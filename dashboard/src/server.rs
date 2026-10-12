@@ -35,7 +35,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             "--port" => {
                 let raw = iter.next().ok_or("--port needs a number")?;
-                port = raw.parse::<u16>().map_err(|_| format!("bad port {raw:?}"))?;
+                port = raw
+                    .parse::<u16>()
+                    .map_err(|_| format!("bad port {raw:?}"))?;
             }
             other => return Err(format!("unknown argument {other:?}")),
         }
@@ -53,9 +55,7 @@ pub fn now_secs() -> f64 {
 /// Only the loopback names with our own port are accepted, which blocks DNS-rebinding requests.
 pub fn host_allowed(host: Option<&str>, port: u16) -> bool {
     match host {
-        Some(value) => {
-            value == format!("127.0.0.1:{port}") || value == format!("localhost:{port}")
-        }
+        Some(value) => value == format!("127.0.0.1:{port}") || value == format!("localhost:{port}"),
         None => false,
     }
 }
@@ -68,14 +68,7 @@ fn text(status: u16, body: &str) -> Reply {
     }
 }
 
-pub fn route(
-    app: &App,
-    method: &str,
-    url: &str,
-    host: Option<&str>,
-    port: u16,
-    now: f64,
-) -> Reply {
+pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, now: f64) -> Reply {
     if !host_allowed(host, port) {
         return text(403, "forbidden host");
     }
@@ -178,7 +171,9 @@ mod tests {
 
     const JOB: &str = r#"{"jobs":[{"id":"001","dir":"d","slug":"s","created":"2026-10-13","feature":"f","branch":"b","stage":"spec","round":0,"stage_since":1.0,"reviews":{"security":"pending","ux":"pending","ui":"pending","code":"pending"}}]}"#;
 
-    fn app_with_board(board: Option<&str>) -> Result<(tempfile::TempDir, Arc<App>), Box<dyn std::error::Error>> {
+    fn app_with_board(
+        board: Option<&str>,
+    ) -> Result<(tempfile::TempDir, Arc<App>), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let factory = dir.path().join(".superpowers").join("factory");
         std::fs::create_dir_all(&factory)?;
@@ -194,7 +189,10 @@ mod tests {
 
     fn http_get(port: u16, path: &str, host: &str) -> Result<String, std::io::Error> {
         let mut stream = TcpStream::connect(("127.0.0.1", port))?;
-        write!(stream, "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")?;
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        )?;
         let mut out = String::new();
         stream.read_to_string(&mut out)?;
         Ok(out)
@@ -206,7 +204,10 @@ mod tests {
         let config = parse_args(&none).expect("defaults parse");
         assert_eq!(config.port, 8765);
         assert_eq!(config.root, PathBuf::from("."));
-        let args: Vec<String> = ["--root", "/r", "--port", "9000"].iter().map(|s| s.to_string()).collect();
+        let args: Vec<String> = ["--root", "/r", "--port", "9000"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let config = parse_args(&args).expect("overrides parse");
         assert_eq!(config.port, 9000);
         assert_eq!(config.root, PathBuf::from("/r"));
@@ -237,10 +238,16 @@ mod tests {
         let host = Some("127.0.0.1:1");
         assert_eq!(route(&app, "GET", "/healthz", host, 1, 5.0).status, 200);
         assert_eq!(route(&app, "GET", "/", host, 1, 5.0).status, 200);
-        assert_eq!(route(&app, "GET", "/dashboard.html?x=1", host, 1, 5.0).status, 200);
+        assert_eq!(
+            route(&app, "GET", "/dashboard.html?x=1", host, 1, 5.0).status,
+            200
+        );
         assert_eq!(route(&app, "GET", "/nope", host, 1, 5.0).status, 404);
         assert_eq!(route(&app, "POST", "/api/state", host, 1, 5.0).status, 405);
-        assert_eq!(route(&app, "GET", "/api/state", Some("evil.example"), 1, 5.0).status, 403);
+        assert_eq!(
+            route(&app, "GET", "/api/state", Some("evil.example"), 1, 5.0).status,
+            403
+        );
         Ok(())
     }
 
@@ -256,7 +263,10 @@ mod tests {
         assert_eq!(reply.status, 200);
         let json: serde_json::Value = serde_json::from_slice(&reply.body)?;
         assert_eq!(json["jobs"][0]["id"], "001");
-        assert_eq!(json["jobs"][0]["agents"][0]["agent_type"], "factory-spec-writer");
+        assert_eq!(
+            json["jobs"][0]["agents"][0]["agent_type"],
+            "factory-spec-writer"
+        );
         assert!(json["board_error"].is_null());
         Ok(())
     }
@@ -276,7 +286,9 @@ mod tests {
         let (_dir, app) = app_with_board(Some("{ nope"))?;
         let reply = route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0);
         let json: serde_json::Value = serde_json::from_slice(&reply.body)?;
-        assert!(json["board_error"].as_str().is_some_and(|text| text.contains("invalid")));
+        assert!(json["board_error"]
+            .as_str()
+            .is_some_and(|text| text.contains("invalid")));
         Ok(())
     }
 

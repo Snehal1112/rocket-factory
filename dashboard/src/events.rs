@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use crate::model::{AgentState, Event, RecentEvent};
 
 const MAX_RECENT: usize = 40;
+const REOPEN_GRACE_SECS: f64 = 2.0;
 
 /// Folds hook events into per-agent state and a short live feed.
 #[derive(Debug, Default)]
@@ -77,6 +78,10 @@ impl Registry {
         };
         let agent = self.entry(event, id);
         if agent.status == "done" {
+            // A Start older than the recorded Stop arrived out of order.
+            if agent.ended_ts.is_some_and(|ended| event.ts <= ended) {
+                return;
+            }
             agent.started_ts = event.ts;
         }
         agent.status = "running".to_string();
@@ -108,6 +113,18 @@ impl Registry {
             return;
         };
         let agent = self.entry(event, id);
+        // A resumed agent may not fire a new start event. Late async lines and the handback
+        // call right after the stop must not reopen it.
+        let reopen = agent.status == "done"
+            && event.tool_name.as_deref() != Some("SubagentHandback")
+            && agent
+                .ended_ts
+                .is_some_and(|ended| event.ts > ended + REOPEN_GRACE_SECS);
+        if reopen {
+            agent.status = "running".to_string();
+            agent.ended_ts = None;
+            agent.started_ts = event.ts;
+        }
         agent.tool_count += 1;
         agent.last_tool = event.tool_name.clone();
         agent.last_target = event.tool_target.clone();
@@ -189,9 +206,13 @@ impl Tailer {
         }
         self.offset += bytes.len() as u64;
         self.partial.push_str(&String::from_utf8_lossy(&bytes));
+        let Some(idx) = self.partial.rfind('\n') else {
+            return Vec::new();
+        };
+        let rest = self.partial.split_off(idx + 1);
+        let complete = std::mem::replace(&mut self.partial, rest);
         let mut lines = Vec::new();
-        while let Some(pos) = self.partial.find('\n') {
-            let line: String = self.partial.drain(..=pos).collect();
+        for line in complete.lines() {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
                 lines.push(trimmed.to_string());
@@ -210,7 +231,8 @@ mod tests {
 
     const START: &str = r#"{"ts":100.0,"hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"factory-builder","cwd":"/wt"}"#;
     const TOOL: &str = r#"{"ts":101.5,"hook_event_name":"PostToolUse","agent_id":"a1","tool_name":"Edit","tool_target":"src/App.tsx","cwd":"/wt"}"#;
-    const STOP: &str = r#"{"ts":120.0,"hook_event_name":"SubagentStop","agent_id":"a1","last_message":"done"}"#;
+    const STOP: &str =
+        r#"{"ts":120.0,"hook_event_name":"SubagentStop","agent_id":"a1","last_message":"done"}"#;
 
     #[test]
     fn start_tool_stop_updates_one_agent() {
@@ -338,5 +360,70 @@ mod tests {
             vec![r#"{"long":"line longer than before"}"#.to_string()]
         );
         Ok(())
+    }
+
+    #[test]
+    fn tailer_reads_a_large_log_in_one_poll() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        let mut text = String::new();
+        for i in 0..200_000 {
+            text.push_str(&format!("{{\"n\":{i}}}\n"));
+        }
+        std::fs::write(&path, text)?;
+        let mut tailer = Tailer::new(path);
+        assert_eq!(tailer.poll().len(), 200_000);
+        Ok(())
+    }
+
+    const STOP_AT_120: &str = r#"{"ts":120.0,"hook_event_name":"SubagentStop","agent_id":"a1"}"#;
+
+    fn tool_at(ts: f64, tool: &str) -> String {
+        format!(
+            r#"{{"ts":{ts},"hook_event_name":"PostToolUse","agent_id":"a1","tool_name":"{tool}"}}"#
+        )
+    }
+
+    #[test]
+    fn a_tool_event_well_after_the_stop_reopens_the_agent() {
+        let mut registry = Registry::new();
+        registry.ingest_line(START);
+        registry.ingest_line(STOP_AT_120);
+        registry.ingest_line(&tool_at(200.0, "Edit"));
+        let agents = registry.agents();
+        assert_eq!(agents[0].status, "running");
+        assert_eq!(agents[0].ended_ts, None);
+        assert_eq!(agents[0].started_ts, 200.0);
+    }
+
+    #[test]
+    fn a_tool_event_one_second_after_the_stop_does_not_reopen() {
+        let mut registry = Registry::new();
+        registry.ingest_line(START);
+        registry.ingest_line(STOP_AT_120);
+        registry.ingest_line(&tool_at(121.0, "Edit"));
+        assert_eq!(registry.agents()[0].status, "done");
+    }
+
+    #[test]
+    fn a_handback_tool_event_after_the_stop_does_not_reopen() {
+        let mut registry = Registry::new();
+        registry.ingest_line(START);
+        registry.ingest_line(STOP_AT_120);
+        registry.ingest_line(&tool_at(300.0, "SubagentHandback"));
+        assert_eq!(registry.agents()[0].status, "done");
+    }
+
+    #[test]
+    fn an_out_of_order_start_does_not_reopen_a_stopped_agent() {
+        let mut registry = Registry::new();
+        registry.ingest_line(START);
+        registry.ingest_line(STOP_AT_120);
+        registry.ingest_line(
+            r#"{"ts":110.0,"hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"factory-builder"}"#,
+        );
+        let agents = registry.agents();
+        assert_eq!(agents[0].status, "done");
+        assert_eq!(agents[0].started_ts, 100.0);
     }
 }

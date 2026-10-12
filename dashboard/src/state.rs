@@ -7,6 +7,7 @@ use crate::model::{AgentState, Board, Job, RecentEvent};
 
 const STALE_SECS: f64 = 1800.0;
 const KEEP_DONE_SECS: f64 = 600.0;
+const UNASSIGNED_MAX_AGE_SECS: f64 = 7200.0;
 
 #[derive(Debug, Serialize)]
 pub struct JobView {
@@ -74,7 +75,7 @@ fn owns_agent(job: &Job, agent: &AgentState) -> bool {
         return true;
     }
     match (&job.worktree, &agent.cwd) {
-        (Some(worktree), Some(cwd)) => Path::new(cwd).starts_with(worktree),
+        (Some(worktree), Some(cwd)) if !worktree.is_empty() => Path::new(cwd).starts_with(worktree),
         _ => false,
     }
 }
@@ -89,7 +90,13 @@ fn keep_unassigned(agent: &AgentState, now: f64) -> bool {
         "done" => agent
             .ended_ts
             .is_some_and(|ended| now - ended <= KEEP_DONE_SECS),
-        _ => true,
+        _ => {
+            let last = agent
+                .last_tool_ts
+                .unwrap_or(agent.started_ts)
+                .max(agent.started_ts);
+            now - last <= UNASSIGNED_MAX_AGE_SECS
+        }
     }
 }
 
@@ -125,7 +132,8 @@ pub fn build_state(
         }
     }
     for view in &mut jobs {
-        view.agents.sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
+        view.agents
+            .sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
     }
     unassigned.sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
     StateView {
@@ -230,7 +238,13 @@ mod tests {
         second.worktree = Some("/repo/.claude/worktrees/factory-002".to_string());
         board.jobs.push(second);
         let mut registry = Registry::new();
-        start(&mut registry, 20.0, "x1", "other", "/repo/.claude/worktrees/factory-002/src");
+        start(
+            &mut registry,
+            20.0,
+            "x1",
+            "other",
+            "/repo/.claude/worktrees/factory-002/src",
+        );
         let view = build_state(&board, &registry, 30.0, None);
         assert_eq!(view.jobs[1].agents.len(), 1);
     }
@@ -240,11 +254,22 @@ mod tests {
         let mut board = Board::default();
         board.jobs.push(job("001", "review", 10.0));
         let mut registry = Registry::new();
-        for (i, kind) in ["factory-security-reviewer", "factory-ux-reviewer", "factory-ui-reviewer", "factory-code-reviewer"]
-            .iter()
-            .enumerate()
+        for (i, kind) in [
+            "factory-security-reviewer",
+            "factory-ux-reviewer",
+            "factory-ui-reviewer",
+            "factory-code-reviewer",
+        ]
+        .iter()
+        .enumerate()
         {
-            start(&mut registry, 20.0 + i as f64, &format!("r{i}"), kind, "/repo");
+            start(
+                &mut registry,
+                20.0 + i as f64,
+                &format!("r{i}"),
+                kind,
+                "/repo",
+            );
         }
         let view = build_state(&board, &registry, 30.0, None);
         assert_eq!(view.jobs[0].agents.len(), 4);
@@ -260,7 +285,10 @@ mod tests {
         registry.ingest_line(r#"{"ts":150.0,"hook_event_name":"SubagentStop","agent_id":"s1"}"#);
         let view = build_state(&board, &registry, 800.0, None);
         assert!(view.jobs[0].agents.is_empty());
-        assert!(view.unassigned_agents.is_empty(), "ended more than 10 minutes ago");
+        assert!(
+            view.unassigned_agents.is_empty(),
+            "ended more than 10 minutes ago"
+        );
     }
 
     #[test]
@@ -273,6 +301,78 @@ mod tests {
         assert_eq!(fresh.jobs[0].agents[0].status, "running");
         let old = build_state(&board, &registry, 20.0 + 1801.0, None);
         assert_eq!(old.jobs[0].agents[0].status, "stale");
+    }
+
+    #[test]
+    fn a_tool_event_keeps_an_agent_running() {
+        let mut board = Board::default();
+        board.jobs.push(job("001", "build", 10.0));
+        let mut registry = Registry::new();
+        start(&mut registry, 20.0, "b1", "factory-builder", "/repo");
+        registry.ingest_line(
+            r#"{"ts":1000.0,"hook_event_name":"PostToolUse","agent_id":"b1","tool_name":"Edit"}"#,
+        );
+        let view = build_state(&board, &registry, 2000.0, None);
+        assert_eq!(view.jobs[0].agents[0].status, "running");
+    }
+
+    #[test]
+    fn a_recent_done_unassigned_agent_is_kept() {
+        let mut registry = Registry::new();
+        start(&mut registry, 100.0, "u1", "other", "/x");
+        registry.ingest_line(r#"{"ts":150.0,"hook_event_name":"SubagentStop","agent_id":"u1"}"#);
+        let view = build_state(&Board::default(), &registry, 200.0, None);
+        assert_eq!(view.unassigned_agents.len(), 1);
+    }
+
+    #[test]
+    fn a_done_agent_without_an_end_time_is_dropped() {
+        let agent = AgentState {
+            agent_id: "u1".to_string(),
+            agent_type: "other".to_string(),
+            status: "done".to_string(),
+            started_ts: 100.0,
+            ended_ts: None,
+            last_tool: None,
+            last_target: None,
+            last_tool_ts: None,
+            tool_count: 0,
+            last_message: None,
+            cwd: None,
+        };
+        assert!(!keep_unassigned(&agent, 200.0));
+    }
+
+    #[test]
+    fn a_running_unassigned_agent_with_recent_activity_is_kept() {
+        let mut registry = Registry::new();
+        start(&mut registry, 100.0, "u1", "other", "/x");
+        let view = build_state(&Board::default(), &registry, 200.0, None);
+        assert_eq!(view.unassigned_agents.len(), 1);
+    }
+
+    #[test]
+    fn a_stale_unassigned_agent_older_than_two_hours_is_dropped() {
+        let mut registry = Registry::new();
+        start(&mut registry, 100.0, "u1", "other", "/x");
+        let view = build_state(&Board::default(), &registry, 100.0 + 7201.0, None);
+        assert!(view.unassigned_agents.is_empty());
+        let view = build_state(&Board::default(), &registry, 100.0 + 3000.0, None);
+        assert_eq!(view.unassigned_agents.len(), 1);
+        assert_eq!(view.unassigned_agents[0].status, "stale");
+    }
+
+    #[test]
+    fn an_empty_worktree_does_not_attach_an_arbitrary_agent() {
+        let mut board = Board::default();
+        let mut only = job("001", "approve", 10.0);
+        only.worktree = Some(String::new());
+        board.jobs.push(only);
+        let mut registry = Registry::new();
+        start(&mut registry, 20.0, "x1", "other", "/repo/src");
+        let view = build_state(&board, &registry, 30.0, None);
+        assert!(view.jobs[0].agents.is_empty());
+        assert_eq!(view.unassigned_agents.len(), 1);
     }
 
     #[test]
