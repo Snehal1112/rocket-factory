@@ -53,7 +53,7 @@ test("clock gives hh:mm:ss", () => {
 test("reviewChip shows role and state as text and whitelists the class", () => {
   const chip = board.reviewChip("security", "pass");
   assert.match(chip, /chip-pass/);
-  assert.match(chip, />sec pass</);
+  assert.match(chip, />security pass</);
   const odd = board.reviewChip("code", '"><script>');
   assert.match(odd, /chip-pending/);
   assert.doesNotMatch(odd, /<script>/);
@@ -107,7 +107,7 @@ test("renderCard shows id, slug, date, branch, round and age", () => {
 test("renderCard shows review chips only from the review stage on", () => {
   assert.doesNotMatch(board.renderCard(makeJob({ stage: "build" })), /class="chip /);
   const review = board.renderCard(makeJob({ stage: "review", reviews: { security: "pass", ux: "skipped", ui: "skipped", code: "changes" } }));
-  assert.match(review, /sec pass/);
+  assert.match(review, /security pass/);
   assert.match(review, /ux skipped/);
   assert.match(review, /code changes/);
 });

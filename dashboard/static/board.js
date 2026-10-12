@@ -10,7 +10,8 @@
     { key: "needs-human", title: "Needs human", sub: "Waiting for your call" },
   ];
   const ROLES = ["security", "ux", "ui", "code"];
-  const ROLE_LABEL = { security: "sec", ux: "ux", ui: "ui", code: "code" };
+  const ROLE_LABEL = { security: "security", ux: "ux", ui: "ui", code: "code" };
+  const MAX_ROUNDS = 2;
   const REVIEW_STATES = ["pending", "running", "pass", "changes", "skipped"];
   const AGENT_STATUSES = ["running", "stale", "done"];
   const CHIP_STAGES = ["review", "approve", "needs-human", "merged"];
@@ -56,49 +57,80 @@
     return `<span class="chip chip-${safeState}" title="${escapeHtml(role)}: ${safeState}">${label} ${safeState}</span>`;
   }
 
-  function agentLine(agent) {
+  function agentLine(agent, now) {
     const status = AGENT_STATUSES.includes(agent.status) ? agent.status : "done";
     let detail = "";
     if (status !== "done" && agent.last_tool) {
-      const target = agent.last_target ? ` ${truncate(agent.last_target, 48)}` : "";
+      const target = agent.last_target ? ` ${agent.last_target}` : "";
       detail = `${agent.last_tool}${target}`;
     } else if (status === "done" && agent.last_message) {
-      detail = truncate(agent.last_message, 60);
+      detail = truncate(agent.last_message, 400);
     }
     const count = agent.tool_count
       ? `${agent.tool_count} ${agent.tool_count === 1 ? "tool" : "tools"}`
       : "";
+    const end = agent.ended_ts || now;
+    const span =
+      Number.isFinite(agent.started_ts) && Number.isFinite(end) && end >= agent.started_ts
+        ? formatAge(end - agent.started_ts)
+        : "";
     return (
       `<li class="agent agent-${status}"><span class="dot dot-${status}" aria-hidden="true"></span>` +
       `<span class="agent-kind">${escapeHtml(shortType(agent.agent_type))}</span>` +
       `<span class="agent-status">${status}</span>` +
-      (detail ? `<span class="agent-detail">${escapeHtml(detail)}</span>` : "") +
+      (span ? `<span class="agent-time">${escapeHtml(span)}</span>` : "") +
       (count ? `<span class="agent-count">${escapeHtml(count)}</span>` : "") +
+      (detail ? `<span class="agent-detail">${escapeHtml(detail)}</span>` : "") +
       `</li>`
     );
   }
 
-  function renderCard(job) {
+  function fact(label, value, extra) {
+    if (value === null || value === undefined || value === "") return "";
+    return `<dt>${label}</dt><dd${extra ? ` class="${extra}"` : ""}>${escapeHtml(value)}</dd>`;
+  }
+
+  function roundPips(round) {
+    const done = Math.min(Math.max(Number(round) || 0, 0), MAX_ROUNDS);
+    let pips = "";
+    for (let i = 0; i < MAX_ROUNDS; i++) {
+      pips += `<span class="pip${i < done ? " pip-on" : ""}"></span>`;
+    }
+    return pips;
+  }
+
+  function renderCard(job, now) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
+    const stageTitle = (STAGES.find((s) => s.key === stage) || STAGES[0]).title;
     const chips = CHIP_STAGES.includes(job.stage)
       ? `<div class="chips">${ROLES.map((role) => reviewChip(role, (job.reviews || {})[role])).join("")}</div>`
       : "";
-    const agents = (job.agents || []).map(agentLine).join("");
+    const agents = (job.agents || []).map((agent) => agentLine(agent, now)).join("");
     const reason =
       job.stage === "needs-human"
         ? `<p class="reason">${escapeHtml(job.reason || "needs a human")}</p>` +
           `<p class="hint"><code>/factory approve ${id}</code> <code>/factory rework ${id} &lt;note&gt;</code></p>`
         : "";
+    const facts =
+      `<dl class="facts">` +
+      fact("branch", job.branch, "fact-path") +
+      fact("worktree", job.worktree, "fact-path") +
+      fact("plan", job.dir, "fact-path") +
+      fact("builder", job.builder_id) +
+      fact("slug", job.slug) +
+      `</dl>`;
     return (
       `<article class="card card-${stage}" data-job="${id}">` +
       `<header class="card-head"><span class="job-id">${id}</span>` +
+      `<span class="card-stage">${escapeHtml(stageTitle)}</span>` +
       `<time class="job-date">${escapeHtml(job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
-      `<p class="branch">${escapeHtml(job.branch)}</p>` +
-      `<div class="meta"><span class="round">round ${Number(job.round) || 0}/2</span>` +
+      `<div class="meta"><span class="round" title="builder rounds used">` +
+      `<span class="pips" aria-hidden="true">${roundPips(job.round)}</span>round ${Number(job.round) || 0}/${MAX_ROUNDS}</span>` +
       `<span class="age">${formatAge(job.seconds_in_stage)} in stage</span></div>` +
       chips +
+      facts +
       (agents ? `<ul class="agents">${agents}</ul>` : "") +
       reason +
       `</article>`
@@ -119,7 +151,7 @@
           .slice(0, MERGED_LIMIT);
       }
       const cards = items.length
-        ? items.map(renderCard).join("")
+        ? items.map((job) => renderCard(job, state.generated_at)).join("")
         : `<p class="empty">Nothing here</p>`;
       return (
         `<section class="column panel column-${stage.key}">` +
@@ -139,7 +171,7 @@
     if (!agents.length) return "";
     return (
       `<section class="panel"><h2>Agents without a job</h2>` +
-      `<ul class="agents">${agents.map(agentLine).join("")}</ul></section>`
+      `<ul class="agents">${agents.map((agent) => agentLine(agent, state.generated_at)).join("")}</ul></section>`
     );
   }
 

@@ -98,6 +98,12 @@ impl Registry {
         let Some(id) = event.agent_id.as_deref() else {
             return;
         };
+        // Claude Code also stops internal helpers that never started and carry no type, such as the
+        // progress summarizer. They are not factory agents, so they must not get an entry.
+        let untyped = event.agent_type.as_deref().is_none_or(str::is_empty);
+        if untyped && !self.agents.contains_key(id) {
+            return;
+        }
         let agent = self.entry(event, id);
         agent.status = "done".to_string();
         agent.ended_ts = Some(event.ts);
@@ -265,6 +271,16 @@ mod tests {
         assert_eq!(agents[0].status, "running");
         assert_eq!(agents[0].started_ts, 200.0);
         assert_eq!(agents[0].ended_ts, None);
+    }
+
+    #[test]
+    fn a_stop_from_an_untyped_agent_that_never_started_is_ignored() {
+        let mut registry = Registry::new();
+        registry.ingest_line(
+            r#"{"ts":100.0,"hook_event_name":"SubagentStop","agent_id":"h1","agent_type":"","last_message":"Reading files"}"#,
+        );
+        assert!(registry.agents().is_empty());
+        assert!(registry.recent().is_empty());
     }
 
     #[test]
