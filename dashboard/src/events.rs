@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
 use crate::model::{AgentState, Event, RecentEvent};
@@ -138,6 +139,8 @@ pub struct Tailer {
     path: PathBuf,
     offset: u64,
     partial: String,
+    /// Device and inode of the file read last, to notice a replaced file.
+    ident: Option<(u64, u64)>,
 }
 
 impl Tailer {
@@ -146,6 +149,7 @@ impl Tailer {
             path,
             offset: 0,
             partial: String::new(),
+            ident: None,
         }
     }
 
@@ -153,11 +157,21 @@ impl Tailer {
     /// A shorter file than before is treated as a new file and read from the start.
     pub fn poll(&mut self) -> Vec<String> {
         let Ok(mut file) = File::open(&self.path) else {
+            // A deleted file starts fresh when it comes back.
+            self.offset = 0;
+            self.partial.clear();
+            self.ident = None;
             return Vec::new();
         };
         let Ok(meta) = file.metadata() else {
             return Vec::new();
         };
+        let ident = (meta.dev(), meta.ino());
+        if self.ident.is_some_and(|old| old != ident) {
+            self.offset = 0;
+            self.partial.clear();
+        }
+        self.ident = Some(ident);
         let len = meta.len();
         if len < self.offset {
             self.offset = 0;
@@ -285,6 +299,44 @@ mod tests {
         assert_eq!(tailer.poll().len(), 2);
         std::fs::write(&path, "{\"c\":3}\n")?;
         assert_eq!(tailer.poll(), vec![r#"{"c":3}"#.to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn tailer_reads_a_replaced_file_that_is_longer_than_the_old_offset() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, "{\"a\":1}\n")?;
+        let mut tailer = Tailer::new(path.clone());
+        assert_eq!(tailer.poll().len(), 1);
+        let other = dir.path().join("new.jsonl");
+        std::fs::write(&other, "{\"x\":10}\n{\"y\":20}\n{\"z\":30}\n")?;
+        std::fs::rename(&other, &path)?;
+        assert_eq!(
+            tailer.poll(),
+            vec![
+                r#"{"x":10}"#.to_string(),
+                r#"{"y":20}"#.to_string(),
+                r#"{"z":30}"#.to_string()
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tailer_reads_a_file_deleted_and_recreated_longer_than_the_old_offset() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, "{\"a\":1}\n")?;
+        let mut tailer = Tailer::new(path.clone());
+        assert_eq!(tailer.poll().len(), 1);
+        std::fs::remove_file(&path)?;
+        assert!(tailer.poll().is_empty());
+        std::fs::write(&path, "{\"long\":\"line longer than before\"}\n")?;
+        assert_eq!(
+            tailer.poll(),
+            vec![r#"{"long":"line longer than before"}"#.to_string()]
+        );
         Ok(())
     }
 }
