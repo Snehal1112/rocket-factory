@@ -74,6 +74,11 @@ test("agentLine shows the live tool for a running agent", () => {
   assert.match(html, />running</);
 });
 
+test("agentLine uses the singular for one tool call", () => {
+  const html = board.agentLine({ agent_type: "factory-builder", status: "running", tool_count: 1 });
+  assert.match(html, />1 tool</);
+});
+
 test("agentLine shows the last message for a finished agent and survives odd status", () => {
   const done = board.agentLine({ agent_type: "factory-ui-reviewer", status: "done", last_message: "VERDICT: APPROVE" });
   assert.match(done, /agent-done/);
@@ -157,14 +162,78 @@ test("renderUnassigned and renderFeed", () => {
   assert.match(board.renderFeed(makeState([])), /No agent activity yet/);
 });
 
+test("every stage, the other agents and the live feed are card panels", () => {
+  const state = makeState([makeJob({ stage: "build" })], {
+    unassigned_agents: [{ agent_type: "factory-approver", status: "running" }],
+    recent: [{ ts: 150, kind: "tool", agent_type: "factory-builder", tool: "Read", target: "CLAUDE.md" }],
+  });
+  const boardHtml = board.renderBoard(state);
+  assert.equal((boardHtml.match(/<section class="column panel /g) || []).length, 6);
+  assert.match(board.renderUnassigned(state), /^<section class="panel">[\s\S]*<\/section>$/);
+  assert.match(board.renderFeed(state), /^<section class="panel">[\s\S]*<\/section>$/);
+  assert.match(board.renderFeed(makeState([])), /^<section class="panel">[\s\S]*<\/section>$/);
+});
+
+test("renderSummary asks for the user first when a job needs them", () => {
+  const html = board.renderSummary(
+    makeState([
+      makeJob({ id: "003", stage: "needs-human", reason: "touches the <trust gate>", feature: "Rename <b>panel</b>" }),
+      makeJob({ id: "004", stage: "build" }),
+    ]),
+  );
+  assert.match(html, /summary-attention/);
+  assert.match(html, />1 job needs you</);
+  assert.match(html, /1 more job is still running\./);
+  assert.match(html, /touches the &lt;trust gate&gt;/);
+  assert.match(html, /Rename &lt;b&gt;panel&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>/);
+  assert.match(html, /\/factory approve 003/);
+  assert.match(html, /\/factory rework 003 &lt;note&gt;/);
+});
+
+test("renderSummary uses the plural forms and lists at most three jobs", () => {
+  const jobs = [1, 2, 3, 4].map((n) => makeJob({ id: `00${n}`, stage: "needs-human" }));
+  const html = board.renderSummary(makeState(jobs));
+  assert.match(html, />4 jobs need you</);
+  assert.match(html, /Nothing else is running\./);
+  assert.equal((html.match(/<li>/g) || []).length, 3);
+});
+
+test("renderSummary says nothing needs the user while jobs run", () => {
+  const running = makeJob({ stage: "build", agents: [{ status: "running" }, { status: "done" }] });
+  const html = board.renderSummary(makeState([running, makeJob({ id: "002", stage: "review" })]));
+  assert.match(html, /summary-running/);
+  assert.match(html, />2 jobs are in progress</);
+  assert.match(html, /1 agent is working\. Nothing needs you right now\./);
+  const quiet = board.renderSummary(makeState([makeJob({ stage: "spec" })]));
+  assert.match(quiet, />1 job is in progress</);
+  assert.match(quiet, /No agent is active at the moment/);
+});
+
+test("renderSummary covers an empty board and a finished one", () => {
+  const empty = board.renderSummary(makeState([]));
+  assert.match(empty, /summary-idle/);
+  assert.match(empty, />No jobs yet</);
+  assert.match(empty, /\/factory &lt;feature&gt;/);
+  const done = board.renderSummary(makeState([makeJob({ stage: "merged" }), makeJob({ id: "002", stage: "merged" })]));
+  assert.match(done, />All caught up</);
+  assert.match(done, /2 jobs merged\./);
+});
+
+test("renderSummary ignores a job with an unknown stage when counting running jobs", () => {
+  const html = board.renderSummary(makeState([makeJob({ stage: "teleporting" })]));
+  assert.doesNotMatch(html, /in progress/);
+});
+
 test("headerStatus", () => {
   assert.equal(board.headerStatus(makeState([]), null, 200).level, "ok");
-  assert.match(board.headerStatus(makeState([]), null, 200).text, /^board\.json · \d\d:\d\d:\d\d$/);
-  assert.equal(board.headerStatus(null, "HTTP 500", null).text, "server unreachable");
-  assert.match(board.headerStatus(null, "boom", 150).text, /^server unreachable · last update \d\d:\d\d:\d\d$/);
+  assert.match(board.headerStatus(makeState([]), null, 200).text, /^Live, updated \d\d:\d\d:\d\d$/);
+  assert.equal(board.headerStatus(null, "HTTP 500", null).text, "Server unreachable");
+  assert.match(board.headerStatus(null, "boom", 150).text, /^Server unreachable, last update \d\d:\d\d:\d\d$/);
   assert.equal(board.headerStatus(null, "boom", 150).level, "error");
   const warn = board.headerStatus(makeState([], { board_error: "board.json is invalid: x" }), null, 200);
   assert.equal(warn.level, "warn");
   assert.equal(warn.text, "board.json is invalid: x");
   assert.equal(board.headerStatus(null, null, null).level, "warn");
+  assert.equal(board.headerStatus(null, null, null).text, "Connecting");
 });

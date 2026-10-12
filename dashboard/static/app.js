@@ -4,6 +4,7 @@
   const POLL_MS = 1000;
   let lastState = null;
   let lastOk = null;
+  let inFlight = false;
 
   function byId(id) {
     return document.getElementById(id);
@@ -20,6 +21,7 @@
   function render(state, error) {
     const view = state || lastState;
     if (view) {
+      setHtml("summary", FactoryBoard.renderSummary(view));
       setHtml("board", FactoryBoard.renderBoard(view));
       setHtml("others", FactoryBoard.renderUnassigned(view));
       setHtml("feed", FactoryBoard.renderFeed(view));
@@ -31,16 +33,22 @@
   }
 
   async function tick() {
+    if (inFlight) return;
+    inFlight = true;
+    let state;
     try {
       const response = await fetch("/api/state", { cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const state = await response.json();
-      lastState = state;
-      lastOk = state.generated_at;
-      render(state, null);
+      state = await response.json();
     } catch (error) {
       render(null, error.message);
+      return;
+    } finally {
+      inFlight = false;
     }
+    lastState = state;
+    lastOk = state.generated_at;
+    render(state, null);
   }
 
   tick();

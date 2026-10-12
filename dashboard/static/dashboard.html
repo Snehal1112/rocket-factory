@@ -3,30 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Software factory · Rocket</title>
+  <title>Software factory for Rocket</title>
   <link rel="stylesheet" href="/dashboard.css">
 </head>
 <body>
-  <header class="top">
-    <h1>Software factory <span class="project">· Rocket</span></h1>
-    <p id="status" class="status status-warn" role="status">
-      <span class="dot" aria-hidden="true"></span><span id="status-text">connecting</span>
-    </p>
-  </header>
-  <div class="board-scroll">
-    <main id="board" class="board"></main>
+  <div class="page">
+    <header class="top">
+      <h1>Software factory <span class="project">for Rocket</span></h1>
+      <p id="status" class="status status-warn" role="status">
+        <span class="dot" aria-hidden="true"></span><span id="status-text">Connecting</span>
+      </p>
+    </header>
+    <div id="summary" class="summary-slot"></div>
+    <div class="board-scroll">
+      <main id="board" class="board"></main>
+    </div>
+    <section class="lower">
+      <div id="others"></div>
+      <div id="feed"></div>
+    </section>
+    <section class="panel commands">
+      <h2>Commands</h2>
+      <dl>
+        <dt><code>/factory &lt;feature&gt;</code></dt><dd>Start a job and write its plan</dd>
+        <dt><code>/factory next</code></dt><dd>Move the oldest job to its next stage</dd>
+        <dt><code>/factory approve &lt;job-id&gt;</code></dt><dd>Release a job that is waiting for you</dd>
+        <dt><code>/factory rework &lt;job-id&gt; &lt;note&gt;</code></dt><dd>Send a job back to the builder with a note</dd>
+        <dt><code>/factory status</code></dt><dd>List every job in the terminal</dd>
+      </dl>
+    </section>
   </div>
-  <section class="lower">
-    <div id="others"></div>
-    <div id="feed"></div>
-  </section>
-  <footer class="commands">
-    <code>/factory &lt;feature&gt;</code>
-    <code>/factory next</code>
-    <code>/factory approve &lt;job-id&gt;</code>
-    <code>/factory rework &lt;job-id&gt; &lt;note&gt;</code>
-    <code>/factory status</code>
-  </footer>
   <script src="/board.js"></script>
   <script src="/app.js"></script>
 </body>

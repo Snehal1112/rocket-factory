@@ -2,12 +2,12 @@
 
 (function (root) {
   const STAGES = [
-    { key: "spec", title: "Spec", sub: "spec-writer · opus" },
-    { key: "build", title: "Build", sub: "builder · opus" },
-    { key: "review", title: "Review", sub: "sec · ux · ui · code" },
-    { key: "approve", title: "Approve", sub: "approver · opus" },
-    { key: "merged", title: "Merged", sub: "main" },
-    { key: "needs-human", title: "Needs human", sub: "approve · rework" },
+    { key: "spec", title: "Spec", sub: "Spec writer writes the plan" },
+    { key: "build", title: "Build", sub: "Builder writes the code" },
+    { key: "review", title: "Review", sub: "Four reviewers check it" },
+    { key: "approve", title: "Approve", sub: "Approver decides" },
+    { key: "merged", title: "Merged", sub: "Landed on main" },
+    { key: "needs-human", title: "Needs human", sub: "Waiting for your call" },
   ];
   const ROLES = ["security", "ux", "ui", "code"];
   const ROLE_LABEL = { security: "sec", ux: "ux", ui: "ui", code: "code" };
@@ -61,16 +61,20 @@
     let detail = "";
     if (status !== "done" && agent.last_tool) {
       const target = agent.last_target ? ` ${truncate(agent.last_target, 48)}` : "";
-      detail = ` · ${agent.last_tool}${target}`;
+      detail = `${agent.last_tool}${target}`;
     } else if (status === "done" && agent.last_message) {
-      detail = ` · ${truncate(agent.last_message, 60)}`;
+      detail = truncate(agent.last_message, 60);
     }
-    const count = agent.tool_count ? ` · ${agent.tool_count} tools` : "";
+    const count = agent.tool_count
+      ? `${agent.tool_count} ${agent.tool_count === 1 ? "tool" : "tools"}`
+      : "";
     return (
       `<li class="agent agent-${status}"><span class="dot dot-${status}" aria-hidden="true"></span>` +
       `<span class="agent-kind">${escapeHtml(shortType(agent.agent_type))}</span>` +
       `<span class="agent-status">${status}</span>` +
-      `<span class="agent-detail">${escapeHtml(detail + count)}</span></li>`
+      (detail ? `<span class="agent-detail">${escapeHtml(detail)}</span>` : "") +
+      (count ? `<span class="agent-count">${escapeHtml(count)}</span>` : "") +
+      `</li>`
     );
   }
 
@@ -89,7 +93,6 @@
     return (
       `<article class="card card-${stage}" data-job="${id}">` +
       `<header class="card-head"><span class="job-id">${id}</span>` +
-      `<span class="job-slug">${escapeHtml(job.slug)}</span>` +
       `<time class="job-date">${escapeHtml(job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
       `<p class="branch">${escapeHtml(job.branch)}</p>` +
@@ -117,9 +120,9 @@
       }
       const cards = items.length
         ? items.map(renderCard).join("")
-        : `<p class="empty">none</p>`;
+        : `<p class="empty">Nothing here</p>`;
       return (
-        `<section class="column column-${stage.key}">` +
+        `<section class="column panel column-${stage.key}">` +
         `<h2>${stage.title}<span class="sub">${stage.sub}</span><span class="count">${total}</span></h2>` +
         cards +
         `</section>`
@@ -134,12 +137,17 @@
   function renderUnassigned(state) {
     const agents = state.unassigned_agents || [];
     if (!agents.length) return "";
-    return `<h2>Other agents</h2><ul class="agents">${agents.map(agentLine).join("")}</ul>`;
+    return (
+      `<section class="panel"><h2>Agents without a job</h2>` +
+      `<ul class="agents">${agents.map(agentLine).join("")}</ul></section>`
+    );
   }
 
   function renderFeed(state) {
     const recent = (state.recent || []).slice(0, FEED_LIMIT);
-    if (!recent.length) return `<h2>Live feed</h2><p class="empty">No agent activity yet.</p>`;
+    if (!recent.length) {
+      return `<section class="panel"><h2>Recent activity</h2><p class="empty">No agent activity yet.</p></section>`;
+    }
     const rows = recent.map((event) => {
       const what = [event.tool, event.target].filter(Boolean).join(" ");
       return (
@@ -149,17 +157,72 @@
         `<span class="feed-what">${escapeHtml(truncate(what, 70))}</span></li>`
       );
     });
-    return `<h2>Live feed</h2><ol class="feed">${rows.join("")}</ol>`;
+    return `<section class="panel"><h2>Recent activity</h2><ol class="feed">${rows.join("")}</ol></section>`;
   }
 
   function headerStatus(state, error, lastOk) {
     if (error) {
-      const since = lastOk ? ` · last update ${clock(lastOk)}` : "";
-      return { level: "error", text: `server unreachable${since}` };
+      const since = lastOk ? `, last update ${clock(lastOk)}` : "";
+      return { level: "error", text: `Server unreachable${since}` };
     }
     if (state && state.board_error) return { level: "warn", text: state.board_error };
-    if (state) return { level: "ok", text: `board.json · ${clock(state.generated_at)}` };
-    return { level: "warn", text: "connecting" };
+    if (state) return { level: "ok", text: `Live, updated ${clock(state.generated_at)}` };
+    return { level: "warn", text: "Connecting" };
+  }
+
+  function plural(count, one, many) {
+    return count === 1 ? one : many;
+  }
+
+  function summaryJob(job) {
+    const id = escapeHtml(job.id);
+    return (
+      `<li><span class="job-id">${id}</span>` +
+      `<span class="summary-feature">${escapeHtml(job.feature)}</span>` +
+      `<span class="summary-reason">${escapeHtml(job.reason || "Needs a human")}</span>` +
+      `<span class="summary-actions"><code>/factory approve ${id}</code>` +
+      `<code>/factory rework ${id} &lt;note&gt;</code></span></li>`
+    );
+  }
+
+  // The first thing on the page: does anything need the user right now?
+  function renderSummary(state) {
+    const jobs = state.jobs || [];
+    const needs = jobs.filter((job) => job.stage === "needs-human");
+    const active = jobs.filter(
+      (job) => job.stage !== "merged" && job.stage !== "needs-human" && STAGES.some((s) => s.key === job.stage),
+    );
+    const merged = jobs.filter((job) => job.stage === "merged").length;
+    const working = jobs.reduce(
+      (total, job) => total + (job.agents || []).filter((agent) => agent.status === "running").length,
+      0,
+    );
+    let tone = "idle";
+    let title = "No jobs yet";
+    let detail = "Start one with <code>/factory &lt;feature&gt;</code>.";
+    let list = "";
+    if (needs.length) {
+      tone = "attention";
+      title = `${needs.length} ${plural(needs.length, "job needs", "jobs need")} you`;
+      detail = active.length
+        ? `${active.length} more ${plural(active.length, "job is", "jobs are")} still running.`
+        : "Nothing else is running.";
+      list = `<ul class="summary-jobs">${needs.slice(0, 3).map(summaryJob).join("")}</ul>`;
+    } else if (active.length) {
+      tone = "running";
+      title = `${active.length} ${plural(active.length, "job is", "jobs are")} in progress`;
+      detail = working
+        ? `${working} ${plural(working, "agent is", "agents are")} working. Nothing needs you right now.`
+        : "No agent is active at the moment. Nothing needs you right now.";
+    } else if (jobs.length) {
+      tone = "idle";
+      title = "All caught up";
+      detail = `${merged} ${plural(merged, "job", "jobs")} merged. Start the next one with <code>/factory &lt;feature&gt;</code>.`;
+    }
+    return (
+      `<section class="summary summary-${tone}">` +
+      `<h2 class="summary-title">${title}</h2><p class="summary-detail">${detail}</p>${list}</section>`
+    );
   }
 
   const api = {
@@ -170,6 +233,7 @@
     reviewChip,
     agentLine,
     renderCard,
+    renderSummary,
     renderBoard,
     renderUnassigned,
     renderFeed,
