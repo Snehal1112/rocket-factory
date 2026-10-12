@@ -1,17 +1,33 @@
 <!doctype html>
-<meta charset="utf-8">
-<title>Software factory</title>
-<h1>Software factory</h1>
-<pre id="out">loading</pre>
-<script>
-  async function tick() {
-    try {
-      const response = await fetch("/api/state", { cache: "no-store" });
-      document.getElementById("out").textContent = JSON.stringify(await response.json(), null, 2);
-    } catch (error) {
-      document.getElementById("out").textContent = "server unreachable: " + error.message;
-    }
-  }
-  setInterval(tick, 1000);
-  tick();
-</script>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Software factory · Rocket</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Software factory <span class="project">· Rocket</span></h1>
+    <p id="status" class="status status-warn" role="status">
+      <span class="dot" aria-hidden="true"></span><span id="status-text">connecting</span>
+    </p>
+  </header>
+  <div class="board-scroll">
+    <main id="board" class="board"></main>
+  </div>
+  <section class="lower">
+    <div id="others"></div>
+    <div id="feed"></div>
+  </section>
+  <footer class="commands">
+    <code>/factory &lt;feature&gt;</code>
+    <code>/factory next</code>
+    <code>/factory approve &lt;job-id&gt;</code>
+    <code>/factory rework &lt;job-id&gt; &lt;note&gt;</code>
+    <code>/factory status</code>
+  </footer>
+  <script src="/board.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

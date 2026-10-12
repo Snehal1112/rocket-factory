@@ -1,0 +1,106 @@
+:root {
+  color-scheme: dark;
+  --bg: #0e0f13;
+  --panel: #161820;
+  --border: #2a2d38;
+  --text: #e6e7ec;
+  --muted: #8b8fa0;
+  --ok: #5ec27f;
+  --warn: #e0b24a;
+  --error: #ef6b6b;
+  --accent: #9b8cff;
+  --info: #5aa9e6;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f6f6f9;
+    --panel: #ffffff;
+    --border: #d9dbe3;
+    --text: #1b1d26;
+    --muted: #5d6275;
+    --ok: #1f8f4a;
+    --warn: #a36b00;
+    --error: #c93a3a;
+    --accent: #5b45d6;
+    --info: #1f6fb3;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 var(--sans);
+}
+
+code, .branch, .job-id, .job-date, time, .agent-status { font-family: var(--mono); }
+code { color: var(--muted); font-size: 12px; margin-right: 1rem; white-space: nowrap; }
+
+.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+h1 { font-size: 18px; margin: 0; }
+.project { color: var(--muted); font-weight: 400; }
+
+.status { margin: 0; display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.status-ok .dot { background: var(--ok); }
+.status-warn .dot { background: var(--warn); }
+.status-error .dot { background: var(--error); }
+.status-error { color: var(--error); }
+
+.board-scroll { overflow-x: auto; margin-top: 1rem; padding-bottom: 0.5rem; }
+.board { display: grid; grid-template-columns: repeat(6, minmax(15rem, 1fr)); gap: 0.75rem; min-width: 96rem; }
+.board.is-stale { opacity: 0.55; }
+
+.column h2 { display: flex; align-items: baseline; gap: 0.5rem; font-size: 13px; margin: 0 0 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
+.column .sub { color: var(--muted); font-size: 11px; font-weight: 400; font-family: var(--mono); }
+.column .count { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.column-merged h2 { color: var(--accent); }
+.column-needs-human h2 { color: var(--warn); }
+.empty { color: var(--muted); margin: 0.25rem 0; }
+.warning { color: var(--warn); grid-column: 1 / -1; }
+
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.8rem; margin-bottom: 0.6rem; overflow-wrap: anywhere; }
+.card-needs-human { border-color: var(--warn); }
+.card-head { display: flex; gap: 0.5rem; align-items: baseline; font-size: 12px; }
+.job-id { color: var(--info); }
+.job-slug { color: var(--muted); }
+.job-date { margin-left: auto; color: var(--muted); font-size: 11px; }
+.feature { margin: 0.4rem 0; }
+.branch { margin: 0; color: var(--muted); font-size: 11px; }
+.meta { display: flex; justify-content: space-between; margin-top: 0.4rem; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+.chip { border: 1px solid var(--border); border-radius: 999px; padding: 0 0.5rem; font-size: 11px; font-family: var(--mono); color: var(--muted); }
+.chip-pass { color: var(--ok); border-color: var(--ok); }
+.chip-changes { color: var(--error); border-color: var(--error); }
+.chip-running { color: var(--info); border-color: var(--info); }
+
+.agents { list-style: none; margin: 0.5rem 0 0; padding: 0; font-size: 12px; }
+.agent { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; margin-top: 0.2rem; }
+.agent-kind { font-weight: 600; }
+.agent-status { color: var(--muted); font-size: 11px; }
+.agent-detail { color: var(--muted); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot-running { background: var(--info); animation: pulse 1.6s ease-in-out infinite; }
+.dot-stale { background: var(--warn); }
+.dot-done { background: var(--ok); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .dot-running { animation: none; } }
+
+.reason { margin: 0.5rem 0 0.25rem; color: var(--warn); }
+.hint { margin: 0; }
+
+.lower { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1rem; margin-top: 1.25rem; }
+.lower h2 { font-size: 13px; margin: 0 0 0.4rem; }
+.feed { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.feed li { margin-bottom: 0.15rem; overflow-wrap: anywhere; }
+.feed time, .feed-kind { color: var(--muted); }
+
+.commands { margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }

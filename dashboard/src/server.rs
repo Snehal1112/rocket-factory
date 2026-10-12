@@ -6,6 +6,9 @@ use crate::events::{Registry, Tailer};
 use crate::state::{build_state, load_board};
 
 const DASHBOARD_HTML: &str = include_str!("../static/dashboard.html");
+const DASHBOARD_CSS: &str = include_str!("../static/dashboard.css");
+const BOARD_JS: &str = include_str!("../static/board.js");
+const APP_JS: &str = include_str!("../static/app.js");
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct Config {
@@ -68,6 +71,14 @@ fn text(status: u16, body: &str) -> Reply {
     }
 }
 
+fn asset(content_type: &'static str, body: &str) -> Reply {
+    Reply {
+        status: 200,
+        content_type,
+        body: body.as_bytes().to_vec(),
+    }
+}
+
 pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, now: f64) -> Reply {
     if !host_allowed(host, port) {
         return text(403, "forbidden host");
@@ -82,6 +93,9 @@ pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, 
             content_type: "text/html; charset=utf-8",
             body: DASHBOARD_HTML.as_bytes().to_vec(),
         },
+        "/dashboard.css" => asset("text/css; charset=utf-8", DASHBOARD_CSS),
+        "/board.js" => asset("text/javascript; charset=utf-8", BOARD_JS),
+        "/app.js" => asset("text/javascript; charset=utf-8", APP_JS),
         "/healthz" => text(200, "ok"),
         "/api/state" => api_state(app, now),
         _ => text(404, "not found"),
@@ -156,6 +170,19 @@ pub fn serve(server: tiny_http::Server, app: Arc<App>, port: u16) {
         }
         if let Ok(header) = tiny_http::Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]) {
             response.add_header(header);
+        }
+        let security: [(&[u8], &[u8]); 3] = [
+            (&b"X-Content-Type-Options"[..], &b"nosniff"[..]),
+            (
+                &b"Content-Security-Policy"[..],
+                &b"default-src 'self'; frame-ancestors 'none'"[..],
+            ),
+            (&b"Referrer-Policy"[..], &b"no-referrer"[..]),
+        ];
+        for (name, value) in security {
+            if let Ok(header) = tiny_http::Header::from_bytes(name, value) {
+                response.add_header(header);
+            }
         }
         let _ = request.respond(response);
     }
@@ -304,6 +331,40 @@ mod tests {
         assert!(good.contains(r#""id":"001""#));
         let bad = http_get(port, "/api/state", "evil.example")?;
         assert!(bad.starts_with("HTTP/1.1 403"), "got: {bad}");
+        Ok(())
+    }
+
+    #[test]
+    fn static_assets_are_served_with_the_right_content_type() -> TestResult {
+        let (_dir, app) = app_with_board(None)?;
+        let host = Some("127.0.0.1:1");
+        let css = route(&app, "GET", "/dashboard.css", host, 1, 5.0);
+        assert_eq!(css.status, 200);
+        assert_eq!(css.content_type, "text/css; charset=utf-8");
+        let board = route(&app, "GET", "/board.js", host, 1, 5.0);
+        assert_eq!(board.status, 200);
+        assert_eq!(board.content_type, "text/javascript; charset=utf-8");
+        let app_js = route(&app, "GET", "/app.js", host, 1, 5.0);
+        assert_eq!(app_js.status, 200);
+        let page = route(&app, "GET", "/", host, 1, 5.0);
+        assert!(String::from_utf8(page.body)?.contains("/board.js"));
+        Ok(())
+    }
+
+    #[test]
+    fn replies_carry_security_headers() -> TestResult {
+        let (_dir, app) = app_with_board(Some(JOB))?;
+        let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
+        let port = server.server_addr().to_ip().ok_or("no ip address")?.port();
+        let served = Arc::clone(&app);
+        std::thread::spawn(move || serve(server, served, port));
+        let reply = http_get(port, "/", &format!("127.0.0.1:{port}"))?.to_lowercase();
+        assert!(
+            reply.contains("x-content-type-options: nosniff"),
+            "got: {reply}"
+        );
+        assert!(reply.contains("frame-ancestors 'none'"), "got: {reply}");
+        assert!(reply.contains("default-src 'self'"), "got: {reply}");
         Ok(())
     }
 }
