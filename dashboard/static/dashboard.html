@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Software factory</title>
+<h1>Software factory</h1>
+<pre id="out">loading</pre>
+<script>
+  async function tick() {
+    try {
+      const response = await fetch("/api/state", { cache: "no-store" });
+      document.getElementById("out").textContent = JSON.stringify(await response.json(), null, 2);
+    } catch (error) {
+      document.getElementById("out").textContent = "server unreachable: " + error.message;
+    }
+  }
+  setInterval(tick, 1000);
+  tick();
+</script>
