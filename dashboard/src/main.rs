@@ -29,6 +29,9 @@ fn main() {
         root: config.root.clone(),
         registry: Mutex::new(events::Registry::new()),
     });
+    if let Some(warning) = server::missing_factory_dir_warning(&config.root) {
+        eprintln!("{warning}");
+    }
     server::spawn_tailer(Arc::clone(&app));
     println!(
         "factory-server: http://127.0.0.1:{}/ (root {})",

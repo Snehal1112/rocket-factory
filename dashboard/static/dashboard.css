@@ -55,7 +55,7 @@ h1 { font-size: 18px; margin: 0; }
 .status-error { color: var(--error); }
 
 .board-scroll { overflow-x: auto; margin-top: 1rem; padding-bottom: 0.5rem; }
-.board { display: grid; grid-template-columns: repeat(6, minmax(15rem, 1fr)); gap: 0.75rem; min-width: 96rem; }
+.board { display: grid; grid-template-columns: repeat(6, minmax(12rem, 1fr)); gap: 0.75rem; }
 .board.is-stale { opacity: 0.55; }
 
 .column h2 { display: flex; align-items: baseline; gap: 0.5rem; font-size: 13px; margin: 0 0 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }

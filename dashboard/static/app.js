@@ -9,12 +9,20 @@
     return document.getElementById(id);
   }
 
+  const shown = {};
+
+  function setHtml(id, html) {
+    if (shown[id] === html) return;
+    shown[id] = html;
+    byId(id).innerHTML = html;
+  }
+
   function render(state, error) {
     const view = state || lastState;
     if (view) {
-      byId("board").innerHTML = FactoryBoard.renderBoard(view);
-      byId("others").innerHTML = FactoryBoard.renderUnassigned(view);
-      byId("feed").innerHTML = FactoryBoard.renderFeed(view);
+      setHtml("board", FactoryBoard.renderBoard(view));
+      setHtml("others", FactoryBoard.renderUnassigned(view));
+      setHtml("feed", FactoryBoard.renderFeed(view));
     }
     const header = FactoryBoard.headerStatus(state, error, lastOk);
     byId("status").className = `status status-${header.level}`;

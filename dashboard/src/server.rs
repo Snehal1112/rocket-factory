@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -25,6 +25,18 @@ pub struct Reply {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+}
+
+/// Return a warning line when the factory data folder is missing under the root.
+pub fn missing_factory_dir_warning(root: &Path) -> Option<String> {
+    let dir = root.join(".superpowers").join("factory");
+    if dir.exists() {
+        return None;
+    }
+    Some(format!(
+        "factory-server: warning: {} does not exist yet; the board stays empty until a factory job or hook event creates it (is --root the main checkout?)",
+        dir.display()
+    ))
 }
 
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
@@ -195,6 +207,16 @@ mod tests {
     use std::net::TcpStream;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn warns_only_when_the_factory_folder_is_missing() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let warning = missing_factory_dir_warning(dir.path());
+        assert!(warning.is_some_and(|text| text.contains("does not exist yet")));
+        std::fs::create_dir_all(dir.path().join(".superpowers").join("factory"))?;
+        assert!(missing_factory_dir_warning(dir.path()).is_none());
+        Ok(())
+    }
 
     const JOB: &str = r#"{"jobs":[{"id":"001","dir":"d","slug":"s","created":"2026-10-13","feature":"f","branch":"b","stage":"spec","round":0,"stage_since":1.0,"reviews":{"security":"pending","ux":"pending","ui":"pending","code":"pending"}}]}"#;
 
