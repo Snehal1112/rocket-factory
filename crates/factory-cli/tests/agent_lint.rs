@@ -230,3 +230,61 @@ fn reviewer_body_pins_the_rules() -> TestResult {
     let without_editor = text.replace("SingleLineEditor", "");
     forbid_all(&without_editor, "reviewer", &["Bash", "Write", "Edit"])
 }
+
+const COMMAND: &str = ".claude/commands/factory.md";
+
+#[test]
+fn command_is_thin_and_pins_the_shapes() -> TestResult {
+    let text = read(COMMAND)?;
+    require_all(
+        &text,
+        "command",
+        &[
+            "<factory> new",
+            "<factory> run",
+            "--series",
+            "--opus",
+            "--plans",
+            "<factory> status",
+            "<factory> approve",
+            "<factory> rework",
+            "<factory> cancel",
+            "<factory> cleanup",
+            "exact shape",
+            "next button for pagination",
+            "status page for jobs",
+            "approve button for forms",
+            "superpowers:brainstorming",
+            "superpowers:writing-plans",
+            "run_in_background",
+            "Do not poll",
+            "at most 3 tasks",
+            "Next plan:",
+            "Next plan: none",
+            "validate",
+            "rework needs a note",
+            "cargo build -j4",
+            "escape",
+            "Never edit the board",
+        ],
+    )?;
+    forbid_all(
+        &text,
+        "command",
+        &["factory-ctl", "python3", "factory-spec-writer", "factory-approver", "set-stage", "SendMessage"],
+    )
+}
+
+#[test]
+fn settings_allow_the_factory_binary() -> TestResult {
+    let text = read(".claude/settings.json")?;
+    require_all(
+        &text,
+        "settings.json",
+        &[
+            "\"allow\"",
+            "Bash(tools/factory/target/debug/factory:*)",
+            "Bash(cargo build -j4 --manifest-path tools/factory/Cargo.toml:*)",
+        ],
+    )
+}
