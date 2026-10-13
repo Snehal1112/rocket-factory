@@ -1,0 +1,48 @@
+{
+  "jobs": [
+    {
+      "id": "001",
+      "dir": "2026-10-13-001-github-issue-21-client-certificates-mtls",
+      "slug": "github-issue-21-client-certificates-mtls",
+      "created": "2026-10-13",
+      "feature": "GitHub issue #21: Client certificates (mTLS) persisted but never loaded by the HTTP client (https://github.com/Snehal1112/rocket/issues/21)",
+      "branch": "factory/001-github-issue-21-client-certificates-mtls",
+      "worktree": "/home/numericlabs/data/rocket/rocket/.claude/worktrees/agent-aafebe66e407a2fef",
+      "builder_id": "aafebe66e407a2fef",
+      "base": "d2a1ea5fe52b72989b2a6d867b805cc0666ea10e",
+      "head": "79b96f7d2080121923ca445e4056643b06ed0799",
+      "stage": "merged",
+      "round": 0,
+      "reason": null,
+      "stage_since": 1791849371.4188454,
+      "reviews": {
+        "security": "pass",
+        "ux": "skipped",
+        "ui": "skipped",
+        "code": "pass"
+      }
+    },
+    {
+      "id": "002",
+      "dir": "2026-10-13-002-github-issue-20-https-github-com-snehal1",
+      "slug": "github-issue-20-https-github-com-snehal1",
+      "created": "2026-10-13",
+      "feature": "GitHub issue #20 (https://github.com/Snehal1112/rocket/issues/20)",
+      "branch": "factory/002-github-issue-20-https-github-com-snehal1",
+      "worktree": "/home/numericlabs/data/rocket/rocket/.claude/worktrees/agent-a8cb6d4556ca0459d",
+      "builder_id": "a8cb6d4556ca0459d",
+      "base": "cf10598e168b32496331f180a183668ffa57af3a",
+      "head": "1d2ef84aa178e83deef80f672f44b3bb2f5c4ebf",
+      "stage": "merged",
+      "round": 0,
+      "reason": null,
+      "stage_since": 1791864838.7289252,
+      "reviews": {
+        "security": "pass",
+        "ux": "pass",
+        "ui": "pass",
+        "code": "pass"
+      }
+    }
+  ]
+}
