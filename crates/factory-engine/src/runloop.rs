@@ -65,7 +65,13 @@ pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
 }
 
 fn run_job_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
-    let limit = driver.config().fix_rounds as usize * 4 + 12;
+    // Each plan task costs one build call, so the allowance grows with the task count.
+    let task_calls = {
+        let job = driver.job(id)?;
+        let plan = std::fs::read_to_string(driver.job_dir(&job).join("plan.md")).unwrap_or_default();
+        crate::tasks::parse_tasks(&plan).len()
+    };
+    let limit = driver.config().fix_rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
         // A live lease of another driver stops this one here, before any stage work.
         driver.renew_lease(id)?;

@@ -187,3 +187,137 @@ fn docs_only_diff_still_writes_a_pass_line() {
     let md = std::fs::read_to_string(fx.job_dir.join("checks.md")).expect("checks.md");
     assert!(md.contains("PASS none"), "{md}");
 }
+
+const TWO_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n";
+
+fn two_task_fixture() -> Fixture {
+    let fx = Fixture::new();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").set_stage(Stage::Build, None, false, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    fx
+}
+
+fn ledger_of(fx: &Fixture) -> String {
+    std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default()
+}
+
+#[test]
+fn the_first_task_call_stays_in_build_and_names_only_task_one() {
+    let fx = two_task_fixture();
+    let runner = scripted(vec![commit_effect("a.txt", 3)]);
+    let out = fx.engine(&runner).build_stage().expect("build");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    let job = fx.job();
+    assert_eq!(job.stage, Stage::Build);
+    assert_eq!(job.task_index, 1);
+    assert!(job.head.is_none());
+    assert_eq!(job.builder_id.as_deref(), Some("sess-1"));
+    let ledger = ledger_of(&fx);
+    assert!(ledger.contains("Task 1: dispatched"), "{ledger}");
+    assert!(ledger.contains("Task 1: implementer done"), "{ledger}");
+    assert!(ledger.contains("Ruling: per-task builders, 2 tasks"), "{ledger}");
+    assert!(!ledger.contains("Task 2:"), "{ledger}");
+    let spec = runner.last_spec().expect("spec");
+    assert!(spec.prompt.contains("Do only Task 1"), "{}", spec.prompt);
+    assert!(!spec.prompt.contains("Do only Task 2"), "{}", spec.prompt);
+    assert_eq!(spec.agent.as_deref(), Some("factory-builder"));
+    assert_eq!(spec.max_turns, Some(120));
+}
+
+#[test]
+fn the_last_task_call_records_head_and_moves_to_review() {
+    let fx = two_task_fixture();
+    let runner = scripted(vec![commit_effect("a.txt", 3), commit_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    let first = fx.repo.tip(&fx.job().branch).expect("tip after task 1");
+    let out = e.build_stage().expect("task 2");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let job = fx.job();
+    assert_eq!(job.task_index, 2);
+    assert_eq!(job.stage, Stage::Review);
+    assert!(job.prev_head.is_none());
+    assert!(job.head.is_some() && job.head != job.base && job.head.as_deref() != Some(first.as_str()));
+    let ledger = ledger_of(&fx);
+    assert!(ledger.contains("Task 2: dispatched"), "{ledger}");
+    assert!(ledger.contains("Task 2: implementer done"), "{ledger}");
+    assert_eq!(ledger.matches("per-task builders").count(), 1, "{ledger}");
+    let prompt = runner.last_spec().expect("spec").prompt;
+    assert!(prompt.contains("Do only Task 2"), "{prompt}");
+    assert!(prompt.contains(&first[..7]) && prompt.contains("test commit"), "{prompt}");
+}
+
+#[test]
+fn a_task_without_a_commit_parks_the_job_with_its_number() {
+    let fx = two_task_fixture();
+    let runner = scripted(vec![commit_effect("a.txt", 3), silent_effect()]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    match e.build_stage().expect("task 2") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("task 2"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(fx.job().task_index, 1);
+}
+
+#[test]
+fn a_plan_without_task_headings_runs_one_whole_plan_builder() {
+    let fx = Fixture::new();
+    let runner = scripted(vec![commit_effect("a.txt", 3)]);
+    let out = fx.engine(&runner).build_stage().expect("build");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    assert_eq!(fx.job().task_index, 0);
+    assert!(!ledger_of(&fx).contains("per-task builders"));
+}
+
+#[test]
+fn a_fix_round_resumes_the_session_and_does_not_restart_the_task_loop() {
+    let fx = two_task_fixture();
+    let runner = scripted(vec![commit_effect("a.txt", 3), commit_effect("b.txt", 2), commit_effect("c.txt", 1)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let head = fx.job().head.clone();
+    std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 2;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    let out = e.build_stage().expect("fix");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let spec = runner.last_spec().expect("spec");
+    assert_eq!(spec.resume.as_deref(), Some("sess-1"));
+    assert!(spec.prompt.contains("changes-r2.md"), "{}", spec.prompt);
+    let job = fx.job();
+    assert_eq!(job.task_index, 2);
+    assert_eq!(job.prev_head, head);
+    assert_eq!(ledger_of(&fx).matches("Task 1: dispatched").count(), 1);
+}
+
+#[test]
+fn a_stopped_first_task_parks_and_a_rework_resumes_at_that_task_with_the_note() {
+    let fx = two_task_fixture();
+    // An empty script makes the runner report a failed run, like a budget or stall kill.
+    let dead = scripted(vec![]);
+    match fx.engine(&dead).build_stage().expect("task 1") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("builder stopped"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(fx.job().task_index, 0);
+    // A rework puts the job back in build and leaves a note.
+    std::fs::write(fx.job_dir.join("rework-note.md"), "use the small helper").expect("note");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    let runner = scripted(vec![commit_effect("a.txt", 3)]);
+    let out = fx.engine(&runner).build_stage().expect("task 1 again");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    let spec = runner.last_spec().expect("spec");
+    assert!(spec.prompt.contains("use the small helper"), "{}", spec.prompt);
+    assert!(spec.prompt.contains("Do only Task 1"), "{}", spec.prompt);
+    assert_eq!(fx.job().task_index, 1);
+    assert!(!fx.job_dir.join("rework-note.md").exists());
+}

@@ -4,7 +4,12 @@ use std::time::Duration;
 use factory_agent::AgentSpec;
 
 use crate::ports::JobView;
+use crate::tasks::PlanTask;
 use crate::Engine;
+
+/// The agent file the driver passes with `--agent`.
+const BUILDER_AGENT: &str = "factory-builder";
+const BUILDER_MAX_TURNS: u32 = 120;
 
 impl Engine<'_> {
     /// Sets the model, the budget and the stall limit from the config. Every agent spec goes through this.
@@ -31,7 +36,50 @@ impl Engine<'_> {
             branch = job.branch,
             plan = self.plan_file.display(),
         );
-        self.with_limits(AgentSpec::new(&self.job_id, "builder", cwd, &prompt), &self.config.builder_model)
+        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        spec.agent = Some(BUILDER_AGENT.to_string());
+        spec.max_turns = Some(BUILDER_MAX_TURNS);
+        self.with_limits(spec, &self.config.builder_model)
+    }
+
+    /// The headless builder for one plan task. It starts fresh and sees only the earlier commit subjects.
+    pub(crate) fn builder_task_spec(
+        &self,
+        job: &JobView,
+        cwd: &Path,
+        task: &PlanTask,
+        base: &str,
+        tip: &str,
+        earlier: &[String],
+    ) -> AgentSpec {
+        let spec_file = self.job_dir.join("spec.md");
+        let spec_line =
+            if spec_file.exists() { format!("The spec is at {}.\n", spec_file.display()) } else { String::new() };
+        let done = if earlier.is_empty() {
+            "No earlier task has a commit yet.".to_string()
+        } else {
+            format!("Commits of earlier tasks, oldest first:\n{}", earlier.join("\n"))
+        };
+        let prompt = format!(
+            "You are the builder in Rocket's software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
+             The plan is at {plan}. Never edit the plan.\n{spec_line}\
+             Base commit: {base}. Current tip: {tip}.\n{done}\n\
+             Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
+             Write the failing test first, then the code, then run the checks the task names.\n\
+             Make exactly one commit, for this task, with the dev-workflow-skills:1-git-commit skill and a pathspec commit \
+             (`git add <paths> && git commit --only -m \"...\" -- <paths>`). Never use `git add -A`, `--all` or `.`. \
+             Never push, never merge, never touch the board or the ledger.\n\
+             Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
+             If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}, and end your reply with the line `HEAD: <sha>`.",
+            branch = job.branch,
+            plan = self.plan_file.display(),
+            n = task.n,
+            title = task.title,
+        );
+        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        spec.agent = Some(BUILDER_AGENT.to_string());
+        spec.max_turns = Some(BUILDER_MAX_TURNS);
+        self.with_limits(spec, &self.config.builder_model)
     }
 
     /// The resumed builder for a fix round.
@@ -45,6 +93,8 @@ impl Engine<'_> {
         );
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.resume = Some(session.to_string());
+        spec.agent = Some(BUILDER_AGENT.to_string());
+        spec.max_turns = Some(BUILDER_MAX_TURNS);
         self.with_limits(spec, &self.config.builder_model)
     }
 }
