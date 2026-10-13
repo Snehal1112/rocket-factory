@@ -223,6 +223,7 @@ mod tests {
             series: None,
             tokens: None,
             budget_weighted: None,
+            cancelled: None,
         }
     }
 

@@ -76,8 +76,8 @@ pub struct StageEntry {
 pub struct Series {
     pub index: u32,
     pub total: u32,
-    #[serde(default)]
-    pub id: serde_json::Value,
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(default, alias = "plan_file")]
     pub next_plan: serde_json::Value,
 }
@@ -133,6 +133,9 @@ pub struct Job {
     pub tokens: Option<Tokens>,
     #[serde(default, deserialize_with = "lenient")]
     pub budget_weighted: Option<u64>,
+    /// True once the user cancelled the job. The driver writes it, a bad value is dropped.
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub cancelled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

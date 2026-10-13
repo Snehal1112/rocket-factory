@@ -2,6 +2,7 @@ mod events;
 mod model;
 mod plan;
 mod server;
+mod specs;
 mod state;
 
 use std::sync::{Arc, Mutex};
