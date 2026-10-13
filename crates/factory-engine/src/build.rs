@@ -34,7 +34,10 @@ impl Engine<'_> {
         };
         let spec = match (&job.session_id, first) {
             (Some(session), false) => {
-                let findings = self.job_dir.join(format!("changes-r{}.md", job.round));
+                // A rework note from the user wins over a round findings file.
+                let note = self.job_dir.join("rework-note.md");
+                let findings =
+                    if note.exists() { note } else { self.job_dir.join(format!("changes-r{}.md", job.round)) };
                 if !findings.exists() {
                     return Err(EngineError::Msg(format!("missing findings file {}", findings.display())));
                 }
@@ -43,6 +46,10 @@ impl Engine<'_> {
             _ => self.builder_first_spec(&job, &cwd),
         };
         let run = self.run_agent(spec)?;
+        if !first {
+            // The builder has seen the note, so it must not be sent again. A missing file is fine.
+            let _ = std::fs::remove_file(self.job_dir.join("rework-note.md"));
+        }
         let session = run.session_id.clone().or(job.session_id.clone());
         self.update(|j| {
             j.builder_id = session;

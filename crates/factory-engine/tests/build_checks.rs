@@ -108,6 +108,26 @@ fn bad_config_is_rejected_when_the_engine_is_built() {
     assert!(res.is_err());
 }
 
+#[test]
+fn a_rework_note_is_the_findings_of_the_resume_and_is_removed_after() {
+    let fx = Fixture::new();
+    let runner = scripted(vec![commit_effect("a.txt", 3), commit_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    // A rework resets the round to 0, so there is no changes-r file, only the note.
+    std::fs::write(fx.job_dir.join("rework-note.md"), "rename the helper").expect("note");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 0;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    let out = e.build_stage().expect("resume");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let spec = runner.last_spec().expect("spec");
+    assert!(spec.prompt.contains("rework-note.md"), "{}", spec.prompt);
+    assert!(!fx.job_dir.join("rework-note.md").exists());
+}
+
 fn built(fx: &Fixture) -> ScriptedRunner {
     let runner = scripted(vec![commit_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");

@@ -30,6 +30,12 @@ impl From<StoreError> for EngineError {
     }
 }
 
+impl From<crate::LeaseError> for EngineError {
+    fn from(e: crate::LeaseError) -> Self {
+        EngineError::Msg(e.to_string())
+    }
+}
+
 impl From<crate::SeriesError> for EngineError {
     fn from(e: crate::SeriesError) -> Self {
         EngineError::Msg(e.to_string())
@@ -47,12 +53,44 @@ pub struct Driver {
     config: Config,
     store: BoardStore,
     runner_for: RunnerFactory,
+    lease_owner: Option<String>,
 }
+
+/// How long a lease lasts without a renewal.
+pub const LEASE_TTL_SECS: f64 = 1800.0;
 
 impl Driver {
     pub fn new(root: &Path, config: Config, runner_for: RunnerFactory) -> Result<Driver, EngineError> {
         let repo = Repo::open(root)?;
-        Ok(Driver { root: root.to_path_buf(), repo, config, store: BoardStore::new(root), runner_for })
+        Ok(Driver {
+            root: root.to_path_buf(),
+            repo,
+            config,
+            store: BoardStore::new(root),
+            runner_for,
+            lease_owner: None,
+        })
+    }
+
+    /// Makes `run_job` take and renew a lease for `owner` on every job it drives.
+    pub fn with_lease_owner(mut self, owner: &str) -> Driver {
+        self.lease_owner = Some(owner.to_string());
+        self
+    }
+
+    /// Takes or renews the lease when this driver has an owner. A live lease of another owner is an error.
+    pub(crate) fn renew_lease(&self, id: &str) -> Result<(), EngineError> {
+        if let Some(owner) = &self.lease_owner {
+            crate::acquire_lease(&self.store, id, owner, LEASE_TTL_SECS, crate::now_secs())?;
+        }
+        Ok(())
+    }
+
+    /// Drops this driver's lease. A failed release is not fatal, because a lease expires by itself.
+    pub(crate) fn release_lease(&self, id: &str) {
+        if let Some(owner) = &self.lease_owner {
+            let _ = crate::release_lease(&self.store, id, owner, crate::now_secs());
+        }
     }
 
     pub fn root(&self) -> &Path {

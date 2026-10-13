@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use factory_core::{Board, CoreError, Job};
+
+use crate::lock::lock_board;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -19,11 +22,32 @@ pub enum StoreError {
 /// The only place the engine and CLI write `board.json` through.
 pub struct BoardStore {
     board_path: PathBuf,
+    wait: Duration,
 }
+
+/// Seconds a write waits for the board lock, unless `FACTORY_LOCK_WAIT` says otherwise.
+const DEFAULT_WAIT_SECS: u64 = 15;
 
 impl BoardStore {
     pub fn new(root: &Path) -> BoardStore {
-        BoardStore { board_path: root.join(".superpowers/factory/board.json") }
+        let secs = std::env::var("FACTORY_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_WAIT_SECS);
+        BoardStore {
+            board_path: root.join(".superpowers/factory/board.json"),
+            wait: Duration::from_secs(secs),
+        }
+    }
+
+    /// A store over an explicit board file. The lock file sits next to it.
+    pub fn at(board_path: &Path) -> BoardStore {
+        let mut store = BoardStore::new(Path::new(""));
+        store.board_path = board_path.to_path_buf();
+        store
+    }
+
+    /// The same store with a different lock wait.
+    pub fn with_wait(mut self, wait: Duration) -> BoardStore {
+        self.wait = wait;
+        self
     }
 
     pub fn board_path(&self) -> &Path {
@@ -39,6 +63,8 @@ impl BoardStore {
     }
 
     pub fn update<R>(&self, f: impl FnOnce(&mut Board) -> Result<R, StoreError>) -> Result<R, StoreError> {
+        // The guard lives until the board is saved, so read, change and write are one step.
+        let _guard = lock_board(&self.board_path.with_extension("json.lock"), self.wait)?;
         let mut board = self.load()?;
         let out = f(&mut board)?;
         let mut text = serde_json::to_string_pretty(&board)?;

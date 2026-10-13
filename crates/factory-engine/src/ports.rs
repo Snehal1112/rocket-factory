@@ -54,10 +54,8 @@ impl Engine<'_> {
 
     /// Loads the board, applies one change, and saves it atomically.
     pub(crate) fn update(&self, f: impl FnOnce(&mut Job) -> Result<(), CoreError>) -> Result<(), EngineError> {
-        let mut board = Board::load(&self.board_path).map_err(core_err)?;
-        let job = board.find_mut(&self.job_id).map_err(core_err)?;
-        f(job).map_err(core_err)?;
-        board.save(&self.board_path).map_err(core_err)
+        // The store takes the board lock, so every stage write is serialized with the other writers.
+        crate::BoardStore::at(&self.board_path).update_job(&self.job_id, f).map_err(core_err)
     }
 
     /// Moves the job to a stage. Only a fix round (review back to build) passes `force`.

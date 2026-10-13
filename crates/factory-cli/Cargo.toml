@@ -4,7 +4,22 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "factory_cli"
+path = "src/lib.rs"
+
 [dependencies]
+factory-core = { path = "../factory-core" }
+factory-git = { path = "../factory-git" }
+factory-agent = { path = "../factory-agent" }
+factory-engine = { path = "../factory-engine" }
+clap.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+git2.workspace = true
+tempfile.workspace = true
 
 [[bin]]
 name = "factory"

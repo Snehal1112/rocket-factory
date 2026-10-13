@@ -21,7 +21,9 @@ pub fn create_job(
     let series_pos = match plan {
         Some(p) => {
             let series = parse_series(driver.root(), p)?;
-            Some(SeriesPos { plan_file: p.to_string_lossy().into_owned(), index: 1, total: series.plans.len() as u32 })
+            // A folder starts at its first plan file.
+            let first = &series.plans[0].path;
+            Some(SeriesPos { plan_file: first.to_string_lossy().into_owned(), index: 1, total: series.plans.len() as u32 })
         }
         None => None,
     };
@@ -48,16 +50,24 @@ pub fn create_job(
     std::fs::create_dir_all(&dir)?;
     Ledger::new(dir.join("progress.md"))
         .create(&format!("# SDD ledger, plan: .superpowers/sdd/{}/plan.md", job.dir))?;
-    if let Some(p) = plan {
-        std::fs::copy(p, dir.join("plan.md"))?;
+    if let Some(pos) = &job.series {
+        std::fs::copy(&pos.plan_file, dir.join("plan.md"))?;
     }
     Ok(job)
 }
 
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
 pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
+    let result = run_job_inner(driver, id);
+    driver.release_lease(id);
+    result
+}
+
+fn run_job_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
     let limit = driver.config().fix_rounds as usize * 4 + 12;
     for _ in 0..limit {
+        // A live lease of another driver stops this one here, before any stage work.
+        driver.renew_lease(id)?;
         let job = driver.job(id)?;
         match job.stage {
             Stage::Merged => return Ok(RunEnd::Merged),

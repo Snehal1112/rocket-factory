@@ -1,0 +1,62 @@
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+#[derive(Parser, Debug)]
+#[command(name = "factory", about = "Rocket software factory driver")]
+pub struct Cli {
+    /// Main checkout root. Defaults to the repository containing the current directory.
+    #[arg(long, global = true)]
+    pub root: Option<PathBuf>,
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Create a job at stage build.
+    New {
+        slug: String,
+        feature: String,
+        /// A plan file or a folder of plan-NN files.
+        #[arg(long)]
+        plans: Option<PathBuf>,
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// Drive a job to merged or needs-human.
+    Run {
+        id: String,
+        /// Continue with the next plan of the series after each merge.
+        #[arg(long)]
+        series: bool,
+    },
+    Status,
+    Show {
+        id: String,
+    },
+    /// Merge a job in needs-human or approve.
+    Approve {
+        id: String,
+    },
+    /// Send a one-line note to the builder and reset the round counter.
+    Rework {
+        id: String,
+        note: String,
+    },
+    Cancel {
+        id: String,
+        #[arg(long, default_value = "cancelled by user")]
+        reason: String,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove the worktree and branch of a merged or cancelled job.
+    Cleanup {
+        id: String,
+        #[arg(long)]
+        discard_commits: bool,
+    },
+    Tokens {
+        id: String,
+    },
+}

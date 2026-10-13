@@ -81,6 +81,26 @@ pub struct Job {
     /// Position in a plan series. New in v3, absent in v1 boards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub series: Option<SeriesPos>,
+    /// The driver that owns the job right now. New in v3, absent in v1 boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease: Option<Lease>,
+    /// True once the job was cancelled by the user. New in v3.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cancelled: bool,
+    /// True once the worktree and branch were removed. New in v3.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cleaned: bool,
+}
+
+/// A time-limited claim on a job, so two drivers never work on one job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Lease {
+    pub owner: String,
+    pub expires: f64,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Where a job sits in a series of plans.
@@ -121,6 +141,9 @@ impl Job {
             tokens: JobTokens::default(),
             syncs: 0,
             series: None,
+            lease: None,
+            cancelled: false,
+            cleaned: false,
         }
     }
 
