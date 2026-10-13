@@ -56,6 +56,13 @@ dependencies = [
 [[package]]
 name = "factory-agent"
 version = "0.1.0"
+dependencies = [
+ "factory-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "factory-checks"

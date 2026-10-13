@@ -1,1 +1,1 @@
-//! Filled in by a later plan of the v3 series.
+//! Headless agent runner for the software factory.
