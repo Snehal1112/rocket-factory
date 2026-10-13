@@ -2,7 +2,9 @@
 
 mod build;
 mod checks_stage;
+mod decide;
 mod ports;
+mod review;
 mod specs;
 
 use std::path::PathBuf;
@@ -15,6 +17,8 @@ use thiserror::Error;
 
 pub use build::build_stage;
 pub use checks_stage::checks_stage;
+pub use decide::{decide, risk_summary, DecideInput, Decision};
+pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
 
 #[derive(Debug, Error)]
 pub enum EngineError {

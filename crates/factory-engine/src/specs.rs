@@ -48,3 +48,28 @@ impl Engine<'_> {
         self.with_limits(spec, &self.config.builder_model)
     }
 }
+
+impl Engine<'_> {
+    /// The combined reviewer. It is read-only and pages the diff to stay cheap.
+    pub(crate) fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32) -> AgentSpec {
+        let prompt = format!(
+            "You are the code reviewer in Rocket's software factory. You are read-only.\n\
+             Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan}, and the worktree at {cwd}. \
+             Round {round}.\n\
+             Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
+             Read .claude/rules/rust-ddd-boundaries.md, .claude/rules/tauri-ipc-boundaries.md and .claude/rules/frontend-component-guardrails.md only for the areas the diff touches.\n\
+             Check: the diff does what the plan asks and nothing else; correctness and edge cases; no unwrap in production Rust; \
+             DDD placement; camelCase serde renames on IPC DTOs only; tests that would fail without the change; \
+             hard rules (shadcn/ui, lucide-react, SingleLineEditor, Monaco, narrow Zustand selectors, no git CLI in Rust); no debug leftovers.\n\
+             Reply in at most 60 lines. List findings as a numbered list with file:line, severity [blocker] or [minor], and a concrete fix. \
+             Any blocker means CHANGES. Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
+            diff = diff.display(),
+            names = names.display(),
+            plan = self.plan_file.display(),
+            cwd = cwd.display(),
+        );
+        let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
+        spec.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
+        self.with_limits(spec, &self.config.reviewer_model)
+    }
+}
