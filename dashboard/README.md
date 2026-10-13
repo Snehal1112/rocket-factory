@@ -16,7 +16,7 @@ Open http://127.0.0.1:8765/. `--root` is the main checkout (the folder that hold
 - `.superpowers/sdd/<job dir>/plan.md`, `spec.md`, `progress.md`: the plan title, spec goal and task list on each card. A task is done when its box is ticked or the ledger says `Task N: complete`; a merged job shows every task done.
 - `.superpowers/factory/events.jsonl`: subagent and tool events, appended by the same driver, with `job_id` and `tokens` on every event. There is no hook.
 
-It never writes either file. If it is not running, the factory works the same.
+It never writes any of these files. If it is not running, the factory works the same.
 
 - Events without a `job_id` show under "Agents without a job".
 - At startup only the last 4 MiB of the log is read.
