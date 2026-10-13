@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a demo factory root with jobs in every stage, for a visual check of the dashboard.
+# Builds a demo factory root with jobs in every stage and one five-plan series, for a visual check of the dashboard.
 # Usage: seed-demo.sh <dir>. Safe to run again on the same dir.
 set -eu
 
@@ -29,6 +29,20 @@ job() {
 none='{"security":"pending","ux":"pending","ui":"pending","code":"pending"}'
 hist() { printf '[{"stage":"spec","ts":%s},{"stage":"build","ts":%s},{"stage":"%s","ts":%s}]' "$((now - 1500))" "$((now - 900))" "$1" "$((now - 300))"; }
 
+# A five-plan series S1: plan 1 builds and plans 2 to 5 wait at spec. Plan 1's folder holds the spec.
+sdd="$root/.superpowers/sdd"
+titles=("" "Harness and fixtures" "Collection benches" "Request benches" "Environment benches" "Report and baseline")
+for i in 1 2 3 4 5; do
+  dir="$sdd/2026-10-13-$(printf '%03d' $((5 + i)))-demo"
+  mkdir -p "$dir"
+  {
+    printf '# Plan: %s\n\n' "${titles[$i]}"
+    for t in 1 2 3; do printf '%s Task %s: Step %s of %s\n\n' '###' "$t" "$t" "${titles[$i]}"; done
+  } >"$dir/plan.md"
+done
+printf '# Spec: Baseline benchmarks\n\n## Goal\n\nMeasure the hot paths before any performance change.\n' \
+  >"$sdd/2026-10-13-006-demo/spec.md"
+
 {
   printf '{"jobs":['
   job 001 "Add a request timeout setting" build null 0 "$none" "$(hist build)" '{"plan_file":"p3.md","index":2,"total":3}' '{"weighted":2500000,"raw":14000000}'
@@ -40,6 +54,13 @@ hist() { printf '[{"stage":"spec","ts":%s},{"stage":"build","ts":%s},{"stage":"%
   job 004 "Show response size in the status bar" merged null 0 "$(reviews pass pass pass pass)" "$(hist merged)" null '{"weighted":400000,"raw":2300000}'
   printf ','
   job 005 "Add a gRPC reflection toggle" spec null 0 "$none" "[{\"stage\":\"spec\",\"ts\":$((now - 300))}]" null null
+  for i in 1 2 3 4 5; do
+    id="$(printf '%03d' $((5 + i)))"
+    if [ "$i" -eq 1 ]; then stage=build; else stage=spec; fi
+    printf ','
+    job "$id" "Baseline benchmarks" "$stage" null 0 "$none" "[{\"stage\":\"spec\",\"ts\":$((now - 300))}]" \
+      "{\"plan_file\":\"plan-0$i.md\",\"index\":$i,\"total\":5,\"id\":\"S1\"}" null
+  done
   printf ']}\n'
 } >"$data/board.json.tmp"
 mv "$data/board.json.tmp" "$data/board.json"

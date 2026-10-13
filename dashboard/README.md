@@ -43,4 +43,4 @@ node --test tools/factory-server/tests/board.test.js tools/factory-server/tests/
 bash tools/factory-server/tests/smoke.sh
 ```
 
-`tests/seed-demo.sh <dir>` builds a demo root with a job in every stage for a visual check.
+`tests/seed-demo.sh <dir>` builds a demo root with a job in every stage and one five-plan series for a visual check.
