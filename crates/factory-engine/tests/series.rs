@@ -1,0 +1,58 @@
+use factory_engine::{parse_series, SeriesError};
+use std::path::Path;
+
+fn plan(dir: &Path, name: &str, tasks: u32, next: &str) {
+    let mut s = String::from("# Plan\n\n");
+    for n in 1..=tasks {
+        s.push_str(&format!("### Task {n}: t\n\n"));
+    }
+    s.push_str(&format!("Next plan: {next}\n"));
+    std::fs::write(dir.join(name), s).expect("write plan");
+}
+
+#[test]
+fn a_valid_chain_parses_in_order() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-a.md", 2, "plan-02-b.md");
+    plan(d.path(), "plan-02-b.md", 3, "none");
+    let s = parse_series(d.path(), d.path()).expect("series");
+    assert_eq!(s.plans.len(), 2);
+    assert_eq!(s.plans[0].tasks, vec![1, 2]);
+    assert!(s.plans[1].next.is_none());
+}
+
+#[test]
+fn a_cycle_is_rejected() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-a.md", 1, "plan-02-b.md");
+    plan(d.path(), "plan-02-b.md", 1, "plan-01-a.md");
+    let e = parse_series(d.path(), d.path()).expect_err("cycle");
+    assert!(matches!(e, SeriesError::Cycle(_)), "{e}");
+}
+
+#[test]
+fn bad_plans_are_rejected_with_clear_errors() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-a.md", 4, "none");
+    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::TaskCount { .. })));
+    plan(d.path(), "plan-01-a.md", 0, "none");
+    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::TaskCount { .. })));
+    plan(d.path(), "plan-01-a.md", 1, "plan-09-missing.md");
+    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::Missing(_))));
+    std::fs::write(d.path().join("plan-01-a.md"), "### Task 1: t\n\nno pointer here\n").expect("w");
+    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::NoNextLine(_))));
+}
+
+#[test]
+fn an_orphan_plan_file_and_a_seventh_plan_are_rejected() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-a.md", 1, "none");
+    plan(d.path(), "plan-02-orphan.md", 1, "none");
+    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::Orphan(_))));
+    let e = tempfile::tempdir().expect("tmp");
+    for i in 1..=7 {
+        let next = if i == 7 { "none".to_string() } else { format!("plan-0{}-x.md", i + 1) };
+        plan(e.path(), &format!("plan-0{i}-x.md"), 1, &next);
+    }
+    assert!(matches!(parse_series(e.path(), e.path()), Err(SeriesError::TooMany(_))));
+}

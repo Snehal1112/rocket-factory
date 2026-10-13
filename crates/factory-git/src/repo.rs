@@ -71,6 +71,19 @@ impl Repo {
         Ok(found.get().peel_to_commit()?)
     }
 
+    /// The names of all local branches, sorted.
+    pub fn local_branch_names(&self) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+        for entry in self.inner.branches(Some(BranchType::Local))? {
+            let (branch, _) = entry?;
+            if let Some(name) = branch.name()? {
+                names.push(name.to_string());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
     /// Full sha of a local branch tip.
     pub fn tip(&self, branch: &str) -> Result<String> {
         Ok(self.branch_commit(branch)?.id().to_string())

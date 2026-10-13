@@ -78,6 +78,17 @@ pub struct Job {
     /// How many times main was merged into the job branch. New in v3, absent in v1 boards.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub syncs: u32,
+    /// Position in a plan series. New in v3, absent in v1 boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<SeriesPos>,
+}
+
+/// Where a job sits in a series of plans.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SeriesPos {
+    pub plan_file: String,
+    pub index: u32,
+    pub total: u32,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -109,6 +120,7 @@ impl Job {
             prev_head: None,
             tokens: JobTokens::default(),
             syncs: 0,
+            series: None,
         }
     }
 

@@ -30,6 +30,12 @@ impl From<StoreError> for EngineError {
     }
 }
 
+impl From<crate::SeriesError> for EngineError {
+    fn from(e: crate::SeriesError) -> Self {
+        EngineError::Msg(e.to_string())
+    }
+}
+
 /// Builds the runner of one job. It is called with the job id every time a job starts a stage,
 /// so a runner (and its event sink) never carries another job's id.
 pub type RunnerFactory = Box<dyn Fn(&str) -> Arc<dyn AgentRunner>>;

@@ -198,6 +198,87 @@ pub fn branch_tip(fx: &MergeFixture) -> String {
     id.to_string()
 }
 
+/// A runner that answers by role: the builder commits a new file, the reviewer replies with `verdict`.
+/// Every run emits one event through the sink that the runner factory made for the job.
+pub struct RoleRunner {
+    sink: EventSink,
+    verdict: String,
+    counter: std::sync::atomic::AtomicUsize,
+}
+
+impl AgentRunner for RoleRunner {
+    fn run(&self, spec: &AgentSpec) -> AgentRun {
+        self.sink.emit(&factory_agent::AgentEvent {
+            kind: factory_agent::EventKind::Start,
+            agent_id: spec.agent_id(),
+            agent_type: spec.role.clone(),
+            tool_name: None,
+            tool_target: None,
+            cwd: None,
+            last_message: None,
+            tokens: 0,
+        });
+        let text = if spec.role == "builder" {
+            let n = self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let sha = commit_file(&spec.cwd, &format!("docs/{}-{n}.txt", spec.job_id), "built\n");
+            format!("done\nHEAD: {sha}")
+        } else {
+            self.verdict.clone()
+        };
+        AgentRun { session_id: Some("sess-1".to_string()), ..AgentRun::done(&text) }
+    }
+}
+
+/// A repo plus a driver whose factory builds one `RoleRunner` and one event sink per job.
+pub struct SeriesFixture {
+    pub tmp: tempfile::TempDir,
+    pub main: PathBuf,
+    pub driver: factory_engine::Driver,
+}
+
+impl SeriesFixture {
+    pub fn new(verdict: &str) -> SeriesFixture {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let main = tmp.path().join("repo");
+        init_repo(&main);
+        let events = main.join(".superpowers/factory/events.jsonl");
+        let verdict = verdict.to_string();
+        let factory: factory_engine::RunnerFactory = Box::new(move |job_id| {
+            Arc::new(RoleRunner {
+                sink: EventSink::new(events.clone(), job_id),
+                verdict: verdict.clone(),
+                counter: std::sync::atomic::AtomicUsize::new(0),
+            })
+        });
+        let driver = factory_engine::Driver::new(&main, Config::default(), factory).expect("driver");
+        SeriesFixture { tmp, main, driver }
+    }
+
+    /// Writes a valid plan file into a `plans/` folder of the temp dir and returns its path.
+    pub fn plan_file(&self, name: &str, tasks: u32, next: &str) -> PathBuf {
+        let dir = self.tmp.path().join("plans");
+        std::fs::create_dir_all(&dir).expect("plans dir");
+        let mut s = String::from("# Plan\n\n");
+        for n in 1..=tasks {
+            s.push_str(&format!("### Task {n}: t\n\n"));
+        }
+        let next = if next == "none" { next.to_string() } else { dir.join(next).to_string_lossy().into_owned() };
+        s.push_str(&format!("Next plan: {next}\n"));
+        let path = dir.join(name);
+        std::fs::write(&path, s).expect("write plan");
+        path
+    }
+}
+
+/// Moves main to `head` by hand, as a person merging outside the driver would.
+pub fn merge_by_hand(fx: &MergeFixture) -> String {
+    let repo = Repository::open(&fx.main).expect("open");
+    let oid = git2::Oid::from_str(&fx.head).expect("oid");
+    repo.reference("refs/heads/main", oid, true, "hand merge").expect("move main");
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).expect("checkout");
+    fx.head.clone()
+}
+
 /// Records `sha` as the reviewed head.
 pub fn record_head(fx: &MergeFixture, sha: &str) {
     let sha = sha.to_string();
