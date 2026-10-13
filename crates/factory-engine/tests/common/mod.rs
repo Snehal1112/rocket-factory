@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use factory_agent::{AgentRun, AgentRunner, AgentSpec, EventSink};
 use factory_core::{Board, CheckRule, Config, Job};
@@ -13,6 +13,9 @@ use git2::{Repository, Signature};
 /// Commits one file in the repository at `dir` and returns the new sha.
 pub fn commit_file(dir: &Path, name: &str, content: &str) -> String {
     let repo = Repository::open(dir).expect("open repo");
+    if let Some(parent) = dir.join(name).parent() {
+        std::fs::create_dir_all(parent).expect("mkdir parent");
+    }
     std::fs::write(dir.join(name), content).expect("write file");
     let mut index = repo.index().expect("index");
     index.add_path(Path::new(name)).expect("add");
@@ -112,4 +115,97 @@ impl AgentRunner for ScriptedRunner {
 
 pub fn scripted(effects: Vec<Effect>) -> ScriptedRunner {
     ScriptedRunner { effects: Mutex::new(effects.into()), calls: Mutex::new(Vec::new()) }
+}
+
+/// A merge fixture: a repo, a driver and a job `001` at stage `approve` with one reviewed commit.
+pub struct MergeFixture {
+    pub tmp: tempfile::TempDir,
+    pub main: PathBuf,
+    pub driver: factory_engine::Driver,
+    pub runner: Arc<ScriptedRunner>,
+    pub id: String,
+    pub head: String,
+}
+
+/// A runner whose first `n` calls are reviewer replies of `VERDICT: APPROVE`.
+pub fn approving_runner(n: usize) -> Arc<ScriptedRunner> {
+    let effects: Vec<Effect> =
+        (0..n).map(|_| Box::new(|_: &AgentSpec| "ok\nVERDICT: APPROVE".to_string()) as Effect).collect();
+    Arc::new(scripted(effects))
+}
+
+pub fn init_repo(main: &Path) {
+    std::fs::create_dir_all(main).expect("mkdir");
+    let mut opts = git2::RepositoryInitOptions::new();
+    opts.initial_head("main");
+    Repository::init_opts(main, &opts).expect("init");
+    commit_file(main, "README.md", "hello\n");
+}
+
+/// A driver whose runner factory hands every job the same shared scripted runner.
+pub fn driver_for(main: &Path, runner: Arc<ScriptedRunner>, config: Config) -> factory_engine::Driver {
+    let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
+    factory_engine::Driver::new(main, config, factory).expect("driver")
+}
+
+/// Creates a repo, a job branch with one commit adding `docs/hello.txt`, a plan file and a board entry at `approve`.
+pub fn approved_job() -> MergeFixture {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let main = tmp.path().join("repo");
+    init_repo(&main);
+    let runner = approving_runner(3);
+    let driver = driver_for(&main, runner.clone(), Config::default());
+    let wt = driver
+        .repo()
+        .create_worktree(&factory_git::JobRef { id: "001".into(), slug: "hello".into() })
+        .expect("worktree");
+    let head = commit_file(&wt.path, "docs/hello.txt", "hello\n");
+    let mut job = Job::new("001", "2026-10-13-001-hello", "hello", "2026-10-13", "say hello", 0.0);
+    job.worktree = Some(wt.path.to_string_lossy().to_string());
+    job.branch = wt.branch.clone();
+    job.base = Some(wt.base.clone());
+    job.head = Some(head.clone());
+    job.set_stage(factory_core::Stage::Approve, None, false, 1.0).expect("stage");
+    let dir = driver.job_dir(&job);
+    std::fs::create_dir_all(&dir).expect("job dir");
+    std::fs::write(dir.join("plan.md"), "- [ ] Task 1: hello\n").expect("plan");
+    driver.ledger(&job).create("# SDD ledger").expect("ledger");
+    driver
+        .store()
+        .update(|b| {
+            b.jobs.push(job);
+            Ok(())
+        })
+        .expect("board");
+    MergeFixture { tmp, main, driver, runner, id: "001".into(), head }
+}
+
+/// The job worktree path from the board.
+pub fn worktree_of(fx: &MergeFixture) -> PathBuf {
+    PathBuf::from(fx.driver.job(&fx.id).expect("job").worktree.expect("worktree"))
+}
+
+pub fn main_tip(dir: &Path) -> String {
+    let repo = Repository::open(dir).expect("open");
+    let id = repo.revparse_single("main").expect("main").peel_to_commit().expect("commit").id();
+    id.to_string()
+}
+
+pub fn branch_tip(fx: &MergeFixture) -> String {
+    let repo = Repository::open(&fx.main).expect("open");
+    let name = fx.driver.job(&fx.id).expect("job").branch;
+    let id = repo.revparse_single(&name).expect("branch").peel_to_commit().expect("commit").id();
+    id.to_string()
+}
+
+/// Records `sha` as the reviewed head.
+pub fn record_head(fx: &MergeFixture, sha: &str) {
+    let sha = sha.to_string();
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.head = Some(sha);
+            Ok(())
+        })
+        .expect("record head");
 }

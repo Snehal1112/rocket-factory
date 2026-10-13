@@ -75,6 +75,13 @@ pub struct Job {
     /// Summed agent token usage. New in v3, absent in v1 boards.
     #[serde(default, skip_serializing_if = "JobTokens::is_zero")]
     pub tokens: JobTokens,
+    /// How many times main was merged into the job branch. New in v3, absent in v1 boards.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub syncs: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 impl Job {
@@ -101,6 +108,7 @@ impl Job {
             model: None,
             prev_head: None,
             tokens: JobTokens::default(),
+            syncs: 0,
         }
     }
 

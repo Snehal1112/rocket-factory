@@ -6,6 +6,12 @@ mod decide;
 mod ports;
 mod review;
 mod specs;
+mod clock;
+mod compat;
+mod merge;
+mod store;
+mod sync;
+mod tick;
 
 use std::path::PathBuf;
 
@@ -16,6 +22,12 @@ use factory_git::Repo;
 use thiserror::Error;
 
 pub use build::build_stage;
+pub use clock::{date_from_days, now_secs, today};
+pub use compat::{Driver, RunnerFactory};
+pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
+pub use store::{next_id, BoardStore, StoreError};
+pub use sync::{sync_stage, SyncOutcome};
+pub use tick::tick_plan;
 pub use checks_stage::checks_stage;
 pub use decide::{decide, risk_summary, DecideInput, Decision};
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
