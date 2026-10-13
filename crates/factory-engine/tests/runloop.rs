@@ -34,6 +34,14 @@ fn run_series_chains_plans_and_each_job_writes_its_own_job_id_into_events() {
     assert_eq!(board.jobs.len(), 2);
     assert!(board.jobs.iter().all(|j| j.stage == factory_core::Stage::Merged));
     assert_eq!(board.jobs[1].series.as_ref().map(|s| (s.index, s.total)), Some((2, 2)));
+    assert_eq!(
+        board.jobs[1].series.as_ref().and_then(|s| s.id.clone()),
+        board.jobs[0].series.as_ref().and_then(|s| s.id.clone()),
+        "one series id"
+    );
+    let stages: Vec<_> = board.jobs[1].stage_history.iter().map(|e| e.stage).collect();
+    assert_eq!(stages[..2], [factory_core::Stage::Spec, factory_core::Stage::Build], "parked, then built");
+    assert_ne!(board.jobs[0].base, board.jobs[1].base, "plan 2 builds on top of plan 1's merge");
     // The second job must not carry the first job's id.
     let events = std::fs::read_to_string(fx.driver.events_path()).expect("events");
     let mut seen = std::collections::BTreeSet::new();
@@ -165,4 +173,59 @@ fn spec_md_is_copied_into_plan_one_only_and_only_for_a_folder() {
     let board = fx.driver.store().load().expect("board");
     assert!(fx.driver.job_dir(&board.jobs[2]).join("spec.md").exists());
     assert!(!fx.driver.job_dir(&board.jobs[3]).join("spec.md").exists());
+}
+
+#[test]
+fn an_old_series_without_an_id_still_gets_its_next_job_after_the_merge() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "none");
+    let job = create_job(&fx.driver, "old", "two plans", Some(&a), None).expect("create");
+    // Make the board look like one written before the plans got their jobs up front.
+    fx.driver
+        .store()
+        .update(|board| {
+            board.jobs.truncate(1);
+            if let Some(series) = board.jobs[0].series.as_mut() {
+                series.id = None;
+            }
+            Ok(())
+        })
+        .expect("rewrite board");
+    assert_eq!(run_series(&fx.driver, &job.id).expect("series"), RunEnd::Merged);
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 2);
+    assert!(board.jobs.iter().all(|j| j.stage == factory_core::Stage::Merged));
+    assert_eq!(board.jobs[1].series.as_ref().and_then(|s| s.id.clone()), None);
+}
+
+#[test]
+fn a_cancelled_plan_stops_the_series_and_later_plans_stay_at_spec() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "plan-03-c.md");
+    fx.plan_file("plan-03-c.md", 1, "none");
+    let job = create_job(&fx.driver, "cancel", "three plans", Some(&a), None).expect("create");
+    fx.driver
+        .store()
+        .update_job("002", |j| {
+            j.set_stage(factory_core::Stage::NeedsHuman, Some("cancelled: test"), false, 1.0)?;
+            j.cancelled = true;
+            Ok(())
+        })
+        .expect("cancel plan 2");
+    assert!(matches!(run_series(&fx.driver, &job.id).expect("series"), RunEnd::NeedsHuman(_)));
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs[0].stage, factory_core::Stage::Merged);
+    assert_eq!(board.jobs[2].stage, factory_core::Stage::Spec);
+}
+
+#[test]
+fn run_job_moves_a_waiting_plan_to_build_by_itself() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "none");
+    create_job(&fx.driver, "waiting", "two plans", Some(&a), None).expect("create");
+    assert_eq!(run_job(&fx.driver, "002").expect("run plan 2 alone"), RunEnd::Merged);
+    assert_eq!(fx.driver.job("002").expect("job").stage, factory_core::Stage::Merged);
 }
