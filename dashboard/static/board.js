@@ -209,6 +209,16 @@
     return `<span class="series" title="Plan ${k} of ${total} in this series">plan ${k} of ${total}</span>`;
   }
 
+  // Says which spec a plan belongs to. Jobs made before series ids, and one-plan series, have none.
+  function specChip(series, specs) {
+    if (!series || !series.id) return "";
+    const total = Number(series.total);
+    if (!Number.isFinite(total) || total < 2) return "";
+    const spec = (specs || []).find((item) => item && item.series_id === series.id);
+    const label = spec && spec.title ? `Spec ${series.id}: ${spec.title}` : `Spec ${series.id}`;
+    return `<span class="series spec-chip" title="${escapeHtml(label)}">spec ${escapeHtml(series.id)}</span>`;
+  }
+
   function durationsLine(job) {
     const known = (job.stage_durations || []).filter(
       (item) => item && STAGES.some((s) => s.key === item.stage) && Number.isFinite(item.seconds),
@@ -249,7 +259,7 @@
     return header.level === "ok" ? "Dashboard is live" : header.text;
   }
 
-  function renderCard(job, now) {
+  function renderCard(job, now, specs) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
     const stageTitle = (STAGES.find((s) => s.key === stage) || STAGES[0]).title;
@@ -262,6 +272,8 @@
           `<p class="hint">${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
     const showAge = job.stage !== "merged" && job.stage !== "needs-human";
+    // A plan that has not started has no time, tokens, agents or branch yet, so those sections stay out.
+    const parked = job.stage === "spec";
     const facts =
       `<details class="facts-box"><summary>Branch and files</summary><dl class="facts">` +
       fact("branch", job.branch, "fact-path") +
@@ -275,6 +287,7 @@
       `<header class="card-head"><span class="job-id">${id}</span>` +
       `<span class="card-stage">${escapeHtml(stageTitle)}</span>` +
       seriesChip(job.series) +
+      specChip(job.series, specs) +
       `<time class="job-date">${escapeHtml(job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
       progressBar(job) +
@@ -283,11 +296,11 @@
       (showAge ? `<span class="age">${formatAge(job.seconds_in_stage)} in stage</span>` : "") +
       `</div>` +
       planSection(job) +
-      durationsLine(job) +
-      tokensBar(job) +
+      (parked ? "" : durationsLine(job)) +
+      (parked ? "" : tokensBar(job)) +
       chips +
-      agentsSection(job, job.agents || [], now) +
-      facts +
+      (parked ? "" : agentsSection(job, job.agents || [], now)) +
+      (parked ? "" : facts) +
       reason +
       `</article>`
     );
@@ -308,7 +321,7 @@
           .slice(0, MERGED_LIMIT);
       }
       const cards = items.length
-        ? items.map((job) => renderCard(job, state.generated_at)).join("")
+        ? items.map((job) => renderCard(job, state.generated_at, state.specs)).join("")
         : `<p class="empty">Nothing here</p>`;
       return (
         `<section class="column panel column-${stage.key}">` +
@@ -323,7 +336,7 @@
     const strays = jobs.filter((job) => !known.has(job.stage));
     const strayColumn = strays.length
       ? `<section class="column panel column-unknown"><h2>Unknown stage<span class="count">${strays.length}</span></h2>` +
-        strays.map((job) => renderCard(job, state.generated_at)).join("") +
+        strays.map((job) => renderCard(job, state.generated_at, state.specs)).join("") +
         `</section>`
       : "";
     return columns.join("") + strayColumn + warning;
@@ -427,6 +440,7 @@
     headerStatus,
     copyChip,
     seriesChip,
+    specChip,
     durationsLine,
     tokensBar,
     announcement,

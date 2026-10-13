@@ -472,3 +472,42 @@ test("announcement is short and depends only on the level text", () => {
   assert.equal(board.announcement({ level: "ok", text: "Live, updated 10:00:01" }), "Dashboard is live");
   assert.equal(board.announcement({ level: "error", text: "Server unreachable" }), "Server unreachable");
 });
+
+test("a plan card shows which spec it belongs to", () => {
+  const job = makeJob({ stage: "build", series: { index: 2, total: 5, id: "S2" } });
+  const html = board.renderCard(job, 200, [{ series_id: "S2", title: "Baseline <b>benches</b>" }]);
+  assert.match(html, />spec S2</);
+  assert.match(html, /title="Spec S2: Baseline &lt;b&gt;benches&lt;\/b&gt;"/);
+  assert.match(html, /plan 2 of 5/);
+});
+
+test("the spec chip works without spec titles and is left out for old jobs and one-plan series", () => {
+  const chip = board.specChip({ index: 1, total: 3, id: "S9" }, undefined);
+  assert.match(chip, />spec S9</);
+  assert.match(chip, /title="Spec S9"/);
+  assert.equal(board.specChip({ index: 1, total: 3 }, []), "");
+  assert.equal(board.specChip({ index: 1, total: 1, id: "S1" }, []), "");
+  assert.equal(board.specChip(null, []), "");
+});
+
+test("a plan card that has not started hides the empty sections and keeps the task list open", () => {
+  const plan = { title: "Collection benches", goal: null, tasks: [{ number: 1, title: "the hook", status: "pending" }] };
+  const extra = {
+    series: { index: 2, total: 5, id: "S2" },
+    plan,
+    token_view: { weighted: 1, raw: 1, budget: 10, fraction: 0.1 },
+    agents: [{ agent_id: "a", agent_type: "factory-builder", status: "running", tool_count: 1 }],
+    worktree: "/tmp/wt",
+  };
+  const waiting = board.renderCard(makeJob(Object.assign({ stage: "spec" }, extra)), 200);
+  assert.doesNotMatch(waiting, /Branch and files/);
+  assert.doesNotMatch(waiting, /tokens-text/);
+  assert.doesNotMatch(waiting, /Agent activity/);
+  assert.match(waiting, /Task 1/);
+  assert.match(waiting, /waiting/);
+  assert.match(waiting, /<details class="tasks-box"[^>]* open/);
+  const running = board.renderCard(makeJob(Object.assign({ stage: "build" }, extra)), 200);
+  assert.match(running, /Branch and files/);
+  assert.match(running, /tokens-text/);
+  assert.match(running, /Agent activity/);
+});
