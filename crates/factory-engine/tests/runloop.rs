@@ -67,3 +67,13 @@ fn create_job_avoids_ids_of_existing_branches() {
     let job = create_job(&fx.driver, "new", "f", Some(&plan), None).expect("create");
     assert_eq!(job.id, "005");
 }
+
+#[test]
+fn create_job_records_the_configured_budget_and_history() {
+    let fx = common::SeriesFixture::new("x");
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "new", "f", Some(&plan), None).expect("create");
+    assert_eq!(job.budget_weighted, Some(fx.driver.config().budget_weighted));
+    let stages: Vec<_> = job.stage_history.iter().map(|e| e.stage).collect();
+    assert_eq!(stages, vec![factory_core::Stage::Spec, factory_core::Stage::Build]);
+}

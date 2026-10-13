@@ -368,6 +368,20 @@ mod tests {
     }
 
     #[test]
+    fn a_board_written_by_the_driver_parses_history_and_budget() -> TestResult {
+        // The same shape factory-core writes: history entries use `at`, plus a budget.
+        let board = board_from(
+            r#","stage_history":[{"stage":"spec","at":100.0},{"stage":"build","at":160.5}],"budget_weighted":3000000,"tokens":{"input":1,"cache_creation":2,"output":3,"cache_read":40}"#,
+        )?;
+        let item = &board.jobs[0];
+        assert_eq!(item.stage_history.len(), 2);
+        assert_eq!(item.stage_history[1].stage, "build");
+        assert_eq!(item.stage_history[1].ts, 160.5);
+        assert_eq!(item.budget_weighted, Some(3_000_000));
+        Ok(())
+    }
+
+    #[test]
     fn an_old_board_without_the_new_fields_still_loads() -> TestResult {
         let board = board_from("")?;
         let item = &board.jobs[0];

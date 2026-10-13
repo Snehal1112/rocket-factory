@@ -10,7 +10,7 @@ pub mod risk;
 pub mod stage;
 pub mod verdict;
 
-pub use board::{Board, Job, JobTokens, Lease, ReviewState, SeriesPos};
+pub use board::{Board, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry};
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use config::{CheckRule, Config};
 pub use error::CoreError;

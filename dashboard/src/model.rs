@@ -67,6 +67,7 @@ impl<'de> Deserialize<'de> for Tokens {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct StageEntry {
     pub stage: String,
+    #[serde(alias = "at")]
     pub ts: f64,
 }
 

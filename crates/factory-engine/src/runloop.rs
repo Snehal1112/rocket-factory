@@ -43,6 +43,7 @@ pub fn create_job(
         job.set_stage(Stage::Build, None, false, now)?;
         job.series = series_pos;
         job.model = model.map(str::to_string);
+        job.budget_weighted = Some(driver.config().budget_weighted);
         board.jobs.push(job.clone());
         Ok(job)
     })?;

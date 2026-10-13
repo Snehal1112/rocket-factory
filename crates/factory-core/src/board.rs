@@ -90,6 +90,19 @@ pub struct Job {
     /// True once the worktree and branch were removed. New in v3.
     #[serde(default, skip_serializing_if = "is_false")]
     pub cleaned: bool,
+    /// Every stage the job entered, in order. The dashboard reads it for durations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stage_history: Vec<StageEntry>,
+    /// The weighted token budget this job was created with. The dashboard reads it for the budget bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_weighted: Option<u64>,
+}
+
+/// One stage change, with the unix time in seconds it happened.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StageEntry {
+    pub stage: Stage,
+    pub at: f64,
 }
 
 /// A time-limited claim on a job, so two drivers never work on one job.
@@ -144,6 +157,8 @@ impl Job {
             lease: None,
             cancelled: false,
             cleaned: false,
+            stage_history: vec![StageEntry { stage: Stage::Spec, at: now }],
+            budget_weighted: None,
         }
     }
 
@@ -163,6 +178,7 @@ impl Job {
         if self.stage != to {
             self.stage = to;
             self.stage_since = now;
+            self.stage_history.push(StageEntry { stage: to, at: now });
         }
         self.reason = if to == Stage::NeedsHuman { reason.map(str::to_string) } else { None };
         Ok(())
@@ -243,6 +259,41 @@ mod tests {
         let before = j.clone();
         assert!(j.set_stage(Stage::Build, None, false, 300.0).is_err());
         assert_eq!(j, before);
+    }
+
+    #[test]
+    fn set_stage_appends_history_in_order() {
+        let mut j = job();
+        assert_eq!(j.stage_history, vec![StageEntry { stage: Stage::Spec, at: 100.0 }]);
+        j.set_stage(Stage::Build, None, false, 200.0).expect("build");
+        j.set_stage(Stage::Build, None, false, 250.0).expect("same stage");
+        j.set_stage(Stage::Review, None, false, 300.0).expect("review");
+        let seen: Vec<(Stage, f64)> = j.stage_history.iter().map(|e| (e.stage, e.at)).collect();
+        assert_eq!(seen, vec![(Stage::Spec, 100.0), (Stage::Build, 200.0), (Stage::Review, 300.0)]);
+    }
+
+    #[test]
+    fn refused_move_appends_no_history() {
+        let mut j = job();
+        j.set_stage(Stage::Merged, None, false, 200.0).expect("forward");
+        let n = j.stage_history.len();
+        assert!(j.set_stage(Stage::Build, None, false, 300.0).is_err());
+        assert_eq!(j.stage_history.len(), n);
+    }
+
+    #[test]
+    fn history_and_budget_are_written_as_the_server_reads_them() -> Result<(), Box<dyn std::error::Error>> {
+        let mut j = job();
+        j.budget_weighted = Some(3_000_000);
+        let v = serde_json::to_value(&j)?;
+        assert_eq!(v["stage_history"][0]["stage"], "spec");
+        assert_eq!(v["stage_history"][0]["at"], 100.0);
+        assert_eq!(v["budget_weighted"], 3_000_000);
+        j.stage_history.clear();
+        j.budget_weighted = None;
+        let v = serde_json::to_value(&j)?;
+        assert!(v.get("stage_history").is_none() && v.get("budget_weighted").is_none());
+        Ok(())
     }
 
     #[test]
