@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"sess-1","model":"claude-sonnet-4-5","tools":["Read","Bash"]}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Reading."}],"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":1}},"session_id":"sess-1"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{"file_path":"/w/a.rs"}}],"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":40}},"session_id":"sess-1"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"fn main() {}"}]},"session_id":"sess-1"}
+{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"All done."}],"usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":1100,"output_tokens":20}},"session_id":"sess-1"}
+{"type":"result","subtype":"success","is_error":false,"result":"All done.","session_id":"sess-1","num_turns":2,"usage":{"input_tokens":15,"cache_creation_input_tokens":100,"cache_read_input_tokens":2100,"output_tokens":60}}

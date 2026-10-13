@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-e"}
+{"type":"result","subtype":"error_max_turns","is_error":true,"result":"","session_id":"sess-e","usage":{"input_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}}

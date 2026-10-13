@@ -1,0 +1,6 @@
+not json at all
+
+{"type":"system","subtype":"init","session_id":"sess-g"}
+{"type":"assistant","message":{"id":"msg_g","usage":{"input_tokens":1,"output_tokens":2}
+{"type":"assistant","message":{"id":"msg_g","content":[],"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}
+{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sess-g"}
