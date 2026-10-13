@@ -54,7 +54,9 @@ fn run_series_stops_when_a_plan_needs_a_human() {
     fx.plan_file("plan-02-b.md", 1, "none");
     let job = create_job(&fx.driver, "stuck", "x", Some(&a), None).expect("create");
     assert!(matches!(run_series(&fx.driver, &job.id).expect("series"), RunEnd::NeedsHuman(_)));
-    assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 1);
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 2, "plan 2 has its job from the start");
+    assert_eq!(board.jobs[1].stage, factory_core::Stage::Spec, "and it never started");
 }
 
 #[test]
@@ -92,4 +94,75 @@ fn every_agent_run_appends_a_usage_line_with_its_role() {
         .filter_map(|v| v["role"].as_str().map(str::to_string))
         .collect();
     assert_eq!(roles, vec!["builder".to_string(), "reviewer".to_string()]);
+}
+
+#[test]
+fn create_job_parks_later_plans_at_spec_with_one_series_id() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 2, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 3, "plan-03-c.md");
+    fx.plan_file("plan-03-c.md", 1, "none");
+    let first = create_job(&fx.driver, "feat", "three plans", Some(&a), None).expect("create");
+    assert_eq!(first.id, "001");
+    assert_eq!(first.stage, factory_core::Stage::Build);
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 3);
+    let stages: Vec<_> = board.jobs.iter().map(|j| j.stage).collect();
+    assert_eq!(stages, vec![factory_core::Stage::Build, factory_core::Stage::Spec, factory_core::Stage::Spec]);
+    let ids: Vec<_> = board.jobs.iter().map(|j| j.series.as_ref().and_then(|s| s.id.clone())).collect();
+    assert_eq!(ids, vec![Some("S1".to_string()); 3]);
+    let places: Vec<_> = board.jobs.iter().map(|j| j.series.as_ref().map(|s| (s.index, s.total))).collect();
+    assert_eq!(places, vec![Some((1, 3)), Some((2, 3)), Some((3, 3))]);
+    for job in &board.jobs {
+        assert!(fx.driver.job_dir(job).join("plan.md").exists(), "plan.md for job {}", job.id);
+    }
+    assert_eq!(board.jobs[1].slug, "plan-02-b");
+}
+
+#[test]
+fn a_second_series_gets_the_next_series_id() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "none");
+    create_job(&fx.driver, "one", "f", Some(&a), None).expect("first series");
+    create_job(&fx.driver, "two", "f", Some(&a), None).expect("second series");
+    let board = fx.driver.store().load().expect("board");
+    let ids: Vec<_> = board.jobs.iter().filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone())).collect();
+    assert_eq!(ids, vec!["S1", "S1", "S2", "S2"]);
+}
+
+#[test]
+fn a_single_plan_gets_no_series_id_and_no_extra_jobs() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    create_job(&fx.driver, "solo", "f", Some(&a), None).expect("create");
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 1);
+    assert_eq!(board.jobs[0].series.as_ref().and_then(|s| s.id.clone()), None);
+}
+
+#[test]
+fn a_broken_chain_creates_no_jobs() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-missing.md");
+    assert!(create_job(&fx.driver, "bad", "f", Some(&a), None).is_err());
+    assert!(fx.driver.store().load().expect("board").jobs.is_empty());
+}
+
+#[test]
+fn spec_md_is_copied_into_plan_one_only_and_only_for_a_folder() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "none");
+    let folder = a.parent().expect("plans folder").to_path_buf();
+    std::fs::write(folder.join("spec.md"), "# Spec: Demo\n\n## Goal\n\nDo it.\n").expect("spec");
+    // A single file as the argument has no folder, so nothing is copied and nothing fails.
+    create_job(&fx.driver, "file", "f", Some(&a), None).expect("file argument");
+    let board = fx.driver.store().load().expect("board");
+    assert!(!fx.driver.job_dir(&board.jobs[0]).join("spec.md").exists());
+    // A folder copies the spec into plan 1 and not into plan 2.
+    create_job(&fx.driver, "folder", "f", Some(&folder), None).expect("folder argument");
+    let board = fx.driver.store().load().expect("board");
+    assert!(fx.driver.job_dir(&board.jobs[2]).join("spec.md").exists());
+    assert!(!fx.driver.job_dir(&board.jobs[3]).join("spec.md").exists());
 }

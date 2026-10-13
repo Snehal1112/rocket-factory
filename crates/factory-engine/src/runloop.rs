@@ -10,23 +10,16 @@ pub enum RunEnd {
     NeedsHuman(String),
 }
 
-/// Creates the job folder, ledger, plan copy and board entry. The job starts at stage build.
-pub fn create_job(
+/// Adds one job to the board and makes its folder, ledger and plan copy. A job that runs now starts at
+/// stage build. A plan that waits for its turn starts at stage spec and moves to build when it runs.
+fn add_job(
     driver: &Driver,
     slug: &str,
     feature: &str,
-    plan: Option<&Path>,
+    series: Option<SeriesPos>,
+    stage: Stage,
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
-    let series_pos = match plan {
-        Some(p) => {
-            let series = parse_series(driver.root(), p)?;
-            // A folder starts at its first plan file.
-            let first = &series.plans[0].path;
-            Some(SeriesPos { plan_file: first.to_string_lossy().into_owned(), index: 1, total: series.plans.len() as u32, id: None })
-        }
-        None => None,
-    };
     // Folder and branch names keep a new id from colliding with a leftover of an older job.
     let dirs: Vec<String> = std::fs::read_dir(driver.root().join(".superpowers/sdd"))
         .map(|rd| rd.filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).collect())
@@ -40,8 +33,10 @@ pub fn create_job(
         let dir = factory_core::job_dir_name(&date, &id, &slug);
         let now = now_secs();
         let mut job = Job::new(&id, &dir, &slug, &date, feature, now);
-        job.set_stage(Stage::Build, None, false, now)?;
-        job.series = series_pos;
+        if stage != Stage::Spec {
+            job.set_stage(stage, None, false, now)?;
+        }
+        job.series = series;
         job.model = model.map(str::to_string);
         job.budget_weighted = Some(driver.config().budget_weighted);
         board.jobs.push(job.clone());
@@ -55,6 +50,54 @@ pub fn create_job(
         std::fs::copy(&pos.plan_file, dir.join("plan.md"))?;
     }
     Ok(job)
+}
+
+/// Creates the jobs of a series and returns plan 1's job, which starts at stage build. Every later plan
+/// gets its job now too, parked at stage spec, so the board shows the whole series from the start.
+pub fn create_job(
+    driver: &Driver,
+    slug: &str,
+    feature: &str,
+    plan: Option<&Path>,
+    model: Option<&str>,
+) -> Result<Job, EngineError> {
+    let Some(start) = plan else {
+        return add_job(driver, slug, feature, None, Stage::Build, model);
+    };
+    // A broken chain fails here, before any job exists.
+    let series = parse_series(driver.root(), start)?;
+    let total = series.plans.len() as u32;
+    // A single plan needs no series id. A longer chain shares one id between all its jobs.
+    let series_id = if total > 1 {
+        let used: Vec<String> = driver
+            .store()
+            .load()?
+            .jobs
+            .iter()
+            .filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone()))
+            .collect();
+        Some(factory_core::next_series_id(&used))
+    } else {
+        None
+    };
+    let pos = |index: usize| SeriesPos {
+        plan_file: series.plans[index].path.to_string_lossy().into_owned(),
+        index: index as u32 + 1,
+        total,
+        id: series_id.clone(),
+    };
+    // A folder starts at its first plan file.
+    let first = add_job(driver, slug, feature, Some(pos(0)), Stage::Build, model)?;
+    // The spec sits beside the plans. Only plan 1 gets a copy, so later builders are not pointed at it.
+    let spec = start.join("spec.md");
+    if start.is_dir() && spec.is_file() {
+        std::fs::copy(&spec, driver.job_dir(&first).join("spec.md"))?;
+    }
+    for (index, later) in series.plans.iter().enumerate().skip(1) {
+        let stem = later.path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
+        add_job(driver, &stem, feature, Some(pos(index)), Stage::Spec, model)?;
+    }
+    Ok(first)
 }
 
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
@@ -133,13 +176,11 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
         current = match existing {
             Some(j) => j.id.clone(),
             None => {
+                // A series made before plans got their jobs up front: create this plan's job now.
                 let stem = next.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
-                let created = create_job(driver, &stem, &job.feature, Some(&next), job.model.as_deref())?;
-                driver.store().update_job(&created.id, |j| {
-                    j.series = Some(SeriesPos { plan_file: next_name, index: pos.index + 1, total: pos.total, id: None });
-                    Ok(())
-                })?;
-                created.id
+                let next_pos =
+                    SeriesPos { plan_file: next_name, index: pos.index + 1, total: pos.total, id: pos.id.clone() };
+                add_job(driver, &stem, &job.feature, Some(next_pos), Stage::Build, job.model.as_deref())?.id
             }
         };
     }
