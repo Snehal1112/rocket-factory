@@ -86,7 +86,6 @@ pub fn create_job(
         total,
         id: series_id.clone(),
     };
-    // A folder starts at its first plan file.
     let first = add_job(driver, slug, feature, Some(pos(0)), Stage::Build, model)?;
     // The spec sits beside the plans. Only plan 1 gets a copy, so later builders are not pointed at it.
     let spec = start.join("spec.md");
@@ -172,7 +171,7 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
         let existing = board
             .jobs
             .iter()
-            .find(|j| j.series.as_ref().is_some_and(|s| s.plan_file == next_name && s.index == pos.index + 1));
+            .find(|j| j.series.as_ref().is_some_and(|s| s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1));
         current = match existing {
             Some(j) => j.id.clone(),
             None => {

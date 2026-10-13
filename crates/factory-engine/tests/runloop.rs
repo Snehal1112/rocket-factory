@@ -140,6 +140,23 @@ fn a_second_series_gets_the_next_series_id() {
 }
 
 #[test]
+fn run_series_follows_its_own_series_when_plan_files_are_reused() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "plan-03-c.md");
+    fx.plan_file("plan-03-c.md", 1, "none");
+    create_job(&fx.driver, "one", "f", Some(&a), None).expect("first series");
+    create_job(&fx.driver, "two", "f", Some(&a), None).expect("second series");
+    assert_eq!(run_series(&fx.driver, "004").expect("series"), RunEnd::Merged);
+    for id in ["004", "005", "006"] {
+        assert_eq!(fx.driver.job(id).expect("job").stage, factory_core::Stage::Merged, "job {id}");
+    }
+    for id in ["002", "003"] {
+        assert_eq!(fx.driver.job(id).expect("job").stage, factory_core::Stage::Spec, "job {id}");
+    }
+}
+
+#[test]
 fn a_single_plan_gets_no_series_id_and_no_extra_jobs() {
     let fx = common::SeriesFixture::new("x");
     let a = fx.plan_file("plan-01-a.md", 1, "none");
