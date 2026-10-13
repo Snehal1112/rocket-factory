@@ -184,6 +184,23 @@ pub fn load_plan(root: &Path, dir: &str, stage: &str, reviewed: bool) -> Option<
     })
 }
 
+/// What a spec file says about itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpecInfo {
+    pub title: Option<String>,
+    pub goal: Option<String>,
+}
+
+/// Reads `spec.md` of one job folder. None when the folder name is unsafe or the file is missing.
+pub fn load_spec(root: &Path, dir: &str) -> Option<SpecInfo> {
+    if !safe_dir_name(dir) {
+        return None;
+    }
+    let path = root.join(".superpowers").join("sdd").join(dir).join("spec.md");
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(SpecInfo { title: first_heading(&text, "Spec:"), goal: goal(&text) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +349,20 @@ mod tests {
         assert!(load_plan(root.path(), "nope", "build", false).is_none());
         assert!(load_plan(root.path(), "../x", "build", false).is_none());
         assert!(load_plan(root.path(), "", "build", false).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn load_spec_reads_title_and_goal_and_refuses_unsafe_folders() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("spec.md"), "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n")?;
+        let info = load_spec(root.path(), "2026-10-13-001-x").ok_or("no spec")?;
+        assert_eq!(info.title.as_deref(), Some("Demo spec"));
+        assert_eq!(info.goal.as_deref(), Some("Show the plans."));
+        assert!(load_spec(root.path(), "../x").is_none());
+        assert!(load_spec(root.path(), "missing-folder").is_none());
         Ok(())
     }
 }
