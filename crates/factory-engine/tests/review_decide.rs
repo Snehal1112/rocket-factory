@@ -201,3 +201,55 @@ fn final_check_failure_blocks_auto_merge() {
     assert_eq!(e2.apply_decision(&out).expect("apply"), StageOutcome::Advanced(Stage::Build));
     assert_eq!(fx.job().round, 2);
 }
+
+fn code_review_state(fx: &Fixture) -> factory_core::ReviewState {
+    fx.job().reviews.get("code").copied().expect("code review state")
+}
+
+#[test]
+fn review_state_is_running_during_the_run_and_pass_after_approve() {
+    let fx = Fixture::new();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let board = fx.board_path.clone();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let seen_in = seen.clone();
+    let rr = scripted(vec![Box::new(move |_| {
+        let state = factory_core::Board::load(&board)
+            .ok()
+            .and_then(|b| b.find("001").ok().and_then(|j| j.reviews.get("code").copied()));
+        if let Ok(mut g) = seen_in.lock() {
+            *g = state;
+        }
+        "ok\nVERDICT: APPROVE".to_string()
+    })]);
+    let e = fx.engine(&rr);
+    e.review_stage().expect("review");
+    let during = seen.lock().map(|g| *g).unwrap_or(None);
+    assert_eq!(during, Some(factory_core::ReviewState::Running));
+    assert_eq!(code_review_state(&fx), factory_core::ReviewState::Pass);
+}
+
+#[test]
+fn review_state_is_changes_after_changes_and_after_a_missing_verdict() {
+    for reply in ["bad\nVERDICT: CHANGES", "no verdict line here"] {
+        let fx = Fixture::new();
+        build_and_pass_checks(&fx, &["a.txt"]);
+        let rr = reviewer(reply);
+        let e = fx.engine(&rr);
+        e.review_stage().expect("review");
+        assert_eq!(code_review_state(&fx), factory_core::ReviewState::Changes, "{reply}");
+    }
+}
+
+#[test]
+fn a_fix_round_resets_the_review_state() {
+    let fx = Fixture::new();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let rr = reviewer("bad\nVERDICT: CHANGES");
+    let e = fx.engine(&rr);
+    let out = e.review_stage().expect("review");
+    assert_eq!(code_review_state(&fx), factory_core::ReviewState::Changes);
+    e.apply_decision(&out).expect("apply");
+    assert_eq!(fx.job().stage, Stage::Build);
+    assert_eq!(code_review_state(&fx), factory_core::ReviewState::Pending);
+}

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
-use factory_core::{budget_state, classify_paths, parse_verdict, Stage, Verdict};
+use factory_core::{budget_state, ReviewState, classify_paths, parse_verdict, Stage, Verdict};
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
 use crate::ports::{git_err, io_err};
@@ -28,6 +28,10 @@ impl Engine<'_> {
 
         let cwd = self.worktree()?;
         let spec = self.reviewer_spec(&cwd, &round_diff.diff, &round_diff.names, job.round);
+        self.update(|j| {
+            j.set_review("code", ReviewState::Running);
+            Ok(())
+        })?;
         let run = self.run_agent(spec)?;
         let review_path = self.job_dir.join(format!("review-code-r{}.md", job.round));
         std::fs::write(&review_path, &run.result_text).map_err(io_err)?;
@@ -37,6 +41,11 @@ impl Engine<'_> {
         } else {
             Verdict::Missing
         };
+        let state = if verdict == Verdict::Approve { ReviewState::Pass } else { ReviewState::Changes };
+        self.update(|j| {
+            j.set_review("code", state);
+            Ok(())
+        })?;
         self.ruling(&format!("review round {} verdict {:?}", job.round, verdict))?;
 
         let checks_ok = self.latest_checks_ok()?;

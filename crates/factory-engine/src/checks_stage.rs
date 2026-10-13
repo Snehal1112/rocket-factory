@@ -29,6 +29,7 @@ impl Engine<'_> {
         // A fix round moves review back to build. That is a backward move, so it is forced and logged as a ruling.
         self.update(|j| {
             j.round = next;
+            j.reset_reviews();
             j.set_stage(Stage::Build, None, true, now())
         })?;
         self.ruling(&format!("fix round {next}, {reason}"))?;
