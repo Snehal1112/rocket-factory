@@ -5,16 +5,16 @@ Local dashboard for Rocket's software factory. It is dev tooling: it is not part
 ## Run
 
 ```bash
-cargo run -j4 --manifest-path tools/factory-server/Cargo.toml -- --root "$(python3 .claude/factory/factory-ctl root)" --port 8765
+cargo run -j4 --manifest-path tools/factory-server/Cargo.toml -- --root "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" --port 8765
 ```
 
-Open http://127.0.0.1:8765/. `--root` is the main checkout (the folder that holds `.superpowers/`), which the `root` command prints even from a worktree. Default port 8765.
+Open http://127.0.0.1:8765/. `--root` is the main checkout (the folder that holds `.superpowers/`), which the command above prints even from a worktree. Default port 8765.
 
 ## What it reads
 
-- `.superpowers/factory/board.json`: job stages, written by `.claude/factory/factory-ctl`.
+- `.superpowers/factory/board.json`: job stages, written by the `factory` driver (`tools/factory/`), not by a Python helper or a hook.
 - `.superpowers/sdd/<job dir>/plan.md`, `spec.md`, `progress.md`: the plan title, spec goal and task list on each card. A task is done when its box is ticked or the ledger says `Task N: complete`; a merged job shows every task done.
-- `.superpowers/factory/events.jsonl`: subagent and tool events, appended by `.claude/factory/hooks/log-event`.
+- `.superpowers/factory/events.jsonl`: subagent and tool events, appended by the same driver.
 
 It never writes either file. If it is not running, the factory works the same.
 

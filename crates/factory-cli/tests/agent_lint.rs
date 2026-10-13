@@ -276,6 +276,41 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
 }
 
 #[test]
+fn docs_describe_the_new_design() -> TestResult {
+    let doc = read(".claude/software-factory.md")?;
+    require_all(
+        &doc,
+        "software-factory.md",
+        &[
+            "Rust driver",
+            "tools/factory/",
+            "measured baseline",
+            "estimate",
+            "12.75M",
+            "2.2M weighted",
+            "needs-human",
+            "VERDICT: APPROVE",
+            "factory run",
+            "tools/factory-server/",
+            "risk_paths",
+            "reviewed sha",
+        ],
+    )?;
+    forbid_all(&doc, "software-factory.md", &["factory-ctl", "factory-approver", "factory-spec-writer", "log-event"])?;
+    let root_doc = read("CLAUDE.md")?;
+    require_all(&root_doc, "CLAUDE.md", &[".claude/software-factory.md", "tools/factory/"])?;
+    forbid_all(&root_doc, "CLAUDE.md", &["factory-ctl"])
+}
+
+#[test]
+fn v2_is_marked_superseded() -> TestResult {
+    let spec = read("docs/superpowers/specs/2026-10-13-software-factory-v2-design.md")?;
+    let index = read("docs/superpowers/plans/2026-10-13-software-factory-v2/00-plan-index.md")?;
+    require_all(&spec, "v2 spec", &["SUPERSEDED", "software-factory-v3"])?;
+    require_all(&index, "v2 plan index", &["SUPERSEDED", "software-factory-v3"])
+}
+
+#[test]
 fn settings_allow_the_factory_binary() -> TestResult {
     let text = read(".claude/settings.json")?;
     require_all(
