@@ -77,6 +77,30 @@ impl Job {
             *state = ReviewState::Pending;
         }
     }
+
+    /// Moves the job to a stage. The reason is kept only for needs-human. Nothing changes when the move is refused.
+    pub fn set_stage(&mut self, to: Stage, reason: Option<&str>, force: bool, now: f64) -> Result<(), CoreError> {
+        Stage::check_move(self.stage, to, force)?;
+        if self.stage != to {
+            self.stage = to;
+            self.stage_since = now;
+        }
+        self.reason = if to == Stage::NeedsHuman { reason.map(str::to_string) } else { None };
+        Ok(())
+    }
+
+    /// The base sha is recorded once. Changing it needs `force`.
+    pub fn set_base(&mut self, sha: &str, force: bool) -> Result<(), CoreError> {
+        match &self.base {
+            Some(have) if have != sha && !force => {
+                Err(CoreError::BaseChange { have: have.clone(), want: sha.to_string() })
+            }
+            _ => {
+                self.base = Some(sha.to_string());
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -109,5 +133,46 @@ impl Board {
     pub fn find_mut(&mut self, id: &str) -> Result<&mut Job, CoreError> {
         let id = crate::ids::normalize_id(id)?;
         self.jobs.iter_mut().find(|j| j.id == id).ok_or(CoreError::NoJob(id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job() -> Job {
+        Job::new("001", "2026-10-13-001-x", "x", "2026-10-13", "feature", 100.0)
+    }
+
+    #[test]
+    fn set_stage_updates_since_only_on_change_and_manages_reason() {
+        let mut j = job();
+        j.set_stage(Stage::Build, None, false, 200.0).expect("spec to build");
+        assert_eq!(j.stage_since, 200.0);
+        j.set_stage(Stage::Build, None, false, 300.0).expect("same stage");
+        assert_eq!(j.stage_since, 200.0);
+        j.set_stage(Stage::NeedsHuman, Some("risky diff"), false, 400.0).expect("park");
+        assert_eq!(j.reason.as_deref(), Some("risky diff"));
+        j.set_stage(Stage::Review, Some("ignored"), false, 500.0).expect("resume");
+        assert_eq!(j.reason, None);
+    }
+
+    #[test]
+    fn refused_move_leaves_the_job_untouched() {
+        let mut j = job();
+        j.set_stage(Stage::Merged, None, false, 200.0).expect("forward");
+        let before = j.clone();
+        assert!(j.set_stage(Stage::Build, None, false, 300.0).is_err());
+        assert_eq!(j, before);
+    }
+
+    #[test]
+    fn base_is_set_once() {
+        let mut j = job();
+        j.set_base("aaa", false).expect("first");
+        j.set_base("aaa", false).expect("same value is fine");
+        assert!(j.set_base("bbb", false).is_err());
+        j.set_base("bbb", true).expect("forced");
+        assert_eq!(j.base.as_deref(), Some("bbb"));
     }
 }
