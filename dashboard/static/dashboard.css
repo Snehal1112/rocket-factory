@@ -222,12 +222,6 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 
 .lower { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 0.75rem; margin-top: 0.75rem; align-items: start; }
 .lower > div:empty { display: none; }
-.feed { margin: 0; padding: 0; font-size: 12px; list-style: none; }
-.feed li { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr); gap: 0 0.7rem; padding: 0.3rem 0; border-top: 1px solid color-mix(in oklch, var(--border) 70%, transparent); }
-.feed li:first-child { border-top: 0; }
-.feed time, .feed-kind { color: var(--muted-foreground); }
-.feed-agent { font-weight: 600; }
-.feed-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .commands { margin-top: 0.75rem; }
 .commands dl { display: grid; grid-template-columns: minmax(0, max-content) 1fr; gap: 0.5rem 1.5rem; align-items: baseline; margin: 0; }

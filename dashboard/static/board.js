@@ -24,7 +24,6 @@
   const AGENT_STATUSES = ["running", "stale", "done"];
   const CHIP_STAGES = ["review", "approve", "needs-human", "merged"];
   const MERGED_LIMIT = 10;
-  const FEED_LIMIT = 15;
   const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
   function escapeHtml(value) {
@@ -339,24 +338,11 @@
     );
   }
 
-  function renderFeed(state) {
-    state = state || {};
-    const recent = (state.recent || []).slice(0, FEED_LIMIT);
-    const skipped = Number(state.skipped_lines) || 0;
-    const note = skipped ? `<p class="warning">${skipped} event log ${plural(skipped, "line", "lines")} skipped</p>` : "";
-    if (!recent.length) {
-      return `<section class="panel"><h2>Recent activity</h2><p class="empty">No agent activity yet.</p>${note}</section>`;
-    }
-    const rows = recent.map((event) => {
-      const what = [event.tool, event.target].filter(Boolean).join(" ");
-      return (
-        `<li><time>${clock(event.ts)}</time> ` +
-        `<span class="feed-kind">${escapeHtml(event.kind)}</span> ` +
-        `<span class="feed-agent">${escapeHtml(shortType(event.agent_type))}</span> ` +
-        `<span class="feed-what">${escapeHtml(truncate(what, 70))}</span></li>`
-      );
-    });
-    return `<section class="panel"><h2>Recent activity</h2><ol class="feed">${rows.join("")}</ol>${note}</section>`;
+  // A warning for log lines the server could not read, so a broken driver or a schema change is visible.
+  function renderLogNotice(state) {
+    const skipped = Number((state || {}).skipped_lines) || 0;
+    if (!skipped) return "";
+    return `<p class="warning">${skipped} event log ${plural(skipped, "line", "lines")} skipped</p>`;
   }
 
   function headerStatus(state, error, lastOk) {
@@ -437,7 +423,7 @@
     renderSummary,
     renderBoard,
     renderUnassigned,
-    renderFeed,
+    renderLogNotice,
     headerStatus,
     copyChip,
     seriesChip,

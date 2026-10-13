@@ -160,14 +160,3 @@ pub struct AgentState {
     pub tokens_weighted: u64,
 }
 
-/// One entry of the live feed.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct RecentEvent {
-    pub ts: f64,
-    /// "start", "stop" or "tool".
-    pub kind: String,
-    pub agent_id: Option<String>,
-    pub agent_type: Option<String>,
-    pub tool: Option<String>,
-    pub target: Option<String>,
-}

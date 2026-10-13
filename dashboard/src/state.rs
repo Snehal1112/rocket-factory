@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::events::Registry;
-use crate::model::{AgentState, Board, Job, RecentEvent, StageEntry};
+use crate::model::{AgentState, Board, Job, StageEntry};
 use crate::plan::{load_plan, PlanView};
 
 const STALE_SECS: f64 = 600.0;
@@ -28,7 +28,6 @@ pub struct StateView {
     pub board_error: Option<String>,
     pub jobs: Vec<JobView>,
     pub unassigned_agents: Vec<AgentState>,
-    pub recent: Vec<RecentEvent>,
     pub skipped_lines: u64,
 }
 
@@ -188,7 +187,6 @@ pub fn build_state(
         board_error,
         jobs,
         unassigned_agents: unassigned,
-        recent: registry.recent(),
         skipped_lines: registry.skipped_lines,
     }
 }
@@ -233,6 +231,15 @@ mod tests {
         registry.ingest_line(&format!(
             r#"{{"ts":{ts},"hook_event_name":"SubagentStart","agent_id":"{id}","agent_type":"{kind}"{job}}}"#
         ));
+    }
+
+    #[test]
+    fn the_state_has_no_recent_activity_feed() -> TestResult {
+        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, Path::new("/nonexistent"));
+        let json = serde_json::to_value(&view)?;
+        assert!(json.get("recent").is_none(), "the recent feed was removed");
+        assert!(json.get("skipped_lines").is_some(), "the skipped-lines count stays");
+        Ok(())
     }
 
     #[test]

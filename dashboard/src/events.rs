@@ -1,13 +1,12 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::model::{AgentState, Event, RecentEvent};
+use crate::model::{AgentState, Event};
 
-const MAX_RECENT: usize = 40;
 const REOPEN_GRACE_SECS: f64 = 2.0;
 /// Agents with no event for this long are dropped from the map.
 const PRUNE_AFTER_SECS: f64 = 86_400.0;
@@ -23,11 +22,10 @@ fn last_activity(agent: &AgentState) -> f64 {
         .max(agent.started_ts)
 }
 
-/// Folds hook events into per-agent state and a short live feed.
+/// Folds driver events into per-agent state.
 #[derive(Debug, Default)]
 pub struct Registry {
     agents: BTreeMap<String, AgentState>,
-    recent: VecDeque<RecentEvent>,
     pub skipped_lines: u64,
 }
 
@@ -35,7 +33,6 @@ impl Registry {
     /// Forgets everything, for a log that was replaced.
     pub fn reset(&mut self) {
         self.agents.clear();
-        self.recent.clear();
         self.skipped_lines = 0;
     }
 
@@ -88,11 +85,6 @@ impl Registry {
         self.agents.values().cloned().collect()
     }
 
-    /// Newest first.
-    pub fn recent(&self) -> Vec<RecentEvent> {
-        self.recent.iter().rev().cloned().collect()
-    }
-
     fn entry(&mut self, event: &Event, agent_id: &str) -> &mut AgentState {
         self.agents
             .entry(agent_id.to_string())
@@ -135,7 +127,6 @@ impl Registry {
                 agent.agent_type = kind.to_string();
             }
         }
-        self.push_recent(event, "start");
     }
 
     fn on_stop(&mut self, event: &Event) {
@@ -160,7 +151,6 @@ impl Registry {
         if let Some(message) = &event.last_message {
             agent.last_message = Some(message.clone());
         }
-        self.push_recent(event, "stop");
     }
 
     fn on_tool(&mut self, event: &Event) {
@@ -193,21 +183,6 @@ impl Registry {
         }
         if let Some(tokens) = &event.tokens {
             agent.tokens_weighted = tokens.weighted;
-        }
-        self.push_recent(event, "tool");
-    }
-
-    fn push_recent(&mut self, event: &Event, kind: &str) {
-        self.recent.push_back(RecentEvent {
-            ts: event.ts,
-            kind: kind.to_string(),
-            agent_id: event.agent_id.clone(),
-            agent_type: event.agent_type.clone(),
-            tool: event.tool_name.clone(),
-            target: event.tool_target.clone(),
-        });
-        while self.recent.len() > MAX_RECENT {
-            self.recent.pop_front();
         }
     }
 }
@@ -397,7 +372,6 @@ mod tests {
             r#"{"ts":100.0,"hook_event_name":"SubagentStop","agent_id":"h1","agent_type":"","last_message":"Reading files"}"#,
         );
         assert!(registry.agents().is_empty());
-        assert!(registry.recent().is_empty());
     }
 
     #[test]
@@ -405,7 +379,6 @@ mod tests {
         let mut registry = Registry::new();
         registry.ingest_line(r#"{"ts":1.0,"hook_event_name":"PostToolUse","tool_name":"Bash"}"#);
         assert!(registry.agents().is_empty());
-        assert!(registry.recent().is_empty());
     }
 
     #[test]
@@ -415,19 +388,6 @@ mod tests {
         assert!(!registry.ingest_line(r#"{"hook_event_name":"Stop"}"#));
         assert_eq!(registry.skipped_lines, 2);
         assert!(registry.agents().is_empty());
-    }
-
-    #[test]
-    fn recent_is_newest_first_and_capped() {
-        let mut registry = Registry::new();
-        for i in 0..60 {
-            registry.ingest_line(&format!(
-                r#"{{"ts":{i}.0,"hook_event_name":"PostToolUse","agent_id":"a1","tool_name":"Read"}}"#
-            ));
-        }
-        let recent = registry.recent();
-        assert_eq!(recent.len(), 40);
-        assert_eq!(recent[0].ts, 59.0);
     }
 
     #[test]

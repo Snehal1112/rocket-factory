@@ -26,7 +26,7 @@ function makeJob(overrides) {
 
 function makeState(jobs, extra) {
   return Object.assign(
-    { generated_at: 200, board_error: null, jobs, unassigned_agents: [], recent: [] },
+    { generated_at: 200, board_error: null, jobs, unassigned_agents: [] },
     extra,
   );
 }
@@ -150,28 +150,25 @@ test("renderBoard reports jobs with an unknown stage", () => {
   assert.match(html, /1 job with an unknown stage/);
 });
 
-test("renderUnassigned and renderFeed", () => {
+test("renderUnassigned lists agents without a job and nothing otherwise", () => {
   assert.equal(board.renderUnassigned(makeState([])), "");
-  const state = makeState([], {
-    unassigned_agents: [{ agent_type: "factory-approver", status: "running" }],
-    recent: [{ ts: 150, kind: "tool", agent_type: "factory-builder", tool: "Read", target: "CLAUDE.md" }],
-  });
+  const state = makeState([], { unassigned_agents: [{ agent_type: "factory-approver", status: "running" }] });
   assert.match(board.renderUnassigned(state), /approver/);
-  assert.match(board.renderFeed(state), /builder/);
-  assert.match(board.renderFeed(state), /Read CLAUDE\.md/);
-  assert.match(board.renderFeed(makeState([])), /No agent activity yet/);
 });
 
-test("every stage, the other agents and the live feed are card panels", () => {
+test("the Recent activity feed is gone", () => {
+  assert.equal(board.renderFeed, undefined);
+  const html = board.renderBoard(makeState([makeJob({ stage: "build" })])) + board.renderUnassigned(makeState([]));
+  assert.doesNotMatch(html, /Recent activity|class="feed"/);
+});
+
+test("every stage and the other agents are card panels", () => {
   const state = makeState([makeJob({ stage: "build" })], {
     unassigned_agents: [{ agent_type: "factory-approver", status: "running" }],
-    recent: [{ ts: 150, kind: "tool", agent_type: "factory-builder", tool: "Read", target: "CLAUDE.md" }],
   });
   const boardHtml = board.renderBoard(state);
   assert.equal((boardHtml.match(/<section class="column panel /g) || []).length, 6);
   assert.match(board.renderUnassigned(state), /^<section class="panel">[\s\S]*<\/section>$/);
-  assert.match(board.renderFeed(state), /^<section class="panel">[\s\S]*<\/section>$/);
-  assert.match(board.renderFeed(makeState([])), /^<section class="panel">[\s\S]*<\/section>$/);
 });
 
 test("renderSummary asks for the user first when a job needs them", () => {
@@ -442,10 +439,11 @@ test("needs-human cards and the summary use copy chips for approve, rework and c
   assert.match(summary, /data-copy="factory approve 004"/);
 });
 
-test("renderFeed reports skipped log lines only when there are some", () => {
-  assert.doesNotMatch(board.renderFeed(makeState([])), /skipped/);
-  assert.match(board.renderFeed(makeState([], { skipped_lines: 3 })), /3 event log lines skipped/);
-  assert.match(board.renderFeed(makeState([], { skipped_lines: 1, recent: [{ ts: 1, kind: "tool" }] })), /1 event log line skipped/);
+test("renderLogNotice reports skipped log lines only when there are some", () => {
+  assert.equal(board.renderLogNotice(makeState([])), "");
+  assert.match(board.renderLogNotice(makeState([], { skipped_lines: 3 })), /3 event log lines skipped/);
+  assert.match(board.renderLogNotice(makeState([], { skipped_lines: 1 })), /1 event log line skipped/);
+  assert.match(board.renderLogNotice(makeState([], { skipped_lines: 2 })), /^<p class="warning">/);
 });
 
 test("clock shows dashes for a missing or invalid timestamp", () => {
@@ -455,7 +453,7 @@ test("clock shows dashes for a missing or invalid timestamp", () => {
 
 test("render functions accept a missing state", () => {
   assert.doesNotThrow(() => board.renderBoard(null));
-  assert.doesNotThrow(() => board.renderFeed(null));
+  assert.doesNotThrow(() => board.renderLogNotice(null));
   assert.doesNotThrow(() => board.renderSummary(null));
 });
 

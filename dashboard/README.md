@@ -30,7 +30,7 @@ It never writes any of these files. If it is not running, the factory works the 
 |---|---|
 | `/` and `/dashboard.html` | the page |
 | `/dashboard.css`, `/board.js`, `/patch.js`, `/app.js` | page assets |
-| `/api/state` | JSON: `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `unassigned_agents[]`, `recent[]` |
+| `/api/state` | JSON: `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `unassigned_agents[]` |
 | `/healthz` | `ok` |
 
 Only `GET` is accepted, only `127.0.0.1` is bound, and a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The CSP has `default-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'none'`.

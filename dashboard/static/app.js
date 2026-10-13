@@ -40,7 +40,7 @@
       setHtml("summary", FactoryBoard.renderSummary(view));
       setHtml("board", FactoryBoard.renderBoard(view));
       setHtml("others", FactoryBoard.renderUnassigned(view));
-      setHtml("feed", FactoryBoard.renderFeed(view));
+      setHtml("notice", FactoryBoard.renderLogNotice(view));
       applyBarWidths();
     }
     const header = FactoryBoard.headerStatus(state, error, lastOk);
