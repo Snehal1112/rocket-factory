@@ -56,27 +56,37 @@ fn goal(spec: &str) -> Option<String> {
     Some(format!("{}…", cut.trim_end()))
 }
 
-/// Parses `- [ ] Task N: title` lines. A ticked box counts as done.
+/// Parses `- [ ] Task N: title` checkbox lines (a ticked box counts as done) and the
+/// `### Task N: title` headings that plans written by the v3 flow use.
 fn parse_tasks(plan: &str) -> Vec<TaskView> {
-    plan.lines()
-        .filter_map(|line| {
-            let rest = line.trim_start().strip_prefix("- [")?;
-            let mark = rest.chars().next()?;
-            let rest = rest.get(mark.len_utf8()..)?.strip_prefix("] Task ")?;
-            let (number, title) = rest.split_once(':')?;
-            let number: u32 = number.trim().parse().ok()?;
-            let status = if mark == 'x' || mark == 'X' {
-                "done"
-            } else {
-                "pending"
-            };
-            Some(TaskView {
-                number,
-                title: title.trim().to_string(),
-                status: status.to_string(),
-            })
-        })
-        .collect()
+    plan.lines().filter_map(parse_task_line).collect()
+}
+
+fn parse_task_line(line: &str) -> Option<TaskView> {
+    let line = line.trim_start();
+    if let Some(rest) = line.strip_prefix("### Task ") {
+        let (number, title) = rest.split_once(':')?;
+        return Some(TaskView {
+            number: number.trim().parse().ok()?,
+            title: title.trim().to_string(),
+            status: "pending".to_string(),
+        });
+    }
+    let rest = line.strip_prefix("- [")?;
+    let mark = rest.chars().next()?;
+    let rest = rest.get(mark.len_utf8()..)?.strip_prefix("] Task ")?;
+    let (number, title) = rest.split_once(':')?;
+    let number: u32 = number.trim().parse().ok()?;
+    let status = if mark == 'x' || mark == 'X' {
+        "done"
+    } else {
+        "pending"
+    };
+    Some(TaskView {
+        number,
+        title: title.trim().to_string(),
+        status: status.to_string(),
+    })
 }
 
 /// Reads ledger lines such as `Task 2: complete` and `Task 1-2: dispatched`.
@@ -162,6 +172,28 @@ mod tests {
         assert_eq!(tasks[0].status, "done");
         assert_eq!(tasks[1].title, "Second thing");
         assert_eq!(first_heading(PLAN, "Plan:").as_deref(), Some("Prove mTLS"));
+    }
+
+    // A plan written by the v3 flow: tasks are `### Task N: title` headings, not checkbox lines.
+    const PLAN_V3: &str = "# Baseline Plan 1\n\n> header\n\n## Review Focus\n\n- not a task\n\n---\n\n### Task 1: criterion and the resolve bench\n\n**Files:**\n- Create: `a.rs`\n\n- [ ] **Step 1: Write the failing test**\n\n### Task 2: fixture generator\n\n- [ ] **Step 1: Write it**\n\n### Task N: template heading is ignored\n\nNext plan: none\n";
+
+    #[test]
+    fn heading_tasks_from_v3_plans_are_parsed() {
+        let tasks = parse_tasks(PLAN_V3);
+        let numbers: Vec<u32> = tasks.iter().map(|t| t.number).collect();
+        assert_eq!(numbers, vec![1, 2]);
+        assert_eq!(tasks[0].title, "criterion and the resolve bench");
+        assert_eq!(tasks[1].status, "pending");
+    }
+
+    #[test]
+    fn heading_tasks_follow_the_driver_ledger() {
+        let mut tasks = parse_tasks(PLAN_V3);
+        apply_ledger(&mut tasks, "Task 1: dispatched (BASE abc, sonnet)\n");
+        assert_eq!(tasks[0].status, "active");
+        assert_eq!(tasks[1].status, "pending");
+        apply_ledger(&mut tasks, "Task 1: complete (merge abc)\nTask 2: complete (merge abc)\n");
+        assert!(tasks.iter().all(|t| t.status == "done"));
     }
 
     #[test]
