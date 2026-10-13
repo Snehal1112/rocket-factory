@@ -115,8 +115,8 @@ test("renderCard shows review chips only from the review stage on", () => {
 test("renderCard for needs-human shows the reason and the commands for that job", () => {
   const html = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "touches the <trust gate>" }));
   assert.match(html, /touches the &lt;trust gate&gt;/);
-  assert.match(html, /\/factory approve 003/);
-  assert.match(html, /\/factory rework 003 &lt;note&gt;/);
+  assert.match(html, /factory approve 003/);
+  assert.match(html, /factory rework 003 &lt;note&gt;/);
 });
 
 test("renderCard copes with missing optional fields", () => {
@@ -187,8 +187,8 @@ test("renderSummary asks for the user first when a job needs them", () => {
   assert.match(html, /touches the &lt;trust gate&gt;/);
   assert.match(html, /Rename &lt;b&gt;panel&lt;\/b&gt;/);
   assert.doesNotMatch(html, /<b>/);
-  assert.match(html, /\/factory approve 003/);
-  assert.match(html, /\/factory rework 003 &lt;note&gt;/);
+  assert.match(html, /factory approve 003/);
+  assert.match(html, /factory rework 003 &lt;note&gt;/);
 });
 
 test("renderSummary uses the plural forms and lists at most three jobs", () => {
@@ -272,4 +272,95 @@ test("renderCard escapes plan text and keeps running agents open", () => {
   assert.doesNotMatch(html, /<b>x<\/b>|<i>t<\/i>/);
   assert.match(html, /<details class="agents-box"[^>]* open>/);
   assert.match(html, /1 working, 1 finished/);
+});
+
+test("renderCard hides time in stage for merged and needs-human cards", () => {
+  assert.match(board.renderCard(makeJob({ stage: "build" })), /in stage/);
+  assert.doesNotMatch(board.renderCard(makeJob({ stage: "merged" })), /in stage/);
+  assert.doesNotMatch(board.renderCard(makeJob({ stage: "needs-human", reason: "x" })), /in stage/);
+});
+
+test("durationsLine shows per-stage times and marks the current one", () => {
+  const html = board.durationsLine(
+    makeJob({
+      stage_durations: [
+        { stage: "spec", seconds: 120, current: false },
+        { stage: "build", seconds: 1860, current: true },
+      ],
+    }),
+  );
+  assert.match(html, /Spec 2m/);
+  assert.match(html, /Build 31m/);
+  assert.match(html, /duration-now/);
+});
+
+test("durationsLine ignores bad entries and shows nothing without data", () => {
+  assert.equal(board.durationsLine(makeJob({})), "");
+  const html = board.durationsLine(
+    makeJob({
+      stage_durations: [
+        { stage: "<script>", seconds: 5 },
+        { stage: "build", seconds: Number.NaN },
+        { stage: "review", seconds: 60 },
+      ],
+    }),
+  );
+  assert.doesNotMatch(html, /script|NaN/);
+  assert.match(html, /Review 1m/);
+});
+
+test("seriesChip shows plan k of N and hides for a single plan or bad numbers", () => {
+  assert.match(board.seriesChip({ index: 2, total: 4 }), />plan 2 of 4</);
+  assert.equal(board.seriesChip({ index: 1, total: 1 }), "");
+  assert.equal(board.seriesChip(null), "");
+  assert.equal(board.seriesChip({ index: "x", total: "y" }), "");
+  assert.match(board.seriesChip({ index: 9, total: 4 }), />plan 4 of 4</);
+  assert.match(board.seriesChip({ index: 0, total: 4 }), />plan 1 of 4</);
+});
+
+test("renderCard puts the series chip in the card head", () => {
+  assert.match(board.renderCard(makeJob({ series: { index: 2, total: 3 } })), /plan 2 of 3/);
+  assert.doesNotMatch(board.renderCard(makeJob({})), /class="series"/);
+});
+
+test("tokensBar shows weighted tokens, a bounded bar and a warning level", () => {
+  assert.equal(board.tokensBar(makeJob({})), "");
+  const half = board.tokensBar(makeJob({ token_view: { weighted: 1500000, raw: 9000000, budget: 3000000, fraction: 0.5 } }));
+  assert.match(half, /1\.5M of 3M/);
+  assert.match(half, /data-pct="50"/);
+  assert.match(half, /tokens-ok/);
+  const high = board.tokensBar(makeJob({ token_view: { weighted: 2500000, raw: 0, budget: 3000000, fraction: 0.83 } }));
+  assert.match(high, /tokens-warn/);
+  const over = board.tokensBar(makeJob({ token_view: { weighted: 9, raw: 0, budget: 3, fraction: 7 } }));
+  assert.match(over, /data-pct="100"/);
+  assert.match(over, /tokens-stop/);
+  const bad = board.tokensBar(makeJob({ token_view: { weighted: "x", raw: 0, budget: 0, fraction: Number.NaN } }));
+  assert.doesNotMatch(bad, /NaN|undefined/);
+});
+
+test("copyChip is a button that carries the escaped command", () => {
+  const html = board.copyChip('factory rework 003 <note> "x"');
+  assert.match(html, /^<button type="button" class="cmd" data-copy="/);
+  assert.match(html, /data-copy="factory rework 003 &lt;note&gt; &quot;x&quot;"/);
+  assert.doesNotMatch(html, /<note>/);
+});
+
+test("needs-human cards and the summary use copy chips for approve, rework and cancel", () => {
+  const card = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "r" }));
+  assert.match(card, /data-copy="factory approve 003"/);
+  assert.match(card, /data-copy="factory rework 003 &lt;note&gt;"/);
+  assert.match(card, /data-copy="factory cancel 003"/);
+  const summary = board.renderSummary(makeState([makeJob({ id: "004", stage: "needs-human", reason: "r" })]));
+  assert.match(summary, /data-copy="factory approve 004"/);
+});
+
+test("renderFeed reports skipped log lines only when there are some", () => {
+  assert.doesNotMatch(board.renderFeed(makeState([])), /skipped/);
+  assert.match(board.renderFeed(makeState([], { skipped_lines: 3 })), /3 event log lines skipped/);
+  assert.match(board.renderFeed(makeState([], { skipped_lines: 1, recent: [{ ts: 1, kind: "tool" }] })), /1 event log line skipped/);
+});
+
+test("announcement is short and depends only on the level text", () => {
+  assert.equal(board.announcement({ level: "ok", text: "Live, updated 10:00:01" }), "Dashboard is live");
+  assert.equal(board.announcement({ level: "error", text: "Server unreachable" }), "Server unreachable");
 });

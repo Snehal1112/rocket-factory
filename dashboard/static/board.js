@@ -157,6 +157,60 @@
     );
   }
 
+  function copyChip(command) {
+    const safe = escapeHtml(command);
+    return `<button type="button" class="cmd" data-copy="${safe}" title="Copy to the clipboard">${safe}</button>`;
+  }
+
+  function seriesChip(series) {
+    if (!series) return "";
+    const total = Number(series.total);
+    const index = Number(series.index);
+    if (!Number.isFinite(total) || !Number.isFinite(index) || total < 2) return "";
+    const k = Math.min(Math.max(index, 1), total);
+    return `<span class="series" title="Plan ${k} of ${total} in this series">plan ${k} of ${total}</span>`;
+  }
+
+  function durationsLine(job) {
+    const known = (job.stage_durations || []).filter(
+      (item) => item && STAGES.some((s) => s.key === item.stage) && Number.isFinite(item.seconds),
+    );
+    if (!known.length) return "";
+    const parts = known.map((item) => {
+      const title = STAGES.find((s) => s.key === item.stage).title;
+      return `<span class="duration${item.current ? " duration-now" : ""}">${title} ${formatAge(item.seconds)}</span>`;
+    });
+    return `<p class="durations" title="Time spent in each stage">${parts.join("")}</p>`;
+  }
+
+  function formatTokens(count) {
+    const n = Number(count);
+    if (!Number.isFinite(n) || n < 0) return "0";
+    if (n >= 1e6) return `${Number((n / 1e6).toFixed(1))}M`;
+    if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+    return String(Math.round(n));
+  }
+
+  // The bar is capped at 100 percent. The level is also written as text, never colour alone.
+  // The width comes from data-pct and is applied by app.js, because the CSP forbids inline styles.
+  function tokensBar(job) {
+    const view = job.token_view;
+    if (!view || !Number.isFinite(view.weighted)) return "";
+    const fraction = Number.isFinite(view.fraction) ? Math.min(Math.max(view.fraction, 0), 1) : 0;
+    const level = fraction >= 1 ? "stop" : fraction >= 0.8 ? "warn" : "ok";
+    const percent = Math.round(fraction * 100);
+    const budget = Number.isFinite(view.budget) && view.budget > 0 ? ` of ${formatTokens(view.budget)}` : "";
+    return (
+      `<div class="tokens tokens-${level}" title="Weighted tokens against the job budget. Raw: ${escapeHtml(formatTokens(view.raw))}">` +
+      `<span class="tokens-text">${formatTokens(view.weighted)}${budget} tokens (${percent}%${level === "ok" ? "" : `, ${level}`})</span>` +
+      `<span class="tokens-bar" aria-hidden="true"><span class="tokens-fill" data-pct="${percent}"></span></span></div>`
+    );
+  }
+
+  function announcement(header) {
+    return header.level === "ok" ? "Dashboard is live" : header.text;
+  }
+
   function renderCard(job, now) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
@@ -167,8 +221,9 @@
     const reason =
       job.stage === "needs-human"
         ? `<p class="reason">${escapeHtml(job.reason || "needs a human")}</p>` +
-          `<p class="hint"><code>/factory approve ${id}</code> <code>/factory rework ${id} &lt;note&gt;</code></p>`
+          `<p class="hint">${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
+    const showAge = job.stage !== "merged" && job.stage !== "needs-human";
     const facts =
       `<details class="facts-box"><summary>Branch and files</summary><dl class="facts">` +
       fact("branch", job.branch, "fact-path") +
@@ -181,13 +236,17 @@
       `<article class="card card-${stage}" data-job="${id}">` +
       `<header class="card-head"><span class="job-id">${id}</span>` +
       `<span class="card-stage">${escapeHtml(stageTitle)}</span>` +
+      seriesChip(job.series) +
       `<time class="job-date">${escapeHtml(job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
       progressBar(job) +
       `<div class="meta"><span class="round" title="builder rounds used">` +
       `<span class="pips" aria-hidden="true">${roundPips(job.round)}</span>round ${Number(job.round) || 0}/${MAX_ROUNDS}</span>` +
-      `<span class="age">${formatAge(job.seconds_in_stage)} in stage</span></div>` +
+      (showAge ? `<span class="age">${formatAge(job.seconds_in_stage)} in stage</span>` : "") +
+      `</div>` +
       planSection(job) +
+      durationsLine(job) +
+      tokensBar(job) +
       chips +
       agentsSection(job, job.agents || [], now) +
       facts +
@@ -236,8 +295,10 @@
 
   function renderFeed(state) {
     const recent = (state.recent || []).slice(0, FEED_LIMIT);
+    const skipped = Number(state.skipped_lines) || 0;
+    const note = skipped ? `<p class="warning">${skipped} event log ${plural(skipped, "line", "lines")} skipped</p>` : "";
     if (!recent.length) {
-      return `<section class="panel"><h2>Recent activity</h2><p class="empty">No agent activity yet.</p></section>`;
+      return `<section class="panel"><h2>Recent activity</h2><p class="empty">No agent activity yet.</p>${note}</section>`;
     }
     const rows = recent.map((event) => {
       const what = [event.tool, event.target].filter(Boolean).join(" ");
@@ -248,7 +309,7 @@
         `<span class="feed-what">${escapeHtml(truncate(what, 70))}</span></li>`
       );
     });
-    return `<section class="panel"><h2>Recent activity</h2><ol class="feed">${rows.join("")}</ol></section>`;
+    return `<section class="panel"><h2>Recent activity</h2><ol class="feed">${rows.join("")}</ol>${note}</section>`;
   }
 
   function headerStatus(state, error, lastOk) {
@@ -271,8 +332,7 @@
       `<li><span class="job-id">${id}</span>` +
       `<span class="summary-feature">${escapeHtml(job.feature)}</span>` +
       `<span class="summary-reason">${escapeHtml(job.reason || "Needs a human")}</span>` +
-      `<span class="summary-actions"><code>/factory approve ${id}</code>` +
-      `<code>/factory rework ${id} &lt;note&gt;</code></span></li>`
+      `<span class="summary-actions">${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}</span></li>`
     );
   }
 
@@ -330,6 +390,11 @@
     renderUnassigned,
     renderFeed,
     headerStatus,
+    copyChip,
+    seriesChip,
+    durationsLine,
+    tokensBar,
+    announcement,
   };
 
   if (typeof module !== "undefined" && module.exports) {

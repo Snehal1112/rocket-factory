@@ -8,6 +8,7 @@ use crate::state::{build_state, load_board};
 const DASHBOARD_HTML: &str = include_str!("../static/dashboard.html");
 const DASHBOARD_CSS: &str = include_str!("../static/dashboard.css");
 const BOARD_JS: &str = include_str!("../static/board.js");
+const PATCH_JS: &str = include_str!("../static/patch.js");
 const APP_JS: &str = include_str!("../static/app.js");
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -107,6 +108,7 @@ pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, 
         },
         "/dashboard.css" => asset("text/css; charset=utf-8", DASHBOARD_CSS),
         "/board.js" => asset("text/javascript; charset=utf-8", BOARD_JS),
+        "/patch.js" => asset("text/javascript; charset=utf-8", PATCH_JS),
         "/app.js" => asset("text/javascript; charset=utf-8", APP_JS),
         "/healthz" => text(200, "ok"),
         "/api/state" => api_state(app, now),
@@ -362,6 +364,9 @@ mod tests {
         let board = route(&app, "GET", "/board.js", host, 1, 5.0);
         assert_eq!(board.status, 200);
         assert_eq!(board.content_type, "text/javascript; charset=utf-8");
+        let patch = route(&app, "GET", "/patch.js", host, 1, 5.0);
+        assert_eq!(patch.status, 200);
+        assert_eq!(patch.content_type, "text/javascript; charset=utf-8");
         let app_js = route(&app, "GET", "/app.js", host, 1, 5.0);
         assert_eq!(app_js.status, 200);
         let page = route(&app, "GET", "/", host, 1, 5.0);

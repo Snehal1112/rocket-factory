@@ -10,9 +10,10 @@
   <div class="page">
     <header class="top">
       <h1>Software factory <span class="project">for Rocket</span></h1>
-      <p id="status" class="status status-warn" role="status">
+      <p id="status" class="status status-warn">
         <span class="dot" aria-hidden="true"></span><span id="status-text">Connecting</span>
       </p>
+      <p id="announce" class="sr-only" role="status" aria-live="polite"></p>
     </header>
     <div id="summary" class="summary-slot"></div>
     <div class="board-scroll">
@@ -25,14 +26,17 @@
     <section class="panel commands">
       <h2>Commands</h2>
       <dl>
-        <dt><code>/factory &lt;feature&gt;</code></dt><dd>Start a job and write its plan</dd>
-        <dt><code>/factory next</code></dt><dd>Move the oldest job to its next stage</dd>
-        <dt><code>/factory approve &lt;job-id&gt;</code></dt><dd>Release a job that is waiting for you</dd>
-        <dt><code>/factory rework &lt;job-id&gt; &lt;note&gt;</code></dt><dd>Send a job back to the builder with a note</dd>
-        <dt><code>/factory status</code></dt><dd>List every job in the terminal</dd>
+        <dt><button type="button" class="cmd" data-copy="/factory &lt;feature&gt;" title="Copy to the clipboard">/factory &lt;feature&gt;</button></dt><dd>Start a job and write its plan</dd>
+        <dt><button type="button" class="cmd" data-copy="factory run" title="Copy to the clipboard">factory run</button></dt><dd>Let the driver move jobs through their stages</dd>
+        <dt><button type="button" class="cmd" data-copy="factory approve &lt;job-id&gt;" title="Copy to the clipboard">factory approve &lt;job-id&gt;</button></dt><dd>Release a job that is waiting for you</dd>
+        <dt><button type="button" class="cmd" data-copy="factory rework &lt;job-id&gt; &lt;note&gt;" title="Copy to the clipboard">factory rework &lt;job-id&gt; &lt;note&gt;</button></dt><dd>Send a job back to the builder with a note</dd>
+        <dt><button type="button" class="cmd" data-copy="factory cancel &lt;job-id&gt;" title="Copy to the clipboard">factory cancel &lt;job-id&gt;</button></dt><dd>Stop a job and clean it up</dd>
+        <dt><button type="button" class="cmd" data-copy="factory status" title="Copy to the clipboard">factory status</button></dt><dd>List every job in the terminal</dd>
       </dl>
     </section>
+    <p id="toast" class="toast" role="status" hidden></p>
   </div>
+  <script src="/patch.js"></script>
   <script src="/board.js"></script>
   <script src="/app.js"></script>
 </body>
