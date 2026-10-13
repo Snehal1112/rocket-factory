@@ -274,6 +274,41 @@ test("renderCard escapes plan text and keeps running agents open", () => {
   assert.match(html, /1 working, 1 finished/);
 });
 
+const TASKS_PLAN = {
+  title: "Plan one",
+  goal: "Do the thing.",
+  tasks: [
+    { number: 1, title: "First", status: "done" },
+    { number: 2, title: "Second", status: "active" },
+  ],
+};
+
+test("the plan task list is a collapsible section with a done count in its summary", () => {
+  const html = board.renderCard(makeJob({ plan: TASKS_PLAN }));
+  assert.match(html, /<details class="tasks-box" data-tasks="001" open>/);
+  assert.match(html, /<summary>Tasks <span class="agents-sum">1\/2 done<\/span><\/summary>/);
+  // The title and goal stay outside the collapsible part, the list is inside it.
+  assert.ok(html.indexOf('class="plan-title"') < html.indexOf('class="tasks-box"'));
+  assert.ok(html.indexOf('class="tasks-box"') < html.indexOf('<ol class="tasks">'));
+  assert.match(html, /Task 2<\/span> Second/);
+});
+
+test("the task list is open for a running job, closed once merged, and the user's choice wins", () => {
+  board.taskChoice.clear();
+  assert.match(board.renderCard(makeJob({ stage: "build", plan: TASKS_PLAN })), /class="tasks-box"[^>]* open>/);
+  assert.doesNotMatch(board.renderCard(makeJob({ stage: "merged", plan: TASKS_PLAN })), /class="tasks-box"[^>]* open>/);
+  board.taskChoice.set("001", false);
+  assert.doesNotMatch(board.renderCard(makeJob({ stage: "build", plan: TASKS_PLAN })), /class="tasks-box"[^>]* open>/);
+  board.taskChoice.set("001", true);
+  assert.match(board.renderCard(makeJob({ stage: "merged", plan: TASKS_PLAN })), /class="tasks-box"[^>]* open>/);
+  board.taskChoice.clear();
+});
+
+test("a plan with a title but no tasks has no empty collapsible section", () => {
+  const html = board.renderCard(makeJob({ plan: { title: "Only a title", goal: null, tasks: [] } }));
+  assert.doesNotMatch(html, /tasks-box/);
+});
+
 test("renderCard hides time in stage for merged and needs-human cards", () => {
   assert.match(board.renderCard(makeJob({ stage: "build" })), /in stage/);
   assert.doesNotMatch(board.renderCard(makeJob({ stage: "merged" })), /in stage/);

@@ -267,9 +267,9 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 @media (prefers-reduced-motion: reduce) { .task-active .task-mark { animation: none; } }
 
 /* Secondary detail folds away. */
-.agents-box, .facts-box { margin-top: 0.65rem; padding-top: 0.5rem; border-top: 1px solid var(--border); font-size: 12px; }
-.agents-box > summary, .facts-box > summary { color: var(--muted-foreground); cursor: pointer; }
-.agents-box > summary:focus-visible, .facts-box > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }
+.agents-box, .facts-box, .tasks-box { margin-top: 0.65rem; padding-top: 0.5rem; border-top: 1px solid var(--border); font-size: 12px; }
+.agents-box > summary, .facts-box > summary, .tasks-box > summary { color: var(--muted-foreground); cursor: pointer; }
+.agents-box > summary:focus-visible, .facts-box > summary:focus-visible, .tasks-box > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }
 .agents-sum { margin-left: 0.4rem; color: var(--foreground); }
-.agents-box .agents, .facts-box .facts { margin-top: 0.5rem; padding-top: 0; border-top: 0; }
+.agents-box .agents, .facts-box .facts, .tasks-box .tasks { margin-top: 0.5rem; padding-top: 0; border-top: 0; }
 .facts-box .facts { grid-template-columns: max-content minmax(0, 1fr); }

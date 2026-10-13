@@ -118,12 +118,17 @@
     render(state, null);
   }
 
-  // Remember which agent lists the user opened, because the board is redrawn every second.
+  // Remember which agent lists and task lists the user opened or closed, because the board is redrawn every second.
   byId("board").addEventListener(
     "toggle",
     (event) => {
       const box = event.target;
-      if (!box.matches || !box.matches("details[data-agents]")) return;
+      if (!box.matches) return;
+      if (box.matches("details[data-tasks]")) {
+        FactoryBoard.taskChoice.set(box.getAttribute("data-tasks"), box.open);
+        return;
+      }
+      if (!box.matches("details[data-agents]")) return;
       const id = box.getAttribute("data-agents");
       if (box.open) FactoryBoard.openAgents.add(id);
       else FactoryBoard.openAgents.delete(id);

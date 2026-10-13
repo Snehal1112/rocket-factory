@@ -104,6 +104,9 @@
   const TASK_LABEL = { pending: "waiting", active: "building", review: "in review", done: "done" };
   // Job ids whose agent list the user has opened. It survives the one-second re-render.
   const openAgents = new Set();
+  // The user's own choice for each job's task list: true is open, false is closed. Without a choice the
+  // list is open while the job is running and closed once it has merged.
+  const taskChoice = new Map();
 
   function taskStatus(task) {
     return TASK_STATUSES.includes(task.status) ? task.status : "pending";
@@ -140,7 +143,18 @@
       .join("");
     const heading = plan.title ? `<p class="plan-title">${escapeHtml(plan.title)}</p>` : "";
     if (!heading && !goal && !tasks) return "";
-    return `<div class="plan">${heading}${goal}${tasks ? `<ol class="tasks">${tasks}</ol>` : ""}</div>`;
+    return `<div class="plan">${heading}${goal}${tasks ? tasksBox(job, plan.tasks, tasks) : ""}</div>`;
+  }
+
+  // The task list folds like the agent list. Only the list folds, the title and goal stay visible.
+  function tasksBox(job, taskList, items) {
+    const done = taskList.filter((task) => taskStatus(task) === "done").length;
+    const open = (taskChoice.has(job.id) ? taskChoice.get(job.id) : job.stage !== "merged") ? " open" : "";
+    return (
+      `<details class="tasks-box" data-tasks="${escapeHtml(job.id)}"${open}>` +
+      `<summary>Tasks <span class="agents-sum">${done}/${taskList.length} done</span></summary>` +
+      `<ol class="tasks">${items}</ol></details>`
+    );
   }
 
   function agentsSection(job, agents, now) {
@@ -389,6 +403,7 @@
   const api = {
     STAGES,
     openAgents,
+    taskChoice,
     escapeHtml,
     formatAge,
     clock,
