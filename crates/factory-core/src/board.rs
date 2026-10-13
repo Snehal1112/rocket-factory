@@ -125,6 +125,10 @@ pub struct SeriesPos {
     pub plan_file: String,
     pub index: u32,
     pub total: u32,
+    /// The id of the series, `S1`, `S2` and so on. All jobs of one series share it. Absent in series
+    /// made before the plans got their jobs up front.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -238,6 +242,17 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn series_pos_id_is_optional_and_left_out_when_none() {
+        let old: SeriesPos = serde_json::from_str(r#"{"plan_file":"p.md","index":1,"total":2}"#).expect("old shape");
+        assert_eq!(old.id, None);
+        let text = serde_json::to_string(&old).expect("json");
+        assert!(!text.contains("\"id\""), "{text}");
+        let with = SeriesPos { id: Some("S2".into()), ..old };
+        let text = serde_json::to_string(&with).expect("json");
+        assert!(text.contains(r#""id":"S2""#), "{text}");
+    }
 
     fn job() -> Job {
         Job::new("001", "2026-10-13-001-x", "x", "2026-10-13", "feature", 100.0)

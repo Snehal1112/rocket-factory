@@ -15,7 +15,7 @@ pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use config::{CheckRule, Config};
 pub use error::CoreError;
 pub use fsutil::write_atomic;
-pub use ids::{job_dir_name, next_job_id, normalize_id, slugify};
+pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
 pub use ledger::{Ledger, TaskState};
 pub use risk::{classify_paths, glob_match, DiffClass};
 pub use stage::Stage;

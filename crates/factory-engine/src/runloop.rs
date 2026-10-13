@@ -23,7 +23,7 @@ pub fn create_job(
             let series = parse_series(driver.root(), p)?;
             // A folder starts at its first plan file.
             let first = &series.plans[0].path;
-            Some(SeriesPos { plan_file: first.to_string_lossy().into_owned(), index: 1, total: series.plans.len() as u32 })
+            Some(SeriesPos { plan_file: first.to_string_lossy().into_owned(), index: 1, total: series.plans.len() as u32, id: None })
         }
         None => None,
     };
@@ -136,7 +136,7 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                 let stem = next.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
                 let created = create_job(driver, &stem, &job.feature, Some(&next), job.model.as_deref())?;
                 driver.store().update_job(&created.id, |j| {
-                    j.series = Some(SeriesPos { plan_file: next_name, index: pos.index + 1, total: pos.total });
+                    j.series = Some(SeriesPos { plan_file: next_name, index: pos.index + 1, total: pos.total, id: None });
                     Ok(())
                 })?;
                 created.id

@@ -68,7 +68,7 @@ mod tests {
         let mut job = factory_core::Job::new("002", "d-002-x", "pagination", "2026-10-13", "f", 0.0);
         job.set_stage(factory_core::Stage::Review, None, false, 1.0).expect("stage");
         job.round = 1;
-        job.series = Some(factory_core::SeriesPos { plan_file: "p".into(), index: 2, total: 5 });
+        job.series = Some(factory_core::SeriesPos { plan_file: "p".into(), index: 2, total: 5, id: None });
         board.jobs.push(job);
         let out = render_status(&board, &factory_core::Config::default());
         let line = out.lines().nth(1).expect("row");

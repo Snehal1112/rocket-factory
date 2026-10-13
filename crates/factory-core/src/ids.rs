@@ -70,9 +70,27 @@ pub fn next_job_id(board_ids: &[String], dir_names: &[String], branch_names: &[S
     format!("{:03}", max.saturating_add(1))
 }
 
+/// The next series id is `S` plus one more than the largest series number seen. Other ids are ignored.
+pub fn next_series_id(series_ids: &[String]) -> String {
+    let max = series_ids
+        .iter()
+        .filter_map(|id| id.strip_prefix('S'))
+        .filter_map(|n| n.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0);
+    format!("S{}", max.saturating_add(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn series_ids_count_up_from_the_largest_seen() {
+        assert_eq!(next_series_id(&[]), "S1");
+        assert_eq!(next_series_id(&s(&["S1", "S3", "junk", "S2"])), "S4");
+        assert_eq!(next_series_id(&s(&["S9", "S10"])), "S11");
+    }
 
     fn s(items: &[&str]) -> Vec<String> {
         items.iter().map(|i| i.to_string()).collect()
