@@ -93,7 +93,26 @@ impl Engine<'_> {
             j.tokens.add(u.input_tokens, u.cache_creation_input_tokens, u.output_tokens, u.cache_read_input_tokens);
             Ok(())
         })?;
+        self.log_usage(&spec.role, &u);
         Ok(run)
+    }
+
+    /// Appends one usage line per agent run to `usage.jsonl` in the job folder, for `factory tokens`.
+    /// A write error is ignored, because the report is informational.
+    fn log_usage(&self, role: &str, u: &factory_agent::Usage) {
+        use std::io::Write;
+        let line = serde_json::json!({
+            "job": self.job_id,
+            "role": role,
+            "input": u.input_tokens,
+            "cache_creation": u.cache_creation_input_tokens,
+            "output": u.output_tokens,
+            "cache_read": u.cache_read_input_tokens,
+        });
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(self.job_dir.join("usage.jsonl"));
+        if let Ok(mut f) = file {
+            let _ = writeln!(f, "{line}");
+        }
     }
 
     /// The job's weighted token tally from the board. A load error counts as zero, because `job()` already failed earlier in the same stage.

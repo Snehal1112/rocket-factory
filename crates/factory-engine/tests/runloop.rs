@@ -77,3 +77,19 @@ fn create_job_records_the_configured_budget_and_history() {
     let stages: Vec<_> = job.stage_history.iter().map(|e| e.stage).collect();
     assert_eq!(stages, vec![factory_core::Stage::Spec, factory_core::Stage::Build]);
 }
+
+#[test]
+fn every_agent_run_appends_a_usage_line_with_its_role() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "hello", "say hello", Some(&plan), None).expect("create");
+    assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
+    let dir = fx.driver.job_dir(&job);
+    let text = std::fs::read_to_string(dir.join("usage.jsonl")).expect("usage log");
+    let roles: Vec<String> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| v["role"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(roles, vec!["builder".to_string(), "reviewer".to_string()]);
+}

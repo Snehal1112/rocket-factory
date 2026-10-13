@@ -261,9 +261,11 @@ fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     let weighted = t.weighted();
     let budget = d.config().budget_weighted;
     let pct = if budget > 0 { weighted * 100 / budget } else { 0 };
+    let records = crate::tokens::load_usage(&d.job_dir(&job).join("usage.jsonl"), id)?;
+    let report = crate::tokens::render(id, &crate::tokens::aggregate(&records));
     Ok(format!(
-        "input {}\ncache_creation {}\noutput {}\ncache_read {}\nweighted {weighted} ({pct}% of {budget})",
-        t.input, t.cache_creation, t.output, t.cache_read
+        "input {}\ncache_creation {}\noutput {}\ncache_read {}\nweighted {weighted} ({pct}% of {budget})\n{}",
+        t.input, t.cache_creation, t.output, t.cache_read, report.trim_end()
     ))
 }
 
