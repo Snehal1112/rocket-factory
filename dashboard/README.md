@@ -12,7 +12,7 @@ Open http://127.0.0.1:8765/. `--root` is the main checkout (the folder that hold
 
 ## What it reads
 
-- `.superpowers/factory/board.json`: job stages, written by the `factory` driver (`tools/factory/`). Optional `stage_history`, `series`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped.
+- `.superpowers/factory/board.json`: job stages, written by the `factory` driver (`tools/factory/`). Optional `stage_history`, `series`, `series.id`, `cancelled`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped.
 - `.superpowers/sdd/<job dir>/plan.md`, `spec.md`, `progress.md`: the plan title, spec goal and task list on each card. A task is done when its box is ticked or the ledger says `Task N: complete`; a merged job shows every task done.
 - `.superpowers/factory/events.jsonl`: subagent and tool events, appended by the same driver, with `job_id` and `tokens` on every event. There is no hook.
 
@@ -30,7 +30,7 @@ It never writes any of these files. If it is not running, the factory works the 
 |---|---|
 | `/` and `/dashboard.html` | the page |
 | `/dashboard.css`, `/board.js`, `/patch.js`, `/app.js` | page assets |
-| `/api/state` | JSON: `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `unassigned_agents[]` |
+| `/api/state` | JSON: `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `specs[]` (`series_id`, `title`, `goal`, `stage`, `plans[]`), `unassigned_agents[]` |
 | `/healthz` | `ok` |
 
 Only `GET` is accepted, only `127.0.0.1` is bound, and a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The CSP has `default-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'none'`.

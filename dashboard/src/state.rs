@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::events::Registry;
 use crate::model::{AgentState, Board, Job, StageEntry};
 use crate::plan::{load_plan, PlanView};
+use crate::specs::{build_spec_cards, SpecCard};
 
 const STALE_SECS: f64 = 600.0;
 const DEFAULT_BUDGET_WEIGHTED: u64 = 3_000_000;
@@ -27,6 +28,7 @@ pub struct StateView {
     pub generated_at: f64,
     pub board_error: Option<String>,
     pub jobs: Vec<JobView>,
+    pub specs: Vec<SpecCard>,
     pub unassigned_agents: Vec<AgentState>,
     pub skipped_lines: u64,
 }
@@ -182,10 +184,12 @@ pub fn build_state(
             .sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
     }
     unassigned.sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
+    let specs = build_spec_cards(&jobs, root);
     StateView {
         generated_at: now,
         board_error,
         jobs,
+        specs,
         unassigned_agents: unassigned,
         skipped_lines: registry.skipped_lines,
     }
@@ -240,6 +244,39 @@ mod tests {
         let json = serde_json::to_value(&view)?;
         assert!(json.get("recent").is_none(), "the recent feed was removed");
         assert!(json.get("skipped_lines").is_some(), "the skipped-lines count stays");
+        assert_eq!(json.get("specs").and_then(|v| v.as_array()).map(Vec::len), Some(0), "specs is an empty list");
+        Ok(())
+    }
+
+    fn series_job(id: &str, stage: &str, index: u32, series_id: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "dir": format!("2026-10-13-{id}-x"), "slug": "x", "created": "2026-10-13",
+            "feature": "f", "branch": format!("factory/{id}-x"), "stage": stage, "round": 0,
+            "stage_since": 0.0, "reviews": {},
+            "series": { "plan_file": "p.md", "index": index, "total": 2, "id": series_id },
+        })
+    }
+
+    #[test]
+    fn the_state_has_one_spec_card_per_series_and_none_for_old_jobs() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("spec.md"), "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n")?;
+        let board: Board = serde_json::from_value(serde_json::json!({ "jobs": [
+            series_job("001", "build", 1, Some("S1")),
+            series_job("002", "spec", 2, Some("S1")),
+            series_job("003", "merged", 1, None),
+        ]}))?;
+        let view = build_state(&board, &Registry::new(), 10.0, None, root.path());
+        assert_eq!(view.specs.len(), 1);
+        assert_eq!(view.specs[0].series_id, "S1");
+        assert_eq!(view.specs[0].title.as_deref(), Some("Demo spec"));
+        let states: Vec<_> = view.specs[0].plans.iter().map(|r| r.state.as_str()).collect();
+        assert_eq!(states, vec!["building", "waiting"]);
+        let json = serde_json::to_value(&view)?;
+        assert_eq!(json["specs"][0]["plans"][1]["job_id"], "002");
+        assert_eq!(json["jobs"].as_array().map(Vec::len), Some(3), "plan jobs stay in jobs[]");
         Ok(())
     }
 
