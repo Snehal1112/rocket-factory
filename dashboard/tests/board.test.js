@@ -202,9 +202,42 @@ test("renderSummary says nothing needs the user while jobs run", () => {
   assert.match(html, /summary-running/);
   assert.match(html, />2 jobs are in progress</);
   assert.match(html, /1 agent is working\. Nothing needs you right now\./);
-  const quiet = board.renderSummary(makeState([makeJob({ stage: "spec" })]));
+  const quiet = board.renderSummary(makeState([makeJob({ stage: "approve" })]));
   assert.match(quiet, />1 job is in progress</);
   assert.match(quiet, /No agent is active at the moment/);
+});
+
+test("renderSummary does not count waiting plans as running", () => {
+  const parked = [2, 3].map((n) => makeJob({ id: `00${n}`, stage: "spec" }));
+  const needs = board.renderSummary(makeState([makeJob({ stage: "needs-human" }), ...parked]));
+  assert.match(needs, /2 plans are waiting\./);
+  assert.doesNotMatch(needs, /still running/);
+  assert.doesNotMatch(needs, /Nothing else is running/);
+  const building = board.renderSummary(makeState([makeJob({ stage: "build" }), ...parked]));
+  assert.match(building, />1 job is in progress</);
+  assert.match(building, /2 plans are waiting\./);
+  const idle = board.renderSummary(makeState([makeJob({ id: "001", stage: "merged" }), ...parked]));
+  assert.match(idle, /summary-idle/);
+  assert.match(idle, />2 plans are waiting</);
+  assert.match(idle, /factory run &lt;id&gt;/);
+  assert.doesNotMatch(idle, /All caught up/);
+});
+
+test("a cancelled job in the needs-you list offers only cleanup", () => {
+  const html = board.renderSummary(makeState([makeJob({ stage: "needs-human", cancelled: true })]));
+  assert.match(html, /factory cleanup 001/);
+  assert.doesNotMatch(html, /factory approve/);
+  assert.doesNotMatch(html, /factory rework/);
+});
+
+test("the merged column keeps only the last spec cards but counts all", () => {
+  const specs = Array.from({ length: 13 }, (_, n) => makeSpec({ series_id: `S${n + 1}`, stage: "merged" }));
+  const html = board.renderBoard(makeState([], { specs }));
+  assert.match(html, /column-merged"><h2>Merged<span class="sub">[^<]*<\/span><span class="count">13<\/span>/);
+  assert.equal((html.match(/data-spec="/g) || []).length, 10);
+  assert.match(html, /data-spec="S13"/);
+  assert.doesNotMatch(html, /data-spec="S3"/);
+  board.taskChoice.clear();
 });
 
 test("renderSummary covers an empty board and a finished one", () => {

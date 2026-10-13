@@ -364,9 +364,11 @@
     const specs = state.specs || [];
     const columns = STAGES.map((stage) => {
       let items = jobs.filter((job) => job.stage === stage.key);
-      const specCards = specs.filter((spec) => spec && spec.stage === stage.key);
+      let specCards = specs.filter((spec) => spec && spec.stage === stage.key);
       const total = items.length + specCards.length;
       if (stage.key === "merged") {
+        // Spec cards have no timestamp, so keep the last ones the server sent.
+        specCards = specCards.slice(-MERGED_LIMIT);
         items = items
           .slice()
           .sort((a, b) => (b.stage_since || 0) - (a.stage_since || 0))
@@ -428,11 +430,16 @@
 
   function summaryJob(job) {
     const id = escapeHtml(job.id);
+    // A cancelled job can be neither approved nor reworked, only cleaned up.
+    const actions =
+      job.cancelled === true
+        ? copyChip(`factory cleanup ${job.id}`)
+        : `${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}`;
     return (
       `<li><span class="job-id">${id}</span>` +
       `<span class="summary-feature">${escapeHtml(job.feature)}</span>` +
       `<span class="summary-reason">${escapeHtml(job.reason || "Needs a human")}</span>` +
-      `<span class="summary-actions">${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}</span></li>`
+      `<span class="summary-actions">${actions}</span></li>`
     );
   }
 
@@ -441,9 +448,16 @@
     state = state || {};
     const jobs = state.jobs || [];
     const needs = jobs.filter((job) => job.stage === "needs-human");
+    // Jobs parked at spec are plans that have not started, so they are not running.
+    const waiting = jobs.filter((job) => job.stage === "spec").length;
     const active = jobs.filter(
-      (job) => job.stage !== "merged" && job.stage !== "needs-human" && STAGES.some((s) => s.key === job.stage),
+      (job) =>
+        job.stage !== "merged" &&
+        job.stage !== "needs-human" &&
+        job.stage !== "spec" &&
+        STAGES.some((s) => s.key === job.stage),
     );
+    const waitNote = waiting ? ` ${waiting} ${plural(waiting, "plan is", "plans are")} waiting.` : "";
     const merged = jobs.filter((job) => job.stage === "merged").length;
     const working = jobs.reduce(
       (total, job) => total + (job.agents || []).filter((agent) => agent.status === "running").length,
@@ -457,8 +471,10 @@
       tone = "attention";
       title = `${needs.length} ${plural(needs.length, "job needs", "jobs need")} you`;
       detail = active.length
-        ? `${active.length} more ${plural(active.length, "job is", "jobs are")} still running.`
-        : "Nothing else is running.";
+        ? `${active.length} more ${plural(active.length, "job is", "jobs are")} still running.${waitNote}`
+        : waiting
+          ? waitNote.trim()
+          : "Nothing else is running.";
       list = `<ul class="summary-jobs">${needs.slice(0, 3).map(summaryJob).join("")}</ul>`;
     } else if (active.length) {
       tone = "running";
@@ -466,6 +482,11 @@
       detail = working
         ? `${working} ${plural(working, "agent is", "agents are")} working. Nothing needs you right now.`
         : "No agent is active at the moment. Nothing needs you right now.";
+      detail += waitNote;
+    } else if (waiting) {
+      tone = "idle";
+      title = `${waiting} ${plural(waiting, "plan is", "plans are")} waiting`;
+      detail = "Run the next plan with <code>factory run &lt;id&gt;</code>.";
     } else if (jobs.length) {
       tone = "idle";
       title = "All caught up";
