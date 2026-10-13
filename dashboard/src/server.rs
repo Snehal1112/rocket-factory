@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::events::{Registry, Tailer};
+use crate::events::{pump, Registry, Tailer, LOG_WINDOW_BYTES};
 use crate::state::{build_state, load_board};
 
 const DASHBOARD_HTML: &str = include_str!("../static/dashboard.html");
@@ -135,6 +135,9 @@ fn api_state(app: &App, now: f64) -> Reply {
     }
 }
 
+/// Content security policy for every reply.
+pub const CSP: &str = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+
 /// Tails the event log in a background thread and feeds the registry.
 pub fn spawn_tailer(app: Arc<App>) {
     let path = app
@@ -143,16 +146,9 @@ pub fn spawn_tailer(app: Arc<App>) {
         .join("factory")
         .join("events.jsonl");
     std::thread::spawn(move || {
-        let mut tailer = Tailer::new(path);
+        let mut tailer = Tailer::with_window(path, LOG_WINDOW_BYTES);
         loop {
-            let lines = tailer.poll();
-            if !lines.is_empty() {
-                if let Ok(mut registry) = app.registry.lock() {
-                    for line in &lines {
-                        registry.ingest_line(line);
-                    }
-                }
-            }
+            pump(&mut tailer, &app.registry, now_secs());
             std::thread::sleep(POLL_INTERVAL);
         }
     });
@@ -187,7 +183,7 @@ pub fn serve(server: tiny_http::Server, app: Arc<App>, port: u16) {
             (&b"X-Content-Type-Options"[..], &b"nosniff"[..]),
             (
                 &b"Content-Security-Policy"[..],
-                &b"default-src 'self'; frame-ancestors 'none'"[..],
+                CSP.as_bytes(),
             ),
             (&b"Referrer-Policy"[..], &b"no-referrer"[..]),
         ];
@@ -305,7 +301,7 @@ mod tests {
         let (_dir, app) = app_with_board(Some(JOB))?;
         if let Ok(mut registry) = app.registry.lock() {
             registry.ingest_line(
-                r#"{"ts":2.0,"hook_event_name":"SubagentStart","agent_id":"s1","agent_type":"factory-spec-writer","cwd":"/r"}"#,
+                r#"{"ts":2.0,"hook_event_name":"SubagentStart","agent_id":"s1","agent_type":"factory-spec-writer","cwd":"/r","job_id":"001"}"#,
             );
         }
         let reply = route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0);
@@ -387,6 +383,15 @@ mod tests {
         );
         assert!(reply.contains("frame-ancestors 'none'"), "got: {reply}");
         assert!(reply.contains("default-src 'self'"), "got: {reply}");
+        assert!(reply.contains("base-uri 'none'"), "got: {reply}");
+        assert!(reply.contains("form-action 'none'"), "got: {reply}");
         Ok(())
+    }
+
+    #[test]
+    fn the_csp_blocks_base_tags_and_form_posts() {
+        for part in ["default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'"] {
+            assert!(CSP.contains(part), "missing {part}");
+        }
     }
 }

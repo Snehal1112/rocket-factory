@@ -3,11 +3,25 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use crate::model::{AgentState, Event, RecentEvent};
 
 const MAX_RECENT: usize = 40;
 const REOPEN_GRACE_SECS: f64 = 2.0;
+/// Agents with no event for this long are dropped from the map.
+const PRUNE_AFTER_SECS: f64 = 86_400.0;
+const MAX_AGENTS: usize = 500;
+/// At startup only this much of the end of the log is read.
+pub const LOG_WINDOW_BYTES: u64 = 4 * 1024 * 1024;
+
+fn last_activity(agent: &AgentState) -> f64 {
+    agent
+        .ended_ts
+        .unwrap_or(0.0)
+        .max(agent.last_tool_ts.unwrap_or(0.0))
+        .max(agent.started_ts)
+}
 
 /// Folds hook events into per-agent state and a short live feed.
 #[derive(Debug, Default)]
@@ -18,6 +32,31 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// Forgets everything, for a log that was replaced.
+    pub fn reset(&mut self) {
+        self.agents.clear();
+        self.recent.clear();
+        self.skipped_lines = 0;
+    }
+
+    /// Drops agents idle for a day, then the oldest ones beyond the cap.
+    pub fn prune(&mut self, now: f64) {
+        self.agents.retain(|_, agent| now - last_activity(agent) <= PRUNE_AFTER_SECS);
+        if self.agents.len() <= MAX_AGENTS {
+            return;
+        }
+        let mut order: Vec<(f64, String)> = self
+            .agents
+            .values()
+            .map(|agent| (last_activity(agent), agent.agent_id.clone()))
+            .collect();
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let excess = self.agents.len() - MAX_AGENTS;
+        for (_, id) in order.into_iter().take(excess) {
+            self.agents.remove(&id);
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -69,6 +108,8 @@ impl Registry {
                 tool_count: 0,
                 last_message: None,
                 cwd: event.cwd.clone(),
+                job_id: event.job_id.clone(),
+                tokens_weighted: 0,
             })
     }
 
@@ -77,6 +118,9 @@ impl Registry {
             return;
         };
         let agent = self.entry(event, id);
+        if agent.job_id.is_none() {
+            agent.job_id = event.job_id.clone();
+        }
         if agent.status == "done" {
             // A Start older than the recorded Stop arrived out of order.
             if agent.ended_ts.is_some_and(|ended| event.ts <= ended) {
@@ -105,6 +149,12 @@ impl Registry {
             return;
         }
         let agent = self.entry(event, id);
+        if agent.job_id.is_none() {
+            agent.job_id = event.job_id.clone();
+        }
+        if let Some(tokens) = &event.tokens {
+            agent.tokens_weighted = tokens.weighted;
+        }
         agent.status = "done".to_string();
         agent.ended_ts = Some(event.ts);
         if let Some(message) = &event.last_message {
@@ -138,6 +188,12 @@ impl Registry {
         if agent.cwd.is_none() {
             agent.cwd = event.cwd.clone();
         }
+        if agent.job_id.is_none() {
+            agent.job_id = event.job_id.clone();
+        }
+        if let Some(tokens) = &event.tokens {
+            agent.tokens_weighted = tokens.weighted;
+        }
         self.push_recent(event, "tool");
     }
 
@@ -164,25 +220,54 @@ pub struct Tailer {
     partial: String,
     /// Device and inode of the file read last, to notice a replaced file.
     ident: Option<(u64, u64)>,
+    /// How much of the end of a file the first read may take.
+    window: u64,
+    /// True until the first read of a file, when the window applies.
+    fresh: bool,
+    /// True while the cut first line of a windowed read is still to be dropped.
+    skip_partial: bool,
+    rotated: bool,
 }
 
 impl Tailer {
+    #[cfg(test)]
     pub fn new(path: PathBuf) -> Self {
+        Self::with_window(path, u64::MAX)
+    }
+
+    pub fn with_window(path: PathBuf, window: u64) -> Self {
         Self {
             path,
             offset: 0,
             partial: String::new(),
             ident: None,
+            window,
+            fresh: true,
+            skip_partial: false,
+            rotated: false,
         }
+    }
+
+    /// True once after the file was truncated, replaced or deleted. The first read is not rotation.
+    pub fn take_rotated(&mut self) -> bool {
+        std::mem::take(&mut self.rotated)
+    }
+
+    fn restart(&mut self) {
+        self.offset = 0;
+        self.partial.clear();
+        self.fresh = true;
+        self.skip_partial = false;
     }
 
     /// Returns the complete lines added since the last call. A missing file gives no lines.
     /// A shorter file than before is treated as a new file and read from the start.
     pub fn poll(&mut self) -> Vec<String> {
         let Ok(mut file) = File::open(&self.path) else {
-            // A deleted file starts fresh when it comes back.
-            self.offset = 0;
-            self.partial.clear();
+            if self.ident.is_some() {
+                self.rotated = true;
+            }
+            self.restart();
             self.ident = None;
             return Vec::new();
         };
@@ -191,14 +276,21 @@ impl Tailer {
         };
         let ident = (meta.dev(), meta.ino());
         if self.ident.is_some_and(|old| old != ident) {
-            self.offset = 0;
-            self.partial.clear();
+            self.rotated = true;
+            self.restart();
         }
         self.ident = Some(ident);
         let len = meta.len();
         if len < self.offset {
-            self.offset = 0;
-            self.partial.clear();
+            self.rotated = true;
+            self.restart();
+        }
+        if self.fresh {
+            self.fresh = false;
+            if len > self.window {
+                self.offset = len - self.window;
+                self.skip_partial = true;
+            }
         }
         if len == self.offset {
             return Vec::new();
@@ -212,19 +304,44 @@ impl Tailer {
         }
         self.offset += bytes.len() as u64;
         self.partial.push_str(&String::from_utf8_lossy(&bytes));
+        if self.skip_partial {
+            match self.partial.find('\n') {
+                Some(idx) => {
+                    self.partial.drain(..=idx);
+                    self.skip_partial = false;
+                }
+                None => {
+                    self.partial.clear();
+                    return Vec::new();
+                }
+            }
+        }
         let Some(idx) = self.partial.rfind('\n') else {
             return Vec::new();
         };
         let rest = self.partial.split_off(idx + 1);
         let complete = std::mem::replace(&mut self.partial, rest);
-        let mut lines = Vec::new();
-        for line in complete.lines() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                lines.push(trimmed.to_string());
-            }
+        complete
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+/// One tailer step: read new lines, reset the registry on rotation, ingest, then prune.
+pub fn pump(tailer: &mut Tailer, registry: &Mutex<Registry>, now: f64) {
+    let lines = tailer.poll();
+    let rotated = tailer.take_rotated();
+    if let Ok(mut guard) = registry.lock() {
+        if rotated {
+            guard.reset();
         }
-        lines
+        for line in &lines {
+            guard.ingest_line(line);
+        }
+        guard.prune(now);
     }
 }
 
@@ -441,5 +558,131 @@ mod tests {
         let agents = registry.agents();
         assert_eq!(agents[0].status, "done");
         assert_eq!(agents[0].started_ts, 100.0);
+    }
+
+    #[test]
+    fn job_id_and_tokens_are_read_and_a_bad_tokens_value_is_dropped() {
+        let mut registry = Registry::new();
+        registry.ingest_line(r#"{"ts":1.0,"hook_event_name":"SubagentStart","agent_id":"a","agent_type":"t","job_id":"001"}"#);
+        registry.ingest_line(r#"{"ts":2.0,"hook_event_name":"PostToolUse","agent_id":"a","tool_name":"Edit","job_id":"001","tokens":{"weighted":30,"raw":300}}"#);
+        registry.ingest_line(r#"{"ts":2.5,"hook_event_name":"PostToolUse","agent_id":"a","tool_name":"Edit","tokens":40}"#);
+        registry.ingest_line(r#"{"ts":3.0,"hook_event_name":"PostToolUse","agent_id":"a","tool_name":"Edit","tokens":"bad"}"#);
+        let agents = registry.agents();
+        assert_eq!(agents[0].job_id.as_deref(), Some("001"));
+        assert_eq!(agents[0].tokens_weighted, 40);
+        assert_eq!(registry.skipped_lines, 0);
+    }
+
+    fn numbered_lines(count: usize) -> String {
+        (0..count).map(|k| format!("{{\"n\":{}}}\n", 100 + k)).collect()
+    }
+
+    #[test]
+    fn a_windowed_tailer_reads_only_the_end_and_drops_the_cut_line() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, numbered_lines(100))?;
+        let mut tailer = Tailer::with_window(path, 55);
+        let lines = tailer.poll();
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[0], "{\"n\":195}");
+        assert_eq!(lines[4], "{\"n\":199}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_windowed_read_does_not_count_the_cut_line_as_skipped() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        let mut text = String::new();
+        for k in 0..200 {
+            text.push_str(&format!(
+                "{{\"ts\":{k}.0,\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"a{k}\",\"agent_type\":\"t\"}}\n"
+            ));
+        }
+        std::fs::write(&path, text)?;
+        let registry = Mutex::new(Registry::new());
+        let mut tailer = Tailer::with_window(path, 500);
+        pump(&mut tailer, &registry, 200.0);
+        let guard = registry.lock().map_err(|_| "poisoned")?;
+        assert_eq!(guard.skipped_lines, 0);
+        assert!(guard.agents().len() < 10);
+        assert!(guard.agents().iter().any(|a| a.agent_id == "a199"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_log_smaller_than_the_window_is_read_whole() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, numbered_lines(10))?;
+        let mut tailer = Tailer::with_window(path, 1_000_000);
+        assert_eq!(tailer.poll().len(), 10);
+        Ok(())
+    }
+
+    #[test]
+    fn rotation_is_flagged_for_a_truncated_or_deleted_file_but_not_at_startup() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        let mut tailer = Tailer::new(path.clone());
+        tailer.poll();
+        assert!(!tailer.take_rotated(), "a missing file at startup is not rotation");
+        std::fs::write(&path, numbered_lines(10))?;
+        tailer.poll();
+        assert!(!tailer.take_rotated(), "the first read is not rotation");
+        std::fs::write(&path, numbered_lines(2))?;
+        tailer.poll();
+        assert!(tailer.take_rotated(), "a shorter file is rotation");
+        assert!(!tailer.take_rotated(), "the flag clears once taken");
+        std::fs::remove_file(&path)?;
+        tailer.poll();
+        assert!(tailer.take_rotated(), "a deleted file is rotation");
+        Ok(())
+    }
+
+    #[test]
+    fn pump_resets_the_registry_when_the_log_is_replaced() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, format!("{START}\n"))?;
+        let registry = Mutex::new(Registry::new());
+        let mut tailer = Tailer::new(path.clone());
+        pump(&mut tailer, &registry, 101.0);
+        assert_eq!(registry.lock().map_err(|_| "poisoned")?.agents().len(), 1);
+        std::fs::write(
+            &path,
+            "{\"ts\":1.0,\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"z\",\"agent_type\":\"t\"}\n",
+        )?;
+        pump(&mut tailer, &registry, 2.0);
+        let guard = registry.lock().map_err(|_| "poisoned")?;
+        let ids: Vec<String> = guard.agents().iter().map(|a| a.agent_id.clone()).collect();
+        assert_eq!(ids, vec!["z".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn prune_drops_agents_idle_for_a_day() {
+        let mut registry = Registry::new();
+        registry.ingest_line(START);
+        registry.prune(100.0 + 86_000.0);
+        assert_eq!(registry.agents().len(), 1);
+        registry.prune(100.0 + 86_401.0);
+        assert!(registry.agents().is_empty());
+    }
+
+    #[test]
+    fn prune_caps_the_agent_map_and_drops_the_oldest_first() {
+        let mut registry = Registry::new();
+        for k in 0..600 {
+            registry.ingest_line(&format!(
+                "{{\"ts\":{k}.0,\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"a{k}\",\"agent_type\":\"t\"}}"
+            ));
+        }
+        registry.prune(700.0);
+        let agents = registry.agents();
+        assert_eq!(agents.len(), 500);
+        assert!(agents.iter().all(|a| a.agent_id != "a0"));
+        assert!(agents.iter().any(|a| a.agent_id == "a599"));
     }
 }
