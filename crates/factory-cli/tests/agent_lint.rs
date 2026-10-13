@@ -310,6 +310,35 @@ fn v2_is_marked_superseded() -> TestResult {
     require_all(&index, "v2 plan index", &["SUPERSEDED", "software-factory-v3"])
 }
 
+fn path_exists(rel: &str) -> Result<bool, String> {
+    Ok(repo_root()?.join(rel).exists())
+}
+
+#[test]
+fn old_python_helper_and_hook_are_gone() -> TestResult {
+    for rel in [
+        ".claude/factory/factory-ctl",
+        ".claude/factory/hooks/log-event",
+        ".claude/factory/tests/run.sh",
+    ] {
+        if path_exists(rel)? {
+            return Err(format!("{rel} must be deleted"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn settings_have_no_factory_hooks() -> TestResult {
+    let text = read(".claude/settings.json")?;
+    forbid_all(
+        &text,
+        "settings.json",
+        &["log-event", "factory/hooks", "SubagentStart", "SubagentStop", "PostToolUse"],
+    )?;
+    require_all(&text, "settings.json", &["rust-safety-pretool", "bash-guard", "commit-gate"])
+}
+
 #[test]
 fn settings_allow_the_factory_binary() -> TestResult {
     let text = read(".claude/settings.json")?;
