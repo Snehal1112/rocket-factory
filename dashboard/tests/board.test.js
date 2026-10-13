@@ -511,3 +511,91 @@ test("a plan card that has not started hides the empty sections and keeps the ta
   assert.match(running, /tokens-text/);
   assert.match(running, /Agent activity/);
 });
+
+function makeSpec(overrides) {
+  return Object.assign(
+    {
+      series_id: "S2",
+      title: "Baseline benchmarks",
+      goal: "Measure the hot paths.",
+      stage: "spec",
+      plans: [
+        { job_id: "001", index: 1, title: "Harness", state: "merged" },
+        { job_id: "002", index: 2, title: "Benches", state: "building" },
+        { job_id: "003", index: 3, title: null, state: "waiting" },
+      ],
+    },
+    overrides,
+  );
+}
+
+test("the spec card shows the id, title, goal, plan rows and the done count", () => {
+  const html = board.renderSpecCard(makeSpec());
+  assert.match(html, /data-spec="S2"/);
+  assert.match(html, />S2</);
+  assert.match(html, /Baseline benchmarks/);
+  assert.match(html, /Measure the hot paths/);
+  assert.match(html, />3 plans</);
+  assert.match(html, /1\/3 plans done/);
+  assert.match(html, /Plan 1<\/span> Harness/);
+  assert.match(html, /Plan 3<\/span>/);
+  assert.match(html, /task-done/);
+  assert.match(html, /task-active/);
+  assert.match(html, /task-pending/);
+  assert.match(html, />merged</);
+  assert.match(html, />building</);
+  assert.match(html, />waiting</);
+  assert.equal((html.match(/class="seg seg-/g) || []).length, 3);
+});
+
+test("the spec card escapes titles and treats an unknown plan state as waiting", () => {
+  const html = board.renderSpecCard(
+    makeSpec({
+      title: "<img src=x onerror=alert(1)>",
+      plans: [{ job_id: "001", index: 1, title: "<script>x</script>", state: "exploding" }],
+    }),
+  );
+  assert.doesNotMatch(html, /<img|<script>/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /task-pending/);
+  assert.match(html, />waiting</);
+});
+
+test("a cancelled plan row and a needs-human row get their own look", () => {
+  const html = board.renderSpecCard(
+    makeSpec({
+      stage: "needs-human",
+      plans: [
+        { job_id: "001", index: 1, title: "A", state: "cancelled" },
+        { job_id: "002", index: 2, title: "B", state: "needs-human" },
+      ],
+    }),
+  );
+  assert.match(html, /task-cancelled/);
+  assert.match(html, />cancelled</);
+  assert.match(html, />needs human</);
+  assert.match(html, /card-needs-human/);
+});
+
+test("the plan list is open while the series runs and closed once it merged, unless the user chose", () => {
+  assert.match(board.renderSpecCard(makeSpec()), /<details class="tasks-box" data-tasks="spec-S2" open>/);
+  assert.doesNotMatch(board.renderSpecCard(makeSpec({ stage: "merged" })), /data-tasks="spec-S2" open/);
+  board.taskChoice.set("spec-S2", false);
+  assert.doesNotMatch(board.renderSpecCard(makeSpec()), /data-tasks="spec-S2" open/);
+  board.taskChoice.delete("spec-S2");
+});
+
+test("the board puts a spec card in its stage column and counts it", () => {
+  const state = makeState([makeJob({ stage: "spec", id: "002" })], { specs: [makeSpec()] });
+  const html = board.renderBoard(state);
+  assert.match(html, /column-spec"><h2>Spec<span class="sub">[^<]*<\/span><span class="count">2<\/span>/);
+  assert.match(html, /data-spec="S2"/);
+  const merged = board.renderBoard(makeState([], { specs: [makeSpec({ stage: "merged" })] }));
+  assert.match(merged, /column-merged"><h2>Merged<span class="sub">[^<]*<\/span><span class="count">1<\/span>[\s\S]*data-spec="S2"/);
+});
+
+test("a state from an older server without specs still renders the board", () => {
+  const html = board.renderBoard(makeState([makeJob({ stage: "build" })]));
+  assert.match(html, /column-build/);
+  assert.doesNotMatch(html, /data-spec=/);
+});

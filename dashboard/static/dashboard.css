@@ -258,6 +258,8 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .task-state { color: var(--muted-foreground); white-space: nowrap; }
 .task-active .task-state, .task-review .task-state { color: var(--primary); }
 .task-done .task-state { color: var(--success); }
+.task-cancelled .task-mark { border-color: var(--attention); }
+.task-cancelled .task-state { color: var(--attention); }
 @media (prefers-reduced-motion: reduce) { .task-active .task-mark { animation: none; } }
 
 /* Secondary detail folds away. */

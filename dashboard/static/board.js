@@ -180,6 +180,56 @@
     );
   }
 
+  // How a plan row of the spec card looks. Each state maps to the task row class and the segment class.
+  const SPEC_ROW = {
+    waiting: { row: "pending", seg: "pending", label: "waiting" },
+    building: { row: "active", seg: "active", label: "building" },
+    review: { row: "review", seg: "review", label: "in review" },
+    "needs-human": { row: "active", seg: "active", label: "needs human" },
+    merged: { row: "done", seg: "done", label: "merged" },
+    cancelled: { row: "cancelled", seg: "pending", label: "cancelled" },
+  };
+
+  function specRow(plan) {
+    return Object.prototype.hasOwnProperty.call(SPEC_ROW, plan.state) ? SPEC_ROW[plan.state] : SPEC_ROW.waiting;
+  }
+
+  // One card for a spec and its plans. It reuses the task list markup, with plans where tasks would be.
+  function renderSpecCard(spec) {
+    const plans = spec.plans || [];
+    const id = escapeHtml(spec.series_id);
+    const stage = STAGES.some((s) => s.key === spec.stage) ? spec.stage : "spec";
+    const done = plans.filter((plan) => plan.state === "merged").length;
+    const segs = plans.map((plan) => `<span class="seg seg-${specRow(plan).seg}"></span>`).join("");
+    const rows = plans
+      .map((plan) => {
+        const look = specRow(plan);
+        const title = plan.title ? ` ${inlineCode(plan.title)}` : "";
+        return (
+          `<li class="task task-${look.row}"><span class="task-mark" aria-hidden="true"></span>` +
+          `<span class="task-title"><span class="task-num">Plan ${Number(plan.index) || 0}</span>${title}</span>` +
+          `<span class="task-state">${look.label}</span></li>`
+        );
+      })
+      .join("");
+    const key = `spec-${spec.series_id}`;
+    const open = (taskChoice.has(key) ? taskChoice.get(key) : stage !== "merged") ? " open" : "";
+    const goal = spec.goal ? `<p class="plan-goal">${inlineCode(spec.goal)}</p>` : "";
+    return (
+      `<article class="card card-${stage}" data-spec="${id}">` +
+      `<header class="card-head"><span class="job-id">${id}</span><span class="card-stage">Spec</span>` +
+      `<span class="series">${plans.length} ${plural(plans.length, "plan", "plans")}</span></header>` +
+      `<p class="feature">${escapeHtml(spec.title || `Spec ${spec.series_id}`)}</p>` +
+      `<div class="progress"><span class="bar" role="img" aria-label="${done} of ${plans.length} plans done">${segs}</span>` +
+      `<span class="progress-label">${done}/${plans.length} ${plural(plans.length, "plan", "plans")} done</span></div>` +
+      `<div class="plan">${goal}` +
+      `<details class="tasks-box" data-tasks="${escapeHtml(key)}"${open}>` +
+      `<summary>Plans <span class="agents-sum">${done}/${plans.length} done</span></summary>` +
+      `<ol class="tasks">${rows}</ol></details></div>` +
+      `</article>`
+    );
+  }
+
   function agentsSection(job, agents, now) {
     if (!agents.length) return "";
     const live = agents.filter((agent) => agent.status !== "done");
@@ -311,18 +361,22 @@
     const jobs = state.jobs || [];
     const known = new Set(STAGES.map((s) => s.key));
     const unknown = jobs.filter((job) => !known.has(job.stage)).length;
+    const specs = state.specs || [];
     const columns = STAGES.map((stage) => {
       let items = jobs.filter((job) => job.stage === stage.key);
-      const total = items.length;
+      const specCards = specs.filter((spec) => spec && spec.stage === stage.key);
+      const total = items.length + specCards.length;
       if (stage.key === "merged") {
         items = items
           .slice()
           .sort((a, b) => (b.stage_since || 0) - (a.stage_since || 0))
           .slice(0, MERGED_LIMIT);
       }
-      const cards = items.length
-        ? items.map((job) => renderCard(job, state.generated_at, state.specs)).join("")
-        : `<p class="empty">Nothing here</p>`;
+      const cards =
+        items.length || specCards.length
+          ? specCards.map(renderSpecCard).join("") +
+            items.map((job) => renderCard(job, state.generated_at, specs)).join("")
+          : `<p class="empty">Nothing here</p>`;
       return (
         `<section class="column panel column-${stage.key}">` +
         `<h2>${stage.title}<span class="sub">${stage.sub}</span><span class="count">${total}</span></h2>` +
@@ -433,6 +487,7 @@
     reviewChip,
     agentLine,
     renderCard,
+    renderSpecCard,
     renderSummary,
     renderBoard,
     renderUnassigned,
