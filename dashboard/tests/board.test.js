@@ -309,6 +309,59 @@ test("a plan with a title but no tasks has no empty collapsible section", () => 
   assert.doesNotMatch(html, /tasks-box/);
 });
 
+function chipsOf(html) {
+  const found = html.match(/<div class="chips">([\s\S]*?)<\/div>/);
+  return found ? found[1] : "";
+}
+
+test("review chips show only the roles the job has, in the usual order", () => {
+  const only = chipsOf(board.renderCard(makeJob({ stage: "review", reviews: { code: "pass" } })));
+  assert.match(only, /code/);
+  assert.doesNotMatch(only, /security|\bux\b|\bui\b/);
+  // A v1 job still shows all four, and a map in another key order is shown in the usual order.
+  const four = chipsOf(
+    board.renderCard(makeJob({ stage: "review", reviews: { code: "pass", ui: "skipped", security: "pass", ux: "skipped" } })),
+  );
+  assert.ok(four.indexOf("security") < four.indexOf("ux"));
+  assert.ok(four.indexOf("ux") < four.indexOf("ui"));
+  assert.ok(four.indexOf("ui") < four.indexOf("code"));
+  // A job with no review state yet still shows the one review that will run.
+  const none = chipsOf(board.renderCard(makeJob({ stage: "review", reviews: {} })));
+  assert.match(none, /code/);
+  assert.doesNotMatch(none, /security/);
+});
+
+test("a long agent message that was cut mid-word starts at a whole word with an ellipsis", () => {
+  const cut = "g was committed. " + "word ".repeat(60); // exactly the length the driver keeps, so a cut is likely
+  const text = cut.slice(0, 300);
+  const agent = { agent_id: "a", agent_type: "builder", status: "done", started_ts: 1, ended_ts: 2, tool_count: 1, last_message: text };
+  const html = board.renderCard(makeJob({ agents: [agent] }));
+  assert.match(html, /… was committed\./);
+  assert.doesNotMatch(html, /[>\s]g was committed/);
+  const short = { ...agent, last_message: "Done and committed." };
+  assert.match(board.renderCard(makeJob({ agents: [short] })), /Done and committed\./);
+  assert.doesNotMatch(board.renderCard(makeJob({ agents: [short] })), /… Done/);
+});
+
+test("backticks in plan text become code, and the text inside stays escaped", () => {
+  const plan = {
+    title: "Use `criterion` here",
+    goal: null,
+    tasks: [{ number: 1, title: "criterion and the `resolve` bench", status: "pending" }, { number: 2, title: "a `<b>x</b>` b", status: "pending" }],
+  };
+  const html = board.renderCard(makeJob({ plan }));
+  assert.match(html, /criterion and the <code>resolve<\/code> bench/);
+  assert.match(html, /Use <code>criterion<\/code> here/);
+  assert.match(html, /<code>&lt;b&gt;x&lt;\/b&gt;<\/code>/);
+  assert.doesNotMatch(html, /`/);
+});
+
+test("the column subtitles describe the v3 flow, not the v1 agents", () => {
+  const subs = board.STAGES.map((stage) => stage.sub).join(" | ");
+  assert.doesNotMatch(subs, /Spec writer|Four reviewers|Approver/);
+  assert.match(board.STAGES.find((stage) => stage.key === "review").sub, /check/i);
+});
+
 test("renderCard hides time in stage for merged and needs-human cards", () => {
   assert.match(board.renderCard(makeJob({ stage: "build" })), /in stage/);
   assert.doesNotMatch(board.renderCard(makeJob({ stage: "merged" })), /in stage/);

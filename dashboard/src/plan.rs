@@ -131,7 +131,27 @@ fn safe_dir_name(dir: &str) -> bool {
 }
 
 /// Loads the plan of one job from `.superpowers/sdd/<dir>`. A merged job shows every task done.
-pub fn load_plan(root: &Path, dir: &str, merged: bool) -> Option<PlanView> {
+/// The driver runs one builder for a whole plan, so it cannot say which task the builder is on.
+/// The stage of the job stands in for it: while the builder runs every open task is active, and
+/// once the build is over the open tasks wait for the review or for the human. A task never moves
+/// backwards, so a ledger line that already marked it done or in review wins.
+fn settle_by_stage(tasks: &mut [TaskView], stage: &str, reviewed: bool) {
+    let status = match stage {
+        "build" => "active",
+        "review" | "approve" => "review",
+        "needs-human" if reviewed => "review",
+        "needs-human" => "active",
+        _ => return,
+    };
+    for task in tasks.iter_mut() {
+        if rank(status) > rank(&task.status) {
+            task.status = status.to_string();
+        }
+    }
+}
+
+/// `stage` is the job's stage. `reviewed` is true once any review has a verdict or is running.
+pub fn load_plan(root: &Path, dir: &str, stage: &str, reviewed: bool) -> Option<PlanView> {
     if !safe_dir_name(dir) {
         return None;
     }
@@ -145,7 +165,8 @@ pub fn load_plan(root: &Path, dir: &str, merged: bool) -> Option<PlanView> {
     if let Ok(progress) = std::fs::read_to_string(base.join("progress.md")) {
         apply_ledger(&mut tasks, &progress);
     }
-    if merged {
+    settle_by_stage(&mut tasks, stage, reviewed);
+    if stage == "merged" {
         for task in &mut tasks {
             task.status = "done".to_string();
         }
@@ -197,6 +218,49 @@ mod tests {
     }
 
     #[test]
+    fn a_running_build_marks_every_open_task_active() {
+        let mut tasks = parse_tasks(PLAN_V3);
+        settle_by_stage(&mut tasks, "build", false);
+        assert!(tasks.iter().all(|t| t.status == "active"));
+    }
+
+    #[test]
+    fn a_finished_build_waiting_for_review_or_a_human_shows_in_review() {
+        for (stage, reviewed) in [("review", false), ("approve", false), ("needs-human", true)] {
+            let mut tasks = parse_tasks(PLAN_V3);
+            apply_ledger(&mut tasks, "Task 1: dispatched (BASE abc, sonnet)\n");
+            settle_by_stage(&mut tasks, stage, reviewed);
+            assert!(tasks.iter().all(|t| t.status == "review"), "{stage}");
+        }
+    }
+
+    #[test]
+    fn a_parked_job_without_a_review_is_still_active_and_done_tasks_stay_done() {
+        let mut tasks = parse_tasks(PLAN_V3);
+        apply_ledger(&mut tasks, "Task 1: complete (merge abc)\n");
+        settle_by_stage(&mut tasks, "needs-human", false);
+        assert_eq!(tasks[0].status, "done");
+        assert_eq!(tasks[1].status, "active");
+        let mut planning = parse_tasks(PLAN_V3);
+        settle_by_stage(&mut planning, "spec", false);
+        assert!(planning.iter().all(|t| t.status == "pending"));
+    }
+
+    #[test]
+    fn load_plan_settles_tasks_by_the_stage_of_the_job() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("plan.md"), PLAN_V3)?;
+        std::fs::write(dir.join("progress.md"), "Task 1: dispatched (BASE abc, sonnet)\n")?;
+        let in_review = load_plan(root.path(), "2026-10-13-001-x", "review", false).ok_or("no plan")?;
+        assert!(in_review.tasks.iter().all(|t| t.status == "review"));
+        let building = load_plan(root.path(), "2026-10-13-001-x", "build", false).ok_or("no plan")?;
+        assert!(building.tasks.iter().all(|t| t.status == "active"));
+        Ok(())
+    }
+
+    #[test]
     fn the_ledger_moves_tasks_forward_and_never_back() {
         let mut tasks = parse_tasks(PLAN);
         apply_ledger(
@@ -229,10 +293,11 @@ mod tests {
         let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("plan.md"), PLAN)?;
-        let open = load_plan(root.path(), "2026-10-13-001-x", false)
+        // While the plan is still being written the tasks wait, whatever the ledger says.
+        let open = load_plan(root.path(), "2026-10-13-001-x", "spec", false)
             .ok_or("plan should load")?;
         assert_eq!(open.tasks[2].status, "pending");
-        let merged = load_plan(root.path(), "2026-10-13-001-x", true)
+        let merged = load_plan(root.path(), "2026-10-13-001-x", "merged", false)
             .ok_or("plan should load")?;
         assert!(merged.tasks.iter().all(|task| task.status == "done"));
         Ok(())
@@ -241,9 +306,9 @@ mod tests {
     #[test]
     fn a_missing_folder_or_unsafe_name_gives_no_plan() -> TestResult {
         let root = tempfile::tempdir()?;
-        assert!(load_plan(root.path(), "nope", false).is_none());
-        assert!(load_plan(root.path(), "../x", false).is_none());
-        assert!(load_plan(root.path(), "", false).is_none());
+        assert!(load_plan(root.path(), "nope", "build", false).is_none());
+        assert!(load_plan(root.path(), "../x", "build", false).is_none());
+        assert!(load_plan(root.path(), "", "build", false).is_none());
         Ok(())
     }
 }

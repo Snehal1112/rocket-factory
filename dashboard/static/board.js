@@ -2,15 +2,23 @@
 
 (function (root) {
   const STAGES = [
-    { key: "spec", title: "Spec", sub: "Spec writer writes the plan" },
+    { key: "spec", title: "Spec", sub: "Planned in your session" },
     { key: "build", title: "Build", sub: "Builder writes the code" },
-    { key: "review", title: "Review", sub: "Four reviewers check it" },
-    { key: "approve", title: "Approve", sub: "Approver decides" },
+    { key: "review", title: "Review", sub: "Checks run, then one reviewer" },
+    { key: "approve", title: "Approve", sub: "Merging the reviewed commit" },
     { key: "merged", title: "Merged", sub: "Landed on main" },
     { key: "needs-human", title: "Needs human", sub: "Waiting for your call" },
   ];
   const ROLES = ["security", "ux", "ui", "code"];
   const ROLE_LABEL = { security: "security", ux: "ux", ui: "ui", code: "code" };
+
+  // The roles that review this job, in the usual order. A v3 job has only `code`, and a job with no
+  // review state yet shows the one review that will run.
+  function reviewRoles(job) {
+    const have = Object.keys((job && job.reviews) || {});
+    const known = ROLES.filter((role) => have.includes(role));
+    return known.length ? known : ["code"];
+  }
   const MAX_ROUNDS = 2;
   const REVIEW_STATES = ["pending", "running", "pass", "changes", "skipped"];
   const AGENT_STATUSES = ["running", "stale", "done"];
@@ -58,6 +66,17 @@
     return `<span class="chip chip-${safeState}" title="${escapeHtml(role)}: ${safeState}">${label} ${safeState}</span>`;
   }
 
+  // The driver keeps only the last 300 characters of a message, so a long one starts in the middle of
+  // a word. Drop the broken word and mark the cut.
+  const CUT_LENGTH = 300;
+  function cleanSnippet(text) {
+    const value = String(text || "");
+    if (value.length < CUT_LENGTH) return value;
+    const space = value.search(/\s/);
+    if (space < 0) return `… ${value}`;
+    return `… ${value.slice(space).trim()}`;
+  }
+
   function agentLine(agent, now) {
     const status = AGENT_STATUSES.includes(agent.status) ? agent.status : "done";
     let detail = "";
@@ -65,7 +84,7 @@
       const target = agent.last_target ? ` ${agent.last_target}` : "";
       detail = `${agent.last_tool}${target}`;
     } else if (status === "done" && agent.last_message) {
-      detail = truncate(agent.last_message, 400);
+      detail = truncate(cleanSnippet(agent.last_message), 400);
     }
     const count = agent.tool_count
       ? `${agent.tool_count} ${agent.tool_count === 1 ? "tool" : "tools"}`
@@ -127,21 +146,26 @@
     );
   }
 
+  // Plan text is Markdown, so `name` becomes <code>. The text is escaped before the tags are added.
+  function inlineCode(text) {
+    return escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>");
+  }
+
   function planSection(job) {
     const plan = job.plan;
     if (!plan) return "";
-    const goal = plan.goal ? `<p class="plan-goal">${escapeHtml(plan.goal)}</p>` : "";
+    const goal = plan.goal ? `<p class="plan-goal">${inlineCode(plan.goal)}</p>` : "";
     const tasks = (plan.tasks || [])
       .map((task) => {
         const status = taskStatus(task);
         return (
           `<li class="task task-${status}"><span class="task-mark" aria-hidden="true"></span>` +
-          `<span class="task-title"><span class="task-num">Task ${Number(task.number) || 0}</span> ${escapeHtml(task.title)}</span>` +
+          `<span class="task-title"><span class="task-num">Task ${Number(task.number) || 0}</span> ${inlineCode(task.title)}</span>` +
           `<span class="task-state">${TASK_LABEL[status]}</span></li>`
         );
       })
       .join("");
-    const heading = plan.title ? `<p class="plan-title">${escapeHtml(plan.title)}</p>` : "";
+    const heading = plan.title ? `<p class="plan-title">${inlineCode(plan.title)}</p>` : "";
     if (!heading && !goal && !tasks) return "";
     return `<div class="plan">${heading}${goal}${tasks ? tasksBox(job, plan.tasks, tasks) : ""}</div>`;
   }
@@ -231,7 +255,7 @@
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
     const stageTitle = (STAGES.find((s) => s.key === stage) || STAGES[0]).title;
     const chips = CHIP_STAGES.includes(job.stage)
-      ? `<div class="chips">${ROLES.map((role) => reviewChip(role, (job.reviews || {})[role])).join("")}</div>`
+      ? `<div class="chips">${reviewRoles(job).map((role) => reviewChip(role, (job.reviews || {})[role])).join("")}</div>`
       : "";
     const reason =
       job.stage === "needs-human"

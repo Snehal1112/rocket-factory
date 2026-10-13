@@ -152,7 +152,12 @@ pub fn build_state(
             job: job.clone(),
             agents: Vec::new(),
             seconds_in_stage: (now - job.stage_since).max(0.0),
-            plan: load_plan(root, &job.dir, job.stage == "merged"),
+            plan: load_plan(
+                root,
+                &job.dir,
+                &job.stage,
+                job.reviews.values().any(|v| matches!(v.as_str(), "pass" | "changes" | "running")),
+            ),
             stage_durations: stage_durations(job, now),
             token_view: token_view(job),
         })
