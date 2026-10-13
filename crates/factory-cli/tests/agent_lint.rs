@@ -141,6 +141,7 @@ fn builder_body_pins_the_rules() -> TestResult {
             "run its git commands yourself",
             "Never amend",
             "One commit per task",
+            "Do only Task",
             "Use at most 2 helper agents per task",
             "Never use a helper agent for commits",
             "Never sleep",

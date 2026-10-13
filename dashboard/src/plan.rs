@@ -162,10 +162,16 @@ pub fn load_plan(root: &Path, dir: &str, stage: &str, reviewed: bool) -> Option<
         return None;
     }
     let mut tasks = plan.as_deref().map(parse_tasks).unwrap_or_default();
+    let mut per_task = false;
     if let Ok(progress) = std::fs::read_to_string(base.join("progress.md")) {
         apply_ledger(&mut tasks, &progress);
+        per_task = progress.contains("per-task builders");
     }
-    settle_by_stage(&mut tasks, stage, reviewed);
+    // With one builder per task the ledger knows each task's state while the build runs or is parked.
+    let ledger_decides = per_task && (stage == "build" || (stage == "needs-human" && !reviewed));
+    if !ledger_decides {
+        settle_by_stage(&mut tasks, stage, reviewed);
+    }
     if stage == "merged" {
         for task in &mut tasks {
             task.status = "done".to_string();
@@ -257,6 +263,23 @@ mod tests {
         assert!(in_review.tasks.iter().all(|t| t.status == "review"));
         let building = load_plan(root.path(), "2026-10-13-001-x", "build", false).ok_or("no plan")?;
         assert!(building.tasks.iter().all(|t| t.status == "active"));
+        Ok(())
+    }
+
+    #[test]
+    fn per_task_ledger_shows_the_true_state_of_each_task() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("plan.md"), "### Task 1: a\n\n### Task 2: b\n\n### Task 3: c\n")?;
+        let ledger = "Ruling: per-task builders, 3 tasks\nTask 1: dispatched (BASE abc, sonnet)\n\
+                      Task 1: implementer done (abc)\nTask 2: dispatched (BASE abc, sonnet)\n";
+        std::fs::write(dir.join("progress.md"), ledger)?;
+        let building = load_plan(root.path(), "2026-10-13-001-x", "build", false).ok_or("no plan")?;
+        let states: Vec<&str> = building.tasks.iter().map(|t| t.status.as_str()).collect();
+        assert_eq!(states, vec!["review", "active", "pending"]);
+        let in_review = load_plan(root.path(), "2026-10-13-001-x", "review", false).ok_or("no plan")?;
+        assert!(in_review.tasks.iter().all(|t| t.status == "review"));
         Ok(())
     }
 
