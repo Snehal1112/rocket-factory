@@ -44,6 +44,7 @@
   }
 
   function clock(ts) {
+    if (!Number.isFinite(ts)) return "--:--:--";
     return new Date(ts * 1000).toTimeString().slice(0, 8);
   }
 
@@ -256,6 +257,7 @@
   }
 
   function renderBoard(state) {
+    state = state || {};
     const jobs = state.jobs || [];
     const known = new Set(STAGES.map((s) => s.key));
     const unknown = jobs.filter((job) => !known.has(job.stage)).length;
@@ -281,7 +283,13 @@
     const warning = unknown
       ? `<p class="warning">${unknown} job${unknown === 1 ? "" : "s"} with an unknown stage</p>`
       : "";
-    return columns.join("") + warning;
+    const strays = jobs.filter((job) => !known.has(job.stage));
+    const strayColumn = strays.length
+      ? `<section class="column panel column-unknown"><h2>Unknown stage<span class="count">${strays.length}</span></h2>` +
+        strays.map((job) => renderCard(job, state.generated_at)).join("") +
+        `</section>`
+      : "";
+    return columns.join("") + strayColumn + warning;
   }
 
   function renderUnassigned(state) {
@@ -294,6 +302,7 @@
   }
 
   function renderFeed(state) {
+    state = state || {};
     const recent = (state.recent || []).slice(0, FEED_LIMIT);
     const skipped = Number(state.skipped_lines) || 0;
     const note = skipped ? `<p class="warning">${skipped} event log ${plural(skipped, "line", "lines")} skipped</p>` : "";
@@ -338,6 +347,7 @@
 
   // The first thing on the page: does anything need the user right now?
   function renderSummary(state) {
+    state = state || {};
     const jobs = state.jobs || [];
     const needs = jobs.filter((job) => job.stage === "needs-human");
     const active = jobs.filter(

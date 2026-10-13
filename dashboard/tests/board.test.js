@@ -360,6 +360,28 @@ test("renderFeed reports skipped log lines only when there are some", () => {
   assert.match(board.renderFeed(makeState([], { skipped_lines: 1, recent: [{ ts: 1, kind: "tool" }] })), /1 event log line skipped/);
 });
 
+test("clock shows dashes for a missing or invalid timestamp", () => {
+  assert.equal(board.clock(undefined), "--:--:--");
+  assert.equal(board.clock("soon"), "--:--:--");
+});
+
+test("render functions accept a missing state", () => {
+  assert.doesNotThrow(() => board.renderBoard(null));
+  assert.doesNotThrow(() => board.renderFeed(null));
+  assert.doesNotThrow(() => board.renderSummary(null));
+});
+
+test("a job with an unknown stage is listed, not only counted", () => {
+  const html = board.renderBoard(makeState([makeJob({ id: "007", stage: "limbo" })]));
+  assert.match(html, /007/);
+});
+
+test("renderCard escapes slug, branch and reason", () => {
+  const evil = "<img src=x onerror=alert(1)>";
+  const html = board.renderCard(makeJob({ slug: evil, branch: evil, stage: "needs-human", reason: evil }), 200);
+  assert.doesNotMatch(html, /<img/);
+});
+
 test("announcement is short and depends only on the level text", () => {
   assert.equal(board.announcement({ level: "ok", text: "Live, updated 10:00:01" }), "Dashboard is live");
   assert.equal(board.announcement({ level: "error", text: "Server unreachable" }), "Server unreachable");
