@@ -45,6 +45,20 @@ fn rework_sends_a_parked_job_back_to_build() {
 }
 
 #[test]
+fn rework_revives_a_cancelled_job_so_approve_can_merge_it() {
+    let fx = Fixture::with_risk_path("docs/**");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let e = fx.run(&["approve", "1"]).expect_err("cancelled");
+    assert!(e.to_string().contains("was cancelled"), "{e}");
+    fx.run(&["rework", "1", "revive the job"]).expect("rework");
+    assert!(fx.run(&["run", "1"]).expect("run again").starts_with("needs-human"));
+    assert!(fx.run(&["approve", "1"]).expect("approve").starts_with("merged"));
+}
+
+#[test]
 fn guard_rails_refuse_with_clear_messages() {
     let fx = Fixture::new();
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");

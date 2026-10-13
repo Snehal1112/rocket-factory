@@ -190,6 +190,8 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
         // Needs-human back to build is allowed by the stage guard, so no force.
         j.set_stage(Stage::Build, None, false, now)?;
         j.round = 0;
+        // A rework revives a cancelled job, so approve does not refuse it later.
+        j.cancelled = false;
         Ok(())
     })?;
     Ok(format!("job {id} back to build, round reset to 0"))
