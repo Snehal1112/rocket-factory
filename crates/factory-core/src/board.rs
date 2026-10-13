@@ -15,6 +15,34 @@ pub enum ReviewState {
     Skipped,
 }
 
+/// Token totals of one job, summed over its agent runs. New in v3, absent in v1 boards.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobTokens {
+    pub input: u64,
+    pub cache_creation: u64,
+    pub output: u64,
+    pub cache_read: u64,
+}
+
+impl JobTokens {
+    pub fn is_zero(&self) -> bool {
+        *self == JobTokens::default()
+    }
+
+    /// Adds one run. Saturates instead of overflowing.
+    pub fn add(&mut self, input: u64, cache_creation: u64, output: u64, cache_read: u64) {
+        self.input = self.input.saturating_add(input);
+        self.cache_creation = self.cache_creation.saturating_add(cache_creation);
+        self.output = self.output.saturating_add(output);
+        self.cache_read = self.cache_read.saturating_add(cache_read);
+    }
+
+    /// The number the budget is measured in, see `weighted_tokens`.
+    pub fn weighted(&self) -> u64 {
+        crate::budget::weighted_tokens(self.input, self.cache_creation, self.output, self.cache_read)
+    }
+}
+
 /// One job in `board.json`. Field names match the v1 file so `factory-server` keeps working.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Job {
@@ -41,6 +69,12 @@ pub struct Job {
     /// Model override for this job. New in v3, absent in v1 boards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The head before the latest fix round. New in v3, absent in v1 boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_head: Option<String>,
+    /// Summed agent token usage. New in v3, absent in v1 boards.
+    #[serde(default, skip_serializing_if = "JobTokens::is_zero")]
+    pub tokens: JobTokens,
 }
 
 impl Job {
@@ -65,6 +99,8 @@ impl Job {
             stage_since: now,
             reviews,
             model: None,
+            prev_head: None,
+            tokens: JobTokens::default(),
         }
     }
 

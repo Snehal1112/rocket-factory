@@ -5,3 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+factory-core = { path = "../factory-core" }
+factory-git = { path = "../factory-git" }
+factory-agent = { path = "../factory-agent" }
+factory-checks = { path = "../factory-checks" }
+thiserror.workspace = true
+
+[dev-dependencies]
+git2.workspace = true
+tempfile.workspace = true
