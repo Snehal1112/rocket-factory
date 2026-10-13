@@ -33,6 +33,7 @@ pub(crate) struct JobView {
     pub prev_head: Option<String>,
     pub session_id: Option<String>,
     pub round: u32,
+    pub task_index: u32,
 }
 
 impl Engine<'_> {
@@ -49,6 +50,7 @@ impl Engine<'_> {
             session_id: job.builder_id.clone(),
             // Plan 01 starts a job at round 0. The engine counts rounds from 1.
             round: job.round.max(1),
+            task_index: job.task_index,
         })
     }
 

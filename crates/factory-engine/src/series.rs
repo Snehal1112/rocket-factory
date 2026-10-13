@@ -49,18 +49,7 @@ fn read_plan(root: &Path, path: &Path) -> Result<SeriesPlan, SeriesError> {
         .map(str::trim)
         .filter(|t| !t.is_empty() && !t.contains(char::is_whitespace))
         .ok_or_else(|| SeriesError::NoNextLine(path.to_path_buf()))?;
-    let mut tasks: Vec<u32> = Vec::new();
-    for line in text.lines() {
-        let t = line.trim_start_matches("- [ ] ").trim_start_matches("- [x] ").trim_start_matches("### ");
-        if let Some(rest) = t.strip_prefix("Task ") {
-            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(n) = digits.parse::<u32>() {
-                if rest[digits.len()..].starts_with(':') && !tasks.contains(&n) {
-                    tasks.push(n);
-                }
-            }
-        }
-    }
+    let tasks: Vec<u32> = crate::tasks::parse_tasks(&text).into_iter().map(|t| t.n).collect();
     if tasks.is_empty() || tasks.len() > 3 {
         return Err(SeriesError::TaskCount { path: path.to_path_buf(), found: tasks.len() });
     }

@@ -16,6 +16,17 @@ fn real_board_round_trips_without_losing_fields() {
 }
 
 #[test]
+fn zero_task_index_is_not_serialised() {
+    let mut board = Board::load(Path::new(FIXTURE)).expect("board loads");
+    assert_eq!(board.jobs[0].task_index, 0);
+    let text = serde_json::to_string(&board.jobs[0]).expect("json");
+    assert!(!text.contains("task_index"));
+    board.jobs[0].task_index = 2;
+    let text = serde_json::to_string(&board.jobs[0]).expect("json");
+    assert!(text.contains("\"task_index\":2"));
+}
+
+#[test]
 fn save_then_load_is_identical() {
     let board = Board::load(Path::new(FIXTURE)).expect("board loads");
     let dir = tempfile::tempdir().expect("tempdir");

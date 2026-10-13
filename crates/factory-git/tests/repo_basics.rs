@@ -62,6 +62,18 @@ fn diff_to_files_of_identical_commits_writes_empty_files() {
 }
 
 #[test]
+fn log_oneline_lists_new_commits_oldest_first() {
+    let fx = Fixture::new();
+    let (base, first) = fx.job_branch("factory/001-x", &[("b.txt", "one\n")]);
+    let second = commit_to_branch(&fx.git(), "factory/001-x", &[("c.txt", "two\n")], "second work");
+    let lines = fx.repo().log_oneline(&base, &second.to_string()).expect("log");
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], format!("{} job work", &first[..7]));
+    assert!(lines[1].ends_with(" second work"), "lines were {lines:?}");
+    assert!(fx.repo().log_oneline(&second.to_string(), &second.to_string()).expect("empty").is_empty());
+}
+
+#[test]
 fn is_ancestor_handles_ancestor_equal_and_sibling() {
     let fx = Fixture::new();
     let (base, head) = fx.job_branch("factory/001-x", &[("a.txt", "a\n")]);

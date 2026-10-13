@@ -96,6 +96,9 @@ pub struct Job {
     /// The weighted token budget this job was created with. The dashboard reads it for the budget bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_weighted: Option<u64>,
+    /// How many plan tasks have a finished, committed builder run. New in plan 09.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub task_index: u32,
 }
 
 /// One stage change, with the unix time in seconds it happened.
@@ -159,6 +162,7 @@ impl Job {
             cleaned: false,
             stage_history: vec![StageEntry { stage: Stage::Spec, at: now }],
             budget_weighted: None,
+            task_index: 0,
         }
     }
 

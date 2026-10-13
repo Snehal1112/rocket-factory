@@ -89,6 +89,21 @@ impl Repo {
         Ok(self.branch_commit(branch)?.id().to_string())
     }
 
+    /// The commits in `base..head` as `<short sha> <subject>` lines, oldest first.
+    pub fn log_oneline(&self, base: &str, head: &str) -> Result<Vec<String>> {
+        let mut walk = self.inner.revwalk()?;
+        walk.push(self.commit_of(head)?.id())?;
+        walk.hide(self.commit_of(base)?.id())?;
+        walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?;
+        let mut lines = Vec::new();
+        for oid in walk {
+            let commit = self.inner.find_commit(oid?)?;
+            let id = commit.id().to_string();
+            lines.push(format!("{} {}", short(&id), commit.summary().unwrap_or("")));
+        }
+        Ok(lines)
+    }
+
     /// Tree-to-tree diff, the same as `git diff base..head`.
     pub(crate) fn tree_diff(&self, base: &str, head: &str) -> Result<Diff<'_>> {
         let b = self.commit_of(base)?.tree()?;

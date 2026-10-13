@@ -14,14 +14,9 @@ pub fn tick_plan(plan_path: &Path, ledger: &Ledger, merge_sha: &str) -> Result<V
         .filter(|(_, state)| *state == TaskState::Complete)
         .map(|(n, _)| n)
         .collect();
-    let mut numbers = BTreeSet::new();
+    let numbers: BTreeSet<u32> = crate::tasks::parse_tasks(&text).into_iter().map(|t| t.n).collect();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
-        if let Some(n) = task_number(line.trim_start_matches("- [ ] ").trim_start_matches("- [x] "))
-            .or_else(|| task_number(line.trim_start_matches("### ")))
-        {
-            numbers.insert(n);
-        }
         match line.strip_prefix("- [ ] Task ") {
             Some(rest) => out.push_str(&format!("- [x] Task {rest}")),
             None => out.push_str(line),
@@ -39,15 +34,6 @@ pub fn tick_plan(plan_path: &Path, ledger: &Ledger, merge_sha: &str) -> Result<V
         }
     }
     Ok(recorded)
-}
-
-fn task_number(s: &str) -> Option<u32> {
-    let rest = s.strip_prefix("Task ")?;
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() || !rest[digits.len()..].starts_with(':') {
-        return None;
-    }
-    digits.parse().ok()
 }
 
 #[cfg(test)]

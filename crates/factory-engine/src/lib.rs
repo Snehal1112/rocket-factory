@@ -15,6 +15,7 @@ mod compat;
 mod merge;
 mod store;
 mod sync;
+mod tasks;
 mod tick;
 
 use std::path::PathBuf;
@@ -35,6 +36,7 @@ pub use runloop::{create_job, run_job, run_series, RunEnd};
 pub use series::{parse_series, Series, SeriesError, SeriesPlan, MAX_PLANS};
 pub use store::{next_id, BoardStore, StoreError};
 pub use sync::{sync_stage, SyncOutcome};
+pub use tasks::{parse_tasks, PlanTask};
 pub use tick::tick_plan;
 pub use checks_stage::checks_stage;
 pub use decide::{decide, risk_summary, DecideInput, Decision};
