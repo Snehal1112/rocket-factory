@@ -1,5 +1,6 @@
 mod events;
 mod model;
+mod plan;
 mod server;
 mod state;
 

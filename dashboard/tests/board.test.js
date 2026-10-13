@@ -237,3 +237,39 @@ test("headerStatus", () => {
   assert.equal(board.headerStatus(null, null, null).level, "warn");
   assert.equal(board.headerStatus(null, null, null).text, "Connecting");
 });
+
+test("renderCard shows a segmented progress bar under the title", () => {
+  const plan = {
+    title: "Prove mTLS",
+    goal: "Close the issue with evidence.",
+    tasks: [
+      { number: 1, title: "First", status: "done" },
+      { number: 2, title: "Second", status: "active" },
+      { number: 3, title: "Third", status: "bogus" },
+    ],
+  };
+  const html = board.renderCard(makeJob({ plan }));
+  assert.match(html, /1\/3 tasks done/);
+  assert.equal((html.match(/class="seg seg-/g) || []).length, 3);
+  assert.match(html, /seg-pending/);
+  assert.ok(html.indexOf("class=\"feature\"") < html.indexOf("class=\"progress\""));
+  assert.match(html, /Task 2<\/span> Second/);
+  assert.match(html, /Close the issue with evidence\./);
+});
+
+test("renderCard without a plan says the plan is being written in the spec stage", () => {
+  assert.match(board.renderCard(makeJob({ stage: "spec" })), /Plan is being written/);
+  assert.match(board.renderCard(makeJob({ stage: "build" })), /No task list found/);
+});
+
+test("renderCard escapes plan text and keeps running agents open", () => {
+  const plan = { title: "<b>x</b>", goal: null, tasks: [{ number: 1, title: "<i>t</i>", status: "pending" }] };
+  const agents = [
+    { agent_id: "a", agent_type: "factory-builder", status: "running", started_ts: 1, tool_count: 1 },
+    { agent_id: "b", agent_type: "agent", status: "done", started_ts: 1, ended_ts: 2, tool_count: 0 },
+  ];
+  const html = board.renderCard(makeJob({ plan, agents }));
+  assert.doesNotMatch(html, /<b>x<\/b>|<i>t<\/i>/);
+  assert.match(html, /<details class="agents-box"[^>]* open>/);
+  assert.match(html, /1 working, 1 finished/);
+});

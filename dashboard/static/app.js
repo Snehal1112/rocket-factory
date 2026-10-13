@@ -51,6 +51,19 @@
     render(state, null);
   }
 
+  // Remember which agent lists the user opened, because the board is redrawn every second.
+  byId("board").addEventListener(
+    "toggle",
+    (event) => {
+      const box = event.target;
+      if (!box.matches || !box.matches("details[data-agents]")) return;
+      const id = box.getAttribute("data-agents");
+      if (box.open) FactoryBoard.openAgents.add(id);
+      else FactoryBoard.openAgents.delete(id);
+    },
+    true,
+  );
+
   tick();
   setInterval(tick, POLL_MS);
 })();

@@ -99,6 +99,64 @@
     return pips;
   }
 
+  const TASK_STATUSES = ["pending", "active", "review", "done"];
+  const TASK_LABEL = { pending: "waiting", active: "building", review: "in review", done: "done" };
+  // Job ids whose agent list the user has opened. It survives the one-second re-render.
+  const openAgents = new Set();
+
+  function taskStatus(task) {
+    return TASK_STATUSES.includes(task.status) ? task.status : "pending";
+  }
+
+  // One segment per task, so the bar reads as "which of the plan's tasks are finished".
+  function progressBar(job) {
+    const tasks = (job.plan && job.plan.tasks) || [];
+    if (!tasks.length) {
+      const text = job.stage === "spec" ? "Plan is being written" : "No task list found";
+      return `<div class="progress progress-none"><span class="bar" aria-hidden="true"><span class="seg"></span></span><span class="progress-label">${text}</span></div>`;
+    }
+    const done = tasks.filter((task) => taskStatus(task) === "done").length;
+    const segs = tasks.map((task) => `<span class="seg seg-${taskStatus(task)}"></span>`).join("");
+    return (
+      `<div class="progress"><span class="bar" role="img" aria-label="${done} of ${tasks.length} tasks done">${segs}</span>` +
+      `<span class="progress-label">${done}/${tasks.length} ${plural(tasks.length, "task", "tasks")} done</span></div>`
+    );
+  }
+
+  function planSection(job) {
+    const plan = job.plan;
+    if (!plan) return "";
+    const goal = plan.goal ? `<p class="plan-goal">${escapeHtml(plan.goal)}</p>` : "";
+    const tasks = (plan.tasks || [])
+      .map((task) => {
+        const status = taskStatus(task);
+        return (
+          `<li class="task task-${status}"><span class="task-mark" aria-hidden="true"></span>` +
+          `<span class="task-title"><span class="task-num">Task ${Number(task.number) || 0}</span> ${escapeHtml(task.title)}</span>` +
+          `<span class="task-state">${TASK_LABEL[status]}</span></li>`
+        );
+      })
+      .join("");
+    const heading = plan.title ? `<p class="plan-title">${escapeHtml(plan.title)}</p>` : "";
+    if (!heading && !goal && !tasks) return "";
+    return `<div class="plan">${heading}${goal}${tasks ? `<ol class="tasks">${tasks}</ol>` : ""}</div>`;
+  }
+
+  function agentsSection(job, agents, now) {
+    if (!agents.length) return "";
+    const live = agents.filter((agent) => agent.status !== "done");
+    const finished = agents.length - live.length;
+    const parts = [];
+    if (live.length) parts.push(`${live.length} working`);
+    if (finished) parts.push(`${finished} finished`);
+    const open = (live.length > 0 && job.stage !== "merged") || openAgents.has(job.id) ? " open" : "";
+    return (
+      `<details class="agents-box" data-agents="${escapeHtml(job.id)}"${open}>` +
+      `<summary>Agent activity <span class="agents-sum">${parts.join(", ")}</span></summary>` +
+      `<ul class="agents">${agents.map((agent) => agentLine(agent, now)).join("")}</ul></details>`
+    );
+  }
+
   function renderCard(job, now) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
@@ -106,32 +164,33 @@
     const chips = CHIP_STAGES.includes(job.stage)
       ? `<div class="chips">${ROLES.map((role) => reviewChip(role, (job.reviews || {})[role])).join("")}</div>`
       : "";
-    const agents = (job.agents || []).map((agent) => agentLine(agent, now)).join("");
     const reason =
       job.stage === "needs-human"
         ? `<p class="reason">${escapeHtml(job.reason || "needs a human")}</p>` +
           `<p class="hint"><code>/factory approve ${id}</code> <code>/factory rework ${id} &lt;note&gt;</code></p>`
         : "";
     const facts =
-      `<dl class="facts">` +
+      `<details class="facts-box"><summary>Branch and files</summary><dl class="facts">` +
       fact("branch", job.branch, "fact-path") +
       fact("worktree", job.worktree, "fact-path") +
       fact("plan", job.dir, "fact-path") +
       fact("builder", job.builder_id) +
       fact("slug", job.slug) +
-      `</dl>`;
+      `</dl></details>`;
     return (
       `<article class="card card-${stage}" data-job="${id}">` +
       `<header class="card-head"><span class="job-id">${id}</span>` +
       `<span class="card-stage">${escapeHtml(stageTitle)}</span>` +
       `<time class="job-date">${escapeHtml(job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
+      progressBar(job) +
       `<div class="meta"><span class="round" title="builder rounds used">` +
       `<span class="pips" aria-hidden="true">${roundPips(job.round)}</span>round ${Number(job.round) || 0}/${MAX_ROUNDS}</span>` +
       `<span class="age">${formatAge(job.seconds_in_stage)} in stage</span></div>` +
+      planSection(job) +
       chips +
+      agentsSection(job, job.agents || [], now) +
       facts +
-      (agents ? `<ul class="agents">${agents}</ul>` : "") +
       reason +
       `</article>`
     );
@@ -259,6 +318,7 @@
 
   const api = {
     STAGES,
+    openAgents,
     escapeHtml,
     formatAge,
     clock,

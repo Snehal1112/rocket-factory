@@ -223,3 +223,39 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
   .commands dl { grid-template-columns: 1fr; gap: 0.15rem; }
   .commands dd { margin-bottom: 0.5rem; }
 }
+
+/* Progress bar: one segment per plan task, right under the title. */
+.progress { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.55rem; font-size: 12px; }
+.bar { display: flex; flex: 1 1 auto; gap: 3px; min-width: 4rem; }
+.seg { flex: 1 1 0; height: 6px; border-radius: 3px; background: var(--untested); }
+.seg-active { background: var(--primary); animation: pulse 1.6s ease-in-out infinite; }
+.seg-review { background: var(--primary); }
+.seg-done { background: var(--success); }
+.progress-label { flex: none; color: var(--muted-foreground); white-space: nowrap; }
+.progress-none .seg { background: transparent; border: 1px dashed var(--untested); height: 6px; }
+@media (prefers-reduced-motion: reduce) { .seg-active { animation: none; } }
+
+/* The plan and its tasks. */
+.plan { margin-top: 0.65rem; padding-top: 0.55rem; border-top: 1px solid var(--border); }
+.plan-title { margin: 0; font-size: 12.5px; font-weight: 600; }
+.plan-goal { margin: 0.25rem 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+.tasks { margin: 0.55rem 0 0; padding: 0; list-style: none; font-size: 12px; }
+.task { display: grid; grid-template-columns: 0.9rem minmax(0, 1fr) auto; gap: 0 0.5rem; align-items: baseline; padding: 0.3rem 0; border-top: 1px solid color-mix(in oklch, var(--border) 70%, transparent); }
+.task:first-child { border-top: 0; }
+.task-mark { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--untested); align-self: center; justify-self: center; }
+.task-active .task-mark, .task-review .task-mark { border-color: var(--primary); background: var(--primary); }
+.task-active .task-mark { animation: pulse 1.6s ease-in-out infinite; }
+.task-done .task-mark { border-color: var(--success); background: var(--success); }
+.task-num { font-weight: 600; }
+.task-state { color: var(--muted-foreground); white-space: nowrap; }
+.task-active .task-state, .task-review .task-state { color: var(--primary); }
+.task-done .task-state { color: var(--success); }
+@media (prefers-reduced-motion: reduce) { .task-active .task-mark { animation: none; } }
+
+/* Secondary detail folds away. */
+.agents-box, .facts-box { margin-top: 0.65rem; padding-top: 0.5rem; border-top: 1px solid var(--border); font-size: 12px; }
+.agents-box > summary, .facts-box > summary { color: var(--muted-foreground); cursor: pointer; }
+.agents-box > summary:focus-visible, .facts-box > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }
+.agents-sum { margin-left: 0.4rem; color: var(--foreground); }
+.agents-box .agents, .facts-box .facts { margin-top: 0.5rem; padding-top: 0; border-top: 0; }
+.facts-box .facts { grid-template-columns: max-content minmax(0, 1fr); }

@@ -122,7 +122,7 @@ fn api_state(app: &App, now: f64) -> Reply {
         .join("board.json");
     let (board, board_error) = load_board(&board_path);
     let view = match app.registry.lock() {
-        Ok(registry) => build_state(&board, &registry, now, board_error),
+        Ok(registry) => build_state(&board, &registry, now, board_error, &app.root),
         Err(_) => return text(500, "state lock poisoned"),
     };
     match serde_json::to_vec(&view) {

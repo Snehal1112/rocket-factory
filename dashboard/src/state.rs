@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::events::Registry;
 use crate::model::{AgentState, Board, Job, RecentEvent};
+use crate::plan::{load_plan, PlanView};
 
 const STALE_SECS: f64 = 1800.0;
 const KEEP_DONE_SECS: f64 = 600.0;
@@ -15,6 +16,7 @@ pub struct JobView {
     pub job: Job,
     pub agents: Vec<AgentState>,
     pub seconds_in_stage: f64,
+    pub plan: Option<PlanView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -105,6 +107,7 @@ pub fn build_state(
     registry: &Registry,
     now: f64,
     board_error: Option<String>,
+    root: &Path,
 ) -> StateView {
     let mut jobs: Vec<JobView> = board
         .jobs
@@ -113,6 +116,7 @@ pub fn build_state(
             job: job.clone(),
             agents: Vec::new(),
             seconds_in_stage: (now - job.stage_since).max(0.0),
+            plan: load_plan(root, &job.dir, job.stage == "merged"),
         })
         .collect();
     let mut unassigned = Vec::new();
@@ -225,7 +229,7 @@ mod tests {
         board.jobs.push(job("002", "build", 10.0));
         let mut registry = Registry::new();
         start(&mut registry, 20.0, "b1", "factory-builder", "/elsewhere");
-        let view = build_state(&board, &registry, 30.0, None);
+        let view = build_state(&board, &registry, 30.0, None, Path::new("/nonexistent"));
         assert_eq!(view.jobs[0].agents.len(), 1);
         assert!(view.jobs[1].agents.is_empty());
     }
@@ -245,7 +249,7 @@ mod tests {
             "other",
             "/repo/.claude/worktrees/factory-002/src",
         );
-        let view = build_state(&board, &registry, 30.0, None);
+        let view = build_state(&board, &registry, 30.0, None, Path::new("/nonexistent"));
         assert_eq!(view.jobs[1].agents.len(), 1);
     }
 
@@ -271,7 +275,7 @@ mod tests {
                 "/repo",
             );
         }
-        let view = build_state(&board, &registry, 30.0, None);
+        let view = build_state(&board, &registry, 30.0, None, Path::new("/nonexistent"));
         assert_eq!(view.jobs[0].agents.len(), 4);
         assert!(view.unassigned_agents.is_empty());
     }
@@ -283,7 +287,7 @@ mod tests {
         let mut registry = Registry::new();
         start(&mut registry, 100.0, "s1", "factory-spec-writer", "/repo");
         registry.ingest_line(r#"{"ts":150.0,"hook_event_name":"SubagentStop","agent_id":"s1"}"#);
-        let view = build_state(&board, &registry, 800.0, None);
+        let view = build_state(&board, &registry, 800.0, None, Path::new("/nonexistent"));
         assert!(view.jobs[0].agents.is_empty());
         assert!(
             view.unassigned_agents.is_empty(),
@@ -297,9 +301,9 @@ mod tests {
         board.jobs.push(job("001", "build", 10.0));
         let mut registry = Registry::new();
         start(&mut registry, 20.0, "b1", "factory-builder", "/repo");
-        let fresh = build_state(&board, &registry, 100.0, None);
+        let fresh = build_state(&board, &registry, 100.0, None, Path::new("/nonexistent"));
         assert_eq!(fresh.jobs[0].agents[0].status, "running");
-        let old = build_state(&board, &registry, 20.0 + 1801.0, None);
+        let old = build_state(&board, &registry, 20.0 + 1801.0, None, Path::new("/nonexistent"));
         assert_eq!(old.jobs[0].agents[0].status, "stale");
     }
 
@@ -312,7 +316,7 @@ mod tests {
         registry.ingest_line(
             r#"{"ts":1000.0,"hook_event_name":"PostToolUse","agent_id":"b1","tool_name":"Edit"}"#,
         );
-        let view = build_state(&board, &registry, 2000.0, None);
+        let view = build_state(&board, &registry, 2000.0, None, Path::new("/nonexistent"));
         assert_eq!(view.jobs[0].agents[0].status, "running");
     }
 
@@ -321,7 +325,7 @@ mod tests {
         let mut registry = Registry::new();
         start(&mut registry, 100.0, "u1", "other", "/x");
         registry.ingest_line(r#"{"ts":150.0,"hook_event_name":"SubagentStop","agent_id":"u1"}"#);
-        let view = build_state(&Board::default(), &registry, 200.0, None);
+        let view = build_state(&Board::default(), &registry, 200.0, None, Path::new("/nonexistent"));
         assert_eq!(view.unassigned_agents.len(), 1);
     }
 
@@ -347,7 +351,7 @@ mod tests {
     fn a_running_unassigned_agent_with_recent_activity_is_kept() {
         let mut registry = Registry::new();
         start(&mut registry, 100.0, "u1", "other", "/x");
-        let view = build_state(&Board::default(), &registry, 200.0, None);
+        let view = build_state(&Board::default(), &registry, 200.0, None, Path::new("/nonexistent"));
         assert_eq!(view.unassigned_agents.len(), 1);
     }
 
@@ -355,9 +359,9 @@ mod tests {
     fn a_stale_unassigned_agent_older_than_two_hours_is_dropped() {
         let mut registry = Registry::new();
         start(&mut registry, 100.0, "u1", "other", "/x");
-        let view = build_state(&Board::default(), &registry, 100.0 + 7201.0, None);
+        let view = build_state(&Board::default(), &registry, 100.0 + 7201.0, None, Path::new("/nonexistent"));
         assert!(view.unassigned_agents.is_empty());
-        let view = build_state(&Board::default(), &registry, 100.0 + 3000.0, None);
+        let view = build_state(&Board::default(), &registry, 100.0 + 3000.0, None, Path::new("/nonexistent"));
         assert_eq!(view.unassigned_agents.len(), 1);
         assert_eq!(view.unassigned_agents[0].status, "stale");
     }
@@ -370,7 +374,7 @@ mod tests {
         board.jobs.push(only);
         let mut registry = Registry::new();
         start(&mut registry, 20.0, "x1", "other", "/repo/src");
-        let view = build_state(&board, &registry, 30.0, None);
+        let view = build_state(&board, &registry, 30.0, None, Path::new("/nonexistent"));
         assert!(view.jobs[0].agents.is_empty());
         assert_eq!(view.unassigned_agents.len(), 1);
     }
@@ -379,7 +383,7 @@ mod tests {
     fn seconds_in_stage_and_the_board_error_are_reported() {
         let mut board = Board::default();
         board.jobs.push(job("001", "build", 100.0));
-        let view = build_state(&board, &Registry::new(), 160.0, Some("oops".to_string()));
+        let view = build_state(&board, &Registry::new(), 160.0, Some("oops".to_string()), Path::new("/nonexistent"));
         assert_eq!(view.jobs[0].seconds_in_stage, 60.0);
         assert_eq!(view.board_error.as_deref(), Some("oops"));
         assert_eq!(view.generated_at, 160.0);
@@ -389,7 +393,7 @@ mod tests {
     fn the_state_serializes_with_flattened_job_fields() -> TestResult {
         let mut board = Board::default();
         board.jobs.push(job("001", "build", 100.0));
-        let view = build_state(&board, &Registry::new(), 160.0, None);
+        let view = build_state(&board, &Registry::new(), 160.0, None, Path::new("/nonexistent"));
         let json = serde_json::to_value(&view)?;
         assert_eq!(json["jobs"][0]["id"], "001");
         assert_eq!(json["jobs"][0]["stage"], "build");
