@@ -1,45 +1,55 @@
 #!/usr/bin/env bash
 # Builds a demo factory root with jobs in every stage, for a visual check of the dashboard.
-# Usage: seed-demo.sh <empty-dir>
+# Usage: seed-demo.sh <dir>. Safe to run again on the same dir.
 set -eu
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
-root="${1:?usage: seed-demo.sh <empty-dir>}"
-ctl="$repo/.claude/factory/factory-ctl"
-logger="$repo/.claude/factory/hooks/log-event"
-log="$root/.superpowers/factory/events.jsonl"
+root="${1:?usage: seed-demo.sh <dir>}"
+data="$root/.superpowers/factory"
+marker="$data/.demo"
 
-mkdir -p "$root"
-git init -q -b main "$root"
-git -C "$root" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-export FACTORY_ROOT="$root"
-export FACTORY_EVENT_LOG="$log"
+if [ -d "$data" ] && [ ! -f "$marker" ] && [ -n "$(ls -A "$data")" ]; then
+  echo "refusing to overwrite $data: it is not a demo root" >&2
+  exit 1
+fi
+mkdir -p "$data"
+touch "$marker"
+log="$data/events.jsonl"
+: >"$log"
+chmod 600 "$log"
 
-run_ctl() { python3 "$ctl" "$@" >/dev/null; }
-event() { printf '%s' "$1" | python3 "$logger"; }
+now="$(date +%s)"
+reviews() { printf '{"security":"%s","ux":"%s","ui":"%s","code":"%s"}' "$1" "$2" "$3" "$4"; }
+job() {
+  # id feature stage reason round reviews history series tokens
+  printf '{"id":"%s","dir":"2026-10-13-%s-demo","slug":"demo","created":"2026-10-13","feature":"%s","branch":"factory/%s-demo","stage":"%s","reason":%s,"round":%s,"stage_since":%s,"reviews":%s,"stage_history":%s,"series":%s,"tokens":%s}' \
+    "$1" "$1" "$2" "$1" "$3" "$4" "$5" "$((now - 300))" "$6" "$7" "$8" "$9"
+}
+none='{"security":"pending","ux":"pending","ui":"pending","code":"pending"}'
+hist() { printf '[{"stage":"spec","ts":%s},{"stage":"build","ts":%s},{"stage":"%s","ts":%s}]' "$((now - 1500))" "$((now - 900))" "$1" "$((now - 300))"; }
 
-python3 "$ctl" new-job "Add a request timeout setting" --date 2026-10-13 >/dev/null
-python3 "$ctl" new-job "Fix collection import crash on empty folders" --date 2026-10-13 >/dev/null
-python3 "$ctl" new-job "Rename the environment variables panel" --date 2026-10-12 >/dev/null
-python3 "$ctl" new-job "Show response size in the status bar" --date 2026-10-12 >/dev/null
-python3 "$ctl" new-job "Add a gRPC reflection toggle" --date 2026-10-13 >/dev/null
+{
+  printf '{"jobs":['
+  job 001 "Add a request timeout setting" build null 0 "$none" "$(hist build)" '{"plan_file":"p3.md","index":2,"total":3}' '{"weighted":2500000,"raw":14000000}'
+  printf ','
+  job 002 "Fix collection import crash on empty folders" review null 1 "$(reviews pass skipped skipped running)" "$(hist review)" null '{"weighted":900000,"raw":5200000}'
+  printf ','
+  job 003 "Rename the environment variables panel" needs-human '"touches the collection trust gate"' 2 "$(reviews changes pass pass pass)" "$(hist needs-human)" null '{"weighted":3100000,"raw":17000000}'
+  printf ','
+  job 004 "Show response size in the status bar" merged null 0 "$(reviews pass pass pass pass)" "$(hist merged)" null '{"weighted":400000,"raw":2300000}'
+  printf ','
+  job 005 "Add a gRPC reflection toggle" spec null 0 "$none" "[{\"stage\":\"spec\",\"ts\":$((now - 300))}]" null null
+  printf ']}\n'
+} >"$data/board.json.tmp"
+mv "$data/board.json.tmp" "$data/board.json"
 
-run_ctl set-stage 1 build --builder-id b-1 --worktree "$root/.claude/worktrees/factory-001"
-run_ctl set-stage 2 review --round 1 --review security=pass --review ux=skipped --review ui=skipped --review code=running
-run_ctl set-stage 3 needs-human --round 2 --reason "touches the collection trust gate" \
-  --review security=changes --review ux=pass --review ui=pass --review code=pass
-run_ctl set-stage 4 merged --review security=pass --review ux=pass --review ui=pass --review code=pass
-# Job 5 stays in the spec stage.
-
-sleep 1
-event '{"hook_event_name":"SubagentStart","agent_id":"b-1","agent_type":"factory-builder","cwd":"'"$root"'/.claude/worktrees/factory-001"}'
-event '{"hook_event_name":"PostToolUse","agent_id":"b-1","tool_name":"Edit","tool_input":{"file_path":"src/components/request/TimeoutField.tsx"},"cwd":"'"$root"'/.claude/worktrees/factory-001"}'
-event '{"hook_event_name":"PostToolUse","agent_id":"b-1","tool_name":"Bash","tool_input":{"command":"cargo check -j4"},"cwd":"'"$root"'/.claude/worktrees/factory-001"}'
-event '{"hook_event_name":"SubagentStart","agent_id":"r-2","agent_type":"factory-code-reviewer","cwd":"'"$root"'"}'
-event '{"hook_event_name":"PostToolUse","agent_id":"r-2","tool_name":"Read","tool_input":{"file_path":"crates/rocket-import/src/lib.rs"},"cwd":"'"$root"'"}'
-event '{"hook_event_name":"SubagentStart","agent_id":"s-5","agent_type":"factory-spec-writer","cwd":"'"$root"'"}'
-event '{"hook_event_name":"PostToolUse","agent_id":"s-5","tool_name":"Grep","tool_input":{"pattern":"reflection"},"cwd":"'"$root"'"}'
+event() { printf '%s\n' "$1" >>"$log"; }
+event "{\"ts\":$((now - 60)),\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"b-1\",\"agent_type\":\"factory-builder\",\"job_id\":\"001\"}"
+event "{\"ts\":$((now - 30)),\"hook_event_name\":\"PostToolUse\",\"agent_id\":\"b-1\",\"tool_name\":\"Edit\",\"tool_target\":\"src/components/request/TimeoutField.tsx\",\"job_id\":\"001\",\"tokens\":1200}"
+event "{\"ts\":$((now - 20)),\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"r-2\",\"agent_type\":\"factory-code-reviewer\",\"job_id\":\"002\"}"
+event "{\"ts\":$((now - 10)),\"hook_event_name\":\"PostToolUse\",\"agent_id\":\"r-2\",\"tool_name\":\"Read\",\"tool_target\":\"crates/rocket-import/src/lib.rs\",\"job_id\":\"002\"}"
+event "{\"ts\":$((now - 5)),\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"s-5\",\"agent_type\":\"factory-spec-writer\"}"
 
 echo "Demo root ready: $root"
 echo "Start the server:"
