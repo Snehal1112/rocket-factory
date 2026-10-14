@@ -174,22 +174,44 @@ fn a_broken_chain_creates_no_jobs() {
     assert!(fx.driver.store().load().expect("board").jobs.is_empty());
 }
 
+const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- It is done.\n";
+
 #[test]
-fn spec_md_is_copied_into_plan_one_only_and_only_for_a_folder() {
+fn spec_md_is_copied_into_every_job_and_only_for_a_folder() {
     let fx = common::SeriesFixture::new("x");
     let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
     fx.plan_file("plan-02-b.md", 1, "none");
     let folder = a.parent().expect("plans folder").to_path_buf();
-    std::fs::write(folder.join("spec.md"), "# Spec: Demo\n\n## Goal\n\nDo it.\n").expect("spec");
+    std::fs::write(folder.join("spec.md"), GOOD_SPEC).expect("spec");
     // A single file as the argument has no folder, so nothing is copied and nothing fails.
     create_job(&fx.driver, "file", "f", Some(&a), None).expect("file argument");
     let board = fx.driver.store().load().expect("board");
     assert!(!fx.driver.job_dir(&board.jobs[0]).join("spec.md").exists());
-    // A folder copies the spec into plan 1 and not into plan 2.
+    // A folder copies the spec into every plan's job.
     create_job(&fx.driver, "folder", "f", Some(&folder), None).expect("folder argument");
     let board = fx.driver.store().load().expect("board");
     assert!(fx.driver.job_dir(&board.jobs[2]).join("spec.md").exists());
-    assert!(!fx.driver.job_dir(&board.jobs[3]).join("spec.md").exists());
+    assert!(fx.driver.job_dir(&board.jobs[3]).join("spec.md").exists());
+}
+
+#[test]
+fn a_folder_without_a_usable_spec_creates_no_jobs() {
+    let bad_specs = [
+        None,
+        Some("# Spec: Demo\n\n## Goal\n\nDo it.\n"),
+        Some("# Spec: Demo\n\n## Goal\n\n## Acceptance criteria\n\n- ok\n"),
+        Some("# Spec: Demo\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n"),
+    ];
+    for spec in bad_specs {
+        let fx = common::SeriesFixture::new("x");
+        let a = fx.plan_file("plan-01-a.md", 1, "none");
+        let folder = a.parent().expect("plans folder").to_path_buf();
+        if let Some(text) = spec {
+            std::fs::write(folder.join("spec.md"), text).expect("spec");
+        }
+        assert!(create_job(&fx.driver, "bad", "f", Some(&folder), None).is_err(), "{spec:?}");
+        assert!(fx.driver.store().load().expect("board").jobs.is_empty(), "{spec:?}");
+    }
 }
 
 #[test]
@@ -274,7 +296,7 @@ fn create_job_takes_series_issues_from_the_feature_text_only() {
     let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
     fx.plan_file("plan-02-b.md", 1, "none");
     let folder = a.parent().expect("plans folder").to_path_buf();
-    std::fs::write(folder.join("spec.md"), "# Spec: Demo\n\nSee also #21.\n").expect("spec");
+    std::fs::write(folder.join("spec.md"), "# Spec: Demo\n\nSee also #21.\n\n## Goal\n\nShip it.\n\n## Acceptance criteria\n\nIt works.\n").expect("spec");
     let feature = "GitHub issue #20 (https://github.com/o/r/issues/20)";
     let first = create_job(&fx.driver, "folder", feature, Some(&folder), None).expect("create");
     assert_eq!(first.issues, vec![20]);

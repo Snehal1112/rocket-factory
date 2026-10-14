@@ -9,6 +9,8 @@ use crate::Engine;
 
 /// The agent file the driver passes with `--agent`.
 const BUILDER_AGENT: &str = "factory-builder";
+/// The reviewer agent file the driver passes with `--agent`. It sets the read-only tools and the checks.
+const REVIEWER_AGENT: &str = "factory-code-reviewer";
 const BUILDER_MAX_TURNS: u32 = 120;
 
 impl Engine<'_> {
@@ -32,6 +34,12 @@ impl Engine<'_> {
         self.config.kb_dir().into_iter().collect()
     }
 
+    /// The prompt line that names the job's spec, or nothing when the job has none.
+    fn spec_line(&self) -> String {
+        let spec_file = self.job_dir.join("spec.md");
+        if spec_file.exists() { format!("The spec is at {}.\n", spec_file.display()) } else { String::new() }
+    }
+
     /// Sets the model, the budget and the stall limit from the config. Every agent spec goes through this.
     pub(crate) fn with_limits(&self, mut spec: AgentSpec, model: &str) -> AgentSpec {
         spec.model = Some(model.to_string());
@@ -43,9 +51,10 @@ impl Engine<'_> {
 
     /// The headless builder for the first run of a job.
     pub(crate) fn builder_first_spec(&self, job: &JobView, cwd: &Path) -> AgentSpec {
+        let spec_line = self.spec_line();
         let prompt = format!(
             "You are the builder in Rocket's software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
-             Read CLAUDE.md, the rule files for the areas you touch under .claude/rules/, and the plan at {plan}. Never edit the plan.\n\
+             Read CLAUDE.md, the rule files for the areas you touch under .claude/rules/, and the plan at {plan}. Never edit the plan.\n{spec_line}\
              Do the plan task by task: write the failing test first, then the code, then run the checks.\n\
              Rules: run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR; \
              run `yarn install --frozen-lockfile` once before the first yarn check; no unwrap in production Rust; no git CLI in Rust code; \
@@ -74,9 +83,7 @@ impl Engine<'_> {
         tip: &str,
         earlier: &[String],
     ) -> AgentSpec {
-        let spec_file = self.job_dir.join("spec.md");
-        let spec_line =
-            if spec_file.exists() { format!("The spec is at {}.\n", spec_file.display()) } else { String::new() };
+        let spec_line = self.spec_line();
         let done = if earlier.is_empty() {
             "No earlier task has a commit yet.".to_string()
         } else {
@@ -127,12 +134,20 @@ impl Engine<'_> {
 }
 
 impl Engine<'_> {
-    /// The combined reviewer. It is read-only and pages the diff to stay cheap.
-    pub(crate) fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32) -> AgentSpec {
+    /// The combined reviewer. It is read-only and pages the diff to stay cheap. The agent file carries the checks.
+    pub fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32) -> AgentSpec {
+        let spec_line = self.spec_line();
+        // A later round also gets the findings of the round before, so the reviewer can check they were fixed.
+        let earlier = self.job_dir.join(format!("review-code-r{}.md", round.saturating_sub(1)));
+        let earlier_line = if round > 1 && earlier.exists() {
+            format!("The findings of round {} are at {}. Check that each was fixed.\n", round - 1, earlier.display())
+        } else {
+            String::new()
+        };
         let prompt = format!(
-            "You are the code reviewer in Rocket's software factory. You are read-only.\n\
+            "Review this round's diff for the job.\n\
              Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan}, and the worktree at {cwd}. \
-             Round {round}.\n\
+             Round {round}.\n{spec_line}{earlier_line}\
              Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
              Read .claude/rules/rust-ddd-boundaries.md, .claude/rules/tauri-ipc-boundaries.md and .claude/rules/frontend-component-guardrails.md only for the areas the diff touches.\n\
              Check: the diff does what the plan asks and nothing else; correctness and edge cases; no unwrap in production Rust; \
@@ -147,6 +162,7 @@ impl Engine<'_> {
             kb = self.kb_line(),
         );
         let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
+        spec.agent = Some(REVIEWER_AGENT.to_string());
         spec.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
         spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.reviewer_model)

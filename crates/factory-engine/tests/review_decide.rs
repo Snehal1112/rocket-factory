@@ -147,11 +147,30 @@ fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
     assert_eq!(spec.role, "reviewer");
     assert_eq!(spec.model, Some(fx.config.reviewer_model.clone()));
     assert_eq!(spec.allowed_tools, vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]);
+    assert_eq!(spec.agent, Some("factory-code-reviewer".to_string()));
     assert_eq!(spec.budget_weighted, Some(fx.config.budget_weighted));
     assert!(spec.prompt.contains("offset"));
     assert!(spec.prompt.contains("1500"));
     assert!(spec.prompt.contains("60 lines"));
     assert!(job_dir.join("review-code-r1.md").exists());
+}
+
+#[test]
+fn reviewer_prompt_names_the_spec_and_the_earlier_findings_when_they_exist() {
+    let fx = Fixture::new();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    // Round 1 has no spec file and no earlier findings, so neither is named.
+    let rr = reviewer("ok\nVERDICT: APPROVE");
+    fx.engine(&rr).review_stage().expect("review");
+    let prompt = rr.last_spec().expect("spec").prompt;
+    assert!(!prompt.contains("The spec is at"), "{prompt}");
+    assert!(!prompt.contains("findings of round"), "{prompt}");
+    // With a spec and a round 1 review on disk, a round 2 reviewer is pointed at both.
+    std::fs::write(fx.job_dir.join("spec.md"), "# Spec\n").expect("spec");
+    std::fs::write(fx.job_dir.join("review-code-r1.md"), "1. [blocker] x\n").expect("earlier review");
+    let spec = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 2);
+    assert!(spec.prompt.contains(&format!("The spec is at {}", fx.job_dir.join("spec.md").display())), "{}", spec.prompt);
+    assert!(spec.prompt.contains("review-code-r1.md"), "{}", spec.prompt);
 }
 
 #[test]

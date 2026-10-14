@@ -54,6 +54,26 @@ fn add_job(
     Ok(job)
 }
 
+/// The text of a section: the lines under `## <title>` up to the next heading. None when there is no such heading.
+fn section_body<'a>(spec: &'a str, title: &str) -> Option<String> {
+    let mut lines = spec.lines();
+    lines.find(|l| l.trim_start_matches('#').trim().eq_ignore_ascii_case(title) && l.starts_with("##"))?;
+    let body: Vec<&str> = lines.take_while(|l| !l.starts_with('#')).collect();
+    Some(body.join("\n"))
+}
+
+/// A spec must name its goal and its acceptance criteria. The headings are the contract with `/factory`.
+fn check_spec(spec: &str) -> Result<(), EngineError> {
+    for title in ["Goal", "Acceptance criteria"] {
+        match section_body(spec, title) {
+            Some(body) if !body.trim().is_empty() => {}
+            Some(_) => return Err(EngineError::Msg(format!("spec.md section `## {title}` is empty"))),
+            None => return Err(EngineError::Msg(format!("spec.md has no `## {title}` section"))),
+        }
+    }
+    Ok(())
+}
+
 /// Creates the jobs of a series and returns plan 1's job, which starts at stage build. Every later plan
 /// gets its job now too, parked at stage spec, so the board shows the whole series from the start.
 pub fn create_job(
@@ -68,6 +88,13 @@ pub fn create_job(
     };
     // A broken chain fails here, before any job exists.
     let series = parse_series(driver.root(), start)?;
+    // A folder holds the spec beside the plans. A single plan file has no spec to check.
+    let spec = start.join("spec.md");
+    if start.is_dir() {
+        let text = std::fs::read_to_string(&spec)
+            .map_err(|_| EngineError::Msg("the plans folder has no spec.md".to_string()))?;
+        check_spec(&text)?;
+    }
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
     let series_id = if total > 1 {
@@ -88,18 +115,21 @@ pub fn create_job(
         total,
         id: series_id.clone(),
     };
-    // The spec sits beside the plans. Only plan 1 gets a copy, so later builders are not pointed at it.
+    // The spec sits beside the plans. Every job gets a copy, so each builder and reviewer can read it.
     // Issue numbers come from the feature text only, so a spec that cites an issue never closes it.
-    let spec = start.join("spec.md");
-    let has_spec = start.is_dir() && spec.is_file();
     let issues = factory_core::parse_issues(feature);
+    let copy_spec = |job: &Job| -> Result<(), EngineError> {
+        if start.is_dir() && spec.is_file() {
+            std::fs::copy(&spec, driver.job_dir(job).join("spec.md"))?;
+        }
+        Ok(())
+    };
     let first = add_job(driver, slug, feature, &issues, Some(pos(0)), Stage::Build, model)?;
-    if has_spec {
-        std::fs::copy(&spec, driver.job_dir(&first).join("spec.md"))?;
-    }
+    copy_spec(&first)?;
     for (index, later) in series.plans.iter().enumerate().skip(1) {
         let stem = later.path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
-        add_job(driver, &stem, feature, &issues, Some(pos(index)), Stage::Spec, model)?;
+        let later_job = add_job(driver, &stem, feature, &issues, Some(pos(index)), Stage::Spec, model)?;
+        copy_spec(&later_job)?;
     }
     Ok(first)
 }
