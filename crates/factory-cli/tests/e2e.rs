@@ -18,8 +18,8 @@ fn two_plans_go_from_new_to_merged_with_a_failed_check_resumed_once() -> TestRes
     )?;
     let end = sc.start(&sc.plan_a, true)?;
     assert_eq!(end, "merged", "{end}");
-    // Spec decision 4: a red check resumes the builder and spends no reviewer run.
-    assert_eq!(sc.runner.roles(), ["builder", "builder", "reviewer", "builder", "reviewer"]);
+    // Spec decision 4: a red check resumes the builder, the committer commits the fix, and no reviewer run is spent.
+    assert_eq!(sc.runner.roles(), ["builder", "committer", "builder", "committer", "reviewer", "builder", "committer", "reviewer"]);
     // Spec decision 11: plan B starts by itself after plan A merges.
     assert_eq!(sc.merges_on_main()?, 2);
     assert_eq!(sc.stage("001")?, "merged");
@@ -39,7 +39,7 @@ fn a_changes_verdict_runs_one_fix_round_then_merges() -> TestResult {
         ],
     )?;
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
-    assert_eq!(sc.runner.roles(), ["builder", "reviewer", "builder", "reviewer"]);
+    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer", "builder", "committer", "reviewer"]);
     // Spec decision 10: the merge commit has the fixed message.
     assert!(sc.last_merge_subject()?.starts_with("chore(factory): merge job 001"), "{}", sc.last_merge_subject()?);
     Ok(())
@@ -52,7 +52,7 @@ fn a_risky_diff_waits_for_approve_and_then_merges_the_reviewed_sha() -> TestResu
     // Spec decision 6: risky paths park the job, main is untouched.
     let end = sc.start(&sc.plan_b, false)?;
     assert!(end.starts_with("needs-human") && end.contains("risky"), "{end}");
-    assert_eq!(sc.runner.roles(), ["builder", "reviewer"]);
+    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer"]);
     assert_eq!(sc.stage("001")?, "needs-human");
     assert_eq!(sc.main_tip()?, before);
     let reviewed = sc.job("001")?.head.ok_or("no reviewed head")?;

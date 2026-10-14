@@ -29,6 +29,16 @@ pub fn commit_file(dir: &Path, name: &str, content: &str) -> String {
     repo.commit(Some("HEAD"), &sig, &sig, "test commit", &tree, &refs).expect("commit").to_string()
 }
 
+/// Commits whatever is staged in `dir`, like a committer agent would.
+pub fn commit_index(dir: &Path, message: &str) -> String {
+    let repo = Repository::open(dir).expect("open repo");
+    let mut index = repo.index().expect("index");
+    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let sig = Signature::now("t", "t@example.com").expect("sig");
+    let parent = repo.head().expect("head").peel_to_commit().expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+}
+
 /// The builder commits a new file, the reviewer approves. It never runs the real `claude`.
 pub struct RoleRunner {
     counter: AtomicUsize,
@@ -38,8 +48,13 @@ impl AgentRunner for RoleRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         let text = if spec.role == "builder" {
             let n = self.counter.fetch_add(1, Ordering::SeqCst);
-            let sha = commit_file(&spec.cwd, &format!("docs/{}-{n}.txt", spec.job_id), "built\n");
-            format!("done\nHEAD: {sha}")
+            let path = spec.cwd.join(format!("docs/{}-{n}.txt", spec.job_id));
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, "built\n").expect("write");
+            "done".to_string()
+        } else if spec.role == "committer" {
+            commit_index(&spec.cwd, "feat(test): build step");
+            "done".to_string()
         } else {
             "fine\nVERDICT: APPROVE".to_string()
         };
@@ -70,6 +85,7 @@ impl Fixture {
         std::fs::create_dir_all(root.join(".claude/factory")).expect("mkdir config");
         std::fs::write(root.join(".claude/factory/config.toml"), format!("risk_paths = [\"{risk}\"]\n"))
             .expect("config");
+        std::fs::write(root.join(".claude/factory/commit-context.md"), "TEST CONTEXT\n").expect("context");
         let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner { counter: AtomicUsize::new(0) });
         let ctx = CliCtx::new(root.clone(), runner, "tester");
         Fixture { tmp, root, ctx }

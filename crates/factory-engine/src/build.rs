@@ -1,11 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use factory_agent::StopReason;
 use factory_core::{Stage, TaskState};
-use factory_git::JobRef;
+use factory_git::{CommitInfo, JobRef, Worktree};
 
+use crate::commit::{CommitKind, CommitOutcome, CommitRequest};
 use crate::ports::{git_err, now, JobView};
-use crate::tasks::{parse_tasks, PlanTask};
+use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{Engine, EngineError, StageOutcome};
 
 impl Engine<'_> {
@@ -42,6 +43,7 @@ impl Engine<'_> {
             }
             _ => self.builder_first_spec(&job, &cwd),
         };
+        let tip_before = self.repo.tip(&branch).map_err(git_err)?;
         let run = self.run_agent(spec)?;
         if !new_work {
             // The builder has seen the note, so it must not be sent again. A missing file is fine.
@@ -55,13 +57,27 @@ impl Engine<'_> {
         if run.stop_reason != StopReason::Done {
             return self.park(format!("builder stopped: {:?}", run.stop_reason));
         }
-        let head = self.repo.tip(&branch).map_err(git_err)?;
-        if new_work && head == base {
-            return self.park("builder made no commits".to_string());
+        if self.repo.tip(&branch).map_err(git_err)? != tip_before {
+            return self.park("builder committed on its own".to_string());
         }
-        if !new_work && Some(&head) == previous_head.as_ref() {
-            return self.park("builder made no new commit on resume".to_string());
-        }
+        // The floor is the base in the first round and the last reviewed head in a fix round.
+        let floor = previous_head.clone().unwrap_or_else(|| base.clone());
+        let before = self.repo.commits_above(&floor, &tip_before).map_err(git_err)?;
+        let wt = self.job_worktree(&job, &cwd, &base, &branch);
+        let (kind, title) = if new_work {
+            (CommitKind::Legacy, "build the plan")
+        } else {
+            (CommitKind::Fix, "address review findings")
+        };
+        let head = match self.commit_work(&wt, kind, title, &floor)? {
+            CommitOutcome::Committed { tip, .. } => tip,
+            CommitOutcome::NothingStaged => {
+                let why = if new_work { "builder made no changes" } else { "builder made no changes on resume" };
+                return self.park(why.to_string());
+            }
+            CommitOutcome::Park(reason) => return self.park(reason),
+        };
+        self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
     }
 
@@ -85,6 +101,46 @@ impl Engine<'_> {
         let cwd = job.worktree.clone().ok_or_else(|| EngineError::Msg("job has no worktree".into()))?;
         let base = job.base.clone().ok_or_else(|| EngineError::Msg("job has no base".into()))?;
         Ok((cwd, base))
+    }
+
+    /// The worktree handle the git layer needs, built from the job record.
+    fn job_worktree(&self, job: &JobView, cwd: &Path, base: &str, branch: &str) -> Worktree {
+        Worktree {
+            name: JobRef { id: self.job_id.clone(), slug: job.slug.clone() }.dir_name(),
+            path: cwd.to_path_buf(),
+            branch: branch.to_string(),
+            base: base.to_string(),
+        }
+    }
+
+    /// Runs the committer step for the builder's uncommitted work.
+    fn commit_work(
+        &self,
+        wt: &Worktree,
+        kind: CommitKind,
+        task_title: &str,
+        floor: &str,
+    ) -> Result<CommitOutcome, EngineError> {
+        let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
+        let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
+        let (plan_title, goal) = (plan_title(&plan), spec_goal(&spec));
+        let req = CommitRequest { kind, plan_title: &plan_title, task_title, goal: &goal, floor };
+        self.commit_step(wt, &req)
+    }
+
+    /// Writes a ruling when the committer rewrote commits that were above the floor before the run.
+    fn note_rewrites(&self, label: &str, floor: &str, before: &[CommitInfo], tip: &str) -> Result<(), EngineError> {
+        let after = self.repo.commits_above(floor, tip).map_err(git_err)?;
+        let gone: Vec<&str> = before
+            .iter()
+            .filter(|c| !after.iter().any(|a| a.sha == c.sha))
+            .map(|c| c.sha.get(..7).unwrap_or(&c.sha))
+            .collect();
+        if gone.is_empty() {
+            return Ok(());
+        }
+        let short = tip.get(..7).unwrap_or(tip);
+        self.ruling(&format!("{label} commit rewrote earlier commits {}, the branch is now at {short}", gone.join(", ")))
     }
 
     /// Runs the agent of the next plan task. After the last task it hands over to review.
@@ -119,11 +175,18 @@ impl Engine<'_> {
         if run.stop_reason != StopReason::Done {
             return self.park(format!("builder stopped in task {}: {:?}", task.n, run.stop_reason));
         }
-        let after = self.repo.tip(&branch).map_err(git_err)?;
-        if after == tip {
-            return self.park(format!("task {} made no commit", task.n));
+        if self.repo.tip(&branch).map_err(git_err)? != tip {
+            return self.park(format!("builder committed on its own in task {}", task.n));
         }
-        let short = after.get(..7).unwrap_or(&after).to_string();
+        let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
+        let wt = self.job_worktree(job, &cwd, &base, &branch);
+        let new_tip = match self.commit_work(&wt, CommitKind::Task, &task.title, &base)? {
+            CommitOutcome::Committed { tip, .. } => tip,
+            CommitOutcome::NothingStaged => return self.park(format!("task {} changed nothing", task.n)),
+            CommitOutcome::Park(reason) => return self.park(reason),
+        };
+        self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
+        let short = new_tip.get(..7).unwrap_or(&new_tip).to_string();
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
         let session = run.session_id.clone().or(job.session_id.clone());
         let next = job.task_index + 1;
@@ -135,7 +198,7 @@ impl Engine<'_> {
         if (next as usize) < tasks.len() {
             return Ok(StageOutcome::Advanced(Stage::Build));
         }
-        self.finish_build(job, &base, after, job.head.clone())
+        self.finish_build(job, &base, new_tip, job.head.clone())
     }
 
     /// Checks the diff cap, records the head and moves the job to review.

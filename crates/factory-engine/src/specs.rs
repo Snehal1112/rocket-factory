@@ -30,9 +30,9 @@ impl Engine<'_> {
              Rules: run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR; \
              run `yarn install --frozen-lockfile` once before the first yarn check; no unwrap in production Rust; no git CLI in Rust code; \
              shadcn/ui, lucide-react, SingleLineEditor and Monaco rules apply.\n\
-             Commit each task with the dev-workflow-skills:1-git-commit skill and a pathspec commit (`git add <paths> && git commit --only -m \"...\" -- <paths>`). \
-             Never use `git add -A`, `--all` or `.`. Never push, never merge, never touch the board or the ledger.\n\
-             If you are blocked, say why in your final reply and stop. Your last line must be `HEAD: <sha of your last commit>`.",
+             Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. \
+             Never push, never merge, never touch the board or the ledger.\n\
+             If you are blocked, say why in your final reply and stop.",
             branch = job.branch,
             plan = self.plan_file.display(),
         );
@@ -66,11 +66,10 @@ impl Engine<'_> {
              Base commit: {base}. Current tip: {tip}.\n{done}\n\
              Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
              Write the failing test first, then the code, then run the checks the task names.\n\
-             Make exactly one commit, for this task, with the dev-workflow-skills:1-git-commit skill and a pathspec commit \
-             (`git add <paths> && git commit --only -m \"...\" -- <paths>`). Never use `git add -A`, `--all` or `.`. \
+             Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. \
              Never push, never merge, never touch the board or the ledger.\n\
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
-             If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}, and end your reply with the line `HEAD: <sha>`.",
+             If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}.",
             branch = job.branch,
             plan = self.plan_file.display(),
             n = task.n,
@@ -85,9 +84,11 @@ impl Engine<'_> {
     /// The resumed builder for a fix round.
     pub(crate) fn builder_resume_spec(&self, job: &JobView, cwd: &Path, findings: &Path, session: &str) -> AgentSpec {
         let prompt = format!(
-            "Fix only the problems listed in {findings}. Make new commits on branch `{branch}`. Do not amend or rewrite earlier commits. \
-             Run the relevant checks (`cargo check -j4`, targeted `cargo test -j4 -p <crate> <test_name>`, yarn checks) before each commit. \
-             Never push, never merge. Your last line must be `HEAD: <sha of your last commit>`.",
+            "Fix only the problems listed in {findings}. You are on branch `{branch}`. \
+             Do not run `git add` or `git commit`: leave the fixes in the worktree and the driver commits them. \
+             Do not amend or rewrite earlier commits. \
+             Run the relevant checks (`cargo check -j4`, targeted `cargo test -j4 -p <crate> <test_name>`, yarn checks) before you finish. \
+             Never push, never merge.",
             findings = findings.display(),
             branch = job.branch,
         );

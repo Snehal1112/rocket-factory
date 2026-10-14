@@ -63,6 +63,16 @@ pub fn commit_files(dir: &Path, files: &[(&str, &str)], message: &str) -> Result
     Ok(repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &refs)?.to_string())
 }
 
+/// Commits whatever is staged in `dir`, like a committer agent would.
+pub fn commit_index(dir: &Path, message: &str) -> String {
+    let repo = Repository::open(dir).expect("open repo");
+    let mut index = repo.index().expect("index");
+    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let sig = Signature::now("t", "t@example.com").expect("sig");
+    let parent = repo.head().expect("head").peel_to_commit().expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+}
+
 /// Plays the script in order and records the role of every call. It never runs the real `claude`.
 pub struct ScriptRunner {
     steps: Mutex<VecDeque<Step>>,
@@ -80,16 +90,27 @@ impl AgentRunner for ScriptRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         if let Ok(mut roles) = self.roles.lock() {
             roles.push(spec.role.clone());        }
+        if spec.role == "committer" {
+            commit_index(&spec.cwd, "feat(test): build step");
+            return AgentRun { session_id: Some("sess-c".to_string()), ..AgentRun::done("done") };
+        }
         let step = self.steps.lock().ok().and_then(|mut s| s.pop_front());
         let (text, input) = match step {
             Some(Step::Build { files, input_tokens }) if spec.role == "builder" => {
-                match commit_files(&spec.cwd, &files, "test commit") {
-                    Ok(sha) => (format!("done\nHEAD: {sha}"), input_tokens),
-                    Err(e) => {
-                        eprintln!("fake builder failed: {e}");
+                for (name, content) in &files {
+                    // An empty content deletes the file, which the driver stages as a deletion.
+                    if content.is_empty() {
+                        let _ = std::fs::remove_file(spec.cwd.join(name));
+                        continue;
+                    }
+                    if let Some(parent) = spec.cwd.join(name).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::write(spec.cwd.join(name), content) {
                         return AgentRun::failed(&format!("fake builder failed: {e}"));
                     }
                 }
+                ("done".to_string(), input_tokens)
             }
             Some(Step::Review { text, before }) if spec.role == "reviewer" => {
                 if let Some(hook) = before {
@@ -131,6 +152,7 @@ impl Scenario {
             "risk_paths = [\"secrets/**\"]\n{extra_config}\n[[checks]]\npaths = [\"**\"]\ncommands = [\"test ! -f bad.flag\"]\n"
         );
         std::fs::write(root.join(".claude/factory/config.toml"), config)?;
+        std::fs::write(root.join(".claude/factory/commit-context.md"), "TEST CONTEXT\n")?;
         let plans = tmp.path().join("plans");
         std::fs::create_dir_all(&plans)?;
         let plan_b = plans.join("plan-02-b.md");

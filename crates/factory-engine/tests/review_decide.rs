@@ -1,6 +1,6 @@
 mod common;
 
-use common::{commit_file, scripted, Effect, Fixture, ScriptedRunner};
+use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture, ScriptedRunner};
 use factory_core::{BudgetState, DiffClass, Stage, Verdict};
 use factory_engine::{decide, DecideInput, Decision, StageOutcome};
 
@@ -91,17 +91,16 @@ fn build_and_pass_checks(fx: &Fixture, files: &[&'static str]) -> ScriptedRunner
     let effects: Vec<Effect> = vec![Box::new({
         let files: Vec<&'static str> = files.to_vec();
         move |spec| {
-            let mut sha = String::new();
             for f in &files {
                 if let Some(parent) = std::path::Path::new(f).parent() {
                     std::fs::create_dir_all(spec.cwd.join(parent)).expect("mkdir");
                 }
-                sha = commit_file(&spec.cwd, f, "x\n");
+                std::fs::write(spec.cwd.join(f), "x\n").expect("write");
             }
-            format!("HEAD: {sha}")
+            "done".to_string()
         }
     })];
-    let runner = scripted(effects);
+    let runner = scripted_auto(effects);
     fx.engine(&runner).build_stage().expect("build");
     // The review stage reads the checks.md that the checks stage wrote.
     fx.engine(&runner).checks_stage().expect("checks");
@@ -114,7 +113,7 @@ fn reviewer(reply: &'static str) -> ScriptedRunner {
 
 #[test]
 fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
-    let fx = Fixture::new();
+    let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("ok\nVERDICT: APPROVE");
     let e = fx.engine(&rr);
@@ -133,7 +132,7 @@ fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
 
 #[test]
 fn approve_on_a_normal_diff_is_auto_merge_and_apply_sets_approve() {
-    let fx = Fixture::new();
+    let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let e = fx.engine(&rr);
@@ -148,7 +147,7 @@ fn approve_on_a_normal_diff_is_auto_merge_and_apply_sets_approve() {
 #[test]
 fn verdict_not_on_the_last_line_counts_as_changes() {
     for reply in ["VERDICT: APPROVE\nbut also this", "```\nVERDICT: APPROVE\n```", "verdict: approve", "looks good"] {
-        let fx = Fixture::new();
+        let fx = committing_fixture();
         build_and_pass_checks(&fx, &["a.txt"]);
         let rr = reviewer(reply);
         let out = fx.engine(&rr).review_stage().expect("review");
@@ -159,7 +158,7 @@ fn verdict_not_on_the_last_line_counts_as_changes() {
 
 #[test]
 fn changes_verdict_starts_a_fix_round_with_the_review_text() {
-    let fx = Fixture::new();
+    let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("1. [blocker] src/a.rs:3 bad\nVERDICT: CHANGES");
     let e = fx.engine(&rr);
@@ -174,7 +173,7 @@ fn changes_verdict_starts_a_fix_round_with_the_review_text() {
 
 #[test]
 fn risky_diff_with_approve_needs_a_human_naming_the_path() {
-    let fx = Fixture::new();
+    let fx = committing_fixture();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let e = fx.engine(&rr);
@@ -189,7 +188,7 @@ fn risky_diff_with_approve_needs_a_human_naming_the_path() {
 
 #[test]
 fn final_check_failure_blocks_auto_merge() {
-    let mut fx = Fixture::new();
+    let mut fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     // The checks pass during review, then the mapped command starts failing.
@@ -208,7 +207,7 @@ fn code_review_state(fx: &Fixture) -> factory_core::ReviewState {
 
 #[test]
 fn review_state_is_running_during_the_run_and_pass_after_approve() {
-    let fx = Fixture::new();
+    let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let board = fx.board_path.clone();
     let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -232,7 +231,7 @@ fn review_state_is_running_during_the_run_and_pass_after_approve() {
 #[test]
 fn review_state_is_changes_after_changes_and_after_a_missing_verdict() {
     for reply in ["bad\nVERDICT: CHANGES", "no verdict line here"] {
-        let fx = Fixture::new();
+        let fx = committing_fixture();
         build_and_pass_checks(&fx, &["a.txt"]);
         let rr = reviewer(reply);
         let e = fx.engine(&rr);
@@ -243,7 +242,7 @@ fn review_state_is_changes_after_changes_and_after_a_missing_verdict() {
 
 #[test]
 fn a_fix_round_resets_the_review_state() {
-    let fx = Fixture::new();
+    let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("bad\nVERDICT: CHANGES");
     let e = fx.engine(&rr);

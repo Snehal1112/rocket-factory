@@ -30,6 +30,42 @@ pub fn commit_file(dir: &Path, name: &str, content: &str) -> String {
     repo.commit(Some("HEAD"), &sig, &sig, "test commit", &tree, &refs).expect("commit").to_string()
 }
 
+/// The subject the fake committer gives its commits.
+pub const AUTO_COMMIT_MESSAGE: &str = "feat(test): build step";
+
+/// Commits whatever is staged in `dir`, like a committer agent would. Returns the new sha.
+pub fn commit_index(dir: &Path, message: &str) -> String {
+    let repo = Repository::open(dir).expect("open repo");
+    let mut index = repo.index().expect("index");
+    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let sig = Signature::now("t", "t@example.com").expect("sig");
+    let parent = repo.head().expect("head").peel_to_commit().expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+}
+
+/// Amends HEAD with whatever is staged in `dir` and a new message, like `git commit --amend`.
+pub fn amend_head(dir: &Path, message: &str) -> String {
+    let repo = Repository::open(dir).expect("open repo");
+    let mut index = repo.index().expect("index");
+    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let head = repo.head().expect("head").peel_to_commit().expect("commit");
+    head.amend(Some("HEAD"), None, None, None, Some(message), Some(&tree)).expect("amend").to_string()
+}
+
+/// Writes the committer prompt context into the main checkout, where the engine reads it.
+pub fn write_commit_context(main: &Path) {
+    let path = main.join(".claude/factory/commit-context.md");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    std::fs::write(path, "TEST CONTEXT\n").expect("context");
+}
+
+/// A fixture whose main checkout has the committer context file, so the engine runs the committer.
+pub fn committing_fixture() -> Fixture {
+    let fx = Fixture::new();
+    write_commit_context(&fx.main);
+    fx
+}
+
 pub struct Fixture {
     pub tmp: tempfile::TempDir,
     pub main: PathBuf,
@@ -94,9 +130,20 @@ pub type Effect = Box<dyn Fn(&AgentSpec) -> String + Send + Sync>;
 pub struct ScriptedRunner {
     effects: Mutex<VecDeque<Effect>>,
     calls: Mutex<Vec<AgentSpec>>,
+    /// When true, every `committer` run commits the staged index and does not use up an effect.
+    auto_committer: bool,
 }
 
 impl ScriptedRunner {
+    /// Every spec the runner was called with for one role, in order.
+    pub fn specs_for(&self, role: &str) -> Vec<AgentSpec> {
+        self.calls.lock().expect("calls").iter().filter(|s| s.role == role).cloned().collect()
+    }
+
+    pub fn last_spec_for(&self, role: &str) -> Option<AgentSpec> {
+        self.specs_for(role).pop()
+    }
+
     pub fn last_spec(&self) -> Option<AgentSpec> {
         self.calls.lock().expect("calls").last().cloned()
     }
@@ -105,6 +152,10 @@ impl ScriptedRunner {
 impl AgentRunner for ScriptedRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         self.calls.lock().expect("calls").push(spec.clone());
+        if self.auto_committer && spec.role == "committer" {
+            commit_index(&spec.cwd, AUTO_COMMIT_MESSAGE);
+            return AgentRun { session_id: Some("sess-c".to_string()), ..AgentRun::done("done") };
+        }
         let next = self.effects.lock().expect("effects").pop_front();
         match next {
             Some(effect) => AgentRun { session_id: Some("sess-1".to_string()), ..AgentRun::done(&effect(spec)) },
@@ -114,7 +165,12 @@ impl AgentRunner for ScriptedRunner {
 }
 
 pub fn scripted(effects: Vec<Effect>) -> ScriptedRunner {
-    ScriptedRunner { effects: Mutex::new(effects.into()), calls: Mutex::new(Vec::new()) }
+    ScriptedRunner { effects: Mutex::new(effects.into()), calls: Mutex::new(Vec::new()), auto_committer: false }
+}
+
+/// Like `scripted`, but committer runs are answered by committing the staged index.
+pub fn scripted_auto(effects: Vec<Effect>) -> ScriptedRunner {
+    ScriptedRunner { effects: Mutex::new(effects.into()), calls: Mutex::new(Vec::new()), auto_committer: true }
 }
 
 /// A merge fixture: a repo, a driver and a job `001` at stage `approve` with one reviewed commit.
@@ -220,8 +276,13 @@ impl AgentRunner for RoleRunner {
         });
         let text = if spec.role == "builder" {
             let n = self.counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let sha = commit_file(&spec.cwd, &format!("docs/{}-{n}.txt", spec.job_id), "built\n");
-            format!("done\nHEAD: {sha}")
+            let path = spec.cwd.join(format!("docs/{}-{n}.txt", spec.job_id));
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, "built\n").expect("write");
+            "done".to_string()
+        } else if spec.role == "committer" {
+            commit_index(&spec.cwd, AUTO_COMMIT_MESSAGE);
+            "done".to_string()
         } else {
             self.verdict.clone()
         };
@@ -241,6 +302,7 @@ impl SeriesFixture {
         let tmp = tempfile::tempdir().expect("tempdir");
         let main = tmp.path().join("repo");
         init_repo(&main);
+        write_commit_context(&main);
         let events = main.join(".superpowers/factory/events.jsonl");
         let verdict = verdict.to_string();
         let factory: factory_engine::RunnerFactory = Box::new(move |job_id| {
