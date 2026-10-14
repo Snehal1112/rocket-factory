@@ -125,8 +125,12 @@ fn the_reviewer_prompt_carries_the_kb_line_only_when_set() {
             Some(dir) => {
                 assert!(spec.prompt.contains(&format!("Knowledge base: {dir}")), "{}", spec.prompt);
                 assert!(spec.prompt.contains("README.md"));
+                assert_eq!(spec.add_dirs, vec![std::path::PathBuf::from(dir)]);
             }
-            None => assert!(!spec.prompt.contains("Knowledge base")),
+            None => {
+                assert!(!spec.prompt.contains("Knowledge base"));
+                assert!(spec.add_dirs.is_empty());
+            }
         }
     }
 }

@@ -507,6 +507,7 @@ fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
     e.build_stage().expect("first");
     let first = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(first.contains(KB_PROMPT), "{first}");
+    assert_eq!(runner.last_spec_for("builder").expect("spec").add_dirs, vec![std::path::PathBuf::from("/kb/rocketapi")]);
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
     let job = board.find_mut("001").expect("job");
@@ -516,11 +517,14 @@ fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
     e.build_stage().expect("resume");
     let resume = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(resume.contains(KB_PROMPT), "{resume}");
+    assert_eq!(runner.last_spec_for("builder").expect("spec").add_dirs, vec![std::path::PathBuf::from("/kb/rocketapi")]);
 
     let off = committing_fixture();
     let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     off.engine(&runner).build_stage().expect("first");
-    assert!(!runner.last_spec_for("builder").expect("spec").prompt.contains("Knowledge base"));
+    let spec = runner.last_spec_for("builder").expect("spec");
+    assert!(!spec.prompt.contains("Knowledge base"));
+    assert!(spec.add_dirs.is_empty());
 }
 
 #[test]
@@ -531,9 +535,12 @@ fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
     fx.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(prompt.contains(KB_PROMPT), "{prompt}");
+    assert_eq!(runner.last_spec_for("builder").expect("spec").add_dirs, vec![std::path::PathBuf::from("/kb/rocketapi")]);
 
     let off = two_task_fixture();
     let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     off.engine(&runner).build_stage().expect("build");
-    assert!(!runner.last_spec_for("builder").expect("spec").prompt.contains("Knowledge base"));
+    let spec = runner.last_spec_for("builder").expect("spec");
+    assert!(!spec.prompt.contains("Knowledge base"));
+    assert!(spec.add_dirs.is_empty());
 }

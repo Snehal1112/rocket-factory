@@ -27,6 +27,11 @@ impl Engine<'_> {
         }
     }
 
+    /// The KB folder as an extra readable directory. It sits outside the job worktree.
+    fn kb_dirs(&self) -> Vec<std::path::PathBuf> {
+        self.config.kb_dir().into_iter().collect()
+    }
+
     /// Sets the model, the budget and the stall limit from the config. Every agent spec goes through this.
     pub(crate) fn with_limits(&self, mut spec: AgentSpec, model: &str) -> AgentSpec {
         spec.model = Some(model.to_string());
@@ -55,6 +60,7 @@ impl Engine<'_> {
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.builder_model)
     }
 
@@ -95,6 +101,7 @@ impl Engine<'_> {
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.builder_model)
     }
 
@@ -114,6 +121,7 @@ impl Engine<'_> {
         spec.resume = Some(session.to_string());
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.builder_model)
     }
 }
@@ -140,6 +148,7 @@ impl Engine<'_> {
         );
         let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
         spec.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
+        spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.reviewer_model)
     }
 }

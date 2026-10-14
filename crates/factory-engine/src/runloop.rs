@@ -54,17 +54,6 @@ fn add_job(
     Ok(job)
 }
 
-/// The issue numbers of a series: those named in the feature text plus those in the spec, sorted.
-fn series_issues(feature: &str, spec_text: Option<&str>) -> Vec<u32> {
-    let mut issues = factory_core::parse_issues(feature);
-    if let Some(text) = spec_text {
-        issues.extend(factory_core::parse_issues(text));
-    }
-    issues.sort_unstable();
-    issues.dedup();
-    issues
-}
-
 /// Creates the jobs of a series and returns plan 1's job, which starts at stage build. Every later plan
 /// gets its job now too, parked at stage spec, so the board shows the whole series from the start.
 pub fn create_job(
@@ -100,10 +89,10 @@ pub fn create_job(
         id: series_id.clone(),
     };
     // The spec sits beside the plans. Only plan 1 gets a copy, so later builders are not pointed at it.
+    // Issue numbers come from the feature text only, so a spec that cites an issue never closes it.
     let spec = start.join("spec.md");
     let has_spec = start.is_dir() && spec.is_file();
-    let spec_text = if has_spec { std::fs::read_to_string(&spec).ok() } else { None };
-    let issues = series_issues(feature, spec_text.as_deref());
+    let issues = factory_core::parse_issues(feature);
     let first = add_job(driver, slug, feature, &issues, Some(pos(0)), Stage::Build, model)?;
     if has_spec {
         std::fs::copy(&spec, driver.job_dir(&first).join("spec.md"))?;

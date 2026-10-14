@@ -139,6 +139,18 @@ fn args_omit_strict_mcp_and_tools_by_default() {
     assert!(spec.env.is_empty());
 }
 
+#[test]
+fn args_carry_one_add_dir_flag_per_entry_and_none_by_default() {
+    let mut spec = AgentSpec::new("001", "builder", "/w", "build");
+    assert!(!spec.args(&caps(true, true, true)).iter().any(|a| a == "--add-dir"));
+    spec.add_dirs = vec!["/kb/one".into(), "/kb/two".into()];
+    let args = spec.args(&caps(true, true, true));
+    let at = args.iter().position(|a| a == "--add-dir").expect("--add-dir present");
+    assert_eq!(args[at + 1], "/kb/one");
+    assert_eq!(args.iter().filter(|a| *a == "--add-dir").count(), 2);
+    assert!(args.iter().any(|a| a == "/kb/two"));
+}
+
 fn sample_event() -> AgentEvent {
     AgentEvent {
         kind: EventKind::Tool,

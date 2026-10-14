@@ -45,6 +45,8 @@ pub struct AgentSpec {
     pub strict_mcp: bool,
     /// Value for `--tools`, a comma separated tool list such as `Bash,Read,Skill`.
     pub tools: Option<String>,
+    /// Extra directories the agent may read, one `--add-dir` flag each.
+    pub add_dirs: Vec<PathBuf>,
 }
 
 impl AgentSpec {
@@ -67,6 +69,7 @@ impl AgentSpec {
             env: Vec::new(),
             strict_mcp: false,
             tools: None,
+            add_dirs: Vec::new(),
         }
     }
 
@@ -99,6 +102,9 @@ impl AgentSpec {
         }
         if let Some(t) = &self.tools {
             push("--tools", t);
+        }
+        for dir in &self.add_dirs {
+            push("--add-dir", &dir.to_string_lossy());
         }
         match (&self.agent, &self.agent_prompt) {
             (Some(name), _) if caps.agent => push("--agent", name),
