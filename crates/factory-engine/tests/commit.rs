@@ -28,6 +28,7 @@ fn request(floor: &str) -> CommitRequest<'_> {
         task_title: "Add the thing.",
         goal: "add the thing",
         floor,
+        issues: &[],
     }
 }
 
@@ -429,4 +430,56 @@ fn a_dirty_tree_after_valid_commits_goes_to_the_fallback() {
     assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add the thing", "chore: Add the thing"]);
     assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));
+}
+
+fn request_with<'a>(floor: &'a str, issues: &'a [u32]) -> CommitRequest<'a> {
+    CommitRequest { issues, ..request(floor) }
+}
+
+fn messages(fx: &Fixture, wt: &Worktree, floor: &str) -> Vec<String> {
+    let tip = fx.repo.tip(&wt.branch).expect("tip");
+    fx.repo.commits_above(floor, &tip).expect("commits").into_iter().map(|c| c.message).collect()
+}
+
+#[test]
+fn a_commit_without_the_issue_footer_is_kept_with_a_ruling() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let runner = scripted(vec![effect(|dir| {
+        commit_paths(dir, &["a.txt"], "feat(test): build step");
+        "done".to_string()
+    })]);
+    let out = fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(test): build step"]);
+    assert!(ledger(&fx).contains("missing footer `Relates to: #20`"), "ledger: {}", ledger(&fx));
+}
+
+#[test]
+fn a_commit_with_the_issue_footer_is_accepted_without_a_ruling() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let runner = scripted(vec![effect(|dir| {
+        commit_paths(dir, &["a.txt"], "feat(test): build step\n\nRelates to: #20");
+        "done".to_string()
+    })]);
+    fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
+    assert!(!ledger(&fx).contains("missing footer"), "ledger: {}", ledger(&fx));
+    assert!(runner.last_spec().expect("spec").prompt.contains("Issue footer: Relates to: #20"));
+}
+
+#[test]
+fn the_fallback_commit_carries_the_issue_footer() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let runner = scripted(vec![nothing(), nothing()]);
+    let out = fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    assert_eq!(messages(&fx, &wt, &wt.base), vec!["chore: Add the thing\n\nRelates to: #20"]);
 }

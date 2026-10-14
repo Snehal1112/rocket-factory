@@ -69,7 +69,7 @@ impl Engine<'_> {
         } else {
             (CommitKind::Fix, "address review findings")
         };
-        let head = match self.commit_work(&wt, kind, title, &floor)? {
+        let head = match self.commit_work(&wt, kind, title, &floor, &job.issues)? {
             CommitOutcome::Committed { tip, .. } => tip,
             CommitOutcome::NothingStaged => {
                 let why = if new_work { "builder made no changes" } else { "builder made no changes on resume" };
@@ -120,11 +120,12 @@ impl Engine<'_> {
         kind: CommitKind,
         task_title: &str,
         floor: &str,
+        issues: &[u32],
     ) -> Result<CommitOutcome, EngineError> {
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
         let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
         let (plan_title, goal) = (plan_title(&plan), spec_goal(&spec));
-        let req = CommitRequest { kind, plan_title: &plan_title, task_title, goal: &goal, floor };
+        let req = CommitRequest { kind, plan_title: &plan_title, task_title, goal: &goal, floor, issues };
         self.commit_step(wt, &req)
     }
 
@@ -180,7 +181,7 @@ impl Engine<'_> {
         }
         let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
         let wt = self.job_worktree(job, &cwd, &base, &branch);
-        let new_tip = match self.commit_work(&wt, CommitKind::Task, &task.title, &base)? {
+        let new_tip = match self.commit_work(&wt, CommitKind::Task, &task.title, &base, &job.issues)? {
             CommitOutcome::Committed { tip, .. } => tip,
             CommitOutcome::NothingStaged => return self.park(format!("task {} changed nothing", task.n)),
             CommitOutcome::Park(reason) => return self.park(reason),

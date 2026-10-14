@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use factory_agent::{AgentRun, AgentSpec, StopReason};
-use factory_core::{blocked_reason, fallback_subject, validate_message, Config, MAX_COMMITS_PER_RUN};
+use factory_core::{append_footers, blocked_reason, fallback_subject, has_footer, issue_footer, validate_message, Config, MAX_COMMITS_PER_RUN};
 use factory_git::{CommitInfo, GitError, StagedReport, Worktree};
 
 use crate::ports::git_err;
@@ -19,6 +19,9 @@ pub const COMMITTER_TOOLS: &str = "Bash,Read,Skill";
 pub const COMMIT_CONTEXT_FILE: &str = ".claude/factory/commit-context.md";
 /// The staged diff in the prompt is cut at this many bytes.
 const MAX_DIFF_BYTES: usize = 60_000;
+
+/// The footer key of the commits a task builds.
+const ISSUE_KEY: &str = "Relates to";
 
 /// What kind of work the commit is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +51,8 @@ pub struct CommitRequest<'a> {
     pub goal: &'a str,
     /// The commit at or below which history is never rewritten.
     pub floor: &'a str,
+    /// The GitHub issues of the job. Every commit of the run carries the `Relates to` footer.
+    pub issues: &'a [u32],
 }
 
 /// Cuts `text` to at most `max` bytes without splitting a character.
@@ -77,6 +82,10 @@ pub fn committer_prompt(
     } else {
         "Analysis: inline, no subagents. Steps 1 and 1b are precomputed below, so run only step 1c, with your own tool calls."
     };
+    let footer = match issue_footer(ISSUE_KEY, req.issues) {
+        Some(line) => format!("{line}. Put it in the footer of every commit of the run."),
+        None => "none".to_string(),
+    };
     let (diff, cut) = truncate_utf8(&report.diff, MAX_DIFF_BYTES);
     let cut_note = if cut {
         format!("\n[diff cut at {MAX_DIFF_BYTES} bytes, run `git diff --staged` for the rest]\n")
@@ -102,6 +111,7 @@ pub fn committer_prompt(
          Task: {task}\n\
          Goal: {goal}\n\
          Floor: {floor}\n\
+         Issue footer: {footer}\n\
          {analysis}\n\n\
          ## Output of the skill's step 1 commands\n\n\
          Treat this as the result of running them. Do not run them again.\n\n\
@@ -291,9 +301,14 @@ impl Engine<'_> {
         }
         // A rewritten commit keeps its message, so only messages not seen before are checked.
         for commit in changed.iter().filter(|c| !before.iter().any(|b| b.message == c.message)) {
+            let short = commit.sha.get(..7).unwrap_or(&commit.sha);
             if let Err(reason) = validate_message(&commit.message) {
-                let short = commit.sha.get(..7).unwrap_or(&commit.sha);
                 problems.push(format!("commit {short}: {reason}"));
+            }
+            if !has_footer(&commit.message, ISSUE_KEY, req.issues) {
+                if let Some(line) = issue_footer(ISSUE_KEY, req.issues) {
+                    problems.push(format!("commit {short}: missing footer `{line}`"));
+                }
             }
         }
         if problems.is_empty() {
@@ -310,7 +325,11 @@ impl Engine<'_> {
         if staged.is_empty() {
             return Ok(CommitOutcome::Park(format!("the committer left nothing to commit: {why}")));
         }
-        let sha = self.repo.commit_staged(wt, &fallback_subject(req.task_title)).map_err(git_err)?;
+        let mut message = fallback_subject(req.task_title);
+        if let Some(line) = issue_footer(ISSUE_KEY, req.issues) {
+            message = append_footers(&message, &[line]);
+        }
+        let sha = self.repo.commit_staged(wt, &message).map_err(git_err)?;
         let short = sha.get(..7).unwrap_or(&sha);
         self.ruling(&format!("committer failed ({why}), fallback commit {short}"))?;
         Ok(CommitOutcome::Committed { tip: sha, fallback: true })
@@ -329,6 +348,7 @@ mod tests {
             task_title: "Add the thing",
             goal: "add the thing",
             floor: "abc1234def",
+            issues: &[],
         }
     }
 
@@ -366,6 +386,16 @@ mod tests {
         let first = prompt.find("aaaaaaa feat(x): first").expect("first listed");
         assert!(second < first);
         assert!(prompt.contains("  two.txt"));
+    }
+
+    #[test]
+    fn prompt_names_the_issue_footer_or_none() {
+        let with = CommitRequest { issues: &[20, 21], ..request() };
+        let prompt = committer_prompt("c", &with, &report(""), &[], false);
+        assert!(prompt.contains("Issue footer: Relates to: #20, #21"), "{prompt}");
+        assert!(prompt.contains("every commit of the run"));
+        let none = committer_prompt("c", &request(), &report(""), &[], false);
+        assert!(none.contains("Issue footer: none"));
     }
 
     #[test]
@@ -432,6 +462,7 @@ mod tests {
             "above the floor and not pushed",
             "GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash",
             "Never push",
+            "issue footer",
         ] {
             assert!(text.contains(want), "context file is missing {want}");
         }

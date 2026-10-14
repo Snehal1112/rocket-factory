@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use factory_agent::AgentSpec;
-use factory_core::{extract_message, validate_message, Config, MESSAGE_BEGIN, MESSAGE_END};
+use factory_core::{append_footers, extract_message, issue_footer, validate_message, Config, MESSAGE_BEGIN, MESSAGE_END};
 use factory_git::CommitInfo;
 
 use crate::{Engine, EngineError, COMMITTER_AGENT, COMMITTER_MAX_TURNS};
@@ -38,6 +38,8 @@ pub struct MessageRequest<'a> {
     pub base: &'a str,
     /// The commit that is merged: the reviewed head (merge) or main's tip (sync).
     pub tip: &'a str,
+    /// The GitHub issues of the job, for the footer the driver adds.
+    pub issues: &'a [u32],
 }
 
 /// The message the driver used before the committer existed. It is the fallback.
@@ -46,6 +48,18 @@ pub fn fixed_message(kind: MessageKind, job_id: &str, slug: &str) -> String {
         MessageKind::Merge => format!("chore(factory): merge job {job_id} {slug}"),
         MessageKind::Sync => format!("chore(factory): sync main into job {job_id} {slug}"),
     }
+}
+
+/// The footer lines the driver adds: the issue line (`Fixes` for a merge, `Relates to` for a sync)
+/// and then `Factory-Job`.
+pub fn driver_footers(req: &MessageRequest<'_>) -> Vec<String> {
+    let key = match req.kind {
+        MessageKind::Merge => "Fixes",
+        MessageKind::Sync => "Relates to",
+    };
+    let mut lines: Vec<String> = issue_footer(key, req.issues).into_iter().collect();
+    lines.push(format!("Factory-Job: {}", req.job_id));
+    lines
 }
 
 /// The prompt of one message run. `commits` is the list above `base`, oldest first.
@@ -69,6 +83,7 @@ pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[Commit
         MessageKind::Merge => "Commits on the job branch above the base, newest first",
         MessageKind::Sync => "Commits that main gained since the base, newest first",
     };
+    let footers = driver_footers(req).join(", ");
     format!(
         "{context}\n\n\
          ## This run\n\n\
@@ -77,7 +92,7 @@ pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[Commit
          Title: {title}\n\
          Base: {base}\n\
          Tip: {tip}\n\n\
-         Write the message for {what}. This is a message-only run: there is no floor, no staged change and no issue footer, the driver adds any footer itself. \
+         Write the message for {what}. This is a message-only run: there is no floor, no staged change and no issue footer. The driver appends these footer lines after your message: {footers}. Leave them out of your reply. \
          Do not run git commit, git add or any other git command, and do not change any file. Use the commit skill's style rules, answer its questions with the standing answers, and follow the Conventional Commits style from the context.\n\n\
          ## {list_title}\n\n{listed}\n\
          ## Reply\n\n\
@@ -89,6 +104,7 @@ pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[Commit
         title = req.title,
         base = req.base,
         tip = req.tip,
+        footers = footers,
         begin = MESSAGE_BEGIN,
         end = MESSAGE_END,
     )
@@ -115,7 +131,8 @@ impl Engine<'_> {
     /// retry by resuming the session, then the fixed message. This never parks and never fails
     /// on a message problem, only on a board or git error.
     pub fn message_step(&self, cwd: &Path, req: &MessageRequest<'_>) -> Result<String, EngineError> {
-        let fixed = fixed_message(req.kind, req.job_id, req.slug);
+        let footers = driver_footers(req);
+        let fixed = append_footers(&fixed_message(req.kind, req.job_id, req.slug), &footers);
         let context = match std::fs::read_to_string(self.repo.root().join(crate::COMMIT_CONTEXT_FILE)) {
             Ok(text) => text,
             Err(e) => {
@@ -129,7 +146,7 @@ impl Engine<'_> {
         let run = self.run_agent(message_spec(&self.job_id, &self.config, cwd, &prompt))?;
         let first = pick(&run.result_text);
         let problem = match first {
-            Ok(message) => return Ok(message),
+            Ok(message) => return Ok(append_footers(&message, &footers)),
             Err(problem) => problem,
         };
         let retry = format!(
@@ -140,7 +157,7 @@ impl Engine<'_> {
         spec.resume = run.session_id.clone();
         let run = self.run_agent(spec)?;
         match pick(&run.result_text) {
-            Ok(message) => Ok(message),
+            Ok(message) => Ok(append_footers(&message, &footers)),
             Err(problem) => {
                 self.ruling(&format!("{} message failed twice ({problem}), fixed message used", req.kind.as_str()))?;
                 Ok(fixed)
@@ -169,7 +186,7 @@ mod tests {
 
     #[test]
     fn prompt_says_no_floor_and_no_commit_and_lists_the_commits() {
-        let req = MessageRequest { kind: MessageKind::Merge, job_id: "001", slug: "hello", title: "hello feature", base: "abc1234", tip: "def5678" };
+        let req = MessageRequest { kind: MessageKind::Merge, job_id: "001", slug: "hello", title: "hello feature", base: "abc1234", tip: "def5678", issues: &[] };
         let commits = vec![CommitInfo { sha: "aaaaaaa1111".into(), subject: "feat(x): one".into(), message: "feat(x): one".into(), files: vec!["a.txt".into()] }];
         let prompt = message_prompt("CONTEXT", &req, &commits);
         assert!(prompt.starts_with("CONTEXT"));
@@ -181,8 +198,18 @@ mod tests {
     }
 
     #[test]
+    fn prompt_names_the_footer_lines_the_driver_adds() {
+        let req = MessageRequest { kind: MessageKind::Merge, job_id: "001", slug: "hello", title: "t", base: "a", tip: "b", issues: &[20] };
+        let prompt = message_prompt("c", &req, &[]);
+        assert!(prompt.contains("Fixes: #20, Factory-Job: 001"), "{prompt}");
+        assert!(!prompt.contains("the driver adds any footer itself"));
+        let sync = MessageRequest { kind: MessageKind::Sync, issues: &[], ..req };
+        assert!(message_prompt("c", &sync, &[]).contains("footer lines after your message: Factory-Job: 001."));
+    }
+
+    #[test]
     fn prompt_with_no_commits_says_none() {
-        let req = MessageRequest { kind: MessageKind::Sync, job_id: "001", slug: "hello", title: "t", base: "a", tip: "b" };
+        let req = MessageRequest { kind: MessageKind::Sync, job_id: "001", slug: "hello", title: "t", base: "a", tip: "b", issues: &[] };
         assert!(message_prompt("c", &req, &[]).contains("(none)"));
     }
 

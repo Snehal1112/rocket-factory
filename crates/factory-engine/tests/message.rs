@@ -114,3 +114,60 @@ fn main_moving_during_the_message_run_syncs_before_merging() {
     merged(&fx);
     assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
 }
+
+fn with_issues(fx: &common::MergeFixture, issues: Vec<u32>) {
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.issues = issues;
+            Ok(())
+        })
+        .expect("issues");
+}
+
+#[test]
+fn merge_message_ends_with_the_fixes_and_job_footers() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply(GOOD)])), true);
+    with_issues(&fx, vec![20]);
+    let sha = merged(&fx);
+    assert!(subject(&fx, &sha).ends_with("Body.\n\nFixes: #20\nFactory-Job: 001"), "{}", subject(&fx, &sha));
+    assert!(fx.runner.specs_for("message")[0].prompt.contains("Fixes: #20, Factory-Job: 001"));
+}
+
+#[test]
+fn the_fixed_merge_message_gets_the_footers_too() {
+    let fx = approved_job_with(Arc::new(scripted(vec![])), true);
+    with_issues(&fx, vec![20]);
+    let sha = merged(&fx);
+    assert_eq!(subject(&fx, &sha), "chore(factory): merge job 001 hello\n\nFixes: #20\nFactory-Job: 001");
+}
+
+#[test]
+fn a_job_without_issues_gets_only_the_job_footer() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply(GOOD)])), true);
+    let sha = merged(&fx);
+    assert!(subject(&fx, &sha).ends_with("Body.\n\nFactory-Job: 001"), "{}", subject(&fx, &sha));
+}
+
+#[test]
+fn a_reply_that_has_the_footer_gets_no_duplicate() {
+    const WITH: &str = "---BEGIN MESSAGE---\nfeat(hello): add the hello docs\n\nFixes: #20\n---END MESSAGE---";
+    let fx = approved_job_with(Arc::new(scripted(vec![reply(WITH)])), true);
+    with_issues(&fx, vec![20]);
+    let sha = merged(&fx);
+    assert_eq!(subject(&fx, &sha).matches("Fixes: #20").count(), 1);
+    assert!(subject(&fx, &sha).ends_with("Fixes: #20\nFactory-Job: 001"));
+}
+
+#[test]
+fn sync_message_uses_relates_to_then_the_job_footer() {
+    let effects = vec![reply(GOOD), reply("ok\nVERDICT: APPROVE")];
+    let fx = approved_job_with(Arc::new(scripted(effects)), true);
+    with_issues(&fx, vec![20]);
+    common::commit_file(&fx.main, "other.txt", "o");
+    merged(&fx);
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let branch = fx.driver.job(&fx.id).expect("job").branch;
+    let tip = repo.revparse_single(&branch).expect("branch").peel_to_commit().expect("commit");
+    assert!(tip.message().expect("msg").ends_with("Relates to: #20\nFactory-Job: 001"), "{}", tip.message().expect("msg"));
+}

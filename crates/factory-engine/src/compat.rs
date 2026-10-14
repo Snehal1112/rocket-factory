@@ -162,6 +162,7 @@ impl Driver {
                 title: &job.feature,
                 base: &base,
                 tip: &tip,
+                issues: &job.issues,
             })
         })
     }
