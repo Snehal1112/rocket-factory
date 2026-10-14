@@ -13,6 +13,7 @@ mod specs;
 mod clock;
 mod commit;
 mod compat;
+mod kb;
 mod merge;
 mod message;
 mod store;
@@ -34,6 +35,7 @@ pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
     COMMIT_CONTEXT_FILE,
 };
+pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use compat::{Driver, RunnerFactory, LEASE_TTL_SECS};
 pub use message::{fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS};
 pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};

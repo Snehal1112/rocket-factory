@@ -1,0 +1,54 @@
+mod common;
+use common::{commit_files, Fixture};
+
+fn print(fx: &Fixture) -> String {
+    fx.repo().checkout_fingerprint().expect("fingerprint")
+}
+
+#[test]
+fn an_unchanged_checkout_has_a_stable_fingerprint() {
+    let fx = Fixture::new();
+    assert_eq!(print(&fx), print(&fx));
+}
+
+#[test]
+fn a_new_untracked_file_changes_it() {
+    let fx = Fixture::new();
+    let before = print(&fx);
+    std::fs::write(fx.path.join("new.txt"), "x").expect("write");
+    assert_ne!(before, print(&fx));
+}
+
+#[test]
+fn editing_a_tracked_file_changes_it() {
+    let fx = Fixture::new();
+    let before = print(&fx);
+    std::fs::write(fx.path.join("base.txt"), "edited\n").expect("write");
+    assert_ne!(before, print(&fx));
+}
+
+#[test]
+fn editing_an_already_dirty_file_changes_it() {
+    let fx = Fixture::new();
+    std::fs::write(fx.path.join("base.txt"), "first edit\n").expect("write");
+    let before = print(&fx);
+    std::fs::write(fx.path.join("base.txt"), "second edit\n").expect("write");
+    assert_ne!(before, print(&fx));
+}
+
+#[test]
+fn an_ignored_file_does_not_change_it() {
+    let fx = Fixture::new();
+    commit_files(&fx.git(), &[(".gitignore", "ignored.txt\n")], "ignore");
+    let before = print(&fx);
+    std::fs::write(fx.path.join("ignored.txt"), "x").expect("write");
+    assert_eq!(before, print(&fx));
+}
+
+#[test]
+fn a_new_commit_changes_it() {
+    let fx = Fixture::new();
+    let before = print(&fx);
+    commit_files(&fx.git(), &[("more.txt", "m")], "more");
+    assert_ne!(before, print(&fx));
+}

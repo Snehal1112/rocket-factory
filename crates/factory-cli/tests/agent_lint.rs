@@ -87,7 +87,7 @@ fn check_description(fm: &[(String, String)], label: &str) -> TestResult {
 }
 
 #[test]
-fn only_the_three_factory_agents_remain() -> TestResult {
+fn only_the_known_factory_agents_remain() -> TestResult {
     let dir = repo_root()?.join(".claude").join("agents");
     let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
     let mut names: Vec<String> = Vec::new();
@@ -102,6 +102,7 @@ fn only_the_three_factory_agents_remain() -> TestResult {
         "factory-builder.md".to_string(),
         "factory-code-reviewer.md".to_string(),
         "factory-committer.md".to_string(),
+        "factory-kb-refresher.md".to_string(),
     ];
     if names == want {
         Ok(())
@@ -285,6 +286,33 @@ fn committer_body_pins_the_rules() -> TestResult {
         ],
     )?;
     forbid_all(&text, "committer", &["SendMessage", "--force-with-lease"])
+}
+
+#[test]
+fn kb_refresher_frontmatter_is_headless() -> TestResult {
+    let text = read(".claude/agents/factory-kb-refresher.md")?;
+    let fm = frontmatter(&text)?;
+    if fm_get(&fm, "name") != Some("factory-kb-refresher") {
+        return Err("kb refresher name is wrong".to_string());
+    }
+    for banned in ["isolation", "model", "tools"] {
+        if fm_get(&fm, banned).is_some() {
+            return Err(format!("kb refresher frontmatter must not set {banned}"));
+        }
+    }
+    check_description(&fm, "kb refresher")?;
+    check_max_turns(&fm, "kb refresher")
+}
+
+#[test]
+fn kb_refresher_body_pins_the_rules() -> TestResult {
+    let text = read(".claude/agents/factory-kb-refresher.md")?;
+    require_all(
+        &text,
+        "kb refresher",
+        &["kb-refresh", "Workflow", "only files under the KB path", "BLOCKED:", "No relevant changes"],
+    )?;
+    forbid_all(&text, "kb refresher", &["SendMessage", "--force-with-lease"])
 }
 
 const COMMAND: &str = ".claude/commands/factory.md";
