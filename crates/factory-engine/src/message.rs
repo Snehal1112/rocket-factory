@@ -215,9 +215,7 @@ mod tests {
 
     #[test]
     fn spec_is_read_only_and_capped_per_run() {
-        let mut config = Config::default();
-        config.commit_model = "opus".into();
-        config.commit_budget_weighted = 777;
+        let config = Config { commit_model: "opus".into(), commit_budget_weighted: 777, ..Config::default() };
         let spec = message_spec("001", &config, Path::new("/wt"), "p");
         assert_eq!(spec.role, "message");
         assert_eq!(spec.agent.as_deref(), Some("factory-committer"));

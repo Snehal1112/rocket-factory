@@ -123,14 +123,8 @@ fn run_one(worktree: &Path, command: &str, timeout: Duration) -> CheckResult {
             }
         }
     };
-    let stdout = match out_thread.join() {
-        Ok(s) => s,
-        Err(_) => String::new(),
-    };
-    let stderr = match err_thread.join() {
-        Ok(s) => s,
-        Err(_) => String::new(),
-    };
+    let stdout: String = out_thread.join().unwrap_or_default();
+    let stderr: String = err_thread.join().unwrap_or_default();
     // Stderr goes last because compilers print their errors there.
     let text = format!("{stdout}{stderr}");
     match status {

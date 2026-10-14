@@ -95,10 +95,12 @@ impl Fixture {
         let mut board = Board::default();
         board.jobs.push(Job::new("001", "2026-10-13-001-demo", "demo", "2026-10-13", "demo feature", 0.0));
         board.save(&board_path).expect("save board");
-        let mut config = Config::default();
-        config.fix_rounds = 2;
-        config.diff_cap_lines = 4000;
-        config.checks = vec![CheckRule { paths: vec!["**".into()], commands: vec!["true".into()] }];
+        let config = Config {
+            fix_rounds: 2,
+            diff_cap_lines: 4000,
+            checks: vec![CheckRule { paths: vec!["**".into()], commands: vec!["true".into()] }],
+            ..Config::default()
+        };
         let repo = Repo::open(&main).expect("open");
         let events = EventSink::new(job_dir.join("events.jsonl"), "001");
         Self { tmp, main, board_path, job_dir, plan_file, repo, config, events }

@@ -49,7 +49,7 @@ impl ClaudeRunner {
         AgentEvent {
             kind,
             agent_id: spec.agent_id(),
-            agent_type: spec.agent.clone().map_or_else(|| spec.role.clone(), |a| a),
+            agent_type: spec.agent.clone().unwrap_or_else(|| spec.role.clone()),
             tool_name: None,
             tool_target: None,
             cwd: Some(spec.cwd.display().to_string()),

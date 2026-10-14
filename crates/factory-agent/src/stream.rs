@@ -105,7 +105,7 @@ impl StreamState {
 
     fn on_result(&mut self, value: &Value, out: &mut Vec<StreamEvent>) {
         let text = value.get("result").and_then(Value::as_str).map_or(String::new(), str::to_string);
-        let is_error = value.get("is_error").and_then(Value::as_bool).map_or(false, |b| b);
+        let is_error = value.get("is_error").and_then(Value::as_bool).unwrap_or(false);
         let subtype = value.get("subtype").and_then(Value::as_str).map_or(String::new(), str::to_string);
         self.result_usage = value.get("usage").map(Usage::from_value);
         self.result_text = Some(text.clone());

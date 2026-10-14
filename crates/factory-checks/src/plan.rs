@@ -94,15 +94,14 @@ mod tests {
     use factory_core::{CheckRule, Config};
 
     fn cfg(rules: Vec<(&[&str], &[&str])>) -> Config {
-        let mut c = Config::default();
-        c.checks = rules
+        let checks = rules
             .into_iter()
             .map(|(p, cmds)| CheckRule {
                 paths: p.iter().map(|s| s.to_string()).collect(),
                 commands: cmds.iter().map(|s| s.to_string()).collect(),
             })
             .collect();
-        c
+        Config { checks, ..Config::default() }
     }
 
     fn paths(p: &[&str]) -> Vec<String> {

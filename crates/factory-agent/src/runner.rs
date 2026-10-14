@@ -40,6 +40,6 @@ impl AgentRunner for FakeRunner {
             Ok(mut g) => g.pop_front(),
             Err(p) => p.into_inner().pop_front(),
         };
-        next.map_or_else(|| AgentRun::failed("fake script exhausted"), |r| r)
+        next.unwrap_or_else(|| AgentRun::failed("fake script exhausted"))
     }
 }

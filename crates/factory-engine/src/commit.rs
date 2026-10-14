@@ -432,10 +432,12 @@ mod tests {
 
     #[test]
     fn spec_is_trimmed_gated_and_capped_per_run() {
-        let mut config = Config::default();
-        config.commit_model = "opus".to_string();
-        config.commit_budget_weighted = 12_345;
-        config.stall_minutes = 7;
+        let config = Config {
+            commit_model: "opus".to_string(),
+            commit_budget_weighted: 12_345,
+            stall_minutes: 7,
+            ..Config::default()
+        };
         let spec = committer_spec("001", &config, Path::new("/wt"), "the prompt");
         assert_eq!(spec.role, "committer");
         assert_eq!(spec.agent.as_deref(), Some("factory-committer"));
