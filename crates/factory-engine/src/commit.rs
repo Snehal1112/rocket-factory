@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use factory_agent::{AgentRun, AgentSpec, StopReason};
 use factory_core::{blocked_reason, fallback_subject, validate_message, Config, MAX_COMMITS_PER_RUN};
-use factory_git::{CommitInfo, StagedReport, Worktree};
+use factory_git::{CommitInfo, GitError, StagedReport, Worktree};
 
 use crate::ports::git_err;
 use crate::{Engine, EngineError};
@@ -75,7 +75,7 @@ pub fn committer_prompt(
     let analysis = if subagents {
         "Analysis: through the skill's subagents."
     } else {
-        "Analysis: inline, no subagents. Run the skill's steps 1, 1b and 1c with your own tool calls."
+        "Analysis: inline, no subagents. Steps 1 and 1b are precomputed below, so run only step 1c, with your own tool calls."
     };
     let (diff, cut) = truncate_utf8(&report.diff, MAX_DIFF_BYTES);
     let cut_note = if cut {
@@ -183,6 +183,17 @@ fn run_note(run: &AgentRun) -> String {
     String::new()
 }
 
+/// The text of the retry run. Without a session to resume it carries the whole prompt.
+fn retry_text(prompt: &str, retry: &str, has_session: bool) -> String {
+    if has_session {
+        retry.to_string()
+    } else {
+        format!(
+            "{prompt}\n\n(The analysis above was computed before the first run. Check git status and git log for the current state.)\n\n{retry}"
+        )
+    }
+}
+
 fn retry_prompt(findings: &str) -> String {
     format!(
         "The previous committer run did not leave the worktree in the expected state.\n\
@@ -203,7 +214,7 @@ impl Engine<'_> {
         }
         let tip = self.repo.tip(&wt.branch).map_err(git_err)?;
         let above = self.repo.commits_above(req.floor, &tip).map_err(git_err)?;
-        let before: Vec<String> = above.iter().map(|c| c.sha.clone()).collect();
+        let before = above.clone();
         let context = match std::fs::read_to_string(self.repo.root().join(COMMIT_CONTEXT_FILE)) {
             Ok(text) => text,
             Err(e) => return self.fallback_commit(wt, req, &format!("commit context unreadable: {e}")),
@@ -215,8 +226,7 @@ impl Engine<'_> {
         let mut check = self.verify_commit_run(wt, req, &before, &run)?;
         if let Some(findings) = check.findings() {
             let retry = retry_prompt(&findings);
-            // Without a session to resume, the retry has to carry the whole prompt.
-            let text = if run.session_id.is_some() { retry } else { format!("{prompt}\n\n{retry}") };
+            let text = retry_text(&prompt, &retry, run.session_id.is_some());
             let mut spec = committer_spec(&self.job_id, &self.config, &wt.path, &text);
             spec.resume = run.session_id.clone();
             run = self.run_agent(spec)?;
@@ -242,16 +252,23 @@ impl Engine<'_> {
         &self,
         wt: &Worktree,
         req: &CommitRequest<'_>,
-        before: &[String],
+        before: &[CommitInfo],
         run: &AgentRun,
     ) -> Result<Check, EngineError> {
-        let tip = self.repo.tip(&wt.branch).map_err(git_err)?;
+        if !self.repo.head_is_on_branch(wt).map_err(git_err)? {
+            return Ok(Check::Park("committer moved HEAD off the job branch".to_string()));
+        }
+        let tip = match self.repo.tip(&wt.branch) {
+            Ok(tip) => tip,
+            Err(GitError::NotFound(_)) => return Ok(Check::Park("the job branch is gone".to_string())),
+            Err(e) => return Err(git_err(e)),
+        };
         if !self.repo.is_ancestor(req.floor, &tip).map_err(git_err)? {
             return Ok(Check::Park("committer rewrote history at or below the floor".to_string()));
         }
         let dirty = !self.repo.worktree_is_clean(wt).map_err(git_err)?;
         let now = self.repo.commits_above(req.floor, &tip).map_err(git_err)?;
-        let changed: Vec<&CommitInfo> = now.iter().filter(|c| !before.contains(&c.sha)).collect();
+        let changed: Vec<&CommitInfo> = now.iter().filter(|c| !before.iter().any(|b| b.sha == c.sha)).collect();
         if dirty || changed.is_empty() {
             let mut notes = Vec::new();
             let note = run_note(run);
@@ -267,10 +284,13 @@ impl Engine<'_> {
             return Ok(Check::RunFault(notes.join("; ")));
         }
         let mut problems = Vec::new();
-        if changed.len() > MAX_COMMITS_PER_RUN {
-            problems.push(format!("{} commits were made, the limit is {MAX_COMMITS_PER_RUN}", changed.len()));
+        // A rebase rewrites every later commit, so only the net growth counts as new commits.
+        let net = now.len().saturating_sub(before.len());
+        if net > MAX_COMMITS_PER_RUN {
+            problems.push(format!("{net} commits were made, the limit is {MAX_COMMITS_PER_RUN}"));
         }
-        for commit in &changed {
+        // A rewritten commit keeps its message, so only messages not seen before are checked.
+        for commit in changed.iter().filter(|c| !before.iter().any(|b| b.message == c.message)) {
             if let Err(reason) = validate_message(&commit.message) {
                 let short = commit.sha.get(..7).unwrap_or(&commit.sha);
                 problems.push(format!("commit {short}: {reason}"));
@@ -355,6 +375,14 @@ mod tests {
         assert!(off.contains("inline, no subagents"));
         assert!(!on.contains("inline, no subagents"));
         assert!(on.contains("through the skill's subagents"));
+    }
+
+    #[test]
+    fn retry_text_carries_the_prompt_only_without_a_session() {
+        assert_eq!(retry_text("PROMPT", "RETRY", true), "RETRY");
+        let text = retry_text("PROMPT", "RETRY", false);
+        assert!(text.starts_with("PROMPT\n\n(The analysis above was computed before the first run."));
+        assert!(text.ends_with("\n\nRETRY"));
     }
 
     #[test]

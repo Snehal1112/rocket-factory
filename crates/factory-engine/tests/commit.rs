@@ -6,7 +6,7 @@ use common::*;
 use factory_agent::AgentSpec;
 use factory_engine::{CommitKind, CommitOutcome, CommitRequest, COMMIT_CONTEXT_FILE};
 use factory_git::{JobRef, Worktree};
-use git2::{Repository, Signature};
+use git2::{Repository, ResetType, Signature};
 
 const GOOD: &str = "feat(x): add the thing\n\nThe thing was missing.";
 
@@ -60,6 +60,27 @@ fn amend_with(dir: &Path, paths: &[&str], message: &str) -> String {
     let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
     let head = repo.head().expect("head").peel_to_commit().expect("commit");
     head.amend(Some("HEAD"), None, None, None, Some(message), Some(&tree)).expect("amend").to_string()
+}
+
+/// Like `commit_paths`, but with a fixed commit time so the sha differs from an earlier twin.
+fn commit_paths_at(dir: &Path, paths: &[&str], message: &str, secs: i64) -> String {
+    let repo = Repository::open(dir).expect("open");
+    let mut index = repo.index().expect("index");
+    for p in paths {
+        index.add_path(Path::new(p)).expect("add");
+    }
+    index.write().expect("write index");
+    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let sig = Signature::new("t", "t@example.com", &git2::Time::new(secs, 0)).expect("sig");
+    let parent = repo.head().expect("head").peel_to_commit().expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+}
+
+/// Moves the branch and the index to `rev`, keeping the files in the work tree.
+fn reset_mixed(dir: &Path, rev: &str) {
+    let repo = Repository::open(dir).expect("open");
+    let obj = repo.revparse_single(rev).expect("rev");
+    repo.reset(&obj, ResetType::Mixed, None).expect("reset");
 }
 
 fn effect(f: impl Fn(&Path) -> String + Send + Sync + 'static) -> Effect {
@@ -291,4 +312,121 @@ fn a_valid_commit_with_a_clean_tree_is_accepted_even_if_the_run_failed() {
     })]);
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+}
+
+#[test]
+fn a_rewritten_chain_of_earlier_commits_is_not_counted_as_new_commits() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    let names = ["c1.txt", "c2.txt", "c3.txt", "c4.txt"];
+    for name in names {
+        write_change(&wt, name);
+        commit_paths(&wt.path, &[name], &format!("feat(x): add {name}"));
+    }
+    write_change(&wt, "e.txt");
+    let base = wt.base.clone();
+    let runner = scripted(vec![effect(move |dir| {
+        reset_mixed(dir, &base);
+        for (i, name) in ["c1.txt", "c2.txt", "c3.txt", "c4.txt"].iter().enumerate() {
+            commit_paths_at(dir, &[name], &format!("feat(x): add {name}"), 1_900_000_000 + i as i64);
+        }
+        commit_paths(dir, &["e.txt"], "feat(x): add e.txt");
+        "done".to_string()
+    })]);
+    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    assert_eq!(subjects(&fx, &wt, &wt.base).len(), 5);
+    let log = ledger(&fx);
+    assert!(!log.contains("commits were made"), "ledger: {log}");
+    assert!(!log.contains("commit message check failed"), "ledger: {log}");
+}
+
+#[test]
+fn detaching_head_parks_without_a_retry() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let runner = scripted(vec![effect(|dir| {
+        let repo = Repository::open(dir).expect("open");
+        let oid = repo.head().expect("head").peel_to_commit().expect("commit").id();
+        repo.set_head_detached(oid).expect("detach");
+        "done".to_string()
+    })]);
+    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
+    match out {
+        CommitOutcome::Park(reason) => assert!(reason.contains("job branch"), "{reason}"),
+        other => panic!("unexpected outcome {other:?}"),
+    }
+    let spec = runner.last_spec().expect("spec");
+    assert!(spec.resume.is_none(), "unexpected resume: {:?}", spec.resume);
+    assert!(!spec.prompt.contains("Findings:"), "unexpected retry prompt: {}", spec.prompt);
+}
+
+#[test]
+fn a_floor_rewrite_on_the_retry_run_parks() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let floor = commit_paths(&wt.path, &["a.txt"], GOOD);
+    write_change(&wt, "b.txt");
+    let runner = scripted(vec![
+        nothing(),
+        effect(|dir| {
+            amend_with(dir, &["b.txt"], GOOD);
+            "done".to_string()
+        }),
+    ]);
+    let out = fx.engine(&runner).commit_step(&wt, &request(&floor)).expect("step");
+    match out {
+        CommitOutcome::Park(reason) => assert!(reason.contains("at or below the floor"), "{reason}"),
+        other => panic!("unexpected outcome {other:?}"),
+    }
+    assert_eq!(runner.last_spec().expect("spec").resume.as_deref(), Some("sess-1"));
+}
+
+#[test]
+fn a_message_fault_fixed_by_the_retry_leaves_no_ruling() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let runner = scripted(vec![
+        effect(|dir| {
+            commit_paths(dir, &["a.txt"], "Added the thing.");
+            "done".to_string()
+        }),
+        effect(|dir| {
+            amend_with(dir, &["a.txt"], GOOD);
+            "done".to_string()
+        }),
+    ]);
+    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add the thing"]);
+    assert!(!ledger(&fx).contains("commit message check failed"), "ledger: {}", ledger(&fx));
+}
+
+#[test]
+fn a_dirty_tree_after_valid_commits_goes_to_the_fallback() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    write_change(&wt, "b.txt");
+    let runner = scripted(vec![
+        effect(|dir| {
+            // Keep b.txt out of the commit, so it stays in the tree.
+            reset_mixed(dir, "HEAD");
+            commit_paths(dir, &["a.txt"], GOOD);
+            "done".to_string()
+        }),
+        nothing(),
+    ]);
+    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add the thing", "chore: Add the thing"]);
+    assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));
 }
