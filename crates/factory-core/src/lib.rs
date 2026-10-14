@@ -13,7 +13,9 @@ pub mod verdict;
 
 pub use board::{Board, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry};
 pub use budget::{budget_state, weighted_tokens, BudgetState};
-pub use commitmsg::{blocked_reason, fallback_subject, validate_message, MAX_COMMITS_PER_RUN, MAX_SUBJECT_CHARS};
+pub use commitmsg::{
+    blocked_reason, extract_message, fallback_subject, validate_message, MAX_COMMITS_PER_RUN, MAX_SUBJECT_CHARS, MESSAGE_BEGIN, MESSAGE_END,
+};
 pub use config::{CheckRule, Config};
 pub use error::CoreError;
 pub use fsutil::write_atomic;

@@ -279,6 +279,7 @@ fn committer_body_pins_the_rules() -> TestResult {
             "git rebase --abort",
             "HARNESS_GATE",
             "BLOCKED:",
+            "message-only",
             "---BEGIN MESSAGE---",
             "---END MESSAGE---",
         ],

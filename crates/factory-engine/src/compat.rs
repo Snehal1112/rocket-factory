@@ -144,6 +144,27 @@ impl Driver {
         f(&engine)
     }
 
+    /// Asks the committer for the message of the merge (`Merge`) or the sync (`Sync`) commit of a job.
+    /// Always returns a valid message, falling back to the fixed text.
+    pub fn commit_message(&self, id: &str, kind: crate::MessageKind) -> Result<String, EngineError> {
+        let job = self.job(id)?;
+        let base = job.base.clone().unwrap_or_default();
+        let tip = match kind {
+            crate::MessageKind::Merge => job.head.clone().unwrap_or_default(),
+            crate::MessageKind::Sync => self.repo.tip("main")?,
+        };
+        let cwd = job.worktree.as_ref().map(PathBuf::from).unwrap_or_else(|| self.root.clone());
+        self.with_engine(id, |e| {
+            e.message_step(&cwd, &crate::MessageRequest {
+                kind,
+                job_id: &job.id,
+                slug: &job.slug,
+                title: &job.feature,
+                base: &base,
+                tip: &tip,
+            })
+        })
+    }
     pub fn build(&self, id: &str) -> Result<StageOutcome, EngineError> {
         self.with_engine(id, |e| e.build_stage())
     }

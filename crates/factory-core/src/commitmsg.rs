@@ -76,6 +76,23 @@ pub fn blocked_reason(reply: &str) -> Option<String> {
     first.strip_prefix("BLOCKED:").map(|reason| reason.trim().to_string())
 }
 
+pub const MESSAGE_BEGIN: &str = "---BEGIN MESSAGE---";
+pub const MESSAGE_END: &str = "---END MESSAGE---";
+
+/// The text between the first begin marker and the first end marker after it, trimmed.
+/// `None` when a marker is missing or the text is empty.
+pub fn extract_message(reply: &str) -> Option<String> {
+    let start = reply.find(MESSAGE_BEGIN)? + MESSAGE_BEGIN.len();
+    let rest = &reply[start..];
+    let end = rest.find(MESSAGE_END)?;
+    let text = rest[..end].trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +181,18 @@ mod tests {
         assert_eq!(blocked_reason("  BLOCKED:   spaced  "), Some("spaced".to_string()));
         assert_eq!(blocked_reason("abc1234 feat: x\nBLOCKED: later line"), None);
         assert_eq!(blocked_reason(""), None);
+    }
+
+    #[test]
+    fn extract_message_takes_the_first_marker_pair() {
+        let reply = "noise\n---BEGIN MESSAGE---\nfeat(x): add y\n\nbody line\n---END MESSAGE---\n---BEGIN MESSAGE---\nother\n---END MESSAGE---";
+        assert_eq!(extract_message(reply).as_deref(), Some("feat(x): add y\n\nbody line"));
+    }
+
+    #[test]
+    fn extract_message_needs_both_markers_and_text() {
+        assert_eq!(extract_message("feat(x): add y"), None);
+        assert_eq!(extract_message("---BEGIN MESSAGE---\nfeat(x): y"), None);
+        assert_eq!(extract_message("---BEGIN MESSAGE---\n  \n---END MESSAGE---"), None);
     }
 }
