@@ -280,7 +280,7 @@ mod tests {
         assert!(cmds("crates/rocket-http/src/lib.rs").contains(&"cargo test -j4 -p {crate}".to_string()));
         assert!(cmds("src/App.tsx").contains(&"yarn tsc --noEmit".to_string()));
         assert!(cmds("src/App.tsx").contains(&"yarn check".to_string()));
-        assert!(cmds("src/App.tsx").contains(&"yarn test".to_string()));
+        assert!(cmds("src/App.tsx").contains(&"yarn test --run --maxWorkers=50%".to_string()));
         assert!(cmds("tools/factory/crates/factory-core/src/lib.rs")
             .contains(&"cargo check -j4 --manifest-path tools/factory/Cargo.toml".to_string()));
         assert!(cmds("tools/factory-server/src/main.rs")
