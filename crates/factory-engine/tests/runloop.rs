@@ -363,3 +363,27 @@ fn a_spec_without_plans_is_an_error_and_creates_no_job() {
     assert!(result.is_err(), "a spec with no plans must not be ignored");
     assert!(fx.driver.store().load().expect("board").jobs.is_empty());
 }
+
+#[test]
+fn a_subheading_or_a_code_comment_does_not_cut_a_section_short() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let folder = a.parent().expect("plans folder").to_path_buf();
+    let spec = "# Spec: Demo\n\n## Goal\n\nShip it.\n\n### Why\n\nBuild the demo so that a user can finish the task in one step.\n\n\
+                ## Acceptance criteria\n\n```bash\n# run the suite\ncargo test\n```\n\n- It is done.\n";
+    std::fs::write(folder.join("spec.md"), spec).expect("spec");
+    create_job(&fx.driver, "deep", "f", Some(&folder), None).expect("sub-headings and code comments stay in the section");
+}
+
+#[test]
+fn only_an_exact_level_two_heading_names_a_section() {
+    let body = "Build the demo so that a user can finish the task in one step.";
+    for heading in ["### Goal", "#### Goal", "## Goal:", "## Goals", "##Goal"] {
+        let fx = common::SeriesFixture::new("x");
+        let a = fx.plan_file("plan-01-a.md", 1, "none");
+        let folder = a.parent().expect("plans folder").to_path_buf();
+        let spec = format!("# Spec: Demo\n\n{heading}\n\n{body}\n\n## Acceptance criteria\n\n- ok\n");
+        std::fs::write(folder.join("spec.md"), spec).expect("spec");
+        assert!(create_job(&fx.driver, "bad", "f", Some(&folder), None).is_err(), "{heading}");
+    }
+}

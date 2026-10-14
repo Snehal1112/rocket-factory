@@ -54,12 +54,43 @@ fn add_job(
     Ok(job)
 }
 
-/// The text of a section: the lines under `## <title>` up to the next heading. None when there is no such heading.
+/// The number of leading `#` of a heading line (`## Goal` is 2), or 0 for any other line.
+fn heading_level(line: &str) -> usize {
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+    if hashes > 0 && line[hashes..].starts_with(' ') {
+        hashes
+    } else {
+        0
+    }
+}
+
+/// The text of a section: the lines under the `## <title>` line up to the next heading of level 1 or 2.
+/// Deeper headings and lines inside fenced code belong to the section. None when there is no such heading.
 fn section_body(spec: &str, title: &str) -> Option<String> {
-    let mut lines = spec.lines();
-    lines.find(|l| l.trim_start_matches('#').trim().eq_ignore_ascii_case(title) && l.starts_with("##"))?;
-    let body: Vec<&str> = lines.take_while(|l| !l.starts_with('#')).collect();
-    Some(body.join("\n"))
+    let mut in_fence = false;
+    let mut in_section = false;
+    let mut found = false;
+    let mut body: Vec<&str> = Vec::new();
+    for line in spec.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            if in_section {
+                body.push(line);
+            }
+            continue;
+        }
+        let level = if in_fence { 0 } else { heading_level(line) };
+        if in_section {
+            if level == 1 || level == 2 {
+                break;
+            }
+            body.push(line);
+        } else if level == 2 && line[2..].trim().eq_ignore_ascii_case(title) {
+            in_section = true;
+            found = true;
+        }
+    }
+    found.then(|| body.join("\n"))
 }
 
 /// The least words a Goal needs. A one-line stub is not a goal.
