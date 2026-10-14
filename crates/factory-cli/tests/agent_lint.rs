@@ -382,6 +382,7 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "ask for approval again",
             "repo-relative",
             "Keep a visible task list",
+            "skip the skill's execution handoff",
             "only when that branch merges",
         ],
     )?;
