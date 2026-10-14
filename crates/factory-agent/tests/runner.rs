@@ -169,3 +169,36 @@ fn env_is_unset_when_the_spec_does_not_set_it() {
     let run = runner(EventSink::null("001")).run(&spec("env\nFACTORY_TEST_ENV", tmp.path()));
     assert_eq!(run.result_text, "<unset>");
 }
+
+fn env_report(var: &str, spec_env: &[(&str, &str)], allowed: bool) -> String {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let mut s = AgentSpec::new("001", "builder", tmp.path(), &format!("env\n{var}"));
+    s.env = spec_env.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect();
+    let run = runner(EventSink::null("001")).with_api_key_allowed(allowed).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Done);
+    run.result_text
+}
+
+#[test]
+fn api_key_never_reaches_the_child_by_default() {
+    let got = env_report("ANTHROPIC_API_KEY", &[("ANTHROPIC_API_KEY", "sk-test")], false);
+    assert_eq!(got, "<unset>");
+}
+
+#[test]
+fn auth_token_never_reaches_the_child_by_default() {
+    let got = env_report("ANTHROPIC_AUTH_TOKEN", &[("ANTHROPIC_AUTH_TOKEN", "tok-test")], false);
+    assert_eq!(got, "<unset>");
+}
+
+#[test]
+fn api_key_reaches_the_child_only_when_allowed_on_purpose() {
+    let got = env_report("ANTHROPIC_API_KEY", &[("ANTHROPIC_API_KEY", "sk-test")], true);
+    assert_eq!(got, "sk-test");
+}
+
+#[test]
+fn other_variables_still_reach_the_child() {
+    let got = env_report("HARNESS_GATE", &[("HARNESS_GATE", "0")], false);
+    assert_eq!(got, "0");
+}

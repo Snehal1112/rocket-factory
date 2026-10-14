@@ -18,6 +18,9 @@ fn run(args: &[&str], stdin: Option<&str>, cwd: &Path) -> Result<Out, Box<dyn st
     let mut child = Command::new("claude")
         .args(args)
         .current_dir(cwd)
+        // Never bill an API account from a probe run.
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("ANTHROPIC_AUTH_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

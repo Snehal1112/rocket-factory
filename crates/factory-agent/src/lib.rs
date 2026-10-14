@@ -8,7 +8,7 @@ pub mod spec;
 pub mod stream;
 pub mod usage;
 
-pub use claude::{AgentError, ClaudeRunner};
+pub use claude::{AgentError, ClaudeRunner, ALLOW_API_KEY_VAR};
 pub use runner::{AgentRunner, FakeRunner};
 pub use events::{AgentEvent, EventKind, EventSink};
 pub use run::{AgentRun, StopReason};

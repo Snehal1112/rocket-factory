@@ -27,12 +27,23 @@ pub enum AgentError {
     Wait(std::io::Error),
 }
 
+/// Variables that make `claude` bill an API account instead of the subscription login.
+const API_BILLING_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+
+/// Set to `1` on purpose to let the agents use the variables above. Off by default.
+pub const ALLOW_API_KEY_VAR: &str = "FACTORY_ALLOW_API_KEY";
+
+fn api_key_allowed_by_env() -> bool {
+    std::env::var(ALLOW_API_KEY_VAR).is_ok_and(|v| v == "1")
+}
+
 /// Runs headless `claude -p` and reads its stream-json output.
 #[derive(Debug)]
 pub struct ClaudeRunner {
     program: OsString,
     caps: Caps,
     sink: EventSink,
+    allow_api_key: bool,
 }
 
 enum Msg {
@@ -42,7 +53,14 @@ enum Msg {
 
 impl ClaudeRunner {
     pub fn new(program: impl Into<OsString>, caps: Caps, sink: EventSink) -> ClaudeRunner {
-        ClaudeRunner { program: program.into(), caps, sink }
+        ClaudeRunner { program: program.into(), caps, sink, allow_api_key: api_key_allowed_by_env() }
+    }
+
+    /// Overrides the `FACTORY_ALLOW_API_KEY` setting. Meant for tests.
+    #[must_use]
+    pub fn with_api_key_allowed(mut self, allowed: bool) -> ClaudeRunner {
+        self.allow_api_key = allowed;
+        self
     }
 
     fn event(&self, spec: &AgentSpec, kind: EventKind, tokens: u64) -> AgentEvent {
@@ -59,15 +77,21 @@ impl ClaudeRunner {
     }
 
     fn run_inner(&self, spec: &AgentSpec) -> Result<AgentRun, AgentError> {
-        let mut child = Command::new(&self.program)
+        let mut command = Command::new(&self.program);
+        command
             .args(spec.args(&self.caps))
             .current_dir(&spec.cwd)
             .envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(AgentError::Spawn)?;
+            .stderr(Stdio::piped());
+        // Removed after the spec env, so nothing can bring the variables back by accident.
+        if !self.allow_api_key {
+            for var in API_BILLING_VARS {
+                command.env_remove(var);
+            }
+        }
+        let mut child = command.spawn().map_err(AgentError::Spawn)?;
         let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
             let _ = child.kill();

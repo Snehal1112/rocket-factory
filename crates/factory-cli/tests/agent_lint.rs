@@ -425,6 +425,7 @@ fn docs_describe_the_new_design() -> TestResult {
             "every job's folder",
             "only an exact `## Goal` line",
             "`--spec` needs `--plans`",
+            "FACTORY_ALLOW_API_KEY",
             "n/a: <reason>",
         ],
     )?;
