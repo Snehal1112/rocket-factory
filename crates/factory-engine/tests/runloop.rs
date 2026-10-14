@@ -1,5 +1,5 @@
 mod common;
-use factory_engine::{create_job, run_job, run_series, RunEnd};
+use factory_engine::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
 
 #[test]
 fn run_job_goes_from_build_to_merged_in_one_call() {
@@ -174,7 +174,7 @@ fn a_broken_chain_creates_no_jobs() {
     assert!(fx.driver.store().load().expect("board").jobs.is_empty());
 }
 
-const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- It is done.\n";
+const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n";
 
 #[test]
 fn spec_md_is_copied_into_every_job_and_only_for_a_folder() {
@@ -198,9 +198,16 @@ fn spec_md_is_copied_into_every_job_and_only_for_a_folder() {
 fn a_folder_without_a_usable_spec_creates_no_jobs() {
     let bad_specs = [
         None,
-        Some("# Spec: Demo\n\n## Goal\n\nDo it.\n"),
+        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n"),
         Some("# Spec: Demo\n\n## Goal\n\n## Acceptance criteria\n\n- ok\n"),
-        Some("# Spec: Demo\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n"),
+        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\n"),
+        // A goal of a few words is a stub.
+        Some("# Spec: Demo\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- ok\n"),
+        // Criteria written as prose have nothing to check one by one.
+        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\nIt works.\n"),
+        // A placeholder left in the text.
+        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task. TBD later.\n\n## Acceptance criteria\n\n- ok\n"),
+        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\n- ok\n\nTODO: more.\n"),
     ];
     for spec in bad_specs {
         let fx = common::SeriesFixture::new("x");
@@ -296,11 +303,52 @@ fn create_job_takes_series_issues_from_the_feature_text_only() {
     let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
     fx.plan_file("plan-02-b.md", 1, "none");
     let folder = a.parent().expect("plans folder").to_path_buf();
-    std::fs::write(folder.join("spec.md"), "# Spec: Demo\n\nSee also #21.\n\n## Goal\n\nShip it.\n\n## Acceptance criteria\n\nIt works.\n").expect("spec");
+    std::fs::write(folder.join("spec.md"), "# Spec: Demo\n\nSee also #21.\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\n- It works.\n").expect("spec");
     let feature = "GitHub issue #20 (https://github.com/o/r/issues/20)";
     let first = create_job(&fx.driver, "folder", feature, Some(&folder), None).expect("create");
     assert_eq!(first.issues, vec![20]);
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 2);
     assert_eq!(board.jobs[1].issues, vec![20]);
+}
+
+#[test]
+fn placeholder_words_inside_code_are_not_placeholders() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let folder = a.parent().expect("plans folder").to_path_buf();
+    let spec = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task. Rejects `TBD` text.\n\n\
+                ## Acceptance criteria\n\n- The scan skips fences:\n\n```\nTODO inside a fence\n```\n";
+    std::fs::write(folder.join("spec.md"), spec).expect("spec");
+    create_job(&fx.driver, "code", "f", Some(&folder), None).expect("code spans are fine");
+}
+
+#[test]
+fn an_explicit_spec_path_replaces_the_spec_beside_the_plans() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "none");
+    let folder = a.parent().expect("plans folder").to_path_buf();
+    // The plans folder has no spec.md. The spec lives elsewhere, like a committed docs file.
+    let spec = folder.parent().expect("parent").join("committed-design.md");
+    std::fs::write(&spec, GOOD_SPEC).expect("spec");
+    create_job_with_spec(&fx.driver, "explicit", "f", Some(&folder), Some(&spec), None).expect("create");
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 2);
+    for job in &board.jobs {
+        let copy = std::fs::read_to_string(fx.driver.job_dir(job).join("spec.md")).expect("copy");
+        assert_eq!(copy, GOOD_SPEC);
+    }
+}
+
+#[test]
+fn an_explicit_spec_path_must_exist_and_pass_the_check() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let missing = a.parent().expect("plans folder").join("nowhere.md");
+    assert!(create_job_with_spec(&fx.driver, "gone", "f", Some(&a), Some(&missing), None).is_err());
+    let thin = a.parent().expect("plans folder").join("thin.md");
+    std::fs::write(&thin, "# Spec\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- ok\n").expect("spec");
+    assert!(create_job_with_spec(&fx.driver, "thin", "f", Some(&a), Some(&thin), None).is_err());
+    assert!(fx.driver.store().load().expect("board").jobs.is_empty());
 }

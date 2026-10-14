@@ -20,6 +20,10 @@ pub enum Command {
         /// A plan file or a folder of plan-NN files.
         #[arg(long)]
         plans: Option<PathBuf>,
+        /// The spec file, for example one committed under docs/superpowers/specs/. Without it a plans
+        /// folder must hold spec.md.
+        #[arg(long)]
+        spec: Option<PathBuf>,
         #[arg(long)]
         model: Option<String>,
     },

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
 use factory_core::{Config, Stage};
 use factory_engine::{
-    acquire_lease, create_job, lease_is_live, merge_stage, now_secs, release_lease, run_job, run_series, Driver,
+    acquire_lease, create_job_with_spec, lease_is_live, merge_stage, now_secs, release_lease, run_job, run_series, Driver,
     MergeResult, RunEnd, LEASE_TTL_SECS,
 };
 
@@ -94,7 +94,7 @@ pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
 /// Runs one command and returns the text to print.
 pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
     match cli.command {
-        Command::New { slug, feature, plans, model } => new_job(ctx, &slug, &feature, plans, model),
+        Command::New { slug, feature, plans, spec, model } => new_job(ctx, &slug, &feature, plans, spec, model),
         Command::Run { id, series } => run(ctx, &norm(&id)?, series),
         Command::Status => {
             let d = ctx.driver()?;
@@ -122,10 +122,11 @@ fn new_job(
     slug: &str,
     feature: &str,
     plans: Option<PathBuf>,
+    spec: Option<PathBuf>,
     model: Option<String>,
 ) -> Result<String, CliError> {
     let d = ctx.driver()?;
-    let job = create_job(&d, slug, feature, plans.as_deref(), model.as_deref())?;
+    let job = create_job_with_spec(&d, slug, feature, plans.as_deref(), spec.as_deref(), model.as_deref())?;
     Ok(format!("created job {} in {}", job.id, job.dir))
 }
 

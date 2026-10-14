@@ -41,7 +41,7 @@ pub use message::{fixed_message, message_prompt, message_spec, MessageKind, Mess
 pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
 pub use lock::{lock_board, BoardLock};
-pub use runloop::{create_job, run_job, run_series, RunEnd};
+pub use runloop::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
 pub use series::{parse_series, Series, SeriesError, SeriesPlan, MAX_PLANS};
 pub use store::{next_id, BoardStore, StoreError};
 pub use sync::{sync_stage, SyncOutcome};

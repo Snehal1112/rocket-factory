@@ -55,21 +55,80 @@ fn add_job(
 }
 
 /// The text of a section: the lines under `## <title>` up to the next heading. None when there is no such heading.
-fn section_body<'a>(spec: &'a str, title: &str) -> Option<String> {
+fn section_body(spec: &str, title: &str) -> Option<String> {
     let mut lines = spec.lines();
     lines.find(|l| l.trim_start_matches('#').trim().eq_ignore_ascii_case(title) && l.starts_with("##"))?;
     let body: Vec<&str> = lines.take_while(|l| !l.starts_with('#')).collect();
     Some(body.join("\n"))
 }
 
+/// The least words a Goal needs. A one-line stub is not a goal.
+const MIN_GOAL_WORDS: usize = 8;
+
+/// Words that mark unfinished text. They are matched as whole upper-case words.
+const PLACEHOLDERS: [&str; 3] = ["TBD", "TODO", "FIXME"];
+
+/// The first line (1-based) and word of unfinished text outside fenced code and inline code spans.
+fn find_placeholder(spec: &str) -> Option<(usize, &'static str)> {
+    let mut in_fence = false;
+    for (index, line) in spec.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        // Text between backticks is quoted code, so only the parts outside count.
+        let outside: Vec<&str> = line.split('`').step_by(2).collect();
+        for part in outside {
+            for word in part.split(|c: char| !c.is_ascii_alphanumeric()) {
+                if let Some(found) = PLACEHOLDERS.iter().find(|p| **p == word) {
+                    return Some((index + 1, found));
+                }
+            }
+            if part.contains("???") {
+                return Some((index + 1, "???"));
+            }
+        }
+    }
+    None
+}
+
+/// True when a line starts a list item: `- `, `* ` or `1. `.
+fn is_list_item(line: &str) -> bool {
+    let t = line.trim_start();
+    if t.starts_with("- ") || t.starts_with("* ") {
+        return true;
+    }
+    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+    digits > 0 && t[digits..].starts_with(". ")
+}
+
 /// A spec must name its goal and its acceptance criteria. The headings are the contract with `/factory`.
+/// The goal needs a few words, the criteria need at least one list item, and no placeholder may remain.
 fn check_spec(spec: &str) -> Result<(), EngineError> {
     for title in ["Goal", "Acceptance criteria"] {
-        match section_body(spec, title) {
-            Some(body) if !body.trim().is_empty() => {}
+        let body = match section_body(spec, title) {
+            Some(body) if !body.trim().is_empty() => body,
             Some(_) => return Err(EngineError::Msg(format!("spec.md section `## {title}` is empty"))),
             None => return Err(EngineError::Msg(format!("spec.md has no `## {title}` section"))),
+        };
+        if title == "Goal" && body.split_whitespace().count() < MIN_GOAL_WORDS {
+            return Err(EngineError::Msg(format!(
+                "spec.md section `## Goal` has fewer than {MIN_GOAL_WORDS} words; say what is built and why"
+            )));
         }
+        if title == "Acceptance criteria" && !body.lines().any(is_list_item) {
+            return Err(EngineError::Msg(
+                "spec.md section `## Acceptance criteria` has no list item; list each check as a bullet".to_string(),
+            ));
+        }
+    }
+    if let Some((line, word)) = find_placeholder(spec) {
+        return Err(EngineError::Msg(format!(
+            "spec.md line {line} still has `{word}`; finish it or remove it"
+        )));
     }
     Ok(())
 }
@@ -83,16 +142,36 @@ pub fn create_job(
     plan: Option<&Path>,
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
+    create_job_with_spec(driver, slug, feature, plan, None, model)
+}
+
+/// Like `create_job`, with the spec at an explicit path (for example a committed file under
+/// `docs/superpowers/specs/`). Without `spec_path` a plans folder holds `spec.md` beside the plans.
+pub fn create_job_with_spec(
+    driver: &Driver,
+    slug: &str,
+    feature: &str,
+    plan: Option<&Path>,
+    spec_path: Option<&Path>,
+    model: Option<&str>,
+) -> Result<Job, EngineError> {
     let Some(start) = plan else {
         return add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model);
     };
     // A broken chain fails here, before any job exists.
     let series = parse_series(driver.root(), start)?;
-    // A folder holds the spec beside the plans. A single plan file has no spec to check.
-    let spec = start.join("spec.md");
-    if start.is_dir() {
-        let text = std::fs::read_to_string(&spec)
-            .map_err(|_| EngineError::Msg("the plans folder has no spec.md".to_string()))?;
+    // An explicit spec path wins. Otherwise a folder holds the spec beside the plans, and a single
+    // plan file has no spec to check.
+    let spec = spec_path.map(Path::to_path_buf).unwrap_or_else(|| start.join("spec.md"));
+    let has_spec = spec_path.is_some() || start.is_dir();
+    if has_spec {
+        let text = std::fs::read_to_string(&spec).map_err(|_| {
+            if spec_path.is_some() {
+                EngineError::Msg(format!("the spec file {} cannot be read", spec.display()))
+            } else {
+                EngineError::Msg("the plans folder has no spec.md".to_string())
+            }
+        })?;
         check_spec(&text)?;
     }
     let total = series.plans.len() as u32;
@@ -115,11 +194,11 @@ pub fn create_job(
         total,
         id: series_id.clone(),
     };
-    // The spec sits beside the plans. Every job gets a copy, so each builder and reviewer can read it.
+    // Every job gets a copy of the spec, so each builder and reviewer can read it.
     // Issue numbers come from the feature text only, so a spec that cites an issue never closes it.
     let issues = factory_core::parse_issues(feature);
     let copy_spec = |job: &Job| -> Result<(), EngineError> {
-        if start.is_dir() && spec.is_file() {
+        if has_spec && spec.is_file() {
             std::fs::copy(&spec, driver.job_dir(job).join("spec.md"))?;
         }
         Ok(())
