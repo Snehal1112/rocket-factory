@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::repo::Repo;
 use crate::worktree::Worktree;
-use git2::{IndexAddOption, Repository, Status, StatusOptions};
+use git2::{ErrorCode, IndexAddOption, Repository, Status, StatusOptions};
 
 /// Options that see untracked files (but not ignored ones), like `git status`.
 fn status_options() -> StatusOptions {
@@ -55,5 +55,17 @@ impl Repo {
         let inside = Repository::open(&wt.path)?;
         let clean = inside.statuses(Some(&mut status_options()))?.is_empty();
         Ok(clean)
+    }
+
+    /// True when HEAD of the job worktree is on the job branch. A detached HEAD, another
+    /// branch, or an unborn HEAD gives false.
+    pub fn head_is_on_branch(&self, wt: &Worktree) -> Result<bool> {
+        let inside = Repository::open(&wt.path)?;
+        let on_branch = match inside.head() {
+            Ok(head) => head.is_branch() && head.shorthand() == Some(wt.branch.as_str()),
+            Err(e) if e.code() == ErrorCode::UnbornBranch || e.code() == ErrorCode::NotFound => false,
+            Err(e) => return Err(e.into()),
+        };
+        Ok(on_branch)
     }
 }

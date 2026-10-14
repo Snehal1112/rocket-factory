@@ -72,3 +72,14 @@ fn worktree_is_clean_ignores_ignored_files_and_sees_untracked_ones() {
     std::fs::write(wt.path.join("stray.txt"), "x\n").expect("stray");
     assert!(!repo.worktree_is_clean(&wt).expect("untracked"));
 }
+
+#[test]
+fn head_is_on_the_job_branch_until_it_is_detached() {
+    let fx = Fixture::new();
+    let (repo, wt) = job_worktree(&fx);
+    assert!(repo.head_is_on_branch(&wt).expect("on branch"));
+    let inside = inside(&wt);
+    let oid = inside.head().expect("head").peel_to_commit().expect("commit").id();
+    inside.set_head_detached(oid).expect("detach");
+    assert!(!repo.head_is_on_branch(&wt).expect("detached"));
+}
