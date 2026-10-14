@@ -153,7 +153,7 @@ fn rewriting_the_floor_commit_parks_at_once() {
     write_change(&wt, "a.txt");
     let floor = commit_paths(&wt.path, &["a.txt"], GOOD);
     write_change(&wt, "b.txt");
-    // Only one effect is scripted: a retry would find the script exhausted and fail the test.
+    // A retry would still park, so the assertions below prove there was no retry.
     let runner = scripted(vec![effect(|dir| {
         amend_with(dir, &["b.txt"], GOOD);
         "done".to_string()
@@ -163,6 +163,10 @@ fn rewriting_the_floor_commit_parks_at_once() {
         CommitOutcome::Park(reason) => assert!(reason.contains("at or below the floor"), "{reason}"),
         other => panic!("unexpected outcome {other:?}"),
     }
+    // A retry would record a second spec that resumes the session and carries the findings.
+    let spec = runner.last_spec().expect("spec");
+    assert!(spec.resume.is_none(), "unexpected resume: {:?}", spec.resume);
+    assert!(!spec.prompt.contains("Findings:"), "unexpected retry prompt: {}", spec.prompt);
 }
 
 #[test]
