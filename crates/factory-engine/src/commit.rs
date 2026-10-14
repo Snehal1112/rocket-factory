@@ -3,9 +3,12 @@
 use std::path::Path;
 use std::time::Duration;
 
-use factory_agent::AgentSpec;
-use factory_core::Config;
-use factory_git::{CommitInfo, StagedReport};
+use factory_agent::{AgentRun, AgentSpec, StopReason};
+use factory_core::{blocked_reason, fallback_subject, validate_message, Config, MAX_COMMITS_PER_RUN};
+use factory_git::{CommitInfo, StagedReport, Worktree};
+
+use crate::ports::git_err;
+use crate::{Engine, EngineError};
 
 /// The agent file the driver passes with `--agent`.
 pub const COMMITTER_AGENT: &str = "factory-committer";
@@ -135,6 +138,165 @@ pub fn committer_spec(job_id: &str, config: &Config, cwd: &Path, prompt: &str) -
     spec
 }
 
+/// What a committer step did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitOutcome {
+    /// The new tip, and whether the plain fallback commit was used.
+    Committed { tip: String, fallback: bool },
+    /// Nothing was staged, so no committer run was started.
+    NothingStaged,
+    /// The run broke a rule that stops the job. The caller parks it.
+    Park(String),
+}
+
+/// The result of checking the worktree after one committer run.
+enum Check {
+    Good(String),
+    Park(String),
+    RunFault(String),
+    MessageFault(Vec<String>),
+}
+
+impl Check {
+    /// The findings text for a retry, when the check failed in a way a retry can fix.
+    fn findings(&self) -> Option<String> {
+        match self {
+            Check::RunFault(reason) => Some(reason.clone()),
+            Check::MessageFault(problems) => Some(problems.join("\n")),
+            Check::Good(_) | Check::Park(_) => None,
+        }
+    }
+}
+
+/// A short note on why the run itself looks wrong, or an empty string.
+fn run_note(run: &AgentRun) -> String {
+    if run.stop_reason != StopReason::Done {
+        let detail = run.error.as_deref().map(|e| format!(": {e}")).unwrap_or_default();
+        return format!("the run ended with {:?}{detail}", run.stop_reason);
+    }
+    if let Some(reason) = blocked_reason(&run.result_text) {
+        return format!("the committer replied BLOCKED: {reason}");
+    }
+    if run.result_text.contains("Unknown skill") {
+        return "the commit skill is not available in the run".to_string();
+    }
+    String::new()
+}
+
+fn retry_prompt(findings: &str) -> String {
+    format!(
+        "The previous committer run did not leave the worktree in the expected state.\n\
+         Findings:\n{findings}\n\
+         Fix this with the commit skill, using the same standing answers. Never rewrite the floor."
+    )
+}
+
+impl Engine<'_> {
+    /// Stages the job worktree, runs the committer agent, and checks the result against the
+    /// rules in the spec. A failed run gets one retry by resuming the session, then a plain
+    /// `git2` fallback commit. Rewriting the floor is returned as `Park`, never retried.
+    /// The step does not change the job stage: the caller parks on `Park`.
+    pub fn commit_step(&self, wt: &Worktree, req: &CommitRequest<'_>) -> Result<CommitOutcome, EngineError> {
+        let staged = self.repo.stage_all(wt).map_err(git_err)?;
+        if staged.is_empty() {
+            return Ok(CommitOutcome::NothingStaged);
+        }
+        let tip = self.repo.tip(&wt.branch).map_err(git_err)?;
+        let above = self.repo.commits_above(req.floor, &tip).map_err(git_err)?;
+        let before: Vec<String> = above.iter().map(|c| c.sha.clone()).collect();
+        let context = match std::fs::read_to_string(self.repo.root().join(COMMIT_CONTEXT_FILE)) {
+            Ok(text) => text,
+            Err(e) => return self.fallback_commit(wt, req, &format!("commit context unreadable: {e}")),
+        };
+        let report = self.repo.staged_report(wt, 5).map_err(git_err)?;
+        let prompt = committer_prompt(&context, req, &report, &above, self.config.commit_subagents);
+
+        let mut run = self.run_agent(committer_spec(&self.job_id, &self.config, &wt.path, &prompt))?;
+        let mut check = self.verify_commit_run(wt, req, &before, &run)?;
+        if let Some(findings) = check.findings() {
+            let retry = retry_prompt(&findings);
+            // Without a session to resume, the retry has to carry the whole prompt.
+            let text = if run.session_id.is_some() { retry } else { format!("{prompt}\n\n{retry}") };
+            let mut spec = committer_spec(&self.job_id, &self.config, &wt.path, &text);
+            spec.resume = run.session_id.clone();
+            run = self.run_agent(spec)?;
+            check = self.verify_commit_run(wt, req, &before, &run)?;
+        }
+        match check {
+            Check::Good(tip) => Ok(CommitOutcome::Committed { tip, fallback: false }),
+            Check::Park(reason) => Ok(CommitOutcome::Park(reason)),
+            Check::RunFault(reason) => self.fallback_commit(wt, req, &reason),
+            Check::MessageFault(problems) => {
+                for problem in &problems {
+                    self.ruling(&format!("commit message check failed, {problem}"))?;
+                }
+                let tip = self.repo.tip(&wt.branch).map_err(git_err)?;
+                Ok(CommitOutcome::Committed { tip, fallback: false })
+            }
+        }
+    }
+
+    /// Checks the worktree after a run. Git state decides: a valid commit with a clean tree is
+    /// accepted even when the reply says BLOCKED. The driver never trusts the prompt for the floor.
+    fn verify_commit_run(
+        &self,
+        wt: &Worktree,
+        req: &CommitRequest<'_>,
+        before: &[String],
+        run: &AgentRun,
+    ) -> Result<Check, EngineError> {
+        let tip = self.repo.tip(&wt.branch).map_err(git_err)?;
+        if !self.repo.is_ancestor(req.floor, &tip).map_err(git_err)? {
+            return Ok(Check::Park("committer rewrote history at or below the floor".to_string()));
+        }
+        let dirty = !self.repo.worktree_is_clean(wt).map_err(git_err)?;
+        let now = self.repo.commits_above(req.floor, &tip).map_err(git_err)?;
+        let changed: Vec<&CommitInfo> = now.iter().filter(|c| !before.contains(&c.sha)).collect();
+        if dirty || changed.is_empty() {
+            let mut notes = Vec::new();
+            let note = run_note(run);
+            if !note.is_empty() {
+                notes.push(note);
+            }
+            if dirty {
+                notes.push("changes are still uncommitted in the worktree".to_string());
+            }
+            if changed.is_empty() {
+                notes.push("no commit was made".to_string());
+            }
+            return Ok(Check::RunFault(notes.join("; ")));
+        }
+        let mut problems = Vec::new();
+        if changed.len() > MAX_COMMITS_PER_RUN {
+            problems.push(format!("{} commits were made, the limit is {MAX_COMMITS_PER_RUN}", changed.len()));
+        }
+        for commit in &changed {
+            if let Err(reason) = validate_message(&commit.message) {
+                let short = commit.sha.get(..7).unwrap_or(&commit.sha);
+                problems.push(format!("commit {short}: {reason}"));
+            }
+        }
+        if problems.is_empty() {
+            Ok(Check::Good(tip))
+        } else {
+            Ok(Check::MessageFault(problems))
+        }
+    }
+
+    /// The plain `git2` commit used when the committer failed twice: `chore: <task title>`.
+    /// Parks when there is nothing left to commit, because then the run lost the changes.
+    fn fallback_commit(&self, wt: &Worktree, req: &CommitRequest<'_>, why: &str) -> Result<CommitOutcome, EngineError> {
+        let staged = self.repo.stage_all(wt).map_err(git_err)?;
+        if staged.is_empty() {
+            return Ok(CommitOutcome::Park(format!("the committer left nothing to commit: {why}")));
+        }
+        let sha = self.repo.commit_staged(wt, &fallback_subject(req.task_title)).map_err(git_err)?;
+        let short = sha.get(..7).unwrap_or(&sha);
+        self.ruling(&format!("committer failed ({why}), fallback commit {short}"))?;
+        Ok(CommitOutcome::Committed { tip: sha, fallback: true })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +325,7 @@ mod tests {
         CommitInfo {
             sha: sha.to_string(),
             subject: subject.to_string(),
+            message: subject.to_string(),
             files: files.iter().map(|f| f.to_string()).collect(),
         }
     }

@@ -103,3 +103,14 @@ fn commits_above_lists_the_rewritten_commit_after_an_amend() {
     assert_eq!(commits[1].sha, new_tip);
     assert!(commits.iter().all(|c| c.sha != old_tip));
 }
+
+#[test]
+fn commits_above_carries_the_full_message() {
+    let fx = Fixture::new();
+    let (repo, wt) = job_worktree(&fx);
+    commit_files(&inside(&wt), &[("a.txt", "a\n")], "feat(x): add a\n\nWhy a exists.");
+    let tip = repo.tip(&wt.branch).expect("tip");
+    let commits = repo.commits_above(&wt.base, &tip).expect("commits");
+    assert_eq!(commits[0].subject, "feat(x): add a");
+    assert_eq!(commits[0].message, "feat(x): add a\n\nWhy a exists.");
+}

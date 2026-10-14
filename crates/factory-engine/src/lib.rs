@@ -30,7 +30,7 @@ use thiserror::Error;
 pub use build::build_stage;
 pub use clock::{date_from_days, now_secs, today};
 pub use commit::{
-    committer_prompt, committer_spec, CommitKind, CommitRequest, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
+    committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
     COMMIT_CONTEXT_FILE,
 };
 pub use compat::{Driver, RunnerFactory, LEASE_TTL_SECS};

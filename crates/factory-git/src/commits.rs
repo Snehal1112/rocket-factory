@@ -11,6 +11,8 @@ pub struct CommitInfo {
     pub sha: String,
     /// The first line of the commit message.
     pub subject: String,
+    /// The full commit message, subject and body.
+    pub message: String,
     /// The paths changed against the first parent, sorted.
     pub files: Vec<String>,
 }
@@ -42,6 +44,7 @@ impl Repo {
             commits.push(CommitInfo {
                 sha: commit.id().to_string(),
                 subject: commit.summary().unwrap_or("").to_string(),
+                message: commit.message().unwrap_or("").to_string(),
                 files: paths_of(&diff),
             });
         }
