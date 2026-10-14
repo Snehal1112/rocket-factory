@@ -21,6 +21,9 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     if chars > MAX_SUBJECT_CHARS {
         return Err(format!("the subject is {chars} characters, the limit is {MAX_SUBJECT_CHARS}"));
     }
+    if subject.ends_with(char::is_whitespace) {
+        return Err("the subject ends with whitespace".to_string());
+    }
     if subject.ends_with('.') {
         return Err("the subject ends with a period".to_string());
     }
@@ -62,7 +65,9 @@ pub fn fallback_subject(task_title: &str) -> String {
     let prefix = "chore: ";
     let room = MAX_SUBJECT_CHARS - prefix.chars().count();
     let cut: String = title.chars().take(room).collect();
-    format!("{prefix}{}", cut.trim_end().trim_end_matches('.'))
+    let cut = cut.trim_end_matches(|c: char| c == '.' || c.is_whitespace());
+    let cut = if cut.is_empty() { "commit factory changes" } else { cut };
+    format!("{prefix}{cut}")
 }
 
 /// The reason after `BLOCKED:` when the first line of a committer reply starts with it.
@@ -136,6 +141,21 @@ mod tests {
         let multibyte = fallback_subject(&"é".repeat(100));
         assert!(multibyte.chars().count() <= MAX_SUBJECT_CHARS);
         assert!(validate_message(&multibyte).is_ok());
+    }
+
+    #[test]
+    fn fallback_subject_is_valid_for_dots_and_blank_titles() {
+        assert_eq!(fallback_subject(". ."), "chore: commit factory changes");
+        assert_eq!(fallback_subject("abc ."), "chore: abc");
+        assert_eq!(fallback_subject("   "), "chore: commit factory changes");
+        for title in [". .", "abc .", "   "] {
+            assert!(validate_message(&fallback_subject(title)).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_a_subject_ending_with_whitespace() {
+        assert!(validate_message("feat: x ").is_err());
     }
 
     #[test]
