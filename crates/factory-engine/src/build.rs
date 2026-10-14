@@ -58,7 +58,7 @@ impl Engine<'_> {
             return self.park(format!("builder stopped: {:?}", run.stop_reason));
         }
         if self.repo.tip(&branch).map_err(git_err)? != tip_before {
-            return self.park("builder committed on its own".to_string());
+            return self.park(format!("builder committed on its own (the branch was at {} before the run)", tip_before.get(..7).unwrap_or(&tip_before)));
         }
         // The floor is the base in the first round and the last reviewed head in a fix round.
         let floor = previous_head.clone().unwrap_or_else(|| base.clone());
@@ -176,7 +176,7 @@ impl Engine<'_> {
             return self.park(format!("builder stopped in task {}: {:?}", task.n, run.stop_reason));
         }
         if self.repo.tip(&branch).map_err(git_err)? != tip {
-            return self.park(format!("builder committed on its own in task {}", task.n));
+            return self.park(format!("builder committed on its own in task {} (the branch was at {} before the run)", task.n, tip.get(..7).unwrap_or(&tip)));
         }
         let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
         let wt = self.job_worktree(job, &cwd, &base, &branch);

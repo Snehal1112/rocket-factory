@@ -30,7 +30,7 @@ impl Engine<'_> {
              Rules: run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR; \
              run `yarn install --frozen-lockfile` once before the first yarn check; no unwrap in production Rust; no git CLI in Rust code; \
              shadcn/ui, lucide-react, SingleLineEditor and Monaco rules apply.\n\
-             Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. \
+             Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              If you are blocked, say why in your final reply and stop.",
             branch = job.branch,
@@ -66,7 +66,7 @@ impl Engine<'_> {
              Base commit: {base}. Current tip: {tip}.\n{done}\n\
              Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
              Write the failing test first, then the code, then run the checks the task names.\n\
-             Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. \
+             Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
              If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}.",

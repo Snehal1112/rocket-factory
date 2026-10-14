@@ -138,6 +138,7 @@ fn builder_body_pins_the_rules() -> TestResult {
             "final whole-branch review",
             "ledger scripts",
             "progress file",
+            "every commit step",
             "superpowers:test-driven-development",
             "superpowers:systematic-debugging",
             "superpowers:verification-before-completion",

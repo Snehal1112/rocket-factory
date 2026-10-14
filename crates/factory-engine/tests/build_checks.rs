@@ -353,12 +353,23 @@ fn start_fix_round(fx: &Fixture) {
     board.save(&fx.board_path).expect("save");
 }
 
+fn assert_short_base(reason: &str, base: &str) {
+    let marker = "the branch was at ";
+    let at = reason.find(marker).expect("marker") + marker.len();
+    let short = reason.get(at..at + 7).expect("short sha");
+    assert!(base.starts_with(short), "{short} vs {base}");
+}
+
 #[test]
 fn a_whole_plan_builder_that_commits_on_its_own_parks_before_any_committer_run() {
     let fx = committing_fixture();
     let runner = scripted_auto(vec![commits_on_its_own_effect("a.txt")]);
     match fx.engine(&runner).build_stage().expect("build") {
-        StageOutcome::NeedsHuman(r) => assert!(r.contains("committed on its own"), "{r}"),
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("committed on its own"), "{r}");
+            assert!(r.contains("before the run"), "{r}");
+            assert_short_base(&r, fx.job().base.as_deref().expect("job base"));
+        }
         other => panic!("unexpected {other:?}"),
     }
     assert!(runner.specs_for("committer").is_empty());
@@ -369,7 +380,11 @@ fn a_task_builder_that_commits_on_its_own_parks_with_its_number() {
     let fx = two_task_fixture();
     let runner = scripted_auto(vec![commits_on_its_own_effect("a.txt")]);
     match fx.engine(&runner).build_stage().expect("task 1") {
-        StageOutcome::NeedsHuman(r) => assert!(r.contains("committed on its own in task 1"), "{r}"),
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("committed on its own in task 1"), "{r}");
+            assert!(r.contains("before the run"), "{r}");
+            assert_short_base(&r, fx.job().base.as_deref().expect("job base"));
+        }
         other => panic!("unexpected {other:?}"),
     }
     assert_eq!(fx.job().task_index, 0);
@@ -468,10 +483,15 @@ fn the_builder_prompts_tell_it_not_to_commit() {
         assert!(!spec.prompt.contains("1-git-commit"), "{}", spec.prompt);
         assert!(!spec.prompt.contains("HEAD: <sha"), "{}", spec.prompt);
     }
+    for spec in &specs[..2] {
+        assert!(spec.prompt.contains("Skip every commit step of the plan"), "{}", spec.prompt);
+    }
     let whole = committing_fixture();
     let whole_runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     whole.engine(&whole_runner).build_stage().expect("whole plan");
     let prompt = whole_runner.last_spec_for("builder").expect("builder spec").prompt;
     assert!(prompt.contains("Do not run `git add` or `git commit`"), "{prompt}");
     assert!(!prompt.contains("1-git-commit"), "{prompt}");
+    assert!(prompt.contains("Skip every commit step of the plan"), "{prompt}");
+    assert!(!prompt.contains("HEAD: <sha"), "{prompt}");
 }
