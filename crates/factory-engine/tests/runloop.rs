@@ -267,3 +267,18 @@ fn create_job_without_issue_numbers_leaves_the_key_out_of_the_board() {
     let text = serde_json::to_string(&board).expect("json");
     assert!(!text.contains("\"issues\""), "{text}");
 }
+
+#[test]
+fn create_job_unions_spec_issues_into_every_job_of_the_series() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "none");
+    let folder = a.parent().expect("plans folder").to_path_buf();
+    std::fs::write(folder.join("spec.md"), "# Spec: Demo\n\nAlso covers #21.\n").expect("spec");
+    let feature = "GitHub issue #20 (https://github.com/o/r/issues/20)";
+    let first = create_job(&fx.driver, "folder", feature, Some(&folder), None).expect("create");
+    assert_eq!(first.issues, vec![20, 21]);
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 2);
+    assert_eq!(board.jobs[1].issues, vec![20, 21]);
+}

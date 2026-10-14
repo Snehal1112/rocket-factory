@@ -82,8 +82,13 @@ pub fn create_job(
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
     let series_id = if total > 1 {
-        let used: Vec<String> =
-            driver.store().load()?.jobs.iter().filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone())).collect();
+        let used: Vec<String> = driver
+            .store()
+            .load()?
+            .jobs
+            .iter()
+            .filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone()))
+            .collect();
         Some(factory_core::next_series_id(&used))
     } else {
         None
@@ -173,19 +178,16 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
             return Ok(end);
         }
         let job = driver.job(&current)?;
-        let Some(pos) = job.series.clone() else {
-            return Ok(RunEnd::Merged);
-        };
+        let Some(pos) = job.series.clone() else { return Ok(RunEnd::Merged) };
         let series = parse_series(driver.root(), Path::new(&pos.plan_file))?;
-        let Some(next) = series.plans[0].next.clone() else {
-            return Ok(RunEnd::Merged);
-        };
+        let Some(next) = series.plans[0].next.clone() else { return Ok(RunEnd::Merged) };
         // Resume: the next job may already exist from an earlier run.
         let board = driver.store().load()?;
         let next_name = next.to_string_lossy().into_owned();
-        let existing = board.jobs.iter().find(|j| {
-            j.series.as_ref().is_some_and(|s| s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1)
-        });
+        let existing = board
+            .jobs
+            .iter()
+            .find(|j| j.series.as_ref().is_some_and(|s| s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1));
         current = match existing {
             Some(j) => j.id.clone(),
             None => {
