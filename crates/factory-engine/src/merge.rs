@@ -79,6 +79,16 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             }
         }
         let message = driver.commit_message(id, MessageKind::Merge)?;
+        // The message run can take a while, so main is checked again before the merge.
+        let again = repo.base_state(&base, &head)?;
+        match again.state {
+            BaseState::Merged => return Ok(Step::Merged(again.main_sha)),
+            BaseState::BaseNotMain => {
+                return Ok(Step::Park("the job base is not on main, a human must look at the branch".into()));
+            }
+            BaseState::MainMoved => continue,
+            BaseState::Current => {}
+        }
         return match repo.merge_no_ff(&job.branch, &head, &message)? {
             MergeOutcome::Merged { merge_sha } => Ok(Step::Merged(merge_sha)),
             MergeOutcome::Conflict { paths } => Ok(Step::Park(format!("merge conflict in {}", paths.join(", ")))),

@@ -65,6 +65,10 @@ pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[Commit
         MessageKind::Merge => "the merge commit that brings the job branch into main",
         MessageKind::Sync => "the merge commit that brings main into the job branch",
     };
+    let list_title = match req.kind {
+        MessageKind::Merge => "Commits on the job branch above the base, newest first",
+        MessageKind::Sync => "Commits that main gained since the base, newest first",
+    };
     format!(
         "{context}\n\n\
          ## This run\n\n\
@@ -75,7 +79,7 @@ pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[Commit
          Tip: {tip}\n\n\
          Write the message for {what}. This is a message-only run: there is no floor, no staged change and no issue footer, the driver adds any footer itself. \
          Do not run git commit, git add or any other git command, and do not change any file. Use the commit skill's style rules, answer its questions with the standing answers, and follow the Conventional Commits style from the context.\n\n\
-         ## Commits on the branch above the base, newest first\n\n{listed}\n\
+         ## {list_title}\n\n{listed}\n\
          ## Reply\n\n\
          Reply with the message between {begin} and {end} and no other text.\n\n\
          {begin}\n<subject>\n\n<optional body>\n{end}\n",
@@ -169,9 +173,11 @@ mod tests {
         let commits = vec![CommitInfo { sha: "aaaaaaa1111".into(), subject: "feat(x): one".into(), message: "feat(x): one".into(), files: vec!["a.txt".into()] }];
         let prompt = message_prompt("CONTEXT", &req, &commits);
         assert!(prompt.starts_with("CONTEXT"));
-        for want in ["Kind: merge", "Job: 001 hello", "Title: hello feature", "aaaaaaa feat(x): one", "  a.txt", "no floor", "Do not run git commit", "---BEGIN MESSAGE---", "---END MESSAGE---"] {
+        for want in ["Kind: merge", "Job: 001 hello", "Title: hello feature", "aaaaaaa feat(x): one", "  a.txt", "no floor", "Do not run git commit", "---BEGIN MESSAGE---", "---END MESSAGE---", "Commits on the job branch above the base, newest first"] {
             assert!(prompt.contains(want), "missing {want}");
         }
+        let sync = MessageRequest { kind: MessageKind::Sync, ..req };
+        assert!(message_prompt("c", &sync, &commits).contains("Commits that main gained since the base, newest first"));
     }
 
     #[test]

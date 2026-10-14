@@ -98,3 +98,19 @@ fn a_message_run_never_commits_the_index() {
     assert_eq!(fx.runner.specs_for("message").len(), 2);
     assert!(fx.runner.specs_for("committer").is_empty());
 }
+
+#[test]
+fn main_moving_during_the_message_run_syncs_before_merging() {
+    let main_dir = Arc::new(std::sync::Mutex::new(std::path::PathBuf::new()));
+    let moves = Arc::clone(&main_dir);
+    let mover: Effect = Box::new(move |_: &AgentSpec| {
+        let dir = moves.lock().expect("dir").clone();
+        common::commit_file(&dir, "late-main.txt", "m");
+        GOOD.to_string()
+    });
+    let effects = vec![mover, reply(GOOD), reply("ok\nVERDICT: APPROVE"), reply(GOOD)];
+    let fx = approved_job_with(Arc::new(scripted(effects)), true);
+    *main_dir.lock().expect("dir") = fx.main.clone();
+    merged(&fx);
+    assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
+}
