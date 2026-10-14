@@ -387,3 +387,16 @@ fn only_an_exact_level_two_heading_names_a_section() {
         assert!(create_job(&fx.driver, "bad", "f", Some(&folder), None).is_err(), "{heading}");
     }
 }
+
+#[test]
+fn the_copied_spec_is_the_checked_spec_with_a_crlf_file_too() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let folder = a.parent().expect("plans folder").to_path_buf();
+    let crlf = GOOD_SPEC.replace('\n', "\r\n");
+    std::fs::write(folder.join("spec.md"), &crlf).expect("spec");
+    create_job(&fx.driver, "crlf", "f", Some(&folder), None).expect("a CRLF spec passes");
+    let board = fx.driver.store().load().expect("board");
+    let copy = std::fs::read_to_string(fx.driver.job_dir(&board.jobs[0]).join("spec.md")).expect("copy");
+    assert_eq!(copy, crlf);
+}

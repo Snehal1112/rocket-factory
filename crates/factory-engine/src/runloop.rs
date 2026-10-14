@@ -199,6 +199,8 @@ pub fn create_job_with_spec(
     // plan file has no spec to check.
     let spec = spec_path.map(Path::to_path_buf).unwrap_or_else(|| start.join("spec.md"));
     let has_spec = spec_path.is_some() || start.is_dir();
+    // The text that passes the check is the text every job gets, so the file is read once.
+    let mut spec_text: Option<String> = None;
     if has_spec {
         let text = std::fs::read_to_string(&spec).map_err(|_| {
             if spec_path.is_some() {
@@ -208,6 +210,7 @@ pub fn create_job_with_spec(
             }
         })?;
         check_spec(&text)?;
+        spec_text = Some(text);
     }
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
@@ -233,8 +236,8 @@ pub fn create_job_with_spec(
     // Issue numbers come from the feature text only, so a spec that cites an issue never closes it.
     let issues = factory_core::parse_issues(feature);
     let copy_spec = |job: &Job| -> Result<(), EngineError> {
-        if has_spec && spec.is_file() {
-            std::fs::copy(&spec, driver.job_dir(job).join("spec.md"))?;
+        if let Some(text) = &spec_text {
+            std::fs::write(driver.job_dir(job).join("spec.md"), text)?;
         }
         Ok(())
     };
