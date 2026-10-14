@@ -44,6 +44,12 @@ fn main() {
             init("fake-1");
             result(&args.join(" "), false, "success");
         }
+        "env" => {
+            // The second prompt line names the variable to report.
+            let name = prompt.lines().nth(1).map_or("", str::trim).to_string();
+            init("fake-1");
+            result(&std::env::var(&name).unwrap_or_else(|_| "<unset>".to_string()), false, "success");
+        }
         "flood" => {
             init("fake-1");
             let junk = "x".repeat(200);

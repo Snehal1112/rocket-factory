@@ -38,6 +38,13 @@ pub struct AgentSpec {
     /// Weighted tokens already spent by earlier runs of this job.
     pub used_before: u64,
     pub stall_after: Option<Duration>,
+    /// Extra environment variables for the child process. Empty for every agent
+    /// except the committer, which sets `HARNESS_GATE=0`.
+    pub env: Vec<(String, String)>,
+    /// Adds `--strict-mcp-config`, so the run loads no MCP servers from settings.
+    pub strict_mcp: bool,
+    /// Value for `--tools`, a comma separated tool list such as `Bash,Read,Skill`.
+    pub tools: Option<String>,
 }
 
 impl AgentSpec {
@@ -57,6 +64,9 @@ impl AgentSpec {
             budget_weighted: None,
             used_before: 0,
             stall_after: None,
+            env: Vec::new(),
+            strict_mcp: false,
+            tools: None,
         }
     }
 
@@ -68,6 +78,9 @@ impl AgentSpec {
     /// Builds the argument list. The prompt itself goes to stdin, see `stdin_prompt`.
     pub fn args(&self, caps: &Caps) -> Vec<String> {
         let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose"].iter().map(|s| s.to_string()).collect();
+        if self.strict_mcp {
+            a.push("--strict-mcp-config".to_string());
+        }
         let mut push = |flag: &str, value: &str| {
             a.push(flag.to_string());
             a.push(value.to_string());
@@ -83,6 +96,9 @@ impl AgentSpec {
         }
         if !self.allowed_tools.is_empty() {
             push("--allowedTools", &self.allowed_tools.join(","));
+        }
+        if let Some(t) = &self.tools {
+            push("--tools", t);
         }
         match (&self.agent, &self.agent_prompt) {
             (Some(name), _) if caps.agent => push("--agent", name),

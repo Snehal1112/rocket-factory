@@ -152,3 +152,20 @@ fn fake_runner_replays_script_and_records_calls() {
     let prompts: Vec<String> = fake.calls().into_iter().map(|s| s.prompt).collect();
     assert_eq!(prompts, vec!["a", "b", "c"]);
 }
+
+#[test]
+fn env_reaches_the_child() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let mut s = spec("env\nFACTORY_TEST_ENV", tmp.path());
+    s.env = vec![("FACTORY_TEST_ENV".into(), "from-spec".into())];
+    let run = runner(EventSink::null("001")).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Done);
+    assert_eq!(run.result_text, "from-spec");
+}
+
+#[test]
+fn env_is_unset_when_the_spec_does_not_set_it() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let run = runner(EventSink::null("001")).run(&spec("env\nFACTORY_TEST_ENV", tmp.path()));
+    assert_eq!(run.result_text, "<unset>");
+}

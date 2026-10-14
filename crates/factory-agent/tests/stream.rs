@@ -119,6 +119,26 @@ fn args_omit_empty_options() {
     assert_eq!(spec.agent_id(), "001-reviewer");
 }
 
+#[test]
+fn args_carry_strict_mcp_and_tools_as_single_arguments() {
+    let mut spec = AgentSpec::new("001", "committer", "/w", "commit");
+    spec.strict_mcp = true;
+    spec.tools = Some("Bash,Read,Skill".into());
+    let args = spec.args(&caps(true, true, true));
+    assert!(args.iter().any(|a| a == "--strict-mcp-config"), "args: {args:?}");
+    let at = args.iter().position(|a| a == "--tools").expect("--tools present");
+    assert_eq!(args[at + 1], "Bash,Read,Skill");
+}
+
+#[test]
+fn args_omit_strict_mcp_and_tools_by_default() {
+    let spec = AgentSpec::new("001", "builder", "/w", "build");
+    let joined = spec.args(&caps(true, true, true)).join(" ");
+    assert!(!joined.contains("--strict-mcp-config"));
+    assert!(!joined.contains("--tools"));
+    assert!(spec.env.is_empty());
+}
+
 fn sample_event() -> AgentEvent {
     AgentEvent {
         kind: EventKind::Tool,

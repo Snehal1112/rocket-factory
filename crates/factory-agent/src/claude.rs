@@ -62,6 +62,7 @@ impl ClaudeRunner {
         let mut child = Command::new(&self.program)
             .args(spec.args(&self.caps))
             .current_dir(&spec.cwd)
+            .envs(spec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
