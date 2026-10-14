@@ -4,6 +4,7 @@ mod diff;
 mod error;
 mod merge;
 mod repo;
+mod stage;
 mod state;
 mod worktree;
 
