@@ -360,7 +360,7 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "escape",
             "Never edit the board",
             // The interview and the committed spec and plans.
-            "--spec",
+            "--plans docs/superpowers/plans/<date>-<slug> --spec docs/superpowers/specs/<date>-<slug>-design.md",
             "docs/superpowers/specs/<date>-<slug>-design.md",
             "docs/superpowers/plans/<date>-<slug>/",
             "one at a time",
@@ -374,6 +374,15 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "approval after each section",
             "spec self-review",
             "dev-workflow-skills:1-git-commit",
+            "git commit --only -- <spec path>",
+            "git commit --only -- <plan paths>",
+            "Coverage gate",
+            "n/a: <reason>",
+            "## Decisions",
+            "ask for approval again",
+            "repo-relative",
+            "Keep a visible task list",
+            "only when that branch merges",
         ],
     )?;
     forbid_all(
@@ -386,9 +395,8 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "factory-approver",
             "set-stage",
             "SendMessage",
-            // Nothing is drafted in a gitignored staging folder any more.
+            // Nothing is drafted in a gitignored folder any more.
             ".superpowers/sdd/draft-",
-            "staging folder",
         ],
     )
 }
@@ -414,6 +422,9 @@ fn docs_describe_the_new_design() -> TestResult {
             "reviewed sha",
             "Acceptance criteria",
             "every job's folder",
+            "only an exact `## Goal` line",
+            "`--spec` needs `--plans`",
+            "n/a: <reason>",
         ],
     )?;
     forbid_all(&doc, "software-factory.md", &["factory-ctl", "factory-approver", "factory-spec-writer", "log-event"])?;
