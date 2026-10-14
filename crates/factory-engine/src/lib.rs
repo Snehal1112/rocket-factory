@@ -11,6 +11,7 @@ mod runloop;
 mod series;
 mod specs;
 mod clock;
+mod commit;
 mod compat;
 mod merge;
 mod store;
@@ -28,6 +29,10 @@ use thiserror::Error;
 
 pub use build::build_stage;
 pub use clock::{date_from_days, now_secs, today};
+pub use commit::{
+    committer_prompt, committer_spec, CommitKind, CommitRequest, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
+    COMMIT_CONTEXT_FILE,
+};
 pub use compat::{Driver, RunnerFactory, LEASE_TTL_SECS};
 pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
