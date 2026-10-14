@@ -21,8 +21,8 @@ pub enum Command {
         #[arg(long)]
         plans: Option<PathBuf>,
         /// The spec file, for example one committed under docs/superpowers/specs/. Without it a plans
-        /// folder must hold spec.md.
-        #[arg(long)]
+        /// folder must hold spec.md. It needs --plans.
+        #[arg(long, requires = "plans")]
         spec: Option<PathBuf>,
         #[arg(long)]
         model: Option<String>,

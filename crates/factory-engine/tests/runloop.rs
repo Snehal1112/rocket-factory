@@ -352,3 +352,14 @@ fn an_explicit_spec_path_must_exist_and_pass_the_check() {
     assert!(create_job_with_spec(&fx.driver, "thin", "f", Some(&a), Some(&thin), None).is_err());
     assert!(fx.driver.store().load().expect("board").jobs.is_empty());
 }
+
+#[test]
+fn a_spec_without_plans_is_an_error_and_creates_no_job() {
+    let fx = common::SeriesFixture::new("x");
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let spec = a.parent().expect("plans folder").join("alone.md");
+    std::fs::write(&spec, GOOD_SPEC).expect("spec");
+    let result = create_job_with_spec(&fx.driver, "alone", "f", None, Some(&spec), None);
+    assert!(result.is_err(), "a spec with no plans must not be ignored");
+    assert!(fx.driver.store().load().expect("board").jobs.is_empty());
+}

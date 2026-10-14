@@ -155,6 +155,10 @@ pub fn create_job_with_spec(
     spec_path: Option<&Path>,
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
+    // A spec with no plans would be skipped without a word, so refuse it.
+    if spec_path.is_some() && plan.is_none() {
+        return Err(EngineError::Msg("--spec needs --plans".to_string()));
+    }
     let Some(start) = plan else {
         return add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model);
     };
