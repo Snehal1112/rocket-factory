@@ -47,6 +47,17 @@ pub struct Config {
     pub stall_minutes: u32,
     pub builder_model: String,
     pub reviewer_model: String,
+    pub commit_model: String,
+    pub commit_subagents: bool,
+    /// Per-run cap on weighted tokens for one committer run.
+    pub commit_budget_weighted: u64,
+    /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
+    pub kb_path: Option<String>,
+    pub kb_model: String,
+    /// Per-run cap on weighted tokens for one KB refresh run.
+    pub kb_budget_weighted: u64,
+    /// Whether the KB refresh commits its edits in the KB folder.
+    pub kb_auto_commit: bool,
     pub checks: Vec<CheckRule>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
@@ -63,6 +74,13 @@ impl Default for Config {
             stall_minutes: 10,
             builder_model: "sonnet".to_string(),
             reviewer_model: "sonnet".to_string(),
+            commit_model: "sonnet".to_string(),
+            commit_subagents: false,
+            commit_budget_weighted: 60_000,
+            kb_path: None,
+            kb_model: "sonnet".to_string(),
+            kb_budget_weighted: 150_000,
+            kb_auto_commit: false,
             checks: Vec::new(),
             degraded: false,
         }
@@ -80,8 +98,15 @@ impl Config {
         if cfg.diff_cap_lines == 0 || cfg.budget_weighted == 0 {
             return Err(CoreError::Config("diff_cap_lines and budget_weighted must be above zero".into()));
         }
-        if cfg.builder_model.trim().is_empty() || cfg.reviewer_model.trim().is_empty() {
+        if cfg.commit_budget_weighted == 0 || cfg.kb_budget_weighted == 0 {
+            return Err(CoreError::Config("commit_budget_weighted and kb_budget_weighted must be above zero".into()));
+        }
+        let models = [&cfg.builder_model, &cfg.reviewer_model, &cfg.commit_model, &cfg.kb_model];
+        if models.iter().any(|m| m.trim().is_empty()) {
             return Err(CoreError::Config("model names must not be empty".into()));
+        }
+        if cfg.kb_path.as_deref().is_some_and(|p| p.trim().is_empty()) {
+            return Err(CoreError::Config("kb_path must not be empty when it is set".into()));
         }
         Ok(cfg)
     }
@@ -114,6 +139,13 @@ mod tests {
         assert_eq!(cfg.stall_minutes, 10);
         assert_eq!(cfg.builder_model, "sonnet");
         assert!(cfg.risk_paths.iter().any(|p| p == "src-tauri/**"));
+        assert_eq!(cfg.commit_model, "sonnet");
+        assert!(!cfg.commit_subagents);
+        assert_eq!(cfg.commit_budget_weighted, 60_000);
+        assert_eq!(cfg.kb_path, None);
+        assert_eq!(cfg.kb_model, "sonnet");
+        assert_eq!(cfg.kb_budget_weighted, 150_000);
+        assert!(!cfg.kb_auto_commit);
     }
 
     #[test]
@@ -144,6 +176,39 @@ mod tests {
         assert!(Config::parse("budget_weighted = 0").is_err());
         assert!(Config::parse("builder_model = \"\"").is_err());
         assert!(Config::parse("this is = = not toml").is_err());
+    }
+
+    #[test]
+    fn commit_and_kb_keys_override_defaults() {
+        let cfg = Config::parse(
+            r#"
+            commit_model = "opus"
+            commit_subagents = true
+            commit_budget_weighted = 90000
+            kb_path = "/kb/rocketapi"
+            kb_model = "haiku"
+            kb_budget_weighted = 40000
+            kb_auto_commit = true
+            "#,
+        )
+        .expect("valid");
+        assert_eq!(cfg.commit_model, "opus");
+        assert!(cfg.commit_subagents);
+        assert_eq!(cfg.commit_budget_weighted, 90_000);
+        assert_eq!(cfg.kb_path.as_deref(), Some("/kb/rocketapi"));
+        assert_eq!(cfg.kb_model, "haiku");
+        assert_eq!(cfg.kb_budget_weighted, 40_000);
+        assert!(cfg.kb_auto_commit);
+    }
+
+    #[test]
+    fn bad_commit_and_kb_values_are_errors() {
+        assert!(Config::parse("commit_budget_weighted = 0").is_err());
+        assert!(Config::parse("kb_budget_weighted = 0").is_err());
+        assert!(Config::parse("commit_model = \"\"").is_err());
+        assert!(Config::parse("kb_model = \"  \"").is_err());
+        assert!(Config::parse("kb_path = \"\"").is_err());
+        assert!(Config::parse("kb_pth = \"/x\"").is_err());
     }
 
     #[test]
@@ -179,5 +244,9 @@ mod tests {
         assert!(cmds("tools/factory-server/src/main.rs")
             .contains(&"cargo check -j4 --manifest-path tools/factory-server/Cargo.toml".to_string()));
         assert!(cmds("docs/a.md").is_empty());
+        assert_eq!(cfg.commit_model, "sonnet");
+        assert!(!cfg.commit_subagents);
+        assert_eq!(cfg.commit_budget_weighted, 60_000);
+        assert_eq!(cfg.kb_path, None);
     }
 }
