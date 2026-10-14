@@ -87,7 +87,7 @@ fn check_description(fm: &[(String, String)], label: &str) -> TestResult {
 }
 
 #[test]
-fn only_builder_and_code_reviewer_remain() -> TestResult {
+fn only_the_three_factory_agents_remain() -> TestResult {
     let dir = repo_root()?.join(".claude").join("agents");
     let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
     let mut names: Vec<String> = Vec::new();
@@ -98,7 +98,11 @@ fn only_builder_and_code_reviewer_remain() -> TestResult {
         }
     }
     names.sort();
-    let want = vec!["factory-builder.md".to_string(), "factory-code-reviewer.md".to_string()];
+    let want = vec![
+        "factory-builder.md".to_string(),
+        "factory-code-reviewer.md".to_string(),
+        "factory-committer.md".to_string(),
+    ];
     if names == want {
         Ok(())
     } else {
@@ -230,6 +234,48 @@ fn reviewer_body_pins_the_rules() -> TestResult {
     // `SingleLineEditor` contains "Edit", so it is removed before the tool names are checked.
     let without_editor = text.replace("SingleLineEditor", "");
     forbid_all(&without_editor, "reviewer", &["Bash", "Write", "Edit"])
+}
+
+#[test]
+fn committer_frontmatter_is_headless() -> TestResult {
+    let text = read(".claude/agents/factory-committer.md")?;
+    let fm = frontmatter(&text)?;
+    if fm_get(&fm, "name") != Some("factory-committer") {
+        return Err("committer name is wrong".to_string());
+    }
+    for banned in ["isolation", "model", "tools"] {
+        if fm_get(&fm, banned).is_some() {
+            return Err(format!("committer frontmatter must not set {banned}"));
+        }
+    }
+    check_description(&fm, "committer")?;
+    check_max_turns(&fm, "committer")
+}
+
+#[test]
+fn committer_body_pins_the_rules() -> TestResult {
+    let text = read(".claude/agents/factory-committer.md")?;
+    require_all(
+        &text,
+        "committer",
+        &[
+            "dev-workflow-skills:1-git-commit",
+            "standing answers",
+            "inline",
+            "floor",
+            "Never push",
+            "Never ask the user",
+            "GIT_SEQUENCE_EDITOR=true",
+            "git add -A",
+            "at most 4 commits",
+            "git rebase --abort",
+            "HARNESS_GATE",
+            "BLOCKED:",
+            "---BEGIN MESSAGE---",
+            "---END MESSAGE---",
+        ],
+    )?;
+    forbid_all(&text, "committer", &["SendMessage", "--force-with-lease"])
 }
 
 const COMMAND: &str = ".claude/commands/factory.md";
