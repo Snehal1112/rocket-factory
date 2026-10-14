@@ -19,7 +19,7 @@ pub enum MergeOutcome {
     Refused { reason: String },
 }
 
-fn signature(repo: &Repository) -> Result<Signature<'static>> {
+pub(crate) fn signature(repo: &Repository) -> Result<Signature<'static>> {
     match repo.signature() {
         Ok(sig) => Ok(sig),
         Err(_) => Ok(Signature::now("factory", "factory@localhost")?),
