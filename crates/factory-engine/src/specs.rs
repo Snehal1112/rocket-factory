@@ -12,6 +12,21 @@ const BUILDER_AGENT: &str = "factory-builder";
 const BUILDER_MAX_TURNS: u32 = 120;
 
 impl Engine<'_> {
+    /// The prompt line that points an agent at the knowledge base. Empty when the KB is off.
+    fn kb_line(&self) -> String {
+        match self.config.kb_dir() {
+            Some(dir) => {
+                let dir = dir.display();
+                format!(
+                    "Knowledge base: {dir}. Read {dir}/README.md first, then only the topic pages that apply to your task. \
+                     It is read-only context, never write to it. Source code and the spec win on any conflict, and say in your reply when a page is stale. \
+                     If the folder does not exist, skip this.\n"
+                )
+            }
+            None => String::new(),
+        }
+    }
+
     /// Sets the model, the budget and the stall limit from the config. Every agent spec goes through this.
     pub(crate) fn with_limits(&self, mut spec: AgentSpec, model: &str) -> AgentSpec {
         spec.model = Some(model.to_string());
@@ -32,9 +47,10 @@ impl Engine<'_> {
              shadcn/ui, lucide-react, SingleLineEditor and Monaco rules apply.\n\
              Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
-             If you are blocked, say why in your final reply and stop.",
+             {kb}If you are blocked, say why in your final reply and stop.",
             branch = job.branch,
             plan = self.plan_file.display(),
+            kb = self.kb_line(),
         );
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
@@ -69,9 +85,10 @@ impl Engine<'_> {
              Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
-             If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}.",
+             {kb}If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}.",
             branch = job.branch,
             plan = self.plan_file.display(),
+            kb = self.kb_line(),
             n = task.n,
             title = task.title,
         );
@@ -84,13 +101,14 @@ impl Engine<'_> {
     /// The resumed builder for a fix round.
     pub(crate) fn builder_resume_spec(&self, job: &JobView, cwd: &Path, findings: &Path, session: &str) -> AgentSpec {
         let prompt = format!(
-            "Fix only the problems listed in {findings}. You are on branch `{branch}`. \
+            "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
              Do not run `git add` or `git commit`: leave the fixes in the worktree and the driver commits them. \
              Do not amend or rewrite earlier commits. \
              Run the relevant checks (`cargo check -j4`, targeted `cargo test -j4 -p <crate> <test_name>`, yarn checks) before you finish. \
              Never push, never merge.",
             findings = findings.display(),
             branch = job.branch,
+            kb = self.kb_line(),
         );
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.resume = Some(session.to_string());
@@ -112,12 +130,13 @@ impl Engine<'_> {
              Check: the diff does what the plan asks and nothing else; correctness and edge cases; no unwrap in production Rust; \
              DDD placement; camelCase serde renames on IPC DTOs only; tests that would fail without the change; \
              hard rules (shadcn/ui, lucide-react, SingleLineEditor, Monaco, narrow Zustand selectors, no git CLI in Rust); no debug leftovers.\n\
-             Reply in at most 60 lines. List findings as a numbered list with file:line, severity [blocker] or [minor], and a concrete fix. \
+             {kb}Reply in at most 60 lines. List findings as a numbered list with file:line, severity [blocker] or [minor], and a concrete fix. \
              Any blocker means CHANGES. Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
             diff = diff.display(),
             names = names.display(),
             plan = self.plan_file.display(),
             cwd = cwd.display(),
+            kb = self.kb_line(),
         );
         let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
         spec.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];

@@ -495,3 +495,45 @@ fn the_builder_prompts_tell_it_not_to_commit() {
     assert!(prompt.contains("Skip every commit step of the plan"), "{prompt}");
     assert!(!prompt.contains("HEAD: <sha"), "{prompt}");
 }
+
+const KB_PROMPT: &str = "Knowledge base: /kb/rocketapi. Read /kb/rocketapi/README.md first";
+
+#[test]
+fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
+    let mut fx = committing_fixture();
+    fx.config.kb_path = Some("/kb/rocketapi".into());
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    let first = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(first.contains(KB_PROMPT), "{first}");
+    std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 2;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    e.build_stage().expect("resume");
+    let resume = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(resume.contains(KB_PROMPT), "{resume}");
+
+    let off = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    off.engine(&runner).build_stage().expect("first");
+    assert!(!runner.last_spec_for("builder").expect("spec").prompt.contains("Knowledge base"));
+}
+
+#[test]
+fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
+    let mut fx = two_task_fixture();
+    fx.config.kb_path = Some("/kb/rocketapi".into());
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(prompt.contains(KB_PROMPT), "{prompt}");
+
+    let off = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    off.engine(&runner).build_stage().expect("build");
+    assert!(!runner.last_spec_for("builder").expect("spec").prompt.contains("Knowledge base"));
+}

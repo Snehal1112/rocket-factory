@@ -112,6 +112,26 @@ fn reviewer(reply: &'static str) -> ScriptedRunner {
 }
 
 #[test]
+fn the_reviewer_prompt_carries_the_kb_line_only_when_set() {
+    for kb in [Some("/kb/rocketapi"), None] {
+        let mut fx = committing_fixture();
+        fx.config.kb_path = kb.map(String::from);
+        build_and_pass_checks(&fx, &["a.txt"]);
+        let rr = reviewer("ok\nVERDICT: APPROVE");
+        fx.engine(&rr).review_stage().expect("review");
+        let spec = rr.last_spec().expect("spec");
+        assert_eq!(spec.allowed_tools, vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]);
+        match kb {
+            Some(dir) => {
+                assert!(spec.prompt.contains(&format!("Knowledge base: {dir}")), "{}", spec.prompt);
+                assert!(spec.prompt.contains("README.md"));
+            }
+            None => assert!(!spec.prompt.contains("Knowledge base")),
+        }
+    }
+}
+
+#[test]
 fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
     let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);

@@ -1,7 +1,7 @@
 use crate::error::CoreError;
 use crate::risk::glob_match;
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Path-based risk list from spec decision 6. Matching ignores case.
 const DEFAULT_RISK: &[&str] = &[
@@ -116,6 +116,13 @@ impl Config {
         Config::parse(&text)
     }
 
+    /// The KB folder with a leading `~` expanded. `None` when `kb_path` is unset, or when `~` is used and `HOME` is unset or empty.
+    /// It does not check that the folder exists.
+    pub fn kb_dir(&self) -> Option<PathBuf> {
+        let path = self.kb_path.as_deref()?;
+        expand_home(path, std::env::var("HOME").ok().as_deref())
+    }
+
     /// Never fails. A missing or invalid file yields the fail-closed config.
     pub fn load(path: &Path) -> Config {
         match Config::try_load(path) {
@@ -125,9 +132,44 @@ impl Config {
     }
 }
 
+/// Expands a leading `~/` or a lone `~` with `home`. Any other `~` stays as it is.
+fn expand_home(path: &str, home: Option<&str>) -> Option<PathBuf> {
+    let rest = if path == "~" {
+        ""
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        rest
+    } else {
+        return Some(PathBuf::from(path));
+    };
+    let home = home.filter(|h| !h.is_empty())?;
+    Some(if rest.is_empty() { PathBuf::from(home) } else { Path::new(home).join(rest) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kb_dir_is_none_when_unset() {
+        assert_eq!(Config::default().kb_dir(), None);
+    }
+
+    #[test]
+    fn an_absolute_kb_path_is_kept() {
+        let cfg = Config { kb_path: Some("/kb/rocketapi".into()), ..Config::default() };
+        assert_eq!(cfg.kb_dir(), Some(PathBuf::from("/kb/rocketapi")));
+    }
+
+    #[test]
+    fn expand_home_handles_tilde_forms() {
+        assert_eq!(expand_home("~/kb", Some("/home/u")), Some(PathBuf::from("/home/u/kb")));
+        assert_eq!(expand_home("~", Some("/home/u")), Some(PathBuf::from("/home/u")));
+        assert_eq!(expand_home("~/kb", None), None);
+        assert_eq!(expand_home("~/kb", Some("")), None);
+        assert_eq!(expand_home("~", None), None);
+        assert_eq!(expand_home("/a/~b", None), Some(PathBuf::from("/a/~b")));
+        assert_eq!(expand_home("~b/kb", Some("/home/u")), Some(PathBuf::from("~b/kb")));
+    }
 
     #[test]
     fn empty_file_gives_defaults_and_is_not_degraded() {
