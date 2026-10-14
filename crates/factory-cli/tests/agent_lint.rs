@@ -310,7 +310,7 @@ fn kb_refresher_body_pins_the_rules() -> TestResult {
     require_all(
         &text,
         "kb refresher",
-        &["kb-refresh", "Workflow", "only files under the KB path", "BLOCKED:", "No relevant changes"],
+        &["kb-refresh", "Workflow", "only files under the KB path", "BLOCKED:", "No relevant changes", "Never write git state", "Never ask the user"],
     )?;
     forbid_all(&text, "kb refresher", &["SendMessage", "--force-with-lease"])
 }

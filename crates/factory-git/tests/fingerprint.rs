@@ -64,3 +64,33 @@ fn retargeting_a_symlink_changes_it() {
     std::os::unix::fs::symlink("two", &link).expect("symlink");
     assert_ne!(before, print(&fx));
 }
+
+#[test]
+fn deleting_another_branch_changes_it() {
+    let fx = Fixture::new();
+    fx.job_branch("job/x", &[("x.txt", "x")]);
+    let before = print(&fx);
+    fx.git().find_branch("job/x", git2::BranchType::Local).expect("branch").delete().expect("delete");
+    assert_ne!(before, print(&fx));
+}
+
+#[test]
+fn creating_a_tag_changes_it() {
+    let fx = Fixture::new();
+    let before = print(&fx);
+    let git = fx.git();
+    let head = git.head().expect("head").peel_to_commit().expect("commit");
+    git.tag_lightweight("v1", head.as_object(), false).expect("tag");
+    assert_ne!(before, print(&fx));
+}
+
+#[test]
+fn switching_to_a_new_branch_at_the_same_commit_changes_it() {
+    let fx = Fixture::new();
+    let before = print(&fx);
+    let git = fx.git();
+    let head = git.head().expect("head").peel_to_commit().expect("commit");
+    git.branch("other", &head, false).expect("branch");
+    git.set_head("refs/heads/other").expect("set head");
+    assert_ne!(before, print(&fx));
+}

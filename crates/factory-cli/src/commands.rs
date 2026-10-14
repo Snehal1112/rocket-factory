@@ -257,10 +257,13 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
     Ok(format!("removed worktree and branch of job {id}"))
 }
 
-/// Takes no lease, but refuses while another driver holds a live one on the job.
+/// Takes no lease. Refuses unless the job is merged, and refuses while another driver holds a live one on the job.
 fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
+    if job.stage != Stage::Merged {
+        return Err(CliError::Refused(format!("job {id} is not merged, the KB refresh needs a merged job")));
+    }
     if let Some(lease) = job.lease.as_ref().filter(|_| lease_is_live(&job, now_secs())) {
         if lease.owner != ctx.owner {
             return Err(CliError::Refused(format!("job {id} is leased by {}", lease.owner)));

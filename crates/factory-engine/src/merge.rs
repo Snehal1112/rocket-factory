@@ -35,7 +35,9 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
         Ok(Step::Merged(sha)) => {
             finish_merge(driver, id, &sha)?;
             // The merge is done, so a failed refresh must not change the result.
-            let _ = driver.kb_refresh(id, false);
+            if let Err(err) = driver.kb_refresh(id, false) {
+                eprintln!("kb refresh error for job {id}: {err}");
+            }
             Ok(MergeResult::Merged(sha))
         }
         Ok(Step::Park(reason)) => {

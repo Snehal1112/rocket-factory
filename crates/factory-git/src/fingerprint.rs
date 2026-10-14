@@ -20,6 +20,21 @@ impl Repo {
         };
         tip.hash(&mut hasher);
 
+        // The symbolic HEAD name and every ref catch a branch switch, delete or tag.
+        let head_name = self.inner.find_reference("HEAD").ok().and_then(|r| r.symbolic_target().map(str::to_string));
+        head_name.hash(&mut hasher);
+        let mut refs: Vec<(String, String)> = Vec::new();
+        for reference in self.inner.references()?.flatten() {
+            let name = String::from_utf8_lossy(reference.name_bytes()).into_owned();
+            let target = match reference.resolve() {
+                Ok(r) => r.target().map(|o| o.to_string()).unwrap_or_default(),
+                Err(_) => String::new(),
+            };
+            refs.push((name, target));
+        }
+        refs.sort();
+        refs.hash(&mut hasher);
+
         let mut opts = StatusOptions::new();
         opts.include_untracked(true).recurse_untracked_dirs(true).include_ignored(false);
         let statuses = self.inner.statuses(Some(&mut opts))?;

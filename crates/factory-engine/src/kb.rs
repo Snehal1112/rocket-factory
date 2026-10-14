@@ -15,25 +15,27 @@ pub const KB_AGENT: &str = "factory-kb-refresher";
 pub const KB_MAX_TURNS: u32 = 80;
 /// The tools a KB run may use. It edits KB pages, so Edit and Write are on.
 pub const KB_TOOLS: &str = "Read,Grep,Glob,Edit,Write,Skill,Agent,Bash";
-/// Bash stays read only for git. Everything else is allowed by name.
-pub const KB_ALLOWED_TOOLS: [&str; 16] = [
-    "Read",
-    "Grep",
-    "Glob",
-    "Edit",
-    "Write",
-    "Skill",
-    "Agent",
-    "Bash(git log:*)",
-    "Bash(git diff:*)",
-    "Bash(git show:*)",
-    "Bash(git rev-parse:*)",
-    "Bash(git merge-base:*)",
-    "Bash(git status:*)",
-    "Bash(git -C:*)",
-    "Bash(date:*)",
-    "Bash(ls:*)",
-];
+/// The read only git subcommands a KB run may use.
+const KB_GIT_SUBS: [&str; 6] = ["log", "diff", "show", "rev-parse", "merge-base", "status"];
+
+/// The allowlist of a KB run. Edit and Write are scoped to the KB folder (`//` marks an absolute
+/// path in a permission rule). Git is read only, and `git -C` is tied to the repo root.
+pub fn kb_allowed_tools(repo_root: &Path, kb_dir: &Path) -> Vec<String> {
+    let mut tools: Vec<String> = ["Read", "Grep", "Glob", "Skill", "Agent"].iter().map(|t| t.to_string()).collect();
+    let kb = kb_dir.display().to_string();
+    let kb = kb.trim_start_matches('/');
+    tools.push(format!("Edit(//{kb}/**)"));
+    tools.push(format!("Write(//{kb}/**)"));
+    for sub in KB_GIT_SUBS {
+        tools.push(format!("Bash(git {sub}:*)"));
+    }
+    for sub in KB_GIT_SUBS {
+        tools.push(format!("Bash(git -C {} {sub}:*)", repo_root.display()));
+    }
+    tools.push("Bash(date:*)".to_string());
+    tools.push("Bash(ls:*)".to_string());
+    tools
+}
 
 /// The prompt for one KB refresh run. `job` is the job id and slug when the run follows a merge.
 pub fn kb_prompt(kb_dir: &Path, repo_root: &Path, tip: &str, job: Option<(&str, &str)>) -> String {
@@ -49,9 +51,10 @@ pub fn kb_prompt(kb_dir: &Path, repo_root: &Path, tip: &str, job: Option<(&str, 
          KB path: {kb}\n\
          Main tip: {tip}\n\
          {trigger}\n\
+         The project is `{project}`, already resolved. Use the repo path and the KB path above as given. Step 1 of the skill reads `projects.json` one folder above the KB path. Read it only if you are allowed to. If you cannot, continue with the given paths.\n\
          Run the `kb-refresh` skill for this project. Use the skill's own subagents through the Agent tool, never the Workflow tool.\n\
-         Edit only files under the KB path. Change nothing in the repo. Git commands are read only (diff, log, show, rev-parse, merge-base, status), even with `-C`. Never run git commands that write, and do not commit.\n\
-         Reply with the pages changed, one per line, or `No relevant changes`.",
+         Edit only files under the KB path. Change nothing in the repo. Git is read only (diff, log, show, rev-parse, merge-base, status). To run git elsewhere, use `git -C {repo}` with the repo path exactly as given. Never run git commands that write, and do not commit.\n\
+         Reply with one changed page path per line and nothing else, or `No relevant changes`.",
         repo = repo_root.display(),
         kb = kb_dir.display(),
     )
@@ -68,9 +71,26 @@ pub fn kb_spec(job_id: &str, config: &Config, repo_root: &Path, kb_dir: &Path, p
     spec.stall_after = Some(Duration::from_secs(u64::from(config.stall_minutes) * 60));
     spec.strict_mcp = true;
     spec.tools = Some(KB_TOOLS.to_string());
-    spec.allowed_tools = KB_ALLOWED_TOOLS.iter().map(|t| t.to_string()).collect();
+    spec.allowed_tools = kb_allowed_tools(repo_root, kb_dir);
+    // Auto mode ignores the allowlist, so dontAsk makes it binding.
+    spec.permission_mode = Some("dontAsk".to_string());
     spec.add_dirs = vec![kb_dir.to_path_buf()];
     spec
+}
+
+/// The page path on a reply line, or `None` when the line does not look like a page.
+fn page_of(line: &str) -> Option<String> {
+    let line = line.trim_start_matches(['-', '*']).trim().trim_matches('`').trim();
+    if line.to_lowercase().starts_with("skipped") {
+        return None;
+    }
+    // A skill-style line reads `Refreshed: <page> - <reason>`.
+    let line = match line.split_once(':') {
+        Some((head, rest)) if head.eq_ignore_ascii_case("refreshed") => rest.trim(),
+        _ => line,
+    };
+    let line = line.split(" \u{2014} ").next().unwrap_or(line).split(" - ").next().unwrap_or(line).trim();
+    line.ends_with(".md").then(|| line.to_string())
 }
 
 /// Reads the reply. An empty list means `No relevant changes`, an error is a `BLOCKED:` reply.
@@ -83,7 +103,13 @@ pub fn parse_kb_reply(reply: &str) -> Result<Vec<String>, String> {
     if first.starts_with("no relevant changes") || first.starts_with("kb is up to date") {
         return Ok(Vec::new());
     }
-    Ok(reply.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+    let lines: Vec<&str> = reply.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    // A skill-style reply may carry prose, so keep only the lines that look like a page.
+    let pages: Vec<String> = lines.iter().filter_map(|l| page_of(l)).collect();
+    if pages.is_empty() {
+        return Ok(lines.iter().map(|l| l.to_string()).collect());
+    }
+    Ok(pages)
 }
 
 /// What a KB refresh step did.
@@ -165,9 +191,16 @@ mod tests {
         assert_eq!(spec.stall_after, Some(Duration::from_secs(u64::from(config.stall_minutes) * 60)));
         assert!(spec.strict_mcp);
         assert_eq!(spec.tools.as_deref(), Some(KB_TOOLS));
-        assert_eq!(spec.allowed_tools.len(), KB_ALLOWED_TOOLS.len());
-        assert!(spec.allowed_tools.contains(&"Bash(git status:*)".to_string()));
-        assert!(spec.allowed_tools.contains(&"Bash(git -C:*)".to_string()));
+        assert_eq!(spec.permission_mode.as_deref(), Some("dontAsk"));
+        assert_eq!(spec.allowed_tools, kb_allowed_tools(Path::new("/repo/rocket"), &kb()));
+        let has = |t: &str| spec.allowed_tools.contains(&t.to_string());
+        assert!(has("Bash(git status:*)"));
+        assert!(has("Bash(git -C /repo/rocket status:*)"));
+        assert!(has("Bash(git -C /repo/rocket merge-base:*)"));
+        assert!(!has("Bash(git -C:*)"));
+        assert!(has("Edit(//kb/rocketapi/**)"));
+        assert!(has("Write(//kb/rocketapi/**)"));
+        assert!(!has("Edit") && !has("Write"));
         assert!(spec.allowed_tools.contains(&"Bash(date:*)".to_string()));
         assert_eq!(spec.add_dirs, vec![kb()]);
         assert_eq!(spec.cwd, PathBuf::from("/repo/rocket"));
@@ -183,5 +216,14 @@ mod tests {
         assert_eq!(parse_kb_reply("\nKB is up to date"), Ok(vec![]));
         assert!(parse_kb_reply("\n\nBLOCKED: no skill").is_err());
         assert_eq!(parse_kb_reply(" a.md \n\nb.md\n"), Ok(vec!["a.md".to_string(), "b.md".to_string()]));
+    }
+
+    #[test]
+    fn reply_parsing_keeps_only_page_lines() {
+        let reply = "Refreshed: a.md \u{2014} reason\nSkipped: b.md";
+        assert_eq!(parse_kb_reply(reply), Ok(vec!["a.md".to_string()]));
+        assert_eq!(parse_kb_reply("- docs/a.md\n* `docs/b.md`\nDone."), Ok(vec!["docs/a.md".to_string(), "docs/b.md".to_string()]));
+        // Without any page-like line, every non-empty line stays.
+        assert_eq!(parse_kb_reply("one\ntwo"), Ok(vec!["one".to_string(), "two".to_string()]));
     }
 }

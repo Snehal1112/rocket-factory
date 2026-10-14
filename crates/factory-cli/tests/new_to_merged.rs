@@ -81,6 +81,7 @@ fn kb_refresh_without_a_kb_path_says_so() {
     let fx = Fixture::new();
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");
     fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    fx.run(&["run", "1"]).expect("run");
     assert_eq!(fx.run(&["kb-refresh", "--job", "1"]).expect("kb"), "kb_path is not set");
 }
 
@@ -96,6 +97,7 @@ fn kb_refresh_lists_the_pages() {
     std::fs::write(fx.root.join(".gitignore"), ".superpowers/\n").expect("ignore");
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");
     fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    fx.run(&["run", "1"]).expect("run");
     // The role runner answers non-builder roles with a verdict text, which counts as a page line.
     let out = fx.run(&["kb-refresh", "--job", "1"]).expect("kb");
     assert!(out.starts_with("kb refreshed, pages:"), "{out}");
@@ -106,7 +108,17 @@ fn kb_refresh_refuses_while_another_driver_holds_the_lease() {
     let fx = Fixture::new();
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");
     fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    fx.run(&["run", "1"]).expect("run");
     fx.hold_lease("001", "someone-else");
     let e = fx.run(&["kb-refresh", "--job", "1"]).expect_err("leased");
     assert!(e.to_string().contains("leased by someone-else"), "{e}");
+}
+
+#[test]
+fn kb_refresh_refuses_a_job_that_is_not_merged() {
+    let fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    let e = fx.run(&["kb-refresh", "--job", "1"]).expect_err("not merged");
+    assert!(e.to_string().contains("not merged"), "{e}");
 }
