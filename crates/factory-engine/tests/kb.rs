@@ -179,4 +179,33 @@ mod merge_hook {
         assert_eq!(fx.driver.kb_refresh(&fx.id, true).expect("line"), "kb_path is not set");
         assert!(!ledger(&fx).contains("Ruling: kb"));
     }
+
+    #[test]
+    fn a_multi_line_failure_still_gets_a_ruling() {
+        let fx = fixture(vec![reply("BLOCKED: one\ntwo")], true);
+        merge(&fx);
+        assert!(ledger(&fx).contains("kb refresh failed"));
+    }
+
+    #[test]
+    fn a_manual_failed_run_keeps_the_marker() {
+        let fx = fixture(vec![], true);
+        let marker = fx.main.join(KB_STOP_FILE);
+        std::fs::create_dir_all(marker.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&marker, "old\n").expect("marker");
+        let line = fx.driver.kb_refresh(&fx.id, true).expect("manual");
+        assert!(line.contains("kb refresh failed"), "{line}");
+        assert!(marker.exists());
+    }
+
+    #[test]
+    fn the_marker_holds_the_reason_and_an_up_to_date_manual_run_clears_it() {
+        let fx = fixture(vec![tamper(), reply("No relevant changes")], true);
+        merge(&fx);
+        let text = std::fs::read_to_string(fx.main.join(KB_STOP_FILE)).expect("marker");
+        assert!(text.contains("the main checkout changed during the KB refresh"), "{text}");
+        let line = fx.driver.kb_refresh(&fx.id, true).expect("manual");
+        assert_eq!(line, "kb up to date");
+        assert!(!fx.main.join(KB_STOP_FILE).exists());
+    }
 }

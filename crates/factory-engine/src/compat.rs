@@ -171,7 +171,7 @@ impl Driver {
     }
 
     /// Refreshes the KB and writes the outcome to the job ledger. Returns a one-line summary.
-    /// A manual run ignores the stop marker and clears it unless the run tampered again.
+    /// A manual run ignores the stop marker and clears it only when the run refreshed or was up to date.
     pub fn kb_refresh(&self, id: &str, manual: bool) -> Result<String, EngineError> {
         if self.config.kb_dir().is_none() {
             return Ok("kb_path is not set".to_string());
@@ -180,6 +180,8 @@ impl Driver {
         let ledger = self.ledger(&job);
         let marker = self.root.join(KB_STOP_FILE);
         let say = |text: String| -> Result<String, EngineError> {
+            // The ledger takes one line, so the text is folded into a single line.
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             ledger.ruling(&text)?;
             Ok(text)
         };
@@ -190,7 +192,7 @@ impl Driver {
             Ok(o) => o,
             Err(e) => crate::KbOutcome::Failed(e.to_string()),
         };
-        if manual && !matches!(outcome, crate::KbOutcome::Tampered(_)) {
+        if manual && matches!(outcome, crate::KbOutcome::Refreshed { .. } | crate::KbOutcome::UpToDate) {
             // A missing marker is fine, so the result is ignored.
             let _ = std::fs::remove_file(&marker);
         }
@@ -199,11 +201,15 @@ impl Driver {
             crate::KbOutcome::UpToDate => say("kb up to date".to_string()),
             crate::KbOutcome::Failed(r) => say(format!("kb refresh failed, {r}")),
             crate::KbOutcome::Tampered(r) => {
-                if let Some(parent) = marker.parent() {
-                    std::fs::create_dir_all(parent)?;
+                let written = marker
+                    .parent()
+                    .map_or(Ok(()), std::fs::create_dir_all)
+                    .and_then(|()| std::fs::write(&marker, format!("{r}\n")));
+                let mut text = format!("kb refresh changed the main checkout, further refreshes stopped: {r}");
+                if let Err(e) = written {
+                    text.push_str(&format!(" (marker not written: {e})"));
                 }
-                std::fs::write(&marker, format!("{r}\n"))?;
-                say(format!("kb refresh changed the main checkout, further refreshes stopped: {r}"))
+                say(text)
             }
         }
     }

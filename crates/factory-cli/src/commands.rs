@@ -109,7 +109,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Cancel { id, reason, force } => cancel(ctx, &norm(&id)?, &reason, force),
         Command::Cleanup { id, discard_commits } => cleanup(ctx, &norm(&id)?, discard_commits),
         Command::Tokens { id } => tokens(ctx, &norm(&id)?),
-        Command::KbRefresh { job } => Ok(ctx.driver()?.kb_refresh(&norm(&job)?, true)?),
+        Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
 }
 
@@ -255,6 +255,18 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
         Ok(())
     })?;
     Ok(format!("removed worktree and branch of job {id}"))
+}
+
+/// Takes no lease, but refuses while another driver holds a live one on the job.
+fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
+    let d = ctx.driver()?;
+    let job = d.job(id)?;
+    if let Some(lease) = job.lease.as_ref().filter(|_| lease_is_live(&job, now_secs())) {
+        if lease.owner != ctx.owner {
+            return Err(CliError::Refused(format!("job {id} is leased by {}", lease.owner)));
+        }
+    }
+    Ok(d.kb_refresh(id, true)?)
 }
 
 fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {

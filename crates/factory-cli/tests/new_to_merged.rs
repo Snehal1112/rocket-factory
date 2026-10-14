@@ -100,3 +100,13 @@ fn kb_refresh_lists_the_pages() {
     let out = fx.run(&["kb-refresh", "--job", "1"]).expect("kb");
     assert!(out.starts_with("kb refreshed, pages:"), "{out}");
 }
+
+#[test]
+fn kb_refresh_refuses_while_another_driver_holds_the_lease() {
+    let fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    fx.hold_lease("001", "someone-else");
+    let e = fx.run(&["kb-refresh", "--job", "1"]).expect_err("leased");
+    assert!(e.to_string().contains("leased by someone-else"), "{e}");
+}

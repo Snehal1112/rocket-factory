@@ -94,7 +94,7 @@ pub enum KbOutcome {
     UpToDate,
     /// The run did not finish. The caller records it and carries on.
     Failed(String),
-    /// The main checkout changed during the run. The caller parks.
+    /// The main checkout changed during the run. The caller records it and stops later refreshes.
     Tampered(String),
 }
 
