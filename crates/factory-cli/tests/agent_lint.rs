@@ -141,13 +141,11 @@ fn builder_body_pins_the_rules() -> TestResult {
             "superpowers:test-driven-development",
             "superpowers:systematic-debugging",
             "superpowers:verification-before-completion",
-            "dev-workflow-skills:1-git-commit",
-            "run its git commands yourself",
+            "Never run `git commit`",
+            "driver commits them",
             "Never amend",
-            "One commit per task",
             "Do only Task",
             "Use at most 2 helper agents per task",
-            "Never use a helper agent for commits",
             "Never sleep",
             "never poll",
             "Never `cd` out of the worktree",
@@ -169,14 +167,23 @@ fn builder_body_pins_the_rules() -> TestResult {
             "Monaco",
             "Zustand",
             "unwrap",
-            "pathspec",
             "No handoff lines",
         ],
     )?;
     forbid_all(
         &text,
         "builder",
-        &["isolation", "WORKTREE:", "BASE:", "HEAD:", "git switch -c", "SendMessage"],
+        &[
+            "isolation",
+            "WORKTREE:",
+            "BASE:",
+            "HEAD:",
+            "git switch -c",
+            "SendMessage",
+            "dev-workflow-skills:1-git-commit",
+            "git commit --only",
+            "Never use a helper agent for commits",
+        ],
     )
 }
 
