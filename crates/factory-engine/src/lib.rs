@@ -36,7 +36,7 @@ pub use commit::{
     COMMIT_CONTEXT_FILE,
 };
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
-pub use compat::{Driver, RunnerFactory, LEASE_TTL_SECS};
+pub use compat::{Driver, RunnerFactory, KB_STOP_FILE, LEASE_TTL_SECS};
 pub use message::{fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS};
 pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};

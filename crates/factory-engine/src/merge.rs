@@ -34,6 +34,8 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
     match try_merge(driver, id) {
         Ok(Step::Merged(sha)) => {
             finish_merge(driver, id, &sha)?;
+            // The merge is done, so a failed refresh must not change the result.
+            let _ = driver.kb_refresh(id, false);
             Ok(MergeResult::Merged(sha))
         }
         Ok(Step::Park(reason)) => {

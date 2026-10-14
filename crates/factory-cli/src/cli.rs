@@ -59,4 +59,10 @@ pub enum Command {
     Tokens {
         id: String,
     },
+    /// Refresh the knowledge base now, ignoring the stop marker.
+    KbRefresh {
+        /// The job whose ledger gets the rulings.
+        #[arg(long)]
+        job: String,
+    },
 }

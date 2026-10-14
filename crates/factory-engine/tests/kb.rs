@@ -86,3 +86,97 @@ fn a_missing_kb_folder_fails_without_a_run() {
     assert!(matches!(out, KbOutcome::Failed(_)), "{out:?}");
     assert!(runner.specs_for("kb").is_empty());
 }
+
+mod merge_hook {
+    use super::reply;
+    use crate::common::{approved_job_config, scripted, Effect, MergeFixture};
+    use factory_agent::AgentSpec;
+    use factory_core::{Config, Stage};
+    use factory_engine::{merge_stage, MergeResult, KB_STOP_FILE};
+    use std::sync::Arc;
+
+    fn fixture(effects: Vec<Effect>, kb: bool) -> MergeFixture {
+        let config = Config { kb_path: kb.then(|| "kb/rocketapi".to_string()), ..Config::default() };
+        approved_job_config(Arc::new(scripted(effects)), false, config)
+    }
+
+    fn ledger(fx: &MergeFixture) -> String {
+        let job = fx.driver.job(&fx.id).expect("job");
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger")
+    }
+
+    fn merge(fx: &MergeFixture) {
+        match merge_stage(&fx.driver, &fx.id).expect("merge") {
+            MergeResult::Merged(_) => {}
+            other => panic!("expected a merge, got {other:?}"),
+        }
+        assert_eq!(fx.driver.job(&fx.id).expect("job").stage, Stage::Merged);
+    }
+
+    fn tamper() -> Effect {
+        Box::new(|spec: &AgentSpec| {
+            std::fs::write(spec.cwd.join("stray.txt"), "x").expect("write");
+            "docs/a.md".to_string()
+        })
+    }
+
+    #[test]
+    fn no_kb_path_means_no_kb_run() {
+        let fx = fixture(vec![], false);
+        merge(&fx);
+        assert!(fx.runner.specs_for("kb").is_empty());
+        assert!(!ledger(&fx).contains("kb "));
+    }
+
+    #[test]
+    fn a_merge_refreshes_the_kb() {
+        let fx = fixture(vec![reply("docs/a.md")], true);
+        merge(&fx);
+        assert_eq!(fx.runner.specs_for("kb").len(), 1);
+        assert!(ledger(&fx).contains("kb refreshed, pages: docs/a.md"));
+    }
+
+    #[test]
+    fn a_failing_refresh_does_not_change_the_merge() {
+        let fx = fixture(vec![], true);
+        merge(&fx);
+        assert!(ledger(&fx).contains("kb refresh failed"));
+    }
+
+    #[test]
+    fn up_to_date_is_recorded() {
+        let fx = fixture(vec![reply("No relevant changes")], true);
+        merge(&fx);
+        assert!(ledger(&fx).contains("kb up to date"));
+    }
+
+    #[test]
+    fn tampering_stops_later_refreshes() {
+        let fx = fixture(vec![tamper(), reply("docs/a.md")], true);
+        merge(&fx);
+        assert!(ledger(&fx).contains("changed the main checkout"));
+        assert!(fx.main.join(KB_STOP_FILE).exists());
+        let line = fx.driver.kb_refresh(&fx.id, false).expect("skip");
+        assert!(line.contains("kb refresh skipped"), "{line}");
+        assert!(ledger(&fx).contains("kb refresh skipped"));
+        assert_eq!(fx.runner.specs_for("kb").len(), 1);
+    }
+
+    #[test]
+    fn a_manual_run_clears_the_marker() {
+        let fx = fixture(vec![reply("docs/a.md")], true);
+        let marker = fx.main.join(KB_STOP_FILE);
+        std::fs::create_dir_all(marker.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&marker, "old\n").expect("marker");
+        let line = fx.driver.kb_refresh(&fx.id, true).expect("manual");
+        assert!(line.contains("kb refreshed"), "{line}");
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn an_unset_kb_path_writes_nothing() {
+        let fx = fixture(vec![], false);
+        assert_eq!(fx.driver.kb_refresh(&fx.id, true).expect("line"), "kb_path is not set");
+        assert!(!ledger(&fx).contains("Ruling: kb"));
+    }
+}

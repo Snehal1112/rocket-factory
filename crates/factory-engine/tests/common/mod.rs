@@ -211,13 +211,28 @@ pub fn approved_job() -> MergeFixture {
 
 /// Like `approved_job`, with a chosen runner. `with_context` commits the committer context file to main first.
 pub fn approved_job_with(runner: Arc<ScriptedRunner>, with_context: bool) -> MergeFixture {
+    approved_job_config(runner, with_context, Config::default())
+}
+
+/// Like `approved_job_with`, with a chosen config.
+pub fn approved_job_config(runner: Arc<ScriptedRunner>, with_context: bool, mut config: Config) -> MergeFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
     let main = tmp.path().join("repo");
     init_repo(&main);
     if with_context {
         commit_file(&main, ".claude/factory/commit-context.md", "TEST CONTEXT\n");
     }
-    let driver = driver_for(&main, runner.clone(), Config::default());
+    // A kb_path set to a relative name points at a folder inside the temp dir.
+    if let Some(name) = config.kb_path.clone() {
+        let kb = tmp.path().join(name);
+        std::fs::create_dir_all(&kb).expect("mkdir kb");
+        config.kb_path = Some(kb.to_string_lossy().into_owned());
+    }
+    if config.kb_path.is_some() {
+        // The real repo ignores `.superpowers/`, and the KB run's tamper check relies on it.
+        commit_file(&main, ".gitignore", ".superpowers/\n");
+    }
+    let driver = driver_for(&main, runner.clone(), config);
     let wt = driver
         .repo()
         .create_worktree(&factory_git::JobRef { id: "001".into(), slug: "hello".into() })

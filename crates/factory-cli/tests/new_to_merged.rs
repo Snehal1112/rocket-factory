@@ -75,3 +75,28 @@ fn guard_rails_refuse_with_clear_messages() {
     let e = fx.run(&["run", "1"]).expect_err("leased");
     assert!(e.to_string().contains("leased by someone-else"), "{e}");
 }
+
+#[test]
+fn kb_refresh_without_a_kb_path_says_so() {
+    let fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert_eq!(fx.run(&["kb-refresh", "--job", "1"]).expect("kb"), "kb_path is not set");
+}
+
+#[test]
+fn kb_refresh_lists_the_pages() {
+    let fx = Fixture::new();
+    let kb = fx.tmp.path().join("kb");
+    std::fs::create_dir_all(&kb).expect("kb");
+    let cfg = fx.root.join(".claude/factory/config.toml");
+    let text = std::fs::read_to_string(&cfg).expect("config");
+    std::fs::write(&cfg, format!("{text}kb_path = \"{}\"\n", kb.display())).expect("config");
+    // The real repo ignores `.superpowers/`, and the tamper check relies on it.
+    std::fs::write(fx.root.join(".gitignore"), ".superpowers/\n").expect("ignore");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    // The role runner answers non-builder roles with a verdict text, which counts as a page line.
+    let out = fx.run(&["kb-refresh", "--job", "1"]).expect("kb");
+    assert!(out.starts_with("kb refreshed, pages:"), "{out}");
+}

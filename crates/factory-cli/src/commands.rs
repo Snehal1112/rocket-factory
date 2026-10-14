@@ -109,6 +109,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Cancel { id, reason, force } => cancel(ctx, &norm(&id)?, &reason, force),
         Command::Cleanup { id, discard_commits } => cleanup(ctx, &norm(&id)?, discard_commits),
         Command::Tokens { id } => tokens(ctx, &norm(&id)?),
+        Command::KbRefresh { job } => Ok(ctx.driver()?.kb_refresh(&norm(&job)?, true)?),
     }
 }
 

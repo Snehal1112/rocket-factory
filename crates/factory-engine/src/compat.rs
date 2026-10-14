@@ -56,6 +56,9 @@ pub struct Driver {
     lease_owner: Option<String>,
 }
 
+/// The marker that stops automatic KB refreshes, relative to the repo root.
+pub const KB_STOP_FILE: &str = ".superpowers/factory/kb-stopped";
+
 /// How long a lease lasts without a renewal.
 pub const LEASE_TTL_SECS: f64 = 1800.0;
 
@@ -165,6 +168,44 @@ impl Driver {
                 issues: &job.issues,
             })
         })
+    }
+
+    /// Refreshes the KB and writes the outcome to the job ledger. Returns a one-line summary.
+    /// A manual run ignores the stop marker and clears it unless the run tampered again.
+    pub fn kb_refresh(&self, id: &str, manual: bool) -> Result<String, EngineError> {
+        if self.config.kb_dir().is_none() {
+            return Ok("kb_path is not set".to_string());
+        }
+        let job = self.job(id)?;
+        let ledger = self.ledger(&job);
+        let marker = self.root.join(KB_STOP_FILE);
+        let say = |text: String| -> Result<String, EngineError> {
+            ledger.ruling(&text)?;
+            Ok(text)
+        };
+        if !manual && marker.exists() {
+            return say(format!("kb refresh skipped, stopped by an earlier change to the main checkout (see {KB_STOP_FILE})"));
+        }
+        let outcome = match self.with_engine(id, |e| e.kb_refresh_step(Some((&job.id, &job.slug)))) {
+            Ok(o) => o,
+            Err(e) => crate::KbOutcome::Failed(e.to_string()),
+        };
+        if manual && !matches!(outcome, crate::KbOutcome::Tampered(_)) {
+            // A missing marker is fine, so the result is ignored.
+            let _ = std::fs::remove_file(&marker);
+        }
+        match outcome {
+            crate::KbOutcome::Refreshed { pages } => say(format!("kb refreshed, pages: {}", pages.join(", "))),
+            crate::KbOutcome::UpToDate => say("kb up to date".to_string()),
+            crate::KbOutcome::Failed(r) => say(format!("kb refresh failed, {r}")),
+            crate::KbOutcome::Tampered(r) => {
+                if let Some(parent) = marker.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&marker, format!("{r}\n"))?;
+                say(format!("kb refresh changed the main checkout, further refreshes stopped: {r}"))
+            }
+        }
     }
 
     pub fn build(&self, id: &str) -> Result<StageOutcome, EngineError> {
