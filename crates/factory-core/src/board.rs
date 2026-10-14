@@ -96,6 +96,9 @@ pub struct Job {
     /// The weighted token budget this job was created with. The dashboard reads it for the budget bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_weighted: Option<u64>,
+    /// GitHub issues this job works on, as numbers. New in this series, absent in older boards.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<u32>,
     /// How many plan tasks have a finished, committed builder run. New in plan 09.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub task_index: u32,
@@ -166,6 +169,7 @@ impl Job {
             cleaned: false,
             stage_history: vec![StageEntry { stage: Stage::Spec, at: now }],
             budget_weighted: None,
+            issues: Vec::new(),
             task_index: 0,
         }
     }
@@ -252,6 +256,20 @@ mod tests {
         let with = SeriesPos { id: Some("S2".into()), ..old };
         let text = serde_json::to_string(&with).expect("json");
         assert!(text.contains(r#""id":"S2""#), "{text}");
+    }
+
+    #[test]
+    fn issues_are_optional_and_left_out_when_empty() {
+        let mut j = job();
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(!text.contains("\"issues\""), "{text}");
+        let back: Job = serde_json::from_str(&text).expect("old shape");
+        assert!(back.issues.is_empty());
+        j.issues = vec![20, 21];
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(text.contains(r#""issues":[20,21]"#), "{text}");
+        let back: Job = serde_json::from_str(&text).expect("round trip");
+        assert_eq!(back.issues, vec![20, 21]);
     }
 
     fn job() -> Job {

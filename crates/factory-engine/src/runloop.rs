@@ -16,6 +16,7 @@ fn add_job(
     driver: &Driver,
     slug: &str,
     feature: &str,
+    issues: &[u32],
     series: Option<SeriesPos>,
     stage: Stage,
     model: Option<&str>,
@@ -36,6 +37,7 @@ fn add_job(
         if stage != Stage::Spec {
             job.set_stage(stage, None, false, now)?;
         }
+        job.issues = issues.to_vec();
         job.series = series;
         job.model = model.map(str::to_string);
         job.budget_weighted = Some(driver.config().budget_weighted);
@@ -52,6 +54,17 @@ fn add_job(
     Ok(job)
 }
 
+/// The issue numbers of a series: those named in the feature text plus those in the spec, sorted.
+fn series_issues(feature: &str, spec_text: Option<&str>) -> Vec<u32> {
+    let mut issues = factory_core::parse_issues(feature);
+    if let Some(text) = spec_text {
+        issues.extend(factory_core::parse_issues(text));
+    }
+    issues.sort_unstable();
+    issues.dedup();
+    issues
+}
+
 /// Creates the jobs of a series and returns plan 1's job, which starts at stage build. Every later plan
 /// gets its job now too, parked at stage spec, so the board shows the whole series from the start.
 pub fn create_job(
@@ -62,20 +75,15 @@ pub fn create_job(
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
     let Some(start) = plan else {
-        return add_job(driver, slug, feature, None, Stage::Build, model);
+        return add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model);
     };
     // A broken chain fails here, before any job exists.
     let series = parse_series(driver.root(), start)?;
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
     let series_id = if total > 1 {
-        let used: Vec<String> = driver
-            .store()
-            .load()?
-            .jobs
-            .iter()
-            .filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone()))
-            .collect();
+        let used: Vec<String> =
+            driver.store().load()?.jobs.iter().filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone())).collect();
         Some(factory_core::next_series_id(&used))
     } else {
         None
@@ -86,15 +94,18 @@ pub fn create_job(
         total,
         id: series_id.clone(),
     };
-    let first = add_job(driver, slug, feature, Some(pos(0)), Stage::Build, model)?;
     // The spec sits beside the plans. Only plan 1 gets a copy, so later builders are not pointed at it.
     let spec = start.join("spec.md");
-    if start.is_dir() && spec.is_file() {
+    let has_spec = start.is_dir() && spec.is_file();
+    let spec_text = if has_spec { std::fs::read_to_string(&spec).ok() } else { None };
+    let issues = series_issues(feature, spec_text.as_deref());
+    let first = add_job(driver, slug, feature, &issues, Some(pos(0)), Stage::Build, model)?;
+    if has_spec {
         std::fs::copy(&spec, driver.job_dir(&first).join("spec.md"))?;
     }
     for (index, later) in series.plans.iter().enumerate().skip(1) {
         let stem = later.path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
-        add_job(driver, &stem, feature, Some(pos(index)), Stage::Spec, model)?;
+        add_job(driver, &stem, feature, &issues, Some(pos(index)), Stage::Spec, model)?;
     }
     Ok(first)
 }
@@ -162,16 +173,19 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
             return Ok(end);
         }
         let job = driver.job(&current)?;
-        let Some(pos) = job.series.clone() else { return Ok(RunEnd::Merged) };
+        let Some(pos) = job.series.clone() else {
+            return Ok(RunEnd::Merged);
+        };
         let series = parse_series(driver.root(), Path::new(&pos.plan_file))?;
-        let Some(next) = series.plans[0].next.clone() else { return Ok(RunEnd::Merged) };
+        let Some(next) = series.plans[0].next.clone() else {
+            return Ok(RunEnd::Merged);
+        };
         // Resume: the next job may already exist from an earlier run.
         let board = driver.store().load()?;
         let next_name = next.to_string_lossy().into_owned();
-        let existing = board
-            .jobs
-            .iter()
-            .find(|j| j.series.as_ref().is_some_and(|s| s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1));
+        let existing = board.jobs.iter().find(|j| {
+            j.series.as_ref().is_some_and(|s| s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1)
+        });
         current = match existing {
             Some(j) => j.id.clone(),
             None => {
@@ -179,7 +193,8 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                 let stem = next.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
                 let next_pos =
                     SeriesPos { plan_file: next_name, index: pos.index + 1, total: pos.total, id: pos.id.clone() };
-                add_job(driver, &stem, &job.feature, Some(next_pos), Stage::Build, job.model.as_deref())?.id
+                add_job(driver, &stem, &job.feature, &job.issues, Some(next_pos), Stage::Build, job.model.as_deref())?
+                    .id
             }
         };
     }

@@ -14,7 +14,8 @@ pub mod verdict;
 pub use board::{Board, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry};
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{
-    blocked_reason, extract_message, fallback_subject, validate_message, MAX_COMMITS_PER_RUN, MAX_SUBJECT_CHARS, MESSAGE_BEGIN, MESSAGE_END,
+    append_footers, blocked_reason, extract_message, fallback_subject, has_footer, issue_footer, parse_issues,
+    validate_message, MAX_COMMITS_PER_RUN, MAX_SUBJECT_CHARS, MESSAGE_BEGIN, MESSAGE_END,
 };
 pub use config::{CheckRule, Config};
 pub use error::CoreError;

@@ -56,6 +56,79 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Every `#N` issue number in the text, sorted and de-duplicated. The `#` must start the text
+/// or follow a character that is not alphanumeric or `_`, and N must be at least 1 and fit `u32`.
+pub fn parse_issues(text: &str) -> Vec<u32> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut found = Vec::new();
+    for (i, c) in chars.iter().enumerate() {
+        if *c != '#' {
+            continue;
+        }
+        if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+            continue;
+        }
+        let digits: String = chars[i + 1..].iter().take_while(|d| d.is_ascii_digit()).collect();
+        if let Ok(n) = digits.parse::<u32>() {
+            if n >= 1 {
+                found.push(n);
+            }
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// The footer line `<key>: #20, #21`, or `None` when there are no issues.
+pub fn issue_footer(key: &str, issues: &[u32]) -> Option<String> {
+    if issues.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = issues.iter().map(|n| format!("#{n}")).collect();
+    Some(format!("{key}: {}", list.join(", ")))
+}
+
+/// True when there are no issues, or a line of the message equals the footer line exactly.
+pub fn has_footer(message: &str, key: &str, issues: &[u32]) -> bool {
+    match issue_footer(key, issues) {
+        None => true,
+        Some(line) => message.lines().any(|l| l == line),
+    }
+}
+
+/// True when the line looks like `Key: value` with a key of letters, digits and dashes.
+fn is_footer_line(line: &str) -> bool {
+    match line.split_once(": ") {
+        Some((key, value)) => {
+            !key.is_empty()
+                && !value.trim().is_empty()
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ' ')
+                && !key.starts_with(' ')
+                && !key.ends_with(' ')
+        }
+        None => false,
+    }
+}
+
+/// Appends footer lines after the body. Lines the message already has are skipped. The lines join an
+/// existing footer paragraph, or start a new one after a blank line.
+pub fn append_footers(message: &str, lines: &[String]) -> String {
+    let base = message.trim_end();
+    let new: Vec<&String> = lines.iter().filter(|l| !base.lines().any(|m| m == l.as_str())).collect();
+    if new.is_empty() {
+        return base.to_string();
+    }
+    let mut out = base.to_string();
+    let last_paragraph: Vec<&str> = base.rsplit("\n\n").next().unwrap_or("").lines().collect();
+    let has_paragraph = base.contains("\n\n");
+    let in_footer = has_paragraph && !last_paragraph.is_empty() && last_paragraph.iter().all(|l| is_footer_line(l));
+    out.push_str(if in_footer { "\n" } else { "\n\n" });
+    let joined: Vec<&str> = new.iter().map(|l| l.as_str()).collect();
+    out.push_str(&joined.join("\n"));
+    out
+}
+
 /// The subject of the plain fallback commit: `chore: <task title>`, with whitespace folded,
 /// a trailing period removed and the whole subject cut to 72 characters.
 pub fn fallback_subject(task_title: &str) -> String {
@@ -194,5 +267,41 @@ mod tests {
         assert_eq!(extract_message("feat(x): add y"), None);
         assert_eq!(extract_message("---BEGIN MESSAGE---\nfeat(x): y"), None);
         assert_eq!(extract_message("---BEGIN MESSAGE---\n  \n---END MESSAGE---"), None);
+    }
+
+    #[test]
+    fn parse_issues_reads_hash_numbers_only() {
+        assert_eq!(parse_issues("GitHub issue #20 (https://github.com/o/r/issues/20)"), vec![20]);
+        assert_eq!(parse_issues("fix #21, #20 and #21"), vec![20, 21]);
+        assert_eq!(parse_issues("C# and a#1 and #abc and #0 and #99999999999"), Vec::<u32>::new());
+        assert_eq!(parse_issues("(#7)"), vec![7]);
+        assert_eq!(parse_issues("#3\n#4"), vec![3, 4]);
+    }
+
+    #[test]
+    fn footers_are_built_and_checked() {
+        assert_eq!(issue_footer("Relates to", &[]), None);
+        assert_eq!(issue_footer("Fixes", &[20, 21]).as_deref(), Some("Fixes: #20, #21"));
+        assert!(has_footer("feat: x", "Relates to", &[]));
+        assert!(has_footer("feat: x\n\nRelates to: #20", "Relates to", &[20]));
+        assert!(!has_footer("feat: x\n\nRelates to: #20", "Relates to", &[20, 21]));
+        assert!(!has_footer("feat: x", "Relates to", &[20]));
+    }
+
+    #[test]
+    fn append_footers_adds_each_line_once() {
+        let lines = vec!["Fixes: #20".to_string(), "Factory-Job: 001".to_string()];
+        assert_eq!(append_footers("feat: x\n", &lines), "feat: x\n\nFixes: #20\nFactory-Job: 001");
+        assert_eq!(append_footers("feat: x\n\nFixes: #20", &lines), "feat: x\n\nFixes: #20\nFactory-Job: 001");
+        assert_eq!(append_footers("feat: x", &[]), "feat: x");
+    }
+
+    #[test]
+    fn append_footers_joins_an_existing_footer_block() {
+        let lines = vec!["Fixes: #20".to_string()];
+        assert_eq!(
+            append_footers("feat: x\n\nbody\n\nSigned-off-by: A", &lines),
+            "feat: x\n\nbody\n\nSigned-off-by: A\nFixes: #20"
+        );
     }
 }

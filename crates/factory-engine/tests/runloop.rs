@@ -246,3 +246,24 @@ fn run_job_moves_a_waiting_plan_to_build_by_itself() {
     assert_eq!(run_job(&fx.driver, "002").expect("run plan 2 alone"), RunEnd::Merged);
     assert_eq!(fx.driver.job("002").expect("job").stage, factory_core::Stage::Merged);
 }
+
+#[test]
+fn create_job_records_issue_numbers_from_the_feature() {
+    let fx = common::SeriesFixture::new("x");
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let feature = "GitHub issue #20 (https://github.com/o/r/issues/20)";
+    let job = create_job(&fx.driver, "new", feature, Some(&plan), None).expect("create");
+    assert_eq!(job.issues, vec![20]);
+    assert_eq!(fx.driver.job(&job.id).expect("job").issues, vec![20]);
+}
+
+#[test]
+fn create_job_without_issue_numbers_leaves_the_key_out_of_the_board() {
+    let fx = common::SeriesFixture::new("x");
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "new", "no refs here", Some(&plan), None).expect("create");
+    assert!(job.issues.is_empty());
+    let board = fx.driver.store().load().expect("board");
+    let text = serde_json::to_string(&board).expect("json");
+    assert!(!text.contains("\"issues\""), "{text}");
+}
