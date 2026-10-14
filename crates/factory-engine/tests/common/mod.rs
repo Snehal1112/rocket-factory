@@ -206,10 +206,17 @@ pub fn driver_for(main: &Path, runner: Arc<ScriptedRunner>, config: Config) -> f
 
 /// Creates a repo, a job branch with one commit adding `docs/hello.txt`, a plan file and a board entry at `approve`.
 pub fn approved_job() -> MergeFixture {
+    approved_job_with(approving_runner(3), false)
+}
+
+/// Like `approved_job`, with a chosen runner. `with_context` commits the committer context file to main first.
+pub fn approved_job_with(runner: Arc<ScriptedRunner>, with_context: bool) -> MergeFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
     let main = tmp.path().join("repo");
     init_repo(&main);
-    let runner = approving_runner(3);
+    if with_context {
+        commit_file(&main, ".claude/factory/commit-context.md", "TEST CONTEXT\n");
+    }
     let driver = driver_for(&main, runner.clone(), Config::default());
     let wt = driver
         .repo()

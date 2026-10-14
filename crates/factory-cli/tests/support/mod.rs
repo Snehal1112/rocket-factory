@@ -94,6 +94,10 @@ impl AgentRunner for ScriptRunner {
             commit_index(&spec.cwd, "feat(test): build step");
             return AgentRun { session_id: Some("sess-c".to_string()), ..AgentRun::done("done") };
         }
+        // A message run never uses up a script step. Its reply has no message, so the fixed one is used.
+        if spec.role == "message" {
+            return AgentRun { session_id: Some("sess-m".to_string()), ..AgentRun::done("done") };
+        }
         let step = self.steps.lock().ok().and_then(|mut s| s.pop_front());
         let (text, input) = match step {
             Some(Step::Build { files, input_tokens }) if spec.role == "builder" => {

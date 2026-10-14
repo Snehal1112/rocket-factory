@@ -1,7 +1,7 @@
 use factory_core::Stage;
 use factory_git::{BaseState, MergeOutcome, Preflight};
 
-use crate::{now_secs, sync_stage, tick_plan, Driver, EngineError, SyncOutcome};
+use crate::{now_secs, sync_stage, tick_plan, Driver, EngineError, MessageKind, SyncOutcome};
 
 pub const MAX_SYNCS: u32 = 2;
 
@@ -78,7 +78,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
                 SyncOutcome::Parked(reason) => return Ok(Step::Park(reason)),
             }
         }
-        let message = format!("chore(factory): merge job {} {}", job.id, job.slug);
+        let message = driver.commit_message(id, MessageKind::Merge)?;
         return match repo.merge_no_ff(&job.branch, &head, &message)? {
             MergeOutcome::Merged { merge_sha } => Ok(Step::Merged(merge_sha)),
             MergeOutcome::Conflict { paths } => Ok(Step::Park(format!("merge conflict in {}", paths.join(", ")))),

@@ -1,0 +1,100 @@
+mod common;
+use common::{approved_job_with, scripted, scripted_auto, Effect};
+use factory_agent::AgentSpec;
+use factory_engine::{merge_stage, MergeResult};
+use std::sync::Arc;
+
+const GOOD: &str = "---BEGIN MESSAGE---\nfeat(hello): add the hello docs\n\nBody.\n---END MESSAGE---";
+
+fn reply(text: &'static str) -> Effect {
+    Box::new(move |_: &AgentSpec| text.to_string())
+}
+
+fn subject(fx: &common::MergeFixture, sha: &str) -> String {
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let commit = repo.find_commit(git2::Oid::from_str(sha).expect("oid")).expect("commit");
+    commit.message().expect("msg").to_string()
+}
+
+fn ledger(fx: &common::MergeFixture) -> String {
+    let job = fx.driver.job(&fx.id).expect("job");
+    std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger")
+}
+
+fn merged(fx: &common::MergeFixture) -> String {
+    match merge_stage(&fx.driver, &fx.id).expect("merge") {
+        MergeResult::Merged(sha) => sha,
+        other => panic!("expected a merge, got {other:?}"),
+    }
+}
+
+#[test]
+fn merge_uses_the_committer_message() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply(GOOD)])), true);
+    let sha = merged(&fx);
+    assert!(subject(&fx, &sha).starts_with("feat(hello): add the hello docs"));
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let commit = repo.find_commit(git2::Oid::from_str(&sha).expect("oid")).expect("commit");
+    assert_eq!(commit.parent_id(1).expect("second parent").to_string(), fx.head);
+    let specs = fx.runner.specs_for("message");
+    assert_eq!(specs.len(), 1);
+    assert_eq!(specs[0].tools.as_deref(), Some("Read,Skill"));
+}
+
+#[test]
+fn an_invalid_reply_retries_once_then_uses_the_fixed_message() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply("no markers"), reply("still none")])), true);
+    let sha = merged(&fx);
+    assert_eq!(subject(&fx, &sha).lines().next(), Some("chore(factory): merge job 001 hello"));
+    let specs = fx.runner.specs_for("message");
+    assert_eq!(specs.len(), 2);
+    assert!(specs[1].resume.is_some());
+    assert!(ledger(&fx).contains("message failed twice"));
+}
+
+#[test]
+fn a_valid_retry_is_used() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply("no markers"), reply(GOOD)])), true);
+    let sha = merged(&fx);
+    assert!(subject(&fx, &sha).starts_with("feat(hello): add the hello docs"));
+    assert!(!ledger(&fx).contains("failed twice"));
+}
+
+#[test]
+fn a_failed_run_still_merges() {
+    let fx = approved_job_with(Arc::new(scripted(vec![])), true);
+    let sha = merged(&fx);
+    assert_eq!(subject(&fx, &sha).lines().next(), Some("chore(factory): merge job 001 hello"));
+}
+
+#[test]
+fn sync_uses_the_committer_message() {
+    let effects = vec![reply(GOOD), reply("ok\nVERDICT: APPROVE")];
+    let fx = approved_job_with(Arc::new(scripted(effects)), true);
+    common::commit_file(&fx.main, "other.txt", "o");
+    merged(&fx);
+    assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let branch = fx.driver.job(&fx.id).expect("job").branch;
+    let tip = repo.revparse_single(&branch).expect("branch").peel_to_commit().expect("commit");
+    let sync_commit = tip;
+    assert!(sync_commit.message().expect("msg").starts_with("feat(hello): add the hello docs"));
+    let specs = fx.runner.specs_for("message");
+    assert!(specs[0].prompt.contains("Kind: sync"));
+}
+
+#[test]
+fn a_message_run_never_commits_the_index() {
+    let fx = approved_job_with(Arc::new(scripted_auto(vec![])), true);
+    let wt = common::worktree_of(&fx);
+    std::fs::write(wt.join("staged.txt"), "x").expect("write");
+    let repo = git2::Repository::open(&wt).expect("open");
+    let mut index = repo.index().expect("index");
+    index.add_path(std::path::Path::new("staged.txt")).expect("add");
+    index.write().expect("write");
+    let before = common::branch_tip(&fx);
+    fx.driver.commit_message(&fx.id, factory_engine::MessageKind::Merge).expect("message");
+    assert_eq!(common::branch_tip(&fx), before);
+    assert_eq!(fx.runner.specs_for("message").len(), 2);
+    assert!(fx.runner.specs_for("committer").is_empty());
+}

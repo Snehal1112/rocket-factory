@@ -19,7 +19,7 @@ fn two_plans_go_from_new_to_merged_with_a_failed_check_resumed_once() -> TestRes
     let end = sc.start(&sc.plan_a, true)?;
     assert_eq!(end, "merged", "{end}");
     // Spec decision 4: a red check resumes the builder, the committer commits the fix, and no reviewer run is spent.
-    assert_eq!(sc.runner.roles(), ["builder", "committer", "builder", "committer", "reviewer", "builder", "committer", "reviewer"]);
+    assert_eq!(sc.runner.roles(), ["builder", "committer", "builder", "committer", "reviewer", "message", "message", "builder", "committer", "reviewer", "message", "message"]);
     // Spec decision 11: plan B starts by itself after plan A merges.
     assert_eq!(sc.merges_on_main()?, 2);
     assert_eq!(sc.stage("001")?, "merged");
@@ -39,7 +39,7 @@ fn a_changes_verdict_runs_one_fix_round_then_merges() -> TestResult {
         ],
     )?;
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
-    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer", "builder", "committer", "reviewer"]);
+    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer", "builder", "committer", "reviewer", "message", "message"]);
     // Spec decision 10: the merge commit has the fixed message.
     assert!(sc.last_merge_subject()?.starts_with("chore(factory): merge job 001"), "{}", sc.last_merge_subject()?);
     Ok(())

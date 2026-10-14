@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use factory_core::Stage;
 use factory_git::{JobRef, MergeOutcome, Worktree};
 
-use crate::{now_secs, Decision, Driver, EngineError, StageOutcome, MAX_SYNCS};
+use crate::{now_secs, Decision, Driver, EngineError, MessageKind, StageOutcome, MAX_SYNCS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncOutcome {
@@ -25,7 +25,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         branch: job.branch.clone(),
         base: job.base.clone().unwrap_or_default(),
     };
-    let message = format!("chore(factory): sync main into job {} {}", job.id, job.slug);
+    let message = driver.commit_message(id, MessageKind::Sync)?;
     let new_head = match driver.repo().merge_main_into(&wt, &message)? {
         MergeOutcome::Conflict { paths } => {
             return Ok(SyncOutcome::Parked(format!("sync conflict in {}", paths.join(", "))));
