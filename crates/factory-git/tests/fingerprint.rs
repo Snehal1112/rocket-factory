@@ -52,3 +52,15 @@ fn a_new_commit_changes_it() {
     commit_files(&fx.git(), &[("more.txt", "m")], "more");
     assert_ne!(before, print(&fx));
 }
+
+#[cfg(unix)]
+#[test]
+fn retargeting_a_symlink_changes_it() {
+    let fx = Fixture::new();
+    let link = fx.path.join("link");
+    std::os::unix::fs::symlink("one", &link).expect("symlink");
+    let before = print(&fx);
+    std::fs::remove_file(&link).expect("remove");
+    std::os::unix::fs::symlink("two", &link).expect("symlink");
+    assert_ne!(before, print(&fx));
+}

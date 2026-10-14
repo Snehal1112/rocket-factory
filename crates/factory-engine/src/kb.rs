@@ -16,7 +16,7 @@ pub const KB_MAX_TURNS: u32 = 80;
 /// The tools a KB run may use. It edits KB pages, so Edit and Write are on.
 pub const KB_TOOLS: &str = "Read,Grep,Glob,Edit,Write,Skill,Agent,Bash";
 /// Bash stays read only for git. Everything else is allowed by name.
-pub const KB_ALLOWED_TOOLS: [&str; 14] = [
+pub const KB_ALLOWED_TOOLS: [&str; 16] = [
     "Read",
     "Grep",
     "Glob",
@@ -30,6 +30,8 @@ pub const KB_ALLOWED_TOOLS: [&str; 14] = [
     "Bash(git rev-parse:*)",
     "Bash(git merge-base:*)",
     "Bash(git status:*)",
+    "Bash(git -C:*)",
+    "Bash(date:*)",
     "Bash(ls:*)",
 ];
 
@@ -48,7 +50,7 @@ pub fn kb_prompt(kb_dir: &Path, repo_root: &Path, tip: &str, job: Option<(&str, 
          Main tip: {tip}\n\
          {trigger}\n\
          Run the `kb-refresh` skill for this project. Use the skill's own subagents through the Agent tool, never the Workflow tool.\n\
-         Edit only files under the KB path. Change nothing in the repo. Never run git commands that write, and do not commit.\n\
+         Edit only files under the KB path. Change nothing in the repo. Git commands are read only (diff, log, show, rev-parse, merge-base, status), even with `-C`. Never run git commands that write, and do not commit.\n\
          Reply with the pages changed, one per line, or `No relevant changes`.",
         repo = repo_root.display(),
         kb = kb_dir.display(),
@@ -73,11 +75,12 @@ pub fn kb_spec(job_id: &str, config: &Config, repo_root: &Path, kb_dir: &Path, p
 
 /// Reads the reply. An empty list means `No relevant changes`, an error is a `BLOCKED:` reply.
 pub fn parse_kb_reply(reply: &str) -> Result<Vec<String>, String> {
+    let reply = reply.trim();
     if let Some(reason) = blocked_reason(reply) {
         return Err(format!("the KB refresher replied BLOCKED: {reason}"));
     }
-    let first = reply.lines().map(str::trim).find(|l| !l.is_empty());
-    if first.is_some_and(|l| l.eq_ignore_ascii_case("No relevant changes")) {
+    let first = reply.lines().next().unwrap_or("").trim().to_lowercase();
+    if first.starts_with("no relevant changes") || first.starts_with("kb is up to date") {
         return Ok(Vec::new());
     }
     Ok(reply.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
@@ -164,6 +167,8 @@ mod tests {
         assert_eq!(spec.tools.as_deref(), Some(KB_TOOLS));
         assert_eq!(spec.allowed_tools.len(), KB_ALLOWED_TOOLS.len());
         assert!(spec.allowed_tools.contains(&"Bash(git status:*)".to_string()));
+        assert!(spec.allowed_tools.contains(&"Bash(git -C:*)".to_string()));
+        assert!(spec.allowed_tools.contains(&"Bash(date:*)".to_string()));
         assert_eq!(spec.add_dirs, vec![kb()]);
         assert_eq!(spec.cwd, PathBuf::from("/repo/rocket"));
         assert!(spec.env.is_empty());
@@ -174,6 +179,9 @@ mod tests {
         assert_eq!(parse_kb_reply("No relevant changes"), Ok(vec![]));
         assert_eq!(parse_kb_reply("  no relevant changes \n"), Ok(vec![]));
         assert!(parse_kb_reply("BLOCKED: x").unwrap_err().contains("x"));
+        assert_eq!(parse_kb_reply("No relevant changes since 2026-10-01 (abc1234) in the KB scope.\nNothing to do."), Ok(vec![]));
+        assert_eq!(parse_kb_reply("\nKB is up to date"), Ok(vec![]));
+        assert!(parse_kb_reply("\n\nBLOCKED: no skill").is_err());
         assert_eq!(parse_kb_reply(" a.md \n\nb.md\n"), Ok(vec!["a.md".to_string(), "b.md".to_string()]));
     }
 }

@@ -33,7 +33,14 @@ impl Repo {
             path.hash(&mut hasher);
             flags.hash(&mut hasher);
             let full = self.root.join(path);
-            let Ok(meta) = std::fs::metadata(&full) else { continue };
+            let Ok(meta) = std::fs::symlink_metadata(&full) else { continue };
+            if meta.file_type().is_symlink() {
+                // Hash the link target, never the file it points at.
+                if let Ok(target) = std::fs::read_link(&full) {
+                    target.hash(&mut hasher);
+                }
+                continue;
+            }
             if !meta.is_file() {
                 continue;
             }
