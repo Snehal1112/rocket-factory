@@ -119,3 +119,23 @@ fn tokens_of_a_job_with_no_runs_prints_zeros() -> TestResult {
     assert!(text.contains("raw 0"), "{text}");
     Ok(())
 }
+
+#[test]
+fn a_merge_refreshes_the_kb_and_tokens_list_the_kb_role() -> TestResult {
+    let tmp = tempfile::tempdir()?;
+    let kb = tmp.path().join("kb");
+    std::fs::create_dir_all(&kb)?;
+    let sc = Scenario::new(&format!("kb_path = \"{}\"\n", kb.display()), vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    // The real repo ignores .superpowers, so the usage log written during the run must not look like tampering.
+    std::fs::write(sc.root.join(".git/info/exclude"), ".superpowers/\n")?;
+    // Spec decision 16: the KB refresh runs after the merge and never changes the result.
+    assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
+    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer", "message", "message", "kb"]);
+    assert_eq!(sc.stage("001")?, "merged");
+    let job = sc.job("001")?;
+    let ledger = std::fs::read_to_string(sc.root.join(".superpowers/sdd").join(&job.dir).join("progress.md"))?;
+    assert!(ledger.contains("kb refreshed, pages: topic.md"), "{ledger}");
+    let text = sc.run(&["tokens", "1"])?;
+    assert!(text.contains("kb "), "{text}");
+    Ok(())
+}

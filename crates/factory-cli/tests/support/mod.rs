@@ -98,6 +98,10 @@ impl AgentRunner for ScriptRunner {
         if spec.role == "message" {
             return AgentRun { session_id: Some("sess-m".to_string()), ..AgentRun::done("done") };
         }
+        // A KB run never uses up a script step. It reports one page changed.
+        if spec.role == "kb" {
+            return AgentRun { session_id: Some("sess-k".to_string()), usage: Usage { input_tokens: 50, ..Usage::default() }, weighted: 50, ..AgentRun::done("topic.md") };
+        }
         let step = self.steps.lock().ok().and_then(|mut s| s.pop_front());
         let (text, input) = match step {
             Some(Step::Build { files, input_tokens }) if spec.role == "builder" => {

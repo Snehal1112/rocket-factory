@@ -128,6 +128,15 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_lists_kb_and_message_roles() {
+        let report = aggregate(&[rec("kb", 100, 0, 50, 0), rec("message", 10, 0, 5, 0)]);
+        assert_eq!(report.by_role["kb"].weighted, 150);
+        assert_eq!(report.by_role["message"].runs, 1);
+        let text = render("001", &report);
+        assert!(text.contains("kb ") && text.contains("message"), "{text}");
+    }
+
+    #[test]
     fn aggregate_of_nothing_is_zero() {
         let report = aggregate(&[]);
         assert_eq!(report.total, Totals::default());
