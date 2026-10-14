@@ -22,6 +22,38 @@ pub fn parse_tasks(plan: &str) -> Vec<PlanTask> {
     out
 }
 
+/// The text of the first `# ` heading of a plan, or `plan` when it has none.
+pub fn plan_title(plan: &str) -> String {
+    plan.lines()
+        .find_map(|line| line.strip_prefix("# "))
+        .map(|title| title.trim().to_string())
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| "plan".to_string())
+}
+
+/// The goal of a spec for the committer prompt: a `Goal:` line, or else the first line that is
+/// neither blank nor a heading, cut to 200 characters. Empty when there is none.
+pub fn spec_goal(spec: &str) -> String {
+    let cut = |text: &str| text.chars().take(200).collect::<String>();
+    let mut first_plain: Option<String> = None;
+    for line in spec.lines() {
+        let t = line.trim().trim_start_matches(['-', '*', ' ']);
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if t.len() >= 5 && t.is_char_boundary(5) && t[..5].eq_ignore_ascii_case("goal:") {
+            let rest = t[5..].trim_start_matches(['*', ' ']).trim();
+            if !rest.is_empty() {
+                return cut(rest);
+            }
+        }
+        if first_plain.is_none() {
+            first_plain = Some(cut(t));
+        }
+    }
+    first_plain.unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,5 +76,33 @@ mod tests {
     #[test]
     fn no_tasks_gives_an_empty_list() {
         assert!(parse_tasks("just text\nTask list\n").is_empty());
+    }
+
+    #[test]
+    fn plan_title_is_the_first_top_level_heading() {
+        assert_eq!(plan_title("# Plan A\n\n### Task 1: x\n"), "Plan A");
+        assert_eq!(plan_title("intro\n# Late Title\n"), "Late Title");
+        assert_eq!(plan_title("## Not top level\n"), "plan");
+        assert_eq!(plan_title("#NoSpace\n"), "plan");
+        assert_eq!(plan_title(""), "plan");
+        assert_eq!(plan_title("#  \n"), "plan");
+    }
+
+    #[test]
+    fn spec_goal_prefers_a_goal_line() {
+        assert_eq!(spec_goal("# T\n\nGoal: add the thing\n\nmore"), "add the thing");
+        assert_eq!(spec_goal("**Goal:** add it\n"), "add it");
+        assert_eq!(spec_goal("- goal: fix it\n"), "fix it");
+        assert_eq!(spec_goal("# T\n\nFirst line.\nGoal: later goal\n"), "later goal");
+    }
+
+    #[test]
+    fn spec_goal_falls_back_to_the_first_plain_line() {
+        assert_eq!(spec_goal("# Title\n\nFirst paragraph line.\nSecond.\n"), "First paragraph line.");
+        assert_eq!(spec_goal(""), "");
+        assert_eq!(spec_goal("# Only a heading\n\n"), "");
+        assert_eq!(spec_goal("Goal:\nnext line\n"), "Goal:");
+        let long = "x".repeat(300);
+        assert_eq!(spec_goal(&long).chars().count(), 200);
     }
 }
