@@ -138,27 +138,27 @@ fn is_list_item(line: &str) -> bool {
 
 /// A spec must name its goal and its acceptance criteria. The headings are the contract with `/factory`.
 /// The goal needs a few words, the criteria need at least one list item, and no placeholder may remain.
-fn check_spec(spec: &str) -> Result<(), EngineError> {
+fn check_spec(spec: &str, name: &str) -> Result<(), EngineError> {
     for title in ["Goal", "Acceptance criteria"] {
         let body = match section_body(spec, title) {
             Some(body) if !body.trim().is_empty() => body,
-            Some(_) => return Err(EngineError::Msg(format!("spec.md section `## {title}` is empty"))),
-            None => return Err(EngineError::Msg(format!("spec.md has no `## {title}` section"))),
+            Some(_) => return Err(EngineError::Msg(format!("{name} section `## {title}` is empty"))),
+            None => return Err(EngineError::Msg(format!("{name} has no `## {title}` section"))),
         };
         if title == "Goal" && body.split_whitespace().count() < MIN_GOAL_WORDS {
             return Err(EngineError::Msg(format!(
-                "spec.md section `## Goal` has fewer than {MIN_GOAL_WORDS} words; say what is built and why"
+                "{name} section `## Goal` has fewer than {MIN_GOAL_WORDS} words; say what is built and why"
             )));
         }
         if title == "Acceptance criteria" && !body.lines().any(is_list_item) {
-            return Err(EngineError::Msg(
-                "spec.md section `## Acceptance criteria` has no list item; list each check as a bullet".to_string(),
-            ));
+            return Err(EngineError::Msg(format!(
+                "{name} section `## Acceptance criteria` has no list item; list each check as a bullet"
+            )));
         }
     }
     if let Some((line, word)) = find_placeholder(spec) {
         return Err(EngineError::Msg(format!(
-            "spec.md line {line} still has `{word}`; finish it or remove it"
+            "{name} line {line} still has `{word}`; finish it or remove it"
         )));
     }
     Ok(())
@@ -193,6 +193,15 @@ pub fn create_job_with_spec(
     let Some(start) = plan else {
         return add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model);
     };
+    // Absolute paths keep `Next plan:` lookups and the stored plan files right from any directory.
+    let absolute = |path: &Path| {
+        std::fs::canonicalize(path)
+            .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", path.display())))
+    };
+    let start_buf = absolute(start)?;
+    let start = start_buf.as_path();
+    let spec_buf = spec_path.map(absolute).transpose()?;
+    let spec_path = spec_buf.as_deref();
     // A broken chain fails here, before any job exists.
     let series = parse_series(driver.root(), start)?;
     // An explicit spec path wins. Otherwise a folder holds the spec beside the plans, and a single
@@ -209,7 +218,7 @@ pub fn create_job_with_spec(
                 EngineError::Msg("the plans folder has no spec.md".to_string())
             }
         })?;
-        check_spec(&text)?;
+        check_spec(&text, &spec.display().to_string())?;
         spec_text = Some(text);
     }
     let total = series.plans.len() as u32;

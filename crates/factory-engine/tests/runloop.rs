@@ -197,26 +197,27 @@ fn spec_md_is_copied_into_every_job_and_only_for_a_folder() {
 #[test]
 fn a_folder_without_a_usable_spec_creates_no_jobs() {
     let bad_specs = [
-        None,
-        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n"),
-        Some("# Spec: Demo\n\n## Goal\n\n## Acceptance criteria\n\n- ok\n"),
-        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\n"),
+        (None, "has no spec.md"),
+        (Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n"), "no `## Acceptance criteria` section"),
+        (Some("# Spec: Demo\n\n## Goal\n\n## Acceptance criteria\n\n- ok\n"), "is empty"),
+        (Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\n"), "is empty"),
         // A goal of a few words is a stub.
-        Some("# Spec: Demo\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- ok\n"),
+        (Some("# Spec: Demo\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- ok\n"), "fewer than"),
         // Criteria written as prose have nothing to check one by one.
-        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\nIt works.\n"),
+        (Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\nIt works.\n"), "no list item"),
         // A placeholder left in the text.
-        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task. TBD later.\n\n## Acceptance criteria\n\n- ok\n"),
-        Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\n- ok\n\nTODO: more.\n"),
+        (Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task. TBD later.\n\n## Acceptance criteria\n\n- ok\n"), "still has"),
+        (Some("# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task.\n\n## Acceptance criteria\n\n- ok\n\nTODO: more.\n"), "still has"),
     ];
-    for spec in bad_specs {
+    for (spec, fragment) in bad_specs {
         let fx = common::SeriesFixture::new("x");
         let a = fx.plan_file("plan-01-a.md", 1, "none");
         let folder = a.parent().expect("plans folder").to_path_buf();
         if let Some(text) = spec {
             std::fs::write(folder.join("spec.md"), text).expect("spec");
         }
-        assert!(create_job(&fx.driver, "bad", "f", Some(&folder), None).is_err(), "{spec:?}");
+        let err = create_job(&fx.driver, "bad", "f", Some(&folder), None).expect_err("bad spec");
+        assert!(err.to_string().contains(fragment), "{spec:?}: {err}");
         assert!(fx.driver.store().load().expect("board").jobs.is_empty(), "{spec:?}");
     }
 }
@@ -384,7 +385,8 @@ fn only_an_exact_level_two_heading_names_a_section() {
         let folder = a.parent().expect("plans folder").to_path_buf();
         let spec = format!("# Spec: Demo\n\n{heading}\n\n{body}\n\n## Acceptance criteria\n\n- ok\n");
         std::fs::write(folder.join("spec.md"), spec).expect("spec");
-        assert!(create_job(&fx.driver, "bad", "f", Some(&folder), None).is_err(), "{heading}");
+        let err = create_job(&fx.driver, "bad", "f", Some(&folder), None).expect_err("bad heading");
+        assert!(err.to_string().contains("no `## Goal` section"), "{heading}: {err}");
     }
 }
 
@@ -399,4 +401,51 @@ fn the_copied_spec_is_the_checked_spec_with_a_crlf_file_too() {
     let board = fx.driver.store().load().expect("board");
     let copy = std::fs::read_to_string(fx.driver.job_dir(&board.jobs[0]).join("spec.md")).expect("copy");
     assert_eq!(copy, crlf);
+}
+
+/// A second checkout (not the driver root) holding two plans that link by repo-relative path.
+fn other_checkout() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let b = tempfile::tempdir().expect("tempdir");
+    let plans = b.path().join("docs/plans");
+    std::fs::create_dir_all(&plans).expect("plans dir");
+    let plan = |next: &str| format!("# Plan\n\n### Task 1: t\n\nNext plan: {next}\n");
+    std::fs::write(plans.join("plan-01-a.md"), plan("docs/plans/plan-02-b.md")).expect("plan 1");
+    std::fs::write(plans.join("plan-02-b.md"), plan("none")).expect("plan 2");
+    std::fs::write(plans.join("spec.md"), GOOD_SPEC).expect("spec");
+    let folder = plans.canonicalize().expect("canonical");
+    (b, folder.clone(), folder.join("plan-02-b.md"))
+}
+
+#[test]
+fn a_repo_relative_next_plan_resolves_in_the_plans_own_checkout() {
+    let fx = common::SeriesFixture::new("x");
+    let (_b, folder, _) = other_checkout();
+    create_job(&fx.driver, "rel", "f", Some(&folder), None).expect("create");
+    assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 2);
+}
+
+#[test]
+fn a_decoy_copy_in_the_driver_root_does_not_win() {
+    let fx = common::SeriesFixture::new("x");
+    let (_b, folder, plan_two) = other_checkout();
+    let decoy = fx.main.join("docs/plans");
+    std::fs::create_dir_all(&decoy).expect("decoy dir");
+    std::fs::write(decoy.join("plan-02-b.md"), "# Decoy\n\n### Task 1: other\n\nNext plan: none\n").expect("decoy");
+    create_job(&fx.driver, "decoy", "f", Some(&folder), None).expect("create");
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 2);
+    let copy = std::fs::read_to_string(fx.driver.job_dir(&board.jobs[1]).join("plan.md")).expect("plan.md");
+    assert_eq!(copy, std::fs::read_to_string(plan_two).expect("b plan"));
+}
+
+#[test]
+fn a_plans_argument_is_stored_absolute() {
+    let fx = common::SeriesFixture::new("x");
+    let (_b, folder, _) = other_checkout();
+    create_job(&fx.driver, "abs", "f", Some(&folder), None).expect("create");
+    let board = fx.driver.store().load().expect("board");
+    for job in &board.jobs {
+        let file = &job.series.as_ref().expect("series").plan_file;
+        assert!(std::path::Path::new(file).is_absolute(), "{file}");
+    }
 }

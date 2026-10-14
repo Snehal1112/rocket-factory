@@ -33,7 +33,14 @@ pub struct Series {
     pub plans: Vec<SeriesPlan>,
 }
 
+/// A relative target is looked up from the plan's own checkout first, then the driver root, then beside the plan.
 fn resolve(root: &Path, from: &Path, rel: &str) -> PathBuf {
+    if Path::new(rel).is_absolute() {
+        return PathBuf::from(rel);
+    }
+    if let Some(found) = from.ancestors().skip(1).map(|dir| dir.join(rel)).find(|p| p.is_file()) {
+        return found;
+    }
     let a = root.join(rel);
     if a.exists() {
         return a;
