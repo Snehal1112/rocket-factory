@@ -359,12 +359,37 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "cargo build -j4",
             "escape",
             "Never edit the board",
+            // The interview and the committed spec and plans.
+            "--spec",
+            "docs/superpowers/specs/<date>-<slug>-design.md",
+            "docs/superpowers/plans/<date>-<slug>/",
+            "one at a time",
+            "until the user confirms",
+            "read-only exploration subagents",
+            "purpose and who benefits",
+            "edge cases and failure behavior",
+            "non-goals",
+            "rejected",
+            "Propose 2 to 3 approaches",
+            "approval after each section",
+            "spec self-review",
+            "dev-workflow-skills:1-git-commit",
         ],
     )?;
     forbid_all(
         &text,
         "command",
-        &["factory-ctl", "python3", "factory-spec-writer", "factory-approver", "set-stage", "SendMessage"],
+        &[
+            "factory-ctl",
+            "python3",
+            "factory-spec-writer",
+            "factory-approver",
+            "set-stage",
+            "SendMessage",
+            // Nothing is drafted in a gitignored staging folder any more.
+            ".superpowers/sdd/draft-",
+            "staging folder",
+        ],
     )
 }
 
