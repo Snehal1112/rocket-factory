@@ -1,5 +1,6 @@
 //! The supervisor library: requests, the queue, runtime records and the scheduler.
 pub mod lock;
+pub mod procinfo;
 pub mod queue;
 pub mod records;
 pub mod request;

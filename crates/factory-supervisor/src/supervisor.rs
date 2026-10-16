@@ -65,6 +65,11 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// True when the recorded child still runs: the pid is alive and started when the record says.
+fn adopted_alive(child: &ChildRecord) -> bool {
+    pid_alive(child.pid) && crate::procinfo::may_be_our_child(child.pid, child.started_ms)
+}
+
 /// Splits a tail read into the text and the note.
 fn split_read(r: Result<String, String>) -> (String, Option<String>) {
     match r {
@@ -118,7 +123,7 @@ pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
     }
     match code {
         Some(code) => Outcome::Failed { code, stderr_tail: stderr_tail(err) },
-        None => Outcome::Lost { reason: "the process ended and left no result line".to_string() },
+        None => Outcome::Lost { reason: "the process ended without a result".to_string() },
     }
 }
 
@@ -299,7 +304,8 @@ impl Supervisor {
             let (ended, code) = match self.spawner.poll(child.pid) {
                 ChildPoll::Running => (false, None),
                 ChildPoll::Exited(code) => (true, Some(code)),
-                ChildPoll::Unknown => (!pid_alive(child.pid), None),
+                // An adopted child is judged by `/proc`. A pid that started far from the record belongs to a stranger.
+                ChildPoll::Unknown => (!adopted_alive(&child), None),
             };
             if !ended {
                 running.push(child);
