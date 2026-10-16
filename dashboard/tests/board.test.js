@@ -726,3 +726,96 @@ test("parkMessage offers a retry only when asked", () => {
   assert.match(board.parkMessage(job, "It failed.", true), /data-park-retry/);
   assert.match(board.parkMessage(job, "<b>", false), /&lt;b&gt;/);
 });
+
+const costs = {
+  generated_at: 100,
+  groups: {
+    small: { n: 4, n_approx: 4, median: 280000, low: 220000, high: 370000, roles: { builder: 62 }, corrected: null },
+    medium: { n: 2, n_approx: 1, median: 300000, low: 250000, high: 350000, roles: {}, corrected: { n: 1, median: 350000, low: 350000, high: 350000 } },
+    all: { n: 6, n_approx: 5, median: 290000, low: 220000, high: 370000, roles: { builder: 62 }, corrected: null },
+  },
+  roles: { builder: 62, committer: 20, reviewer: 10, message: 8 },
+};
+
+test("the cost panel lists a row per group in order with median, range and notes", () => {
+  const html = board.renderCostPanel(costs, 160);
+  assert.match(html, /<h2[^>]*>Cost per job<\/h2>/);
+  const order = ["small", "medium", "all"].map((g) => html.indexOf(`>${g}<`));
+  assert.ok(order[0] > 0 && order[0] < order[1] && order[1] < order[2], html);
+  assert.doesNotMatch(html, />complex</);
+  assert.match(html, /280K/);
+  assert.match(html, /220K to 370K/);
+  assert.match(html, /4 of 4 approximate/);
+  assert.match(html, /1 of 2 approximate/);
+  assert.match(html, /few jobs/);
+  assert.match(html, /updated 1m ago/);
+});
+
+test("approximate medians carry a tilde with an explanation", () => {
+  const html = board.renderCostPanel(costs, 160);
+  assert.match(html, /280K <span class="approx" title="[^"]+">~<\/span>/);
+});
+
+test("corrected figures are listed when a group has them", () => {
+  const html = board.renderCostPanel(costs, 160);
+  assert.match(html, /Exact counts only/);
+  assert.match(html, /medium: median 350K \(1 job\)/);
+});
+
+test("the role bar has a segment and a legend entry per known role", () => {
+  const html = board.roleBar({ builder: 62, committer: 20, reviewer: 10, message: 8 });
+  assert.equal((html.match(/class="role-seg role-(builder|committer|reviewer|message)" data-pct="\d+"/g) || []).length, 4);
+  assert.match(html, /builder 62%/);
+  assert.match(html, /role="img"/);
+  assert.match(html, /aria-label="[^"]*builder 62%[^"]*"/);
+});
+
+test("an unknown or hostile role name is escaped and gets no class from file text", () => {
+  const html = board.roleBar({ '<img onerror=x>': 40, builder: 60 });
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img onerror=x&gt; 40%/);
+  assert.match(html, /class="role-seg role-other" data-pct="40"/);
+  assert.equal(board.roleBar({}), "");
+  assert.equal(board.roleBar(null), "");
+});
+
+test("group names are escaped and an unknown group is still listed after the known ones", () => {
+  const html = board.renderCostPanel({ generated_at: 1, groups: { "<b>x</b>": { n: 1, n_approx: 0, median: 5, low: 5, high: 5, roles: {} } }, roles: {} }, 2);
+  assert.doesNotMatch(html, /<b>x/);
+});
+
+test("the empty panel invites an action and does not throw on missing data", () => {
+  for (const empty of [null, undefined, {}, { groups: {}, roles: {} }, { groups: { small: { n: 0 } }, roles: {} }]) {
+    const html = board.renderCostPanel(empty, 10);
+    assert.match(html, /No cost history yet/);
+    assert.match(html, /data-copy="factory costs"/);
+  }
+});
+
+test("an unmerged card with an estimate shows the range, group and caveats", () => {
+  const job = makeJob({ stage: "build", estimate: { group: "small", median: 280000, low: 220000, high: 370000, n: 4, n_approx: 4 } });
+  const html = board.renderCard(job, 200, []);
+  assert.match(html, /<p class="estimate">Estimated 220K to 370K weighted \(small, 4 jobs, 4 approximate\)<\/p>/);
+  const few = makeJob({ stage: "spec", estimate: { group: "all", median: 10, low: 10, high: 10, n: 1, n_approx: 0 } });
+  assert.match(board.renderCard(few, 200, []), /Estimated 10 to 10 weighted \(all sizes, 1 job, few jobs\)/);
+});
+
+test("a card without an estimate shows no estimate line", () => {
+  const html = board.renderCard(makeJob({ stage: "build" }), 200, []);
+  assert.doesNotMatch(html, /class="estimate"/);
+  assert.equal(board.estimateLine(makeJob({})), "");
+  assert.equal(board.estimateLine(makeJob({ estimate: "lots" })), "");
+});
+
+test("a merged card compares the actual cost with the estimate range", () => {
+  const est = { group: "small", median: 280000, low: 220000, high: 370000, n: 4, n_approx: 0 };
+  const within = board.estimateLine(makeJob({ stage: "merged", estimate: est, token_view: { weighted: 300000 } }));
+  assert.match(within, /Cost 300K, estimate 220K to 370K: within the range/);
+  assert.match(board.estimateLine(makeJob({ stage: "merged", estimate: est, token_view: { weighted: 220000 } })), /within the range/);
+  assert.match(board.estimateLine(makeJob({ stage: "merged", estimate: est, token_view: { weighted: 370000 } })), /within the range/);
+  assert.match(board.estimateLine(makeJob({ stage: "merged", estimate: est, token_view: { weighted: 370001 } })), /above the range/);
+  assert.match(board.estimateLine(makeJob({ stage: "merged", estimate: est, token_view: { weighted: 100 } })), /below the range/);
+  const noActual = board.estimateLine(makeJob({ stage: "merged", estimate: est }));
+  assert.match(noActual, /Estimated 220K to 370K/);
+  assert.doesNotMatch(noActual, /Cost /);
+});

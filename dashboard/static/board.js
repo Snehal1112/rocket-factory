@@ -393,6 +393,106 @@
     return `<p class="park-link"><button type="button" class="cmd park-open" data-park="${escapeHtml(job.id)}">See what went wrong</button></p>`;
   }
 
+  const GROUP_ORDER = ["small", "medium", "complex", "all"];
+  const GROUP_LABEL = { all: "all" };
+  const ROLE_CLASS = ["builder", "committer", "reviewer", "message", "kb"];
+  const FEW_JOBS = 3;
+
+  function jobsWord(n) {
+    return n === 1 ? "1 job" : `${n} jobs`;
+  }
+
+  // The words that tell a reader how far to trust a figure.
+  function estimateNotes(group, n, nApprox) {
+    const notes = [group === "all" ? "all sizes" : group, jobsWord(n)];
+    if (n < FEW_JOBS) notes.push("few jobs");
+    if (nApprox > 0) notes.push(`${nApprox} approximate`);
+    return notes.join(", ");
+  }
+
+  function isEstimate(e) {
+    return Boolean(e) && typeof e === "object" && [e.median, e.low, e.high, e.n].every((v) => Number.isFinite(Number(v)));
+  }
+
+  // One line on a card: the estimate before the job merges, the actual cost against it afterwards.
+  function estimateLine(job) {
+    const e = job && job.estimate;
+    if (!isEstimate(e)) return "";
+    const range = `${formatTokens(e.low)} to ${formatTokens(e.high)}`;
+    const actual = job.token_view && Number(job.token_view.weighted);
+    if (job.stage === "merged" && Number.isFinite(actual) && actual > 0) {
+      const word = actual > e.high ? "above" : actual < e.low ? "below" : "within";
+      return `<p class="estimate">Cost ${formatTokens(actual)}, estimate ${range}: ${word} the range</p>`;
+    }
+    return `<p class="estimate">Estimated ${range} weighted (${escapeHtml(estimateNotes(String(e.group), Number(e.n), Number(e.n_approx) || 0))})</p>`;
+  }
+
+  function roleClass(role) {
+    return ROLE_CLASS.includes(role) ? `role-${role}` : "role-other";
+  }
+
+  // A stacked bar of the role shares and a text legend. Widths are set from data-pct by app.js.
+  function roleBar(roles) {
+    const entries = Object.entries(roles || {}).filter(([, pct]) => Number(pct) > 0);
+    if (!entries.length) return "";
+    const label = entries.map(([role, pct]) => `${role} ${Number(pct)}%`).join(", ");
+    const segs = entries
+      .map(([role, pct]) => `<span class="role-seg ${roleClass(role)}" data-pct="${Math.max(0, Math.min(100, Number(pct)))}"></span>`)
+      .join("");
+    const legend = entries
+      .map(([role, pct]) => `<li><span class="role-key ${roleClass(role)}" aria-hidden="true"></span>${escapeHtml(role)} ${Number(pct)}%</li>`)
+      .join("");
+    return (
+      `<div class="role-bar" role="img" aria-label="${escapeHtml(`Share of tokens by role: ${label}`)}">${segs}</div>` +
+      `<ul class="role-legend">${legend}</ul>`
+    );
+  }
+
+  function costRow(name, g) {
+    const approx = Number(g.n_approx) > 0;
+    const notes = [];
+    if (Number(g.n) < FEW_JOBS) notes.push("few jobs");
+    if (approx) notes.push(`${Number(g.n_approx)} of ${Number(g.n)} approximate`);
+    const mark = approx
+      ? ` <span class="approx" title="Output tokens were counted too low for some of these jobs, so the figure is a little low.">~</span>`
+      : "";
+    return (
+      `<tr><th scope="row">${escapeHtml(GROUP_LABEL[name] || name)}</th><td>${Number(g.n)}</td>` +
+      `<td>${formatTokens(g.median)}${mark}</td><td>${formatTokens(g.low)} to ${formatTokens(g.high)}</td>` +
+      `<td class="cost-notes">${escapeHtml(notes.join(", "))}</td></tr>`
+    );
+  }
+
+  function renderCostPanel(costs, now) {
+    const groups = (costs && costs.groups) || {};
+    const names = [...GROUP_ORDER.filter((g) => groups[g]), ...Object.keys(groups).filter((g) => !GROUP_ORDER.includes(g))];
+    const rows = names.filter((name) => groups[name] && Number(groups[name].n) > 0);
+    if (!rows.length) {
+      return (
+        `<h2>Cost per job</h2><p class="cost-empty">No cost history yet. Run ${copyChip("factory costs")} after a job merges, ` +
+        `or wait for the next merge.</p>`
+      );
+    }
+    const age =
+      costs && Number(costs.generated_at) > 0 && Number.isFinite(Number(now))
+        ? `<span class="cost-updated">updated ${escapeHtml(formatAge(Math.max(0, Number(now) - Number(costs.generated_at))))} ago</span>`
+        : "";
+    const corrected = rows
+      .filter((name) => groups[name].corrected && Number(groups[name].corrected.n) > 0)
+      .map((name) => {
+        const c = groups[name].corrected;
+        return `<li>${escapeHtml(GROUP_LABEL[name] || name)}: median ${formatTokens(c.median)} (${jobsWord(Number(c.n))})</li>`;
+      });
+    return (
+      `<h2>Cost per job</h2>${age}` +
+      `<div class="cost-scroll"><table class="cost-table"><caption class="sr-only">Weighted tokens per finished job, by plan size</caption>` +
+      `<thead><tr><th scope="col">size</th><th scope="col">jobs</th><th scope="col">median</th><th scope="col">range</th><th scope="col">notes</th></tr></thead>` +
+      `<tbody>${rows.map((name) => costRow(name, groups[name])).join("")}</tbody></table></div>` +
+      (corrected.length ? `<p class="cost-note">Exact counts only</p><ul class="cost-corrected">${corrected.join("")}</ul>` : "") +
+      `<h3 class="cost-sub">Where the tokens go</h3>${roleBar(costs && costs.roles)}`
+    );
+  }
+
   function renderCard(job, now, specs) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
@@ -431,6 +531,7 @@
       (showAge ? `<span class="age">${formatAge(job.seconds_in_stage)} in stage</span>` : "") +
       `</div>` +
       planSection(job) +
+      estimateLine(job) +
       (parked ? "" : durationsLine(job)) +
       (parked ? "" : tokensBar(job)) +
       chips +
@@ -600,6 +701,9 @@
     renderLogNotice,
     headerStatus,
     copyChip,
+    renderCostPanel,
+    estimateLine,
+    roleBar,
     parkKindLabel,
     parkKindClass,
     markLines,
