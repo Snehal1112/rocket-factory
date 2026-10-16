@@ -4,7 +4,7 @@
 set -eu
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(cd "$here/../../.." && pwd)"
+repo="$(cd "$here/../.." && pwd)"
 root="${1:?usage: seed-demo.sh <dir>}"
 data="$root/.superpowers/factory"
 marker="$data/.demo"
@@ -101,5 +101,5 @@ event "{\"ts\":$((now - 5)),\"hook_event_name\":\"SubagentStart\",\"agent_id\":\
 
 echo "Demo root ready: $root"
 echo "Start the server:"
-echo "  cargo run -j4 --manifest-path $repo/tools/factory-server/Cargo.toml -- --root $root --port 8765"
+echo "  cargo run -j4 --manifest-path $repo/dashboard/Cargo.toml -- --root $root --port 8765"
 echo "Then open http://127.0.0.1:8765/"

@@ -12,7 +12,7 @@ Open http://127.0.0.1:8765/. `--root` is the main checkout (the folder that hold
 
 ## What it reads
 
-- `.superpowers/factory/board.json`: job stages, written by the `factory` driver (`tools/factory/`). Optional `stage_history`, `series`, `series.id`, `cancelled`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped.
+- `.superpowers/factory/board.json`: job stages, written by the `factory` driver (the crates under `crates/`, binary in `crates/factory-cli`). Optional `stage_history`, `series`, `series.id`, `cancelled`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped.
 - `.superpowers/sdd/<job dir>/plan.md`, `spec.md`, `progress.md`: the plan title, spec goal and task list on each card. A task is done when its box is ticked or the ledger says `Task N: complete`; a merged job shows every task done.
 - `.superpowers/factory/events.jsonl`: subagent and tool events, appended by the same driver, with `job_id` and `tokens` on every event. There is no hook.
 
