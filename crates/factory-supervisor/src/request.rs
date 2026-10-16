@@ -54,7 +54,7 @@ pub fn validate_id_chars(id: &str) -> Result<(), RequestError> {
     }
 }
 
-fn validate_job(job: &str) -> Result<(), RequestError> {
+pub fn validate_job(job: &str) -> Result<(), RequestError> {
     if !job.is_empty() && job.len() <= MAX_JOB_DIGITS && job.chars().all(|c| c.is_ascii_digit()) {
         Ok(())
     } else {

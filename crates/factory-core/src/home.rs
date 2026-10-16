@@ -9,6 +9,7 @@ const QUEUE_DIR: &str = "queue";
 const RESULTS_DIR: &str = "results";
 const RUN_DIR: &str = "run";
 const LOGS_DIR: &str = "logs";
+const CHILDREN_DIR: &str = "children";
 
 /// The folder that holds `presets/` and `projects/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +55,11 @@ impl Home {
         self.dir.join(RUN_DIR)
     }
 
+    /// One record per child process the supervisor started.
+    pub fn children_dir(&self) -> PathBuf {
+        self.run_dir().join(CHILDREN_DIR)
+    }
+
     /// The log folder of one project. The name must already be validated.
     pub fn logs_dir(&self, project: &str) -> PathBuf {
         self.dir.join(LOGS_DIR).join(project)
@@ -95,6 +101,7 @@ mod tests {
         assert_eq!(h.queue_dir(), PathBuf::from("/h/queue"));
         assert_eq!(h.results_dir(), PathBuf::from("/h/results"));
         assert_eq!(h.run_dir(), PathBuf::from("/h/run"));
+        assert_eq!(h.children_dir(), PathBuf::from("/h/run/children"));
         assert_eq!(h.logs_dir("p"), PathBuf::from("/h/logs/p"));
     }
 

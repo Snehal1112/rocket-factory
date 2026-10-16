@@ -27,7 +27,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn no_source_names_a_state_path_or_the_main_branch() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut hits = Vec::new();
-    for name in ["factory-engine", "factory-git", "factory-cli", "factory-agent", "factory-checks", "factory-core"] {
+    for name in ["factory-engine", "factory-git", "factory-cli", "factory-agent", "factory-checks", "factory-core", "factory-supervisor"] {
         let mut files = Vec::new();
         rust_files(&crates.join(name).join("src"), &mut files);
         for file in files {
