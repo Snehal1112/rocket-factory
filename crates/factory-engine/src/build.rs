@@ -89,12 +89,8 @@ impl Engine<'_> {
 
     /// Creates the job worktree and records the branch and base. The git layer picks all three.
     fn start_worktree(&self, job: &JobView) -> Result<(PathBuf, String, String), EngineError> {
-        // Refuse bad names before anything is created.
-        for f in &self.agent_files {
-            if !is_agent_file_name(&f.name) {
-                return Err(EngineError::Msg(format!("agent file name {:?} is not allowed, use factory-<name>.md", f.name)));
-            }
-        }
+        // Refuse bad names before the worktree is created. The writer checks them again.
+        self.check_agent_names()?;
         let wt = self
             .repo
             .create_worktree(&JobRef { id: self.job_id.clone(), slug: job.slug.clone() })
@@ -109,6 +105,15 @@ impl Engine<'_> {
         Ok((wt.path, base, branch))
     }
 
+    fn check_agent_names(&self) -> Result<(), EngineError> {
+        for f in &self.agent_files {
+            if !is_agent_file_name(&f.name) {
+                return Err(EngineError::Msg(format!("agent file name {:?} is not allowed, use factory-<name>.md", f.name)));
+            }
+        }
+        Ok(())
+    }
+
     /// Writes the agent files into the job worktree. It runs on every build step, so a crash or a failed
     /// write on the first step is repaired on the next one. They are git-excluded, and a file that is tracked
     /// on the base branch is left alone. An existing file or a symlinked folder is never written through.
@@ -116,6 +121,8 @@ impl Engine<'_> {
         if self.agent_files.is_empty() {
             return Ok(());
         }
+        // All or nothing: no path is joined and nothing is created before every name is checked.
+        self.check_agent_names()?;
         let rel_dir = agent_files_rel_dir();
         self.repo.exclude_paths(&[AGENT_EXCLUDE_PATTERN]).map_err(git_err)?;
         let dir = wt.join(&rel_dir);

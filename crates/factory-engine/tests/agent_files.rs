@@ -161,3 +161,23 @@ fn names_outside_the_allow_list_are_refused() {
         assert!(fx.job().worktree.is_none(), "no worktree for {bad}");
     }
 }
+
+#[test]
+fn a_resumed_step_refuses_bad_names_and_writes_nothing() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
+    fx.engine(&runner).build_stage().expect("first");
+    let wt = worktree(&fx);
+    for bad in ["../evil.md", "Factory-X.md", "factory-x.md.sh"] {
+        let list = vec![
+            AgentFile { name: "factory-good.md".into(), content: "G".into() },
+            AgentFile { name: bad.into(), content: "E".into() },
+        ];
+        let err = fx.engine(&runner).with_agent_files(list).build_stage().expect_err(bad);
+        assert!(matches!(&err, EngineError::Msg(m) if m.contains(bad)), "{bad}: {err}");
+        assert!(!wt.join(".claude").exists(), "nothing created for {bad}");
+        assert!(!wt.join("evil.md").exists() && !wt.join(".claude/evil.md").exists());
+        assert!(!wt.join("../evil.md").exists());
+    }
+}
