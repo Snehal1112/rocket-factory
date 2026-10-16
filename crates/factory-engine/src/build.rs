@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::StopReason;
-use factory_core::{ParkKind, ParkPart, Stage, TaskState};
+use factory_core::{agent_files_rel_dir, is_agent_file_name, AGENT_EXCLUDE_PATTERN, ParkKind, ParkPart, Stage, TaskState};
 use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest};
@@ -88,6 +88,12 @@ impl Engine<'_> {
 
     /// Creates the job worktree and records the branch and base. The git layer picks all three.
     fn start_worktree(&self, job: &JobView) -> Result<(PathBuf, String, String), EngineError> {
+        // Refuse bad names before anything is created.
+        for f in &self.agent_files {
+            if !is_agent_file_name(&f.name) {
+                return Err(EngineError::Msg(format!("agent file name {:?} is not allowed, use factory-<name>.md", f.name)));
+            }
+        }
         let wt = self
             .repo
             .create_worktree(&JobRef { id: self.job_id.clone(), slug: job.slug.clone() })
@@ -99,7 +105,38 @@ impl Engine<'_> {
             j.branch = br;
             j.set_base(&b, false)
         })?;
+        self.write_agent_files(&wt.path)?;
         Ok((wt.path, base, branch))
+    }
+
+    /// Writes the agent files into a new worktree. They are git-excluded, and a file that is tracked
+    /// on the base branch is left alone. An existing file or a symlinked folder is never written through.
+    fn write_agent_files(&self, wt: &Path) -> Result<(), EngineError> {
+        if self.agent_files.is_empty() {
+            return Ok(());
+        }
+        let rel_dir = agent_files_rel_dir();
+        self.repo.exclude_paths(&[AGENT_EXCLUDE_PATTERN]).map_err(git_err)?;
+        let dir = wt.join(&rel_dir);
+        for p in [wt.join(rel_dir.components().next().map(|c| c.as_os_str()).unwrap_or_default()), dir.clone()] {
+            if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err(EngineError::Msg(format!("{} is a symlink, agent files are not written", p.display())));
+            }
+        }
+        std::fs::create_dir_all(&dir)?;
+        for f in &self.agent_files {
+            let rel = rel_dir.join(&f.name);
+            let rel_text = rel.to_string_lossy().replace('\\', "/");
+            if self.repo.is_tracked_at_branch(self.repo.base_branch(), &rel_text).map_err(git_err)? {
+                continue;
+            }
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(wt.join(&rel)) {
+                Ok(mut file) => std::io::Write::write_all(&mut file, f.content.as_bytes())?,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
     }
 
     fn existing_worktree(&self, job: &JobView) -> Result<(PathBuf, String), EngineError> {

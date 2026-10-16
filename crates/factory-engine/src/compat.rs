@@ -56,6 +56,7 @@ pub struct Driver {
     runner_for: RunnerFactory,
     lease_owner: Option<String>,
     lock_wait: Duration,
+    agent_files: Vec<factory_core::AgentFile>,
 }
 
 /// How long a lease lasts without a renewal.
@@ -67,7 +68,7 @@ impl Driver {
             .with_base_branch(&config.base_branch)
             .with_worktrees_dir(layout.worktrees_dir.clone());
         let store = BoardStore::new(&layout.board_file(), DEFAULT_LOCK_WAIT);
-        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT })
+        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT, agent_files: Vec::new() })
     }
 
     /// Changes how long board writes wait for the lock.
@@ -79,6 +80,12 @@ impl Driver {
 
     pub fn layout(&self) -> &Layout {
         &self.layout
+    }
+
+    /// Sets the agent files every engine of this driver writes into new job worktrees.
+    pub fn with_agent_files(mut self, files: Vec<factory_core::AgentFile>) -> Driver {
+        self.agent_files = files;
+        self
     }
 
     /// Makes `run_job` take and renew a lease for `owner` on every job it drives.
@@ -150,7 +157,8 @@ impl Driver {
             self.config.clone(),
             &events,
         )?
-        .with_lock_wait(self.lock_wait);
+        .with_lock_wait(self.lock_wait)
+        .with_agent_files(self.agent_files.clone());
         let engine = if self.layout.commit_context_file.exists() {
             engine.with_commit_context(self.layout.commit_context_file.clone())
         } else {

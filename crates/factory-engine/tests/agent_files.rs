@@ -1,0 +1,102 @@
+mod common;
+
+use std::sync::{Arc, Mutex};
+
+use common::{commit_file, committing_fixture, scripted_auto, Effect, Fixture};
+use factory_core::{AgentFile, Stage};
+use factory_engine::{EngineError, StageOutcome};
+use git2::{Repository, StatusOptions};
+
+const BUILDER: &str = ".claude/agents/factory-builder.md";
+
+fn files() -> Vec<AgentFile> {
+    vec![
+        AgentFile { name: "factory-builder.md".into(), content: "BUILDER".into() },
+        AgentFile { name: "factory-reviewer.md".into(), content: "REVIEWER".into() },
+    ]
+}
+
+/// A builder that records the agent file text it sees, then writes a change.
+fn recording_effect(seen: Arc<Mutex<Vec<Option<String>>>>) -> Effect {
+    Box::new(move |spec| {
+        let text = std::fs::read_to_string(spec.cwd.join(BUILDER)).ok();
+        seen.lock().expect("seen").push(text);
+        std::fs::write(spec.cwd.join("a.txt"), "a\n").expect("write");
+        "done".to_string()
+    })
+}
+
+#[test]
+fn files_exist_before_the_builder_runs_and_stay_out_of_the_commit() {
+    let fx = committing_fixture();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let runner = scripted_auto(vec![recording_effect(seen.clone())]);
+    let out = fx.engine(&runner).with_agent_files(files()).build_stage().expect("build");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    assert_eq!(seen.lock().expect("seen").as_slice(), &[Some("BUILDER".to_string())]);
+
+    let job = fx.job();
+    let wt = std::path::PathBuf::from(job.worktree.clone().expect("worktree"));
+    assert_eq!(std::fs::read_to_string(wt.join(".claude/agents/factory-reviewer.md")).expect("reviewer"), "REVIEWER");
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    let repo = Repository::open(&wt).expect("open wt");
+    let st = repo.statuses(Some(&mut opts)).expect("statuses");
+    assert!(st.iter().all(|e| !e.path().unwrap_or("").contains("factory-")), "agent files must be excluded");
+    let head = repo.find_commit(git2::Oid::from_str(&job.head.expect("head")).expect("oid")).expect("commit");
+    let tree = head.tree().expect("tree");
+    assert!(tree.get_path(std::path::Path::new(".claude/agents")).is_err());
+    assert!(tree.get_path(std::path::Path::new("a.txt")).is_ok());
+}
+
+#[test]
+fn a_file_tracked_on_the_base_branch_is_not_overwritten() {
+    let fx = committing_fixture();
+    commit_file(&fx.main, BUILDER, "REPO");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let runner = scripted_auto(vec![recording_effect(seen.clone())]);
+    fx.engine(&runner).with_agent_files(files()).build_stage().expect("build");
+    assert_eq!(seen.lock().expect("seen").as_slice(), &[Some("REPO".to_string())]);
+    let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
+    assert_eq!(std::fs::read_to_string(wt.join(".claude/agents/factory-reviewer.md")).expect("reviewer"), "REVIEWER");
+}
+
+#[test]
+fn no_files_means_no_agents_folder() {
+    let fx = committing_fixture();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let runner = scripted_auto(vec![recording_effect(seen)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
+    assert!(!wt.join(".claude/agents").exists());
+}
+
+#[test]
+fn a_later_build_step_leaves_existing_files_alone() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, "# P\n\n### Task 1: first\n\nx\n\n### Task 2: second\n\ny\n").expect("plan");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let second: Effect = Box::new(|spec| {
+        std::fs::write(spec.cwd.join("b.txt"), "b\n").expect("write");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![recording_effect(seen.clone()), second]);
+    let e = fx.engine(&runner).with_agent_files(files());
+    e.build_stage().expect("first");
+    let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
+    std::fs::write(wt.join(BUILDER), "EDITED").expect("edit");
+    e.build_stage().expect("second");
+    assert_eq!(std::fs::read_to_string(wt.join(BUILDER)).expect("read"), "EDITED");
+}
+
+#[test]
+fn names_outside_the_allow_list_are_refused() {
+    for bad in ["../evil.md", "builder.md", "factory-x.txt", "factory-A.md", "factory-a/b.md", "factory-.md"] {
+        let fx: Fixture = committing_fixture();
+        let runner = scripted_auto(vec![]);
+        let list = vec![AgentFile { name: bad.into(), content: "x".into() }];
+        let err = fx.engine(&runner).with_agent_files(list).build_stage().expect_err(bad);
+        assert!(matches!(&err, EngineError::Msg(m) if m.contains(bad)), "{bad}: {err}");
+        assert!(fx.job().worktree.is_none(), "no worktree for {bad}");
+    }
+}

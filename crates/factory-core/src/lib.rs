@@ -30,7 +30,7 @@ pub use error::CoreError;
 pub use fsutil::write_atomic;
 pub use home::Home;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
-pub use layout::Layout;
+pub use layout::{agent_files_rel_dir, is_agent_file_name, Layout, AGENT_EXCLUDE_PATTERN};
 pub use ledger::{Ledger, TaskState};
 pub use park::{ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};

@@ -2,6 +2,21 @@
 
 use std::path::{Path, PathBuf};
 
+/// The git exclude line that covers every agent file the driver writes into a job worktree.
+pub const AGENT_EXCLUDE_PATTERN: &str = "/.claude/agents/factory-*.md";
+
+/// The folder, relative to a worktree root, where Claude Code looks for agent files.
+pub fn agent_files_rel_dir() -> PathBuf {
+    Path::new(".claude").join("agents")
+}
+
+/// True for `factory-<a-z, 0-9, ->.md`, the only names the exclude line covers and the engine writes.
+pub fn is_agent_file_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("factory-") else { return false };
+    let Some(stem) = rest.strip_suffix(".md") else { return false };
+    !stem.is_empty() && stem.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 /// The folders and files of one project. `in_repo` gives the layout Rocket uses today.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
@@ -70,6 +85,16 @@ mod tests {
         assert_eq!(l.worktrees_dir, PathBuf::from("/r/.claude/worktrees"));
         assert_eq!(l.config_file, PathBuf::from("/r/.claude/factory/config.toml"));
         assert_eq!(l.commit_context_file, PathBuf::from("/r/.claude/factory/commit-context.md"));
+    }
+
+    #[test]
+    fn agent_file_names_are_limited() {
+        for ok in ["factory-builder.md", "factory-a-1.md"] {
+            assert!(is_agent_file_name(ok), "{ok}");
+        }
+        for bad in ["factory-.md", "builder.md", "factory-x.txt", "factory-X.md", "factory-../x.md", "factory-a/b.md", "factory-a.md.md", "factory-a b.md"] {
+            assert!(!is_agent_file_name(bad), "{bad}");
+        }
     }
 
     #[test]

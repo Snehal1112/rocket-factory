@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use factory_agent::{AgentRunner, EventSink};
 use factory_checks::validate_config;
-use factory_core::{Config, Stage};
+use factory_core::{AgentFile, Config, Stage};
 use factory_git::Repo;
 use thiserror::Error;
 
@@ -90,6 +90,8 @@ pub struct Engine<'a> {
     pub events: &'a EventSink,
     pub lock_wait: Duration,
     pub commit_context: Option<PathBuf>,
+    /// Agent files written into each new job worktree. Empty by default.
+    pub agent_files: Vec<AgentFile>,
 }
 
 impl<'a> Engine<'a> {
@@ -116,6 +118,7 @@ impl<'a> Engine<'a> {
             events,
             lock_wait: DEFAULT_LOCK_WAIT,
             commit_context: None,
+            agent_files: Vec::new(),
         })
     }
 
@@ -128,6 +131,12 @@ impl<'a> Engine<'a> {
     /// Sets the file the committer prompt text is read from. Without it the committer step is skipped.
     pub fn with_commit_context(mut self, path: PathBuf) -> Self {
         self.commit_context = Some(path);
+        self
+    }
+
+    /// Sets the agent files written into each new job worktree.
+    pub fn with_agent_files(mut self, files: Vec<AgentFile>) -> Self {
+        self.agent_files = files;
         self
     }
 
