@@ -13,7 +13,7 @@ pub struct Baseline {
 }
 
 /// One agent run as logged by the engine in `usage.jsonl`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct UsageRecord {
     pub job: String,
     pub role: String,
@@ -21,6 +21,16 @@ pub struct UsageRecord {
     pub cache_creation: u64,
     pub output: u64,
     pub cache_read: u64,
+    /// 2 for lines with the corrected output count, 0 for old lines.
+    pub usage_v: u64,
+    pub model: String,
+    pub turns: u64,
+    pub resumed: bool,
+    pub stop: String,
+    pub round: u64,
+    pub tasks_done: Option<u64>,
+    pub start_ctx: u64,
+    pub ts: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -76,6 +86,32 @@ pub fn render(job: &str, report: &TokenReport) -> String {
     out
 }
 
+/// True when any line predates the corrected output count.
+pub fn under_counted(records: &[UsageRecord]) -> bool {
+    records.iter().any(|r| r.usage_v < 2)
+}
+
+/// One row per run in log order, so resumes, fix rounds and tasks show up as separate costs.
+pub fn render_detail(records: &[UsageRecord]) -> String {
+    if records.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("  runs\n");
+    for (i, r) in records.iter().enumerate() {
+        let task = r.tasks_done.map_or(String::new(), |n| format!(" done {n}"));
+        let resumed = if r.resumed { " resumed" } else { "" };
+        out.push_str(&format!(
+            "  {:<3} {:<10} round {}{task}{resumed} turns {} weighted {}\n",
+            i + 1,
+            r.role,
+            r.round.max(1),
+            r.turns,
+            weighted(r)
+        ));
+    }
+    out
+}
+
 /// Reads usage lines for one job. Unreadable lines are skipped, a missing file is empty.
 pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Vec<UsageRecord>, std::io::Error> {
     let text = match std::fs::read_to_string(log) {
@@ -97,6 +133,15 @@ pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Vec<UsageRecord>, 
             cache_creation: n("cache_creation"),
             output: n("output"),
             cache_read: n("cache_read"),
+            usage_v: n("usage_v"),
+            model: v["model"].as_str().unwrap_or("").to_string(),
+            turns: n("turns"),
+            resumed: v["resumed"].as_bool().unwrap_or(false),
+            stop: v["stop"].as_str().unwrap_or("").to_string(),
+            round: n("round"),
+            tasks_done: v["tasks_done"].as_u64(),
+            start_ctx: n("start_ctx"),
+            ts: n("ts"),
         });
     }
     Ok(out)
@@ -107,7 +152,57 @@ mod tests {
     use super::*;
 
     fn rec(role: &str, input: u64, cc: u64, out: u64, cr: u64) -> UsageRecord {
-        UsageRecord { job: "001".into(), role: role.into(), input, cache_creation: cc, output: out, cache_read: cr }
+        UsageRecord { job: "001".into(), role: role.into(), input, cache_creation: cc, output: out, cache_read: cr, usage_v: 2, ..Default::default() }
+    }
+
+    #[test]
+    fn old_lines_are_flagged_as_under_counted() {
+        let old = UsageRecord { usage_v: 0, ..rec("builder", 1, 1, 1, 1) };
+        assert!(under_counted(&[rec("reviewer", 1, 1, 1, 1), old]));
+        assert!(!under_counted(&[rec("reviewer", 1, 1, 1, 1)]));
+        assert!(!under_counted(&[]));
+    }
+
+    #[test]
+    fn load_reads_old_new_and_garbage_lines_together() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let log = dir.path().join("usage.jsonl");
+        std::fs::write(
+            &log,
+            concat!(
+                "{\"job\":\"001\",\"role\":\"builder\",\"input\":1,\"cache_creation\":2,\"output\":3,\"cache_read\":40}\n",
+                "garbage line\n",
+                "{\"job\":\"001\",\"role\":\"builder\",\"input\":1,\"cache_creation\":2,\"output\":300,\"cache_read\":40,",
+                "\"ts\":5,\"model\":\"sonnet\",\"turns\":9,\"resumed\":true,\"stop\":\"done\",\"round\":2,\"tasks_done\":1,\"start_ctx\":77,\"usage_v\":2}\n"
+            ),
+        )?;
+        let records = load_usage(&log, "001")?;
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].usage_v, 0);
+        assert_eq!(records[0].tasks_done, None);
+        assert_eq!(records[1].usage_v, 2);
+        assert_eq!(records[1].turns, 9);
+        assert!(records[1].resumed);
+        assert_eq!(records[1].tasks_done, Some(1));
+        assert_eq!(records[1].start_ctx, 77);
+        assert!(under_counted(&records));
+        Ok(())
+    }
+
+    #[test]
+    fn detail_lists_one_row_per_run_with_its_weighted_cost() {
+        let r = UsageRecord { turns: 9, resumed: true, round: 2, tasks_done: Some(1), stop: "done".into(), ..rec("builder", 100, 200, 300, 1_000) };
+        let text = render_detail(&[r, rec("reviewer", 1, 0, 0, 0)]);
+        assert!(text.contains("builder"), "{text}");
+        assert!(text.contains("resumed"), "{text}");
+        assert!(text.contains("turns 9"), "{text}");
+        assert!(text.contains("weighted 700"), "{text}");
+        assert!(text.contains("reviewer"), "{text}");
+    }
+
+    #[test]
+    fn detail_of_nothing_is_empty() {
+        assert_eq!(render_detail(&[]), "");
     }
 
     #[test]
