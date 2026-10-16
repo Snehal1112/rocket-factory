@@ -1,3 +1,4 @@
+mod costs;
 mod events;
 mod model;
 mod park;

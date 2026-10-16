@@ -32,6 +32,7 @@ pub struct StateView {
     pub specs: Vec<SpecCard>,
     pub unassigned_agents: Vec<AgentState>,
     pub skipped_lines: u64,
+    pub costs: Option<crate::costs::CostsView>,
 }
 
 /// Reads `board.json`. A missing file means no jobs. A bad file gives no jobs and an error text.
@@ -199,6 +200,7 @@ pub fn build_state(
         specs,
         unassigned_agents: unassigned,
         skipped_lines: registry.skipped_lines,
+        costs: crate::costs::load_costs(root),
     }
 }
 
@@ -237,6 +239,7 @@ mod tests {
             cancelled: None,
             park_kind: None,
             park_at: None,
+            estimate: None,
         }
     }
 
@@ -602,6 +605,41 @@ mod tests {
         assert_eq!(json["skipped_lines"], 2);
         assert!(json["jobs"][0]["stage_durations"].is_array());
         assert!(json["jobs"][0]["token_view"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn the_state_carries_the_group_summary_but_never_a_per_job_list() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join(".superpowers/factory");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(
+            dir.join("costs.json"),
+            r#"{"generated_at":1.0,"groups":{"small":{"n":1,"n_approx":0,"median":9,"low":9,"high":9,"roles":{},"corrected":null}},"roles":{"builder":100},"jobs":[{"id":"SECRET-JOB"}]}"#,
+        )?;
+        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, root.path());
+        let json = serde_json::to_string(&view)?;
+        assert!(json.contains("\"costs\":{"), "{json}");
+        assert!(json.contains("\"median\":9"), "{json}");
+        assert!(!json.contains("SECRET-JOB"), "{json}");
+        let none = build_state(&Board::default(), &Registry::new(), 10.0, None, Path::new("/nonexistent"));
+        assert!(serde_json::to_value(&none)?["costs"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn a_job_estimate_passes_through_and_a_malformed_one_is_dropped() -> TestResult {
+        let good: Board = serde_json::from_str(
+            r#"{"jobs":[{"id":"001","dir":"d","slug":"s","created":"c","feature":"f","branch":"b","stage":"build","round":0,"stage_since":1.0,"reviews":{},
+                "estimate":{"group":"small","median":250000,"low":220000,"high":310000,"n":4,"n_approx":2}}]}"#,
+        )?;
+        let view = build_state(&good, &Registry::new(), 10.0, None, Path::new("/nonexistent"));
+        let json = serde_json::to_value(&view)?;
+        assert_eq!(json["jobs"][0]["estimate"]["median"], 250_000);
+        let bad: Board = serde_json::from_str(
+            r#"{"jobs":[{"id":"001","dir":"d","slug":"s","created":"c","feature":"f","branch":"b","stage":"build","round":0,"stage_since":1.0,"reviews":{},"estimate":"lots"}]}"#,
+        )?;
+        assert!(bad.jobs[0].estimate.is_none());
         Ok(())
     }
 }

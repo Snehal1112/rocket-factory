@@ -142,6 +142,20 @@ pub struct Job {
     /// Unix seconds the job parked. A bad value is dropped.
     #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
     pub park_at: Option<u64>,
+    /// The cost estimate made when the job was created. A bad value is dropped.
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub estimate: Option<Estimate>,
+}
+
+/// The cost estimate the driver stored on a job when it created it.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Estimate {
+    pub group: String,
+    pub median: u64,
+    pub low: u64,
+    pub high: u64,
+    pub n: u32,
+    pub n_approx: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
