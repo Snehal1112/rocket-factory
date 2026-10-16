@@ -51,6 +51,25 @@ fn diff_to_files_writes_diff_stat_and_names_files() {
 }
 
 #[test]
+fn diff_counts_reports_files_and_changed_lines_without_writing_files() {
+    let fx = Fixture::new();
+    let (base, head) = fx.job_branch("factory/001-x", &[("b.txt", "new\n"), ("base.txt", "base\nmore\n")]);
+    let counts = fx.repo().diff_counts(&base, &head).expect("counts");
+    assert_eq!((counts.files, counts.insertions, counts.deletions), (2, 2, 0));
+    let out = fx.dir.path().join("out");
+    assert!(!out.exists(), "diff_counts must not write anything");
+}
+
+#[test]
+fn diff_counts_of_identical_commits_is_zero_and_of_an_unknown_commit_is_an_error() {
+    let fx = Fixture::new();
+    let tip = fx.main_sha();
+    let counts = fx.repo().diff_counts(&tip, &tip).expect("counts");
+    assert_eq!((counts.files, counts.insertions, counts.deletions), (0, 0, 0));
+    assert!(fx.repo().diff_counts("0000000000000000000000000000000000000000", &tip).is_err());
+}
+
+#[test]
 fn diff_to_files_of_identical_commits_writes_empty_files() {
     let fx = Fixture::new();
     let sha = fx.main_sha();

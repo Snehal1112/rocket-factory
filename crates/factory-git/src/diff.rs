@@ -31,7 +31,22 @@ fn write_line(out: &mut impl Write, line: &DiffLine<'_>) -> io::Result<()> {
     out.write_all(line.content())
 }
 
+/// Counts of a diff, without writing any file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiffCounts {
+    pub files: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
 impl Repo {
+    /// File and line counts between two commits. Nothing is written.
+    pub fn diff_counts(&self, base: &str, head: &str) -> Result<DiffCounts> {
+        let diff = self.tree_diff(base, head)?;
+        let stats = diff.stats()?;
+        Ok(DiffCounts { files: stats.files_changed(), insertions: stats.insertions(), deletions: stats.deletions() })
+    }
+
     /// Writes `review-<base7>..<head7>.diff`, `.stat` and `.names` into `dir`.
     pub fn diff_to_files(&self, base: &str, head: &str, dir: &Path) -> Result<DiffFiles> {
         let base_id = self.commit_of(base)?.id().to_string();

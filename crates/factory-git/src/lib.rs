@@ -12,7 +12,7 @@ mod state;
 mod worktree;
 
 pub use commits::CommitInfo;
-pub use diff::DiffFiles;
+pub use diff::{DiffCounts, DiffFiles};
 pub use error::{GitError, Result};
 pub use merge::MergeOutcome;
 pub use repo::{Repo, MAIN_BRANCH};
