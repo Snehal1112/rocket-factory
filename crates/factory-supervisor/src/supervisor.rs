@@ -43,6 +43,18 @@ pub struct TickReport {
     pub bad_children: Vec<String>,
     /// Problems that did not stop the tick, such as a queue entry that could not be removed.
     pub errors: Vec<String>,
+    /// Projects whose lease is held by a live driver process that is not a child of this supervisor.
+    /// Nothing is started for them until that process ends.
+    pub orphans: Vec<String>,
+}
+
+/// What start-up recovery found.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RecoveryReport {
+    /// Request ids of children that still run and are now watched again.
+    pub adopted: Vec<String>,
+    /// What recovery ended or found, in the shape of a tick report.
+    pub report: TickReport,
 }
 
 pub struct Supervisor {
@@ -52,6 +64,8 @@ pub struct Supervisor {
     max_parallel: u32,
     /// Requests whose child runs but could not be recorded. They are never started again by this process.
     started_ids: HashSet<String>,
+    /// True once start-up recovery ran.
+    recovered: bool,
 }
 
 /// True when the pid runs and is not a zombie.
@@ -132,6 +146,7 @@ pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
 pub fn new_lines(prev: &mut HashSet<String>, report: &TickReport) -> Vec<String> {
     let mut now: Vec<String> = report.errors.iter().map(|e| format!("factoryd: {e}")).collect();
     now.extend(report.bad_children.iter().map(|b| format!("factoryd: bad child record {b}")));
+    now.extend(report.orphans.iter().map(|p| format!("factoryd: project {p} is busy, its lease belongs to a live process that is not a child of factoryd")));
     let fresh: Vec<String> = now.iter().filter(|l| !prev.contains(*l)).cloned().collect();
     *prev = now.into_iter().collect();
     let mut seen = HashSet::new();
@@ -148,7 +163,7 @@ pub fn clamp_interval(interval: Duration) -> Duration {
 
 impl Supervisor {
     pub fn new(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Supervisor {
-        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new() }
+        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new(), recovered: false }
     }
 
     pub fn set_max_parallel(&mut self, n: u32) {
@@ -285,9 +300,9 @@ impl Supervisor {
         Some(name.to_string())
     }
 
-    pub fn tick(&mut self) -> Result<TickReport, SupervisorError> {
-        let mut report = TickReport::default();
-        // Step 1: finish what ended. A child that cannot be finished yet keeps its project busy.
+    /// Finishes every child that ended. Returns the children still running and the projects that
+    /// are blocked by a child record that cannot be read or finished.
+    fn settle_children(&self, report: &mut TickReport) -> (Vec<ChildRecord>, Vec<String>) {
         let mut running: Vec<ChildRecord> = Vec::new();
         let mut blocked: Vec<String> = Vec::new();
         for child in records::read_children(&self.home) {
@@ -323,21 +338,95 @@ impl Supervisor {
                     _ => {}
                 }
             }
-            if let Err(e) = self.finish(&child, outcome, &mut report) {
+            if let Err(e) = self.finish(&child, outcome, report) {
                 report.errors.push(format!("finish {}: {e}", child.request_id));
                 running.push(child);
             }
         }
+        (running, blocked)
+    }
+
+    /// Projects held by a live driver process that has no child record.
+    fn find_orphans(states: &BTreeMap<String, ProjectState>, running_projects: &[String]) -> Vec<String> {
+        states
+            .iter()
+            .filter(|(name, state)| {
+                matches!(state, ProjectState::LeaseHeld { owner } if owner_pid(owner).is_some())
+                    && !running_projects.iter().any(|p| p == *name)
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// Start-up recovery. A child record whose process still runs is adopted and stays in place. One whose
+    /// process is gone ends from its log files, as `Lost` when they hold no result line. A queued request
+    /// with no result and no child record but with log files was started before a crash: it ends as `Lost`
+    /// and is never run again. A job is never restarted. The first tick calls this once, and calling it
+    /// first by hand is fine.
+    pub fn recover(&mut self) -> Result<RecoveryReport, SupervisorError> {
+        self.recover_inner().map(|(report, _, _)| report)
+    }
+
+    /// Recovery plus the children still running and the blocked projects, so a tick need not look again.
+    fn recover_inner(&mut self) -> Result<(RecoveryReport, Vec<ChildRecord>, Vec<String>), SupervisorError> {
+        let mut report = TickReport::default();
+        let (running, blocked) = self.settle_children(&mut report);
+        for item in queue::list(&self.home) {
+            let QueueItem::Ok(r) = item else { continue };
+            let tracked = running.iter().any(|c| c.request_id == r.id) || blocked.contains(&r.project);
+            if tracked || self.result_path(&r.id).exists() {
+                continue;
+            }
+            let logs = self.home.logs_dir(&r.project);
+            let evidence = ["out", "err"]
+                .iter()
+                .map(|ext| format!("{}.{ext}", r.id))
+                .find(|name| std::fs::symlink_metadata(logs.join(name)).is_ok());
+            let Some(name) = evidence else { continue };
+            let reason = format!("the request was started but no child record exists (found log file {name}), it is not run again");
+            report.errors.push(format!("request {}: {reason}", r.id));
+            match self.record_result(&r.id, &r.project, &r.job, Outcome::Lost { reason }) {
+                Ok(outcome) => {
+                    report.finished.push((r.id.clone(), outcome));
+                    if let Err(e) = self.drop_queued(&r.id) {
+                        report.errors.push(format!("drop {}: {e}", r.id));
+                    }
+                }
+                // Without a result the request would start again, so this stops recovery.
+                Err(e) => return Err(e),
+            }
+        }
+        let child_pids: BTreeSet<u32> = running.iter().map(|c| c.pid).collect();
+        let mut running_projects: Vec<String> = running.iter().map(|c| c.project.clone()).collect();
+        running_projects.extend(blocked.iter().cloned());
+        report.orphans = Self::find_orphans(&self.project_states(&child_pids)?, &running_projects);
+        self.recovered = true;
+        let adopted = running.iter().map(|c| c.request_id.clone()).collect();
+        Ok((RecoveryReport { adopted, report }, running, blocked))
+    }
+
+    pub fn tick(&mut self) -> Result<TickReport, SupervisorError> {
+        // Step 1: finish what ended. A child that cannot be finished yet keeps its project busy.
+        // The first tick does this inside recovery.
+        let mut report = TickReport::default();
+        let (running, blocked) = if self.recovered {
+            self.settle_children(&mut report)
+        } else {
+            let (rec, running, blocked) = self.recover_inner()?;
+            report = rec.report;
+            (running, blocked)
+        };
         // Step 2: the snapshot. A request that already has a result is dropped and never started.
         let mut queue: Vec<Request> = Vec::new();
         for item in queue::list(&self.home) {
             if let QueueItem::Ok(r) = item {
-                if self.started_ids.contains(&r.id) {
-                    report.errors.push(format!("request {} was started but is untracked, not starting it again", r.id));
-                } else if self.result_path(&r.id).exists() {
+                // The result check comes first, so a failed queue drop is retried here even for a started id.
+                if self.result_path(&r.id).exists() {
                     if let Err(e) = self.drop_queued(&r.id) {
                         report.errors.push(format!("drop {}: {e}", r.id));
                     }
+                } else if self.started_ids.contains(&r.id) {
+                    report.errors.push(format!("request {} was started but is untracked, not starting it again", r.id));
                 } else {
                     queue.push(r);
                 }
@@ -346,12 +435,14 @@ impl Supervisor {
         let child_pids: BTreeSet<u32> = running.iter().map(|c| c.pid).collect();
         let mut running_projects: Vec<String> = running.iter().map(|c| c.project.clone()).collect();
         running_projects.extend(blocked);
-        let input = SchedulerInput {
-            max_parallel: self.max_parallel,
-            queue,
-            running_projects,
-            project_states: self.project_states(&child_pids)?,
-        };
+        let project_states = self.project_states(&child_pids)?;
+        // Recovery reported the orphans it found already, so this adds only the ones it did not.
+        for p in Self::find_orphans(&project_states, &running_projects) {
+            if !report.orphans.contains(&p) {
+                report.orphans.push(p);
+            }
+        }
+        let input = SchedulerInput { max_parallel: self.max_parallel, queue, running_projects, project_states };
         // Step 3: act.
         for decision in decide(&input) {
             // One failing decision never stops the others.
@@ -383,7 +474,13 @@ impl Supervisor {
                         eprintln!("{line}");
                     }
                 }
-                Err(e) => eprintln!("factoryd: tick failed: {e}"),
+                Err(e) => {
+                    // The same failure prints once, through the same filter as the other lines.
+                    let failed = TickReport { errors: vec![format!("tick failed: {e}")], ..TickReport::default() };
+                    for line in new_lines(&mut printed, &failed) {
+                        eprintln!("{line}");
+                    }
+                }
             }
             if stop() {
                 return;

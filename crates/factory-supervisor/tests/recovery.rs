@@ -8,9 +8,23 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use factory_core::{project, Home};
 use factory_supervisor::request::{Action, Request};
+use factory_engine::{acquire_project_lease, project_lease_status, ProjectLeaseStatus};
 use factory_supervisor::{pid_alive, queue, records, ChildRecord, Outcome, ProcessSpawner, QueueItem, Supervisor};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
+
+// The script counts its starts per project and job. A `hold` behavior runs until its gate file is deleted.
+const SCRIPT: &str = r#"#!/bin/sh
+d=$(dirname "$0")
+echo x >> "$d/runs-$2-$4"
+b=$(cat "$d/behavior-$2-$4")
+case "$b" in
+  merged*) echo "$b" ;;
+  hold)
+    while [ -f "$d/gate-$2-$4" ]; do sleep 0.02; done
+    echo merged ;;
+esac
+"#;
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -32,7 +46,7 @@ fn env() -> Env {
 impl Env {
     fn supervisor(&self) -> Supervisor {
         let bin = self.dir.join("factory");
-        std::fs::write(&bin, "#!/bin/sh\nexit 0\n").expect("script");
+        std::fs::write(&bin, SCRIPT).expect("script");
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let mut s = Supervisor::new(self.home.clone(), Box::new(ProcessSpawner::new(bin)), Box::new(now_ms));
         s.set_max_parallel(4);
@@ -43,6 +57,28 @@ impl Env {
         let repo = self._tmp.path().join("repos").join(name);
         std::fs::create_dir_all(&repo).expect("repo");
         project::add(&self.home, name, &repo, "rust", None, &|_| Ok(())).expect("add project");
+    }
+
+    /// Queues a request. The script behavior is `merged` or `hold`, and `hold` creates its gate file.
+    fn enqueue_with(&self, project: &str, job: &str, behavior: &str) -> Request {
+        std::fs::write(self.dir.join(format!("behavior-{project}-{job}")), behavior).expect("behavior");
+        if behavior == "hold" {
+            std::fs::write(self.dir.join(format!("gate-{project}-{job}")), "").expect("gate");
+        }
+        self.enqueue(project, job)
+    }
+
+    fn release(&self, project: &str, job: &str) {
+        std::fs::remove_file(self.dir.join(format!("gate-{project}-{job}"))).expect("remove gate");
+    }
+
+    fn runs(&self, project: &str, job: &str) -> usize {
+        std::fs::read_to_string(self.dir.join(format!("runs-{project}-{job}"))).map(|t| t.lines().count()).unwrap_or(0)
+    }
+
+    fn state_dir(&self, name: &str) -> PathBuf {
+        let file = project::get(&self.home, name).expect("project");
+        project::layout(&self.home, name, &file).expect("layout").state_dir
     }
 
     fn enqueue(&self, project: &str, job: &str) -> Request {
@@ -126,4 +162,185 @@ fn a_recorded_pid_that_started_when_the_record_says_is_adopted() {
     child.kill().expect("kill");
     child.wait().expect("wait");
     wait_dead(child.id());
+}
+
+/// A pid that ran and was reaped, so `/proc` has no entry for it.
+fn dead_pid() -> u32 {
+    let mut c = Command::new("sh").arg("-c").arg("exit 0").spawn().expect("sh");
+    let pid = c.id();
+    c.wait().expect("wait");
+    pid
+}
+
+fn tick_until_finished(s: &mut Supervisor, id: &str) {
+    let end = Instant::now() + TIMEOUT;
+    loop {
+        let r = s.tick().expect("tick");
+        if r.finished.iter().any(|(i, _)| i == id) {
+            return;
+        }
+        assert!(Instant::now() < end, "request {id} did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The process group of a pid, from field 5 of its stat line.
+fn pgrp(pid: u32) -> String {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("stat");
+    stat.rsplit_once(')').expect("paren").1.split_whitespace().nth(2).expect("pgrp").to_string()
+}
+
+#[test]
+fn a_new_supervisor_adopts_a_running_child_and_finishes_it() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue_with("p", "1", "hold").id;
+    let mut first = e.supervisor();
+    assert_eq!(first.tick().expect("tick").started, vec![id.clone()]);
+    let pid = records::read_children(&e.home).into_iter().flatten().next().expect("record").pid;
+    // The supervisor stops, the child does not.
+    drop(first);
+    assert!(pid_alive(pid));
+    assert_ne!(pgrp(pid), pgrp(std::process::id()), "the child has its own process group");
+    let mut second = e.supervisor();
+    let rec = second.recover().expect("recover");
+    assert_eq!(rec.adopted, vec![id.clone()]);
+    assert!(rec.report.finished.is_empty());
+    for _ in 0..3 {
+        assert!(second.tick().expect("tick").started.is_empty());
+    }
+    assert_eq!(e.runs("p", "1"), 1, "no second spawn");
+    assert_eq!(e.queue_ids(), vec![id.clone()]);
+    e.release("p", "1");
+    tick_until_finished(&mut second, &id);
+    assert_eq!(e.result(&id), Some(Outcome::Merged));
+    assert!(records::read_children(&e.home).is_empty());
+    assert!(e.queue_ids().is_empty());
+}
+
+#[test]
+fn a_child_killed_while_no_supervisor_runs_is_lost_and_never_restarted() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue_with("p", "1", "hold").id;
+    let mut first = e.supervisor();
+    first.tick().expect("tick");
+    let pid = records::read_children(&e.home).into_iter().flatten().next().expect("record").pid;
+    drop(first);
+    // Kill only after the script has started, so the start counter is written.
+    let end = Instant::now() + TIMEOUT;
+    while e.runs("p", "1") == 0 {
+        assert!(Instant::now() < end, "the script did not start");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(Command::new("kill").arg("-9").arg(pid.to_string()).status().expect("kill").success());
+    wait_dead(pid);
+    let mut second = e.supervisor();
+    let rec = second.recover().expect("recover");
+    assert_eq!(rec.report.finished.len(), 1);
+    assert!(matches!(e.result(&id), Some(Outcome::Lost { .. })), "{:?}", e.result(&id));
+    assert!(records::read_children(&e.home).is_empty());
+    assert!(e.queue_ids().is_empty());
+    // The project is free for a later request, and the lost job did not run again.
+    let next = e.enqueue_with("p", "2", "merged").id;
+    tick_until_finished(&mut second, &next);
+    assert_eq!(e.result(&next), Some(Outcome::Merged));
+    assert_eq!(e.runs("p", "1"), 1);
+}
+
+#[test]
+fn a_child_record_without_a_queue_file_still_gets_a_result() {
+    let e = env();
+    e.add_project("p");
+    let req = Request::new("p", Action::Run, "1", false, now_ms()).expect("request");
+    e.child_record(&req, dead_pid(), now_ms(), "merged\n");
+    let mut s = e.supervisor();
+    let rec = s.recover().expect("recover");
+    assert_eq!(rec.report.finished.len(), 1);
+    assert_eq!(e.result(&req.id), Some(Outcome::Merged));
+    assert!(records::read_children(&e.home).is_empty());
+}
+
+#[test]
+fn a_corrupt_child_record_is_reported_and_the_others_are_handled() {
+    let e = env();
+    e.add_project("p");
+    e.add_project("q");
+    let req = Request::new("p", Action::Run, "1", false, now_ms()).expect("request");
+    e.child_record(&req, dead_pid(), now_ms(), "merged\n");
+    std::fs::write(e.home.children_dir().join("q.json"), "{nope").expect("corrupt");
+    let blocked = e.enqueue_with("q", "1", "merged").id;
+    let mut s = e.supervisor();
+    let rec = s.recover().expect("recover");
+    assert_eq!(rec.report.bad_children.len(), 1, "{rec:?}");
+    assert_eq!(e.result(&req.id), Some(Outcome::Merged));
+    // The project with the unreadable record stays busy.
+    assert!(s.tick().expect("tick").started.is_empty());
+    assert_eq!(e.runs("q", "1"), 0);
+    assert_eq!(e.queue_ids(), vec![blocked]);
+}
+
+#[test]
+fn two_supervisors_on_one_home_never_start_a_request_twice() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue_with("p", "1", "hold").id;
+    let mut a = e.supervisor();
+    let mut b = e.supervisor();
+    assert_eq!(a.tick().expect("tick").started, vec![id.clone()]);
+    for _ in 0..3 {
+        assert!(b.tick().expect("tick").started.is_empty());
+        assert!(a.tick().expect("tick").started.is_empty());
+    }
+    assert_eq!(e.runs("p", "1"), 1);
+    e.release("p", "1");
+    tick_until_finished(&mut b, &id);
+    assert_eq!(e.result(&id), Some(Outcome::Merged));
+    assert_eq!(e.runs("p", "1"), 1);
+}
+
+#[test]
+fn a_started_request_without_a_child_record_is_lost_and_not_run_again() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue_with("p", "1", "merged").id;
+    // The log files exist because the spawn step creates them before the child starts.
+    let logs = e.home.logs_dir("p");
+    std::fs::create_dir_all(&logs).expect("logs");
+    std::fs::write(logs.join(format!("{id}.err")), "").expect("err log");
+    let mut s = e.supervisor();
+    let rec = s.recover().expect("recover");
+    assert_eq!(rec.report.finished.len(), 1);
+    assert!(rec.report.errors.iter().any(|m| m.contains(&id) && m.contains(".err")), "{:?}", rec.report.errors);
+    assert!(matches!(e.result(&id), Some(Outcome::Lost { .. })));
+    assert!(e.queue_ids().is_empty());
+    assert!(s.tick().expect("tick").started.is_empty());
+    assert_eq!(e.runs("p", "1"), 0);
+}
+
+#[test]
+fn a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends() {
+    let e = env();
+    e.add_project("p");
+    let mut stranger = sleeper();
+    let state = e.state_dir("p");
+    std::fs::create_dir_all(&state).expect("state");
+    let owner = format!("driver-{}-1", stranger.id());
+    let now = now_ms() as f64 / 1000.0;
+    acquire_project_lease(&state, "001", &owner, 100_000.0, now, Duration::from_secs(2)).expect("lease");
+    let id = e.enqueue_with("p", "1", "merged").id;
+    let mut s = e.supervisor();
+    let rec = s.recover().expect("recover");
+    assert_eq!(rec.report.orphans, vec!["p".to_string()]);
+    for _ in 0..3 {
+        let r = s.tick().expect("tick");
+        assert_eq!(r.orphans, vec!["p".to_string()]);
+        assert!(r.started.is_empty());
+    }
+    assert_eq!(e.runs("p", "1"), 0);
+    stranger.kill().expect("kill");
+    stranger.wait().expect("wait");
+    assert!(matches!(project_lease_status(&state, now), ProjectLeaseStatus::Stale { .. }));
+    tick_until_finished(&mut s, &id);
+    assert_eq!(e.result(&id), Some(Outcome::Merged));
 }

@@ -14,4 +14,4 @@ pub use request::{Action, Request, RequestError};
 pub use scheduler::{decide, Decision, ProjectState, SchedulerInput};
 pub use lock::{InstanceLock, LockError};
 pub use spawn::{ChildPoll, ProcessSpawner, SpawnError, Spawner};
-pub use supervisor::{pid_alive, Supervisor, SupervisorError, TickReport};
+pub use supervisor::{pid_alive, RecoveryReport, Supervisor, SupervisorError, TickReport};
