@@ -3,6 +3,7 @@
 mod commits;
 mod diff;
 mod error;
+mod exclude;
 mod fingerprint;
 mod merge;
 mod repo;

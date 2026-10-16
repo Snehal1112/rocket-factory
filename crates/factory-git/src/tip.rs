@@ -66,4 +66,10 @@ impl Repo {
         }
         Ok(out)
     }
+
+    /// True when `rel` exists in the tree at the tip of `branch`, as a file or a folder.
+    pub fn is_tracked_at_branch(&self, branch: &str, rel: &str) -> Result<bool> {
+        let tree = self.tree_at_branch(branch)?;
+        Ok(entry_at(&tree, rel)?.is_some())
+    }
 }
