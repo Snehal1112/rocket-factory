@@ -1,0 +1,24 @@
+# Preset: Rust workspace. Edit this file in ~/.factory/presets/rust/ to change every project that uses it.
+risk_paths = [
+  "**/Cargo.toml",
+  "**/Cargo.lock",
+  "**/build.rs",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*credential*",
+  ".github/**",
+]
+read_first = ["CLAUDE.md"]
+builder_rules = [
+  "Run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR.",
+  "No unwrap in production Rust.",
+  "Do not shell out to the git CLI from Rust code, use the git2 crate.",
+]
+check_hints = ["cargo check -j4", "cargo test -j4 -p <crate> <test_name>"]
+reviewer_rules = [
+  "Judge correctness, error handling (no unwrap in production paths), test quality and the project's own rules in CLAUDE.md.",
+]
+
+[[checks]]
+paths = ["crates/*/**"]
+commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]

@@ -1,0 +1,23 @@
+# Preset: Go module. Edit this file in ~/.factory/presets/go/ to change every project that uses it.
+risk_paths = [
+  "go.mod",
+  "go.sum",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*credential*",
+  "**/Dockerfile",
+  ".github/**",
+]
+read_first = ["CLAUDE.md"]
+builder_rules = [
+  "Run `go build ./...` and `go test ./...` for the packages you touch; keep functions small and handle every error.",
+  "Do not ignore returned errors.",
+]
+check_hints = ["go build ./...", "go test ./..."]
+reviewer_rules = [
+  "Judge correctness, error handling (no ignored errors), test quality and the project's own rules in CLAUDE.md.",
+]
+
+[[checks]]
+paths = ["**/*.go"]
+commands = ["go vet ./...", "go test ./..."]

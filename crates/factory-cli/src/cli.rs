@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "factory", about = "Rocket software factory driver")]
+#[command(name = "factory", about = "Software factory driver")]
 pub struct Cli {
     /// Main checkout root. Defaults to the repository containing the current directory.
     #[arg(long, global = true)]

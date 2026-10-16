@@ -64,6 +64,14 @@ pub struct Config {
     pub size_medium_max_bytes: u64,
     /// The branch jobs start from and merge into.
     pub base_branch: String,
+    /// Files or folders the builder reads before it starts, such as `CLAUDE.md`.
+    pub read_first: Vec<String>,
+    /// Rules added to the builder prompt, one sentence each.
+    pub builder_rules: Vec<String>,
+    /// Example check commands named to the builder, one command each.
+    pub check_hints: Vec<String>,
+    /// Rules added to the reviewer prompt, one sentence each.
+    pub reviewer_rules: Vec<String>,
     pub checks: Vec<CheckRule>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
@@ -90,6 +98,10 @@ impl Default for Config {
             size_small_max_bytes: 12_288,
             size_medium_max_bytes: 25_600,
             base_branch: "main".to_string(),
+            read_first: Vec::new(),
+            builder_rules: Vec::new(),
+            check_hints: Vec::new(),
+            reviewer_rules: Vec::new(),
             checks: Vec::new(),
             degraded: false,
         }
@@ -122,6 +134,16 @@ impl Config {
         }
         if let Err(why) = check_branch_name(&cfg.base_branch) {
             return Err(CoreError::Config(format!("base_branch: {why}")));
+        }
+        for (key, lines) in [
+            ("read_first", &cfg.read_first),
+            ("builder_rules", &cfg.builder_rules),
+            ("check_hints", &cfg.check_hints),
+            ("reviewer_rules", &cfg.reviewer_rules),
+        ] {
+            if lines.iter().any(|l| l.trim().is_empty() || l.contains('\n') || l.contains('\r')) {
+                return Err(CoreError::Config(format!("{key}: every line must be one non-empty line")));
+            }
         }
         Ok(cfg)
     }
@@ -183,6 +205,28 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_keys_default_to_empty_and_parse() {
+        let cfg = Config::default();
+        assert!(cfg.read_first.is_empty() && cfg.builder_rules.is_empty());
+        assert!(cfg.check_hints.is_empty() && cfg.reviewer_rules.is_empty());
+        let cfg = Config::parse(
+            "read_first = [\"CLAUDE.md\"]\nbuilder_rules = [\"a\", \"b\"]\ncheck_hints = [\"make test\"]\nreviewer_rules = [\"c\"]\n",
+        )
+        .expect("parses");
+        assert_eq!(cfg.read_first, vec!["CLAUDE.md".to_string()]);
+        assert_eq!(cfg.builder_rules.len(), 2);
+        assert_eq!(cfg.check_hints, vec!["make test".to_string()]);
+        assert_eq!(cfg.reviewer_rules, vec!["c".to_string()]);
+    }
+
+    #[test]
+    fn prompt_lines_must_be_one_line_and_not_empty() {
+        for body in ["builder_rules = [\"\"]", "reviewer_rules = [\"a\\nb\"]", "read_first = [\"  \"]", "check_hints = [\"x\\ry\"]"] {
+            assert!(Config::parse(&format!("{body}\n")).is_err(), "{body} must be refused");
+        }
+    }
 
     #[test]
     fn base_branch_defaults_to_main_and_survives_fail_closed() {
