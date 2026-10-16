@@ -412,6 +412,8 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
 fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     ctx.runnable()?;
     let d = ctx.driver()?;
+    // The refresh writes into the main checkout, so it takes the project lease like a run.
+    let _project = d.hold_project(id)?;
     let job = d.job(id)?;
     if job.stage != Stage::Merged {
         return Err(CliError::Refused(format!("job {id} is not merged, the KB refresh needs a merged job")));

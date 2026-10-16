@@ -114,3 +114,17 @@ fn a_dead_drivers_lease_is_stale_in_status_and_does_not_block_run() {
     assert!(status.starts_with("project: stale lease from driver-4294967000-1"), "{status}");
     assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
 }
+
+#[test]
+fn kb_refresh_is_refused_while_another_driver_holds_the_project() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    hold_project(&fx, "someone-else", now_secs());
+    let e = fx.run(&["kb-refresh", "--job", "1"]).expect_err("busy");
+    assert!(e.to_string().contains("project is busy"), "{e}");
+    let state = factory_core::Layout::in_repo(&fx.root).state_dir;
+    factory_engine::force_release_project_lease(&state, "003", Duration::from_secs(5)).expect("release");
+    assert_eq!(fx.run(&["kb-refresh", "--job", "1"]).expect("free"), "kb_path is not set");
+    assert_eq!(fx.run(&["status"]).expect("status").lines().next(), Some("project: free"));
+}
