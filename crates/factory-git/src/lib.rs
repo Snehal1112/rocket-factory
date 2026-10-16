@@ -8,6 +8,7 @@ mod merge;
 mod repo;
 mod report;
 mod stage;
+mod tip;
 mod state;
 mod worktree;
 
