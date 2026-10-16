@@ -102,3 +102,47 @@ fn a_missing_object_is_an_error_not_an_absent_file() {
     assert_eq!(repo.file_at_branch("v-4.0.0", "nothing-here").expect("absent"), None);
     assert!(repo.dir_at_branch("v-4.0.0", "no/such").expect("absent").is_empty());
 }
+
+/// Commits a symlink blob onto a branch without a working tree.
+fn commit_symlink(fx: &Fixture, branch: &str, dir: &str, name: &str) {
+    let git = fx.git();
+    let parent = git.find_branch(branch, git2::BranchType::Local).expect("b").get().peel_to_commit().expect("c");
+    let blob = git.blob(b"/etc/passwd").expect("blob");
+    let mut inner = git.treebuilder(None).expect("tb");
+    inner.insert(name, blob, 0o120000).expect("insert");
+    let inner_id = inner.write().expect("write");
+    let mut root = git.treebuilder(Some(&parent.tree().expect("tree"))).expect("root");
+    root.insert(dir, inner_id, 0o040000).expect("dir");
+    let tree = git.find_tree(root.write().expect("tree")).expect("find");
+    let refname = format!("refs/heads/{branch}");
+    git.commit(Some(&refname), &sig(), &sig(), "link", &tree, &[&parent]).expect("commit");
+}
+
+#[test]
+fn a_symlink_is_refused_by_file_at_branch() {
+    let fx = Fixture::on_branch("main");
+    commit_symlink(&fx, "main", ".factory", "override.toml");
+    let err = fx.repo().file_at_branch("main", ".factory/override.toml").expect_err("symlink");
+    assert!(err.to_string().contains("not a regular file"), "{err}");
+}
+
+#[test]
+fn a_symlink_in_a_listed_folder_is_an_error() {
+    let fx = Fixture::on_branch("main");
+    commit_symlink(&fx, "main", ".factory", "factory-x.md");
+    let err = fx.repo().dir_at_branch("main", ".factory").expect_err("symlink");
+    assert!(err.to_string().contains("not a regular file"), "{err}");
+}
+
+#[test]
+fn an_executable_file_is_still_read() {
+    let fx = Fixture::on_branch("main");
+    let git = fx.git();
+    let parent = git.head().expect("head").peel_to_commit().expect("c");
+    let blob = git.blob(b"run").expect("blob");
+    let mut tb = git.treebuilder(Some(&parent.tree().expect("tree"))).expect("tb");
+    tb.insert("tool.sh", blob, 0o100755).expect("insert");
+    let tree = git.find_tree(tb.write().expect("w")).expect("find");
+    git.commit(Some("refs/heads/main"), &sig(), &sig(), "exe", &tree, &[&parent]).expect("commit");
+    assert_eq!(fx.repo().file_at_branch("main", "tool.sh").expect("read").as_deref(), Some("run"));
+}

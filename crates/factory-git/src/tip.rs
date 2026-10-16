@@ -15,6 +15,11 @@ fn entry_at(tree: &Tree<'_>, rel: &str) -> Result<Option<TreeEntry<'static>>> {
     }
 }
 
+/// A blob that is a regular file. A symlink (0o120000) or a submodule is not.
+fn is_regular(entry: &TreeEntry<'_>) -> bool {
+    entry.kind() == Some(ObjectType::Blob) && matches!(entry.filemode(), 0o100644 | 0o100755)
+}
+
 impl Repo {
     fn tree_at_branch(&self, branch: &str) -> Result<Tree<'_>> {
         let b = self
@@ -31,7 +36,7 @@ impl Repo {
         let Some(entry) = entry_at(&tree, rel)? else {
             return Ok(None);
         };
-        if entry.kind() != Some(ObjectType::Blob) {
+        if !is_regular(&entry) {
             return Err(GitError::Refused(format!("{rel} is not a regular file")));
         }
         let blob = self.inner.find_blob(entry.id())?;
@@ -53,8 +58,12 @@ impl Repo {
         let sub = self.inner.find_tree(entry.id())?;
         let mut out = Vec::new();
         for item in sub.iter() {
-            if item.kind() != Some(ObjectType::Blob) {
+            if item.kind() == Some(ObjectType::Tree) {
                 continue;
+            }
+            if !is_regular(&item) {
+                let n = item.name().unwrap_or("?");
+                return Err(GitError::Refused(format!("{rel}/{n} is not a regular file")));
             }
             let name = item
                 .name()
