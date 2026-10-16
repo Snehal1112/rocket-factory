@@ -49,11 +49,12 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
         Ok(Step::Merged(sha)) => {
             finish_merge(driver, id, &sha)?;
             // The merge is done, so a failed refresh must not change the result.
-            if let Err(err) = crate::costs::refresh_costs(driver) {
-                eprintln!("costs refresh error for job {id}: {err}");
-            }
             if let Err(err) = driver.kb_refresh(id, false) {
                 eprintln!("kb refresh error for job {id}: {err}");
+            }
+            // The costs refresh runs last so that it counts the kb run of this job.
+            if let Err(err) = crate::costs::refresh_costs(driver) {
+                eprintln!("costs refresh error for job {id}: {err}");
             }
             Ok(MergeResult::Merged(sha))
         }

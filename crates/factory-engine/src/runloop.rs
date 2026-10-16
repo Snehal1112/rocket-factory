@@ -55,11 +55,14 @@ fn add_job(
         let bytes = std::fs::metadata(dir.join("plan.md")).map(|m| m.len()).unwrap_or(0);
         if let Some(estimate) = crate::costs::estimate_for_plan(driver, bytes) {
             let stored = estimate.clone();
-            driver.store().update_job(&job.id, |j| {
+            // A failed write is ignored, so the job simply has no estimate.
+            let written = driver.store().update_job(&job.id, |j| {
                 j.estimate = Some(stored);
                 Ok(())
-            })?;
-            job.estimate = Some(estimate);
+            });
+            if written.is_ok() {
+                job.estimate = Some(estimate);
+            }
         }
     }
     Ok(job)

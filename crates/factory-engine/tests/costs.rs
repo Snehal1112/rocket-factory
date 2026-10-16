@@ -140,6 +140,12 @@ fn a_merge_refreshes_costs_json_and_a_failed_refresh_does_not_fail_the_merge() {
     assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
     let raw = std::fs::read_to_string(costs_path(fx.driver.root())).expect("costs.json after the merge");
     assert!(raw.contains("\"groups\""), "{raw}");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("costs.json parses");
+    assert_eq!(value["groups"]["all"]["n"], 1, "the merged job is counted: {raw}");
+    let jobs = gather_costs(&fx.driver).expect("gather");
+    let merged = jobs.iter().find(|j| j.id == job.id).expect("merged job");
+    assert!(merged.lines.is_some_and(|n| n > 0), "lines: {:?}", merged.lines);
+    assert!(merged.files.is_some_and(|n| n >= 1), "files: {:?}", merged.files);
 
     // A directory where the file goes makes the write fail.
     let fx2 = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
@@ -147,4 +153,17 @@ fn a_merge_refreshes_costs_json_and_a_failed_refresh_does_not_fail_the_merge() {
     let plan2 = fx2.plan_file("plan-01-a.md", 1, "none");
     let job2 = create_job(&fx2.driver, "blocked", "a feature", Some(&plan2), None).expect("create");
     assert_eq!(run_job(&fx2.driver, &job2.id).expect("run"), RunEnd::Merged);
+}
+
+#[test]
+fn the_costs_refresh_after_a_merge_includes_the_kb_run_of_that_job() {
+    let kb = tempfile::tempdir().expect("kb dir");
+    let config = factory_core::Config { kb_path: Some(kb.path().to_string_lossy().into_owned()), ..Default::default() };
+    let fx = common::SeriesFixture::with_config("fine\nVERDICT: APPROVE", config);
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "kb", "a feature", Some(&plan), None).expect("create");
+    assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
+    let raw = std::fs::read_to_string(costs_path(fx.driver.root())).expect("costs.json");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("parses");
+    assert!(value["roles"].to_string().contains("\"kb\""), "roles must list kb: {raw}");
 }
