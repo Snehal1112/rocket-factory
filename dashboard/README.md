@@ -5,7 +5,7 @@ Local dashboard for Rocket's software factory. It is dev tooling: it is not part
 ## Run
 
 ```bash
-cargo run -j4 --manifest-path tools/factory-server/Cargo.toml -- --root "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" --port 8765
+cargo run -j4 --manifest-path dashboard/Cargo.toml -- --root <project checkout> --port 8765
 ```
 
 Open http://127.0.0.1:8765/. `--root` is the main checkout (the folder that holds `.superpowers/`), which the command above prints even from a worktree. Default port 8765.
@@ -38,9 +38,9 @@ Only `GET` is accepted, only `127.0.0.1` is bound, and a `Host` header other tha
 ## Tests
 
 ```bash
-cargo test -j4 --manifest-path tools/factory-server/Cargo.toml
-node --test tools/factory-server/tests/board.test.js tools/factory-server/tests/patch.test.js
-bash tools/factory-server/tests/smoke.sh
+cargo test -j4 --manifest-path dashboard/Cargo.toml
+node --test dashboard/tests/board.test.js dashboard/tests/patch.test.js
+bash dashboard/tests/smoke.sh
 ```
 
 The smoke test also covers the park endpoint (404 without a file, the evidence with one, no evidence text in /api/state).
