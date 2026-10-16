@@ -26,7 +26,10 @@ pub enum LeaseTake {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectLeaseError {
-    #[error("project is busy: job {job} is running (leased by {owner} for another {secs_left} seconds)")]
+    #[error(
+        "project is busy: job {job} is running (leased by {owner} for another {secs_left} seconds). \
+         If the process that held it is gone, `factory cancel {job} --force` clears it, or delete the project.lease file in the state folder"
+    )]
     Held { owner: String, job: String, secs_left: u64 },
     #[error("project lease lock: {0}")]
     Lock(#[from] StoreError),
@@ -41,6 +44,28 @@ pub enum ProjectLeaseStatus {
     Held { owner: String, job: String, secs_left: u64 },
     Stale { owner: String, job: String },
     Unreadable(String),
+}
+
+/// The pid in an owner of the form `driver-<pid>-<secs>`. Any other owner has none.
+fn owner_pid(owner: &str) -> Option<u32> {
+    let rest = owner.strip_prefix("driver-")?;
+    let (pid, secs) = rest.split_once('-')?;
+    secs.parse::<u64>().ok()?;
+    pid.parse().ok()
+}
+
+/// True only when `/proc` exists and has no entry for `pid`. This process is never gone.
+fn process_gone(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return false;
+    }
+    let proc = Path::new("/proc");
+    proc.join("self").exists() && !proc.join(pid.to_string()).exists()
+}
+
+/// A lease whose owner is a driver process that no longer runs on this machine.
+fn owner_is_dead(owner: &str) -> bool {
+    owner_pid(owner).is_some_and(process_gone)
 }
 
 fn lease_path(state_dir: &Path) -> PathBuf {
@@ -74,7 +99,7 @@ pub fn acquire_project_lease(
     let take = match read_lease(&path) {
         Ok(None) => LeaseTake::Fresh,
         Ok(Some(l)) if l.owner == owner => LeaseTake::Renewed,
-        Ok(Some(l)) if l.expires <= now => LeaseTake::TookOverStale { owner: l.owner, job: l.job },
+        Ok(Some(l)) if l.expires <= now || owner_is_dead(&l.owner) => LeaseTake::TookOverStale { owner: l.owner, job: l.job },
         Ok(Some(l)) => {
             return Err(ProjectLeaseError::Held { owner: l.owner, job: l.job, secs_left: (l.expires - now) as u64 });
         }
@@ -93,7 +118,7 @@ pub fn release_project_lease(state_dir: &Path, owner: &str, wait: Duration) -> R
     let path = lease_path(state_dir);
     let removable = match read_lease(&path) {
         Ok(None) => return Ok(()),
-        Ok(Some(l)) => l.owner == owner || l.expires <= now_secs(),
+        Ok(Some(l)) => l.owner == owner || l.expires <= now_secs() || owner_is_dead(&l.owner),
         Err(_) => true,
     };
     if removable {
@@ -106,11 +131,29 @@ pub fn release_project_lease(state_dir: &Path, owner: &str, wait: Duration) -> R
     Ok(())
 }
 
+/// Removes the lease when it belongs to `job`, whoever the owner is. Used when a job is cancelled with
+/// force, because the process that held the lease may be gone. Returns true when a lease was removed.
+pub fn force_release_project_lease(state_dir: &Path, job: &str, wait: Duration) -> Result<bool, ProjectLeaseError> {
+    let _lock = lock_board(&lock_path(state_dir), wait)?;
+    let path = lease_path(state_dir);
+    match read_lease(&path) {
+        Ok(Some(l)) if l.job == job => {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(ProjectLeaseError::Io(e.to_string())),
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Reads the lease without locking, for display.
 pub fn project_lease_status(state_dir: &Path, now: f64) -> ProjectLeaseStatus {
     match read_lease(&lease_path(state_dir)) {
         Ok(None) => ProjectLeaseStatus::Free,
-        Ok(Some(l)) if l.expires > now => {
+        Ok(Some(l)) if l.expires > now && !owner_is_dead(&l.owner) => {
             ProjectLeaseStatus::Held { owner: l.owner, job: l.job, secs_left: (l.expires - now) as u64 }
         }
         Ok(Some(l)) => ProjectLeaseStatus::Stale { owner: l.owner, job: l.job },

@@ -6,7 +6,7 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
 use factory_engine::{
-    acquire_project_lease, create_job, project_lease_status, release_project_lease, run_job, run_series, LeaseTake, ProjectLease,
+    acquire_project_lease, create_job, force_release_project_lease, project_lease_status, release_project_lease, run_job, run_series, LeaseTake, ProjectLease,
     ProjectLeaseError, ProjectLeaseStatus,
 };
 
@@ -27,7 +27,9 @@ fn a_second_owner_is_refused_and_the_same_owner_renews() {
     assert!(lease_file(d.path()).exists());
     let err = acquire_project_lease(d.path(), "002", "b", 100.0, 1010.0, WAIT).expect_err("held");
     assert!(matches!(err, ProjectLeaseError::Held { .. }));
-    assert_eq!(err.to_string(), "project is busy: job 001 is running (leased by a for another 90 seconds)");
+    let text = err.to_string();
+    assert!(text.starts_with("project is busy: job 001 is running (leased by a for another 90 seconds)"), "{text}");
+    assert!(text.contains("factory cancel 001 --force") && text.contains("project.lease"), "{text}");
     assert_eq!(acquire_project_lease(d.path(), "001", "a", 100.0, 1050.0, WAIT).expect("renew"), LeaseTake::Renewed);
     assert_eq!(read(d.path()).expires, 1150.0);
 }
@@ -249,4 +251,56 @@ fn renewing_moves_the_project_lease_forward() {
     run_job(&fx.driver, &job.id).expect("run");
     let after = read(&fx.driver.layout().state_dir).expires;
     assert!(after > before, "{after} > {before}");
+}
+
+/// A pid that no process has: above the kernel's pid limit.
+const DEAD_OWNER: &str = "driver-4294967000-1";
+
+#[test]
+fn a_lease_of_a_dead_driver_is_stale_and_taken_over() {
+    let d = tempfile::tempdir().expect("tmp");
+    acquire_project_lease(d.path(), "001", DEAD_OWNER, 100_000.0, 1000.0, WAIT).expect("fresh");
+    assert_eq!(
+        project_lease_status(d.path(), 1010.0),
+        ProjectLeaseStatus::Stale { owner: DEAD_OWNER.into(), job: "001".into() }
+    );
+    let take = acquire_project_lease(d.path(), "002", "driver-1-2", 100.0, 1010.0, WAIT).expect("take over");
+    assert_eq!(take, LeaseTake::TookOverStale { owner: DEAD_OWNER.into(), job: "001".into() });
+    // A dead owner's lease can be released by anyone.
+    std::fs::remove_file(lease_file(d.path())).expect("rm");
+    acquire_project_lease(d.path(), "003", DEAD_OWNER, 100_000.0, 1000.0, WAIT).expect("again");
+    release_project_lease(d.path(), "other", WAIT).expect("release");
+    assert!(!lease_file(d.path()).exists());
+}
+
+#[test]
+fn other_owners_are_never_judged_by_pid() {
+    let d = tempfile::tempdir().expect("tmp");
+    for owner in ["tester", "driver-x-1", "driver-4294967000", "driver-4294967000-x"] {
+        acquire_project_lease(d.path(), "001", owner, 100_000.0, 1000.0, WAIT).expect("fresh");
+        assert!(matches!(project_lease_status(d.path(), 1010.0), ProjectLeaseStatus::Held { .. }), "{owner}");
+        let err = acquire_project_lease(d.path(), "002", "b", 100.0, 1010.0, WAIT).expect_err("held");
+        assert!(matches!(err, ProjectLeaseError::Held { .. }), "{owner}");
+        std::fs::remove_file(lease_file(d.path())).expect("rm");
+    }
+}
+
+#[test]
+fn a_lease_of_this_process_is_held() {
+    let d = tempfile::tempdir().expect("tmp");
+    let me = format!("driver-{}-1", std::process::id());
+    acquire_project_lease(d.path(), "001", &me, 100_000.0, 1000.0, WAIT).expect("fresh");
+    assert!(matches!(project_lease_status(d.path(), 1010.0), ProjectLeaseStatus::Held { .. }));
+    assert!(acquire_project_lease(d.path(), "002", "b", 100.0, 1010.0, WAIT).is_err());
+}
+
+#[test]
+fn force_release_removes_only_the_lease_of_that_job() {
+    let d = tempfile::tempdir().expect("tmp");
+    acquire_project_lease(d.path(), "001", "tester", 100_000.0, 1000.0, WAIT).expect("fresh");
+    assert!(!force_release_project_lease(d.path(), "002", WAIT).expect("other job"));
+    assert!(lease_file(d.path()).exists());
+    assert!(force_release_project_lease(d.path(), "001", WAIT).expect("same job"));
+    assert!(!lease_file(d.path()).exists());
+    assert!(!force_release_project_lease(d.path(), "001", WAIT).expect("nothing left"));
 }
