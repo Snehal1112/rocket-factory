@@ -7,6 +7,7 @@ pub mod cost;
 pub mod error;
 pub mod fsutil;
 pub mod home;
+pub mod homeconfig;
 pub mod ids;
 pub mod layout;
 pub mod ledger;
@@ -31,6 +32,7 @@ pub use cost::{count_tasks, estimate_for, group_of, stats, usage_summary, CostsF
 pub use error::CoreError;
 pub use fsutil::write_atomic;
 pub use home::Home;
+pub use homeconfig::HomeConfig;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
 pub use layout::{agent_files_rel_dir, is_agent_file_name, Layout, AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE};
 pub use ledger::{Ledger, TaskState};
