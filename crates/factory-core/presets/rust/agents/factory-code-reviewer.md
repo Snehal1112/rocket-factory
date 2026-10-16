@@ -10,7 +10,7 @@ Input: your prompt names a diff file, the plan, the job's `spec.md` and the work
 
 ## Stack
 
-This is a Rust project. Run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`. Never use `--workspace` or `--all`, and never set `CARGO_TARGET_DIR`. Run `cargo check -j4` yourself before you finish, so the driver's checks start from a warm target. No unwrap in production paths, and no git CLI shell-outs from Rust code.
+This is a Rust project. When you judge a diff, look at error handling (no unwrap in production paths, errors carried to the caller with context), ownership and lifetime clarity, needless clones, and tests that would fail without the change. You cannot run commands, so judge from the diff and the source.
 
 ## How to read
 

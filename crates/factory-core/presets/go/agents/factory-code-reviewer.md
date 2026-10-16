@@ -10,7 +10,7 @@ Input: your prompt names a diff file, the plan, the job's `spec.md` and the work
 
 ## Stack
 
-This is a Go project. Run `go build ./...` and `go test ./...` for the packages you touch. Keep functions small, handle every returned error and never ignore one. Run the build yourself before you finish, so the driver's checks start from a warm cache.
+This is a Go project. When you judge a diff, look at ignored errors, goroutine and context leaks, shared state without locking, and tests (table-driven where fitting) that would fail without the change. You cannot run commands, so judge from the diff and the source.
 
 ## How to read
 

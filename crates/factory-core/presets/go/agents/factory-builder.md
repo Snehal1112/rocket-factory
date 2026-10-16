@@ -24,7 +24,7 @@ Input: your prompt names the plan file, the spec file (absolute paths in the job
 
 ## Stack
 
-This is a Go project. Run `go build ./...` and `go test ./...` for the packages you touch. Keep functions small, handle every returned error and never ignore one. Run the build yourself before you finish, so the driver's checks start from a warm cache.
+This is a Go project. Run `go build ./...` and `go test ./...` for the packages you touch. Keep functions small, handle every returned error and never ignore one. Run the build yourself before you finish, so the driver's checks start from a warm build and test cache.
 
 ## Commits
 
