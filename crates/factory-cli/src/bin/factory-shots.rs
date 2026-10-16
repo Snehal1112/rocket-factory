@@ -11,8 +11,8 @@ pub const BROWSERS: [&str; 4] = ["google-chrome", "chromium", "chromium-browser"
 
 // The plan 07 seeder takes only the root. {root} is replaced before running.
 const SEED_PROGRAM: &str = "bash";
-const SEED_ARGS: [&str; 2] = ["tools/factory-server/tests/seed-demo.sh", "{root}"];
-const SERVER_BIN: &str = "tools/factory-server/target/debug/factory-server";
+const SEED_ARGS: [&str; 2] = ["dashboard/tests/seed-demo.sh", "{root}"];
+const SERVER_BIN: &str = "dashboard/target/debug/factory-server";
 
 pub fn pick_browser(installed: impl Fn(&str) -> bool) -> Option<&'static str> {
     BROWSERS.iter().copied().find(|n| installed(n))
@@ -90,7 +90,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         return Ok(1);
     }
     let built = Command::new("cargo")
-        .args(["build", "-j4", "-q", "--manifest-path", "tools/factory-server/Cargo.toml"])
+        .args(["build", "-j4", "-q", "--manifest-path", "dashboard/Cargo.toml"])
         .status()?;
     if !built.success() {
         eprintln!("FAIL: the server did not build");

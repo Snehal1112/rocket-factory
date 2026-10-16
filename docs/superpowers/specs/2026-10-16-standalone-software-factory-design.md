@@ -74,7 +74,7 @@ Local JSON over HTTP on `127.0.0.1`. Every call needs a token read from a file i
 
 ## Plan series
 
-1. Extract into a new repo with history kept (`git subtree split`). All existing tests pass. No behavior change.
+1. Extract into a new repo with history kept (`git filter-repo` on a throwaway clone). All existing tests pass. No behavior change.
 2. Layout struct, injectable paths, lock wait parameter, `base_branch` setting.
 3. Project registry commands, `project.toml`, three-layer settings, `rust` and `go` presets, prompt text moved to presets, agent files written and excluded in worktrees.
 4. Project lease and the `--project` CLI flag.

@@ -1,5 +1,5 @@
 //! Probes which `claude` headless flags exist and how they behave.
-//! Run: cargo run -j4 --manifest-path tools/factory/Cargo.toml -p factory-agent --example probe
+//! Run: cargo run -j4 -p factory-agent --example probe
 
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
