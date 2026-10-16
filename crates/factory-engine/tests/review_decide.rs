@@ -150,6 +150,7 @@ fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
     assert_eq!(spec.role, "reviewer");
     assert_eq!(spec.model, Some(fx.config.reviewer_model.clone()));
     assert_eq!(spec.allowed_tools, vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]);
+    assert_eq!(spec.tools, Some("Read,Grep,Glob".to_string()));
     assert_eq!(spec.agent, Some("factory-code-reviewer".to_string()));
     assert_eq!(spec.budget_weighted, Some(fx.config.budget_weighted));
     assert!(spec.prompt.contains("offset"));

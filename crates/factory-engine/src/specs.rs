@@ -191,6 +191,8 @@ impl Engine<'_> {
         let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
         spec.agent = Some(REVIEWER_AGENT.to_string());
         spec.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
+        // The tool list itself is limited too, so the reviewer cannot even see a write tool.
+        spec.tools = Some("Read,Grep,Glob".to_string());
         spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.reviewer_model)
     }
