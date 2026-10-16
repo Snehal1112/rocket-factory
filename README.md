@@ -20,3 +20,49 @@ The driver gets every path as a value. `Layout` holds them. `Layout::in_repo` gi
 - `commit_context_file`: the context the committer prompt reads. Default is `.claude/factory/commit-context.md`.
 
 The config key `base_branch` is the branch jobs start from and merge into. The default is `main`. A name that git would refuse makes the whole config invalid. So does a name that starts with `factory/`. The driver then falls back to the fail-closed config.
+
+## Projects and presets
+
+The factory keeps its own files in a home folder: `$FACTORY_HOME`, or `~/.factory` when it is not set.
+
+```
+<home>/presets/<preset>/{config.toml,commit-context.md,agents/}   seeded from the built-in presets (rust, go)
+<home>/projects/<name>/{project.toml,agents/,state/,worktrees/}    one folder per registered project
+```
+
+The `project` commands work on the home only, so they run outside a git repository:
+
+```
+factory project add /path/to/repo --preset rust [--base main] [--name demo]
+factory project list
+factory project show demo
+factory project remove demo [--force]
+```
+
+`add` needs the top folder of a git repository and stores the base branch it used (`--base`, or the branch the
+repo is on). The name defaults to the lowercased repo folder name. `list` shows a project whose repo is gone as
+`disabled`. `show` prints the resolved settings, the folders, the number of risk paths, the agent file names and
+any problems; a project whose settings failed closed is marked `degraded`. `remove` deletes only the project
+folder and refuses while a job is not merged or cancelled, unless `--force` is given.
+
+### Layers
+
+Settings come from three layers, each on top of the one before:
+
+1. the preset `config.toml`,
+2. the `[settings]` table in the project's `project.toml`,
+3. the repo override `.factory/override.toml`, read from the tip of the base branch (never the working tree).
+
+A repo override may only add `risk_paths` and `checks`. Both are additive. Any other key, or an unreadable file,
+makes the config fail closed. `.factory/**` is always a risk path, so a repo cannot change its own factory
+settings without review.
+
+The four prompt keys are `read_first` (files the builder reads first), `builder_rules`, `check_hints` and
+`reviewer_rules`.
+
+### Agent files
+
+Agent files are merged by name from the preset `agents/` folder, the project `agents/` folder and the repo's
+`.factory/agents/` folder on the base branch (later wins). The engine writes them to `.claude/agents/` in each new
+job worktree. Only names like `factory-<name>.md` are written, they are git-excluded, and a file that is tracked
+on the base branch is never overwritten.
