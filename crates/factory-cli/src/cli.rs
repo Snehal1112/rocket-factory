@@ -65,11 +65,42 @@ pub enum Command {
     },
     /// Print the cost of every job and the figures per size group, and write costs.json.
     Costs,
+    /// Manage the registered projects in the factory home.
+    Project {
+        #[command(subcommand)]
+        cmd: ProjectCmd,
+    },
     /// Refresh the knowledge base now, ignoring the stop marker.
     KbRefresh {
         /// The job whose ledger gets the rulings.
         #[arg(long)]
         job: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProjectCmd {
+    /// Register a repository as a project.
+    Add {
+        path: PathBuf,
+        #[arg(long)]
+        preset: String,
+        /// The branch jobs start from and merge into. Defaults to the branch the repo is on.
+        #[arg(long)]
+        base: Option<String>,
+        /// The project name. Defaults to the lowercased repo folder name.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// List the projects.
+    List,
+    /// Show the resolved settings of a project.
+    Show { name: String },
+    /// Delete a project folder. The repository and the presets stay.
+    Remove {
+        name: String,
+        #[arg(long)]
+        force: bool,
     },
 }
 

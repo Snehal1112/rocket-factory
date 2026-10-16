@@ -133,6 +133,9 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Cleanup { id, discard_commits } => cleanup(ctx, &norm(&id)?, discard_commits),
         Command::Tokens { id } => tokens(ctx, &norm(&id)?),
         Command::Costs => costs(ctx),
+        Command::Project { .. } => Err(CliError::Refused(
+            "project commands do not need a repository, run them through project::run".into(),
+        )),
         Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
 }

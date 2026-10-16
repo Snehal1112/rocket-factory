@@ -175,6 +175,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "factory-agent",
+ "factory-checks",
  "factory-core",
  "factory-engine",
  "factory-git",

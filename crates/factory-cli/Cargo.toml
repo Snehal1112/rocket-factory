@@ -13,6 +13,7 @@ factory-core = { path = "../factory-core" }
 factory-git = { path = "../factory-git" }
 factory-agent = { path = "../factory-agent" }
 factory-engine = { path = "../factory-engine" }
+factory-checks = { path = "../factory-checks" }
 clap.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
