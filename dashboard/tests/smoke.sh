@@ -147,5 +147,18 @@ cat >"$board" <<JSON
 JSON
 await "a malformed series, tokens or history does not give a board error" '.board_error == null and (.jobs | length) == 1'
 
+# The cost summary and a job estimate reach the state, the per-job list does not.
+cat >"$data/costs.json" <<JSON
+{"generated_at":$now,"groups":{"small":{"n":2,"n_approx":1,"median":280000,"low":220000,"high":340000,"roles":{"builder":60},"corrected":null}},"roles":{"builder":60},"jobs":[{"id":"SECRET-JOB"}]}
+JSON
+await "the state carries the group summary" '.costs | select(.groups.small.n==2 and .roles.builder==60)'
+check "the state never carries a per-job list from costs.json" bash -c "! curl -fs $url/api/state | grep -q SECRET-JOB"
+cat >"$board" <<JSON
+{"jobs":[{"id":"001","dir":"d","slug":"s","created":"2026-10-13","feature":"f","branch":"b","stage":"build","round":0,"stage_since":1,"reviews":{},"estimate":{"group":"small","median":280000,"low":220000,"high":370000,"n":4,"n_approx":2}}]}
+JSON
+await "a job estimate passes through to the state" '.jobs[0].estimate | select(.group=="small" and .median==280000)'
+echo "garbage" >"$data/costs.json"
+await "a broken costs.json gives costs null and no board error" '.costs == null and .board_error == null'
+
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; fi
 exit $((fails > 0))

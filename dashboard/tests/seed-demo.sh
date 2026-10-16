@@ -76,6 +76,22 @@ cat >"$sdd/2026-10-13-003-demo/park.json" <<JSON
   "text":"## cargo test -j4 -p factory-engine (exit 101)\nrunning 3 tests\ntest ports::tests::usage_line_has_the_counters ... ok\ntest ports::tests::a_killed_run_names_its_stop_reason ... FAILED\n\nfailures:\n\n---- ports::tests::a_killed_run_names_its_stop_reason stdout ----\nthread 'ports::tests::a_killed_run_names_its_stop_reason' panicked at src/ports.rs:171:9:\nassertion \`left == right\` failed\n  left: \"done\"\n right: \"budget-stop\"\n\nerror: test failed, to rerun pass \`-p factory-engine --lib\`"}]}
 JSON
 
+# A cost summary and estimates, for a look at the panel and the card lines.
+cat >"$data/costs.json" <<JSON
+{"generated_at":$((now - 240)),"thresholds":{"small_max_bytes":12288,"medium_max_bytes":25600},
+ "groups":{
+  "small":{"n":4,"n_approx":4,"median":280000,"low":220000,"high":370000,"roles":{"builder":61,"committer":22,"reviewer":11,"message":6},"corrected":null},
+  "medium":{"n":2,"n_approx":1,"median":300000,"low":250000,"high":350000,"roles":{"builder":64,"committer":20,"reviewer":10,"message":6},"corrected":{"n":1,"median":350000,"low":350000,"high":350000}},
+  "complex":{"n":3,"n_approx":3,"median":450000,"low":420000,"high":480000,"roles":{"builder":70,"committer":15,"reviewer":10,"message":5},"corrected":null},
+  "all":{"n":9,"n_approx":8,"median":310000,"low":220000,"high":480000,"roles":{"builder":65,"committer":19,"reviewer":10,"message":6},"corrected":{"n":1,"median":350000,"low":350000,"high":350000}}},
+ "roles":{"builder":65,"committer":19,"reviewer":10,"message":6}}
+JSON
+sed -e "s/{\"id\":\"001\",/{\"id\":\"001\",\"estimate\":{\"group\":\"small\",\"median\":280000,\"low\":220000,\"high\":370000,\"n\":4,\"n_approx\":4},/" \
+    -e "s/{\"id\":\"004\",/{\"id\":\"004\",\"estimate\":{\"group\":\"medium\",\"median\":300000,\"low\":250000,\"high\":350000,\"n\":2,\"n_approx\":1},/" \
+    -e "s/{\"id\":\"005\",/{\"id\":\"005\",\"estimate\":{\"group\":\"all\",\"median\":310000,\"low\":220000,\"high\":480000,\"n\":1,\"n_approx\":0},/" \
+    "$data/board.json" >"$data/board.json.tmp"
+mv "$data/board.json.tmp" "$data/board.json"
+
 event() { printf '%s\n' "$1" >>"$log"; }
 event "{\"ts\":$((now - 60)),\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"b-1\",\"agent_type\":\"factory-builder\",\"job_id\":\"001\"}"
 event "{\"ts\":$((now - 30)),\"hook_event_name\":\"PostToolUse\",\"agent_id\":\"b-1\",\"tool_name\":\"Edit\",\"tool_target\":\"src/components/request/TimeoutField.tsx\",\"job_id\":\"001\",\"tokens\":1200}"

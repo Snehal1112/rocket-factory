@@ -44,6 +44,8 @@ bash tools/factory-server/tests/smoke.sh
 ```
 
 The smoke test also covers the park endpoint (404 without a file, the evidence with one, no evidence text in /api/state).
+The smoke test also checks that costs.json reaches /api/state as a group summary without any per-job list, that a job estimate passes through, and that a broken costs.json gives costs null.
 
 `tests/seed-demo.sh <dir>` builds a demo root with a job in every stage and one five-plan series for a visual check.
 Job 003 in the demo is parked with details, so its card shows the "See what went wrong" button.
+The demo also has a costs.json and estimates on jobs 001, 004 and 005, so the cost panel and the estimate lines show.
