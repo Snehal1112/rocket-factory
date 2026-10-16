@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::StopReason;
-use factory_core::{Stage, TaskState};
+use factory_core::{ParkKind, Stage, TaskState};
 use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest};
+use crate::park::builder_stop_parts;
 use crate::ports::{git_err, now, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{Engine, EngineError, StageOutcome};
@@ -55,10 +56,14 @@ impl Engine<'_> {
             Ok(())
         })?;
         if run.stop_reason != StopReason::Done {
-            return self.park(format!("builder stopped: {:?}", run.stop_reason));
+            return self.park_with(ParkKind::BuilderStopped, format!("builder stopped: {:?}", run.stop_reason), builder_stop_parts(&run));
         }
         if self.repo.tip(&branch).map_err(git_err)? != tip_before {
-            return self.park(format!("builder committed on its own (the branch was at {} before the run)", tip_before.get(..7).unwrap_or(&tip_before)));
+            return self.park_with(
+                ParkKind::BuilderCommitted,
+                format!("builder committed on its own (the branch was at {} before the run)", tip_before.get(..7).unwrap_or(&tip_before)),
+                Vec::new(),
+            );
         }
         // The floor is the base in the first round and the last reviewed head in a fix round.
         let floor = previous_head.clone().unwrap_or_else(|| base.clone());
@@ -73,9 +78,9 @@ impl Engine<'_> {
             CommitOutcome::Committed { tip, .. } => tip,
             CommitOutcome::NothingStaged => {
                 let why = if new_work { "builder made no changes" } else { "builder made no changes on resume" };
-                return self.park(why.to_string());
+                return self.park_with(ParkKind::NothingChanged, why.to_string(), Vec::new());
             }
-            CommitOutcome::Park(reason) => return self.park(reason),
+            CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
         };
         self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
@@ -174,17 +179,21 @@ impl Engine<'_> {
             let _ = std::fs::remove_file(&note_path);
         }
         if run.stop_reason != StopReason::Done {
-            return self.park(format!("builder stopped in task {}: {:?}", task.n, run.stop_reason));
+            return self.park_with(ParkKind::BuilderStopped, format!("builder stopped in task {}: {:?}", task.n, run.stop_reason), builder_stop_parts(&run));
         }
         if self.repo.tip(&branch).map_err(git_err)? != tip {
-            return self.park(format!("builder committed on its own in task {} (the branch was at {} before the run)", task.n, tip.get(..7).unwrap_or(&tip)));
+            return self.park_with(
+                ParkKind::BuilderCommitted,
+                format!("builder committed on its own in task {} (the branch was at {} before the run)", task.n, tip.get(..7).unwrap_or(&tip)),
+                Vec::new(),
+            );
         }
         let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
         let wt = self.job_worktree(job, &cwd, &base, &branch);
         let new_tip = match self.commit_work(&wt, CommitKind::Task, &task.title, &base, &job.issues)? {
             CommitOutcome::Committed { tip, .. } => tip,
-            CommitOutcome::NothingStaged => return self.park(format!("task {} changed nothing", task.n)),
-            CommitOutcome::Park(reason) => return self.park(reason),
+            CommitOutcome::NothingStaged => return self.park_with(ParkKind::NothingChanged, format!("task {} changed nothing", task.n), Vec::new()),
+            CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
         };
         self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
         let short = new_tip.get(..7).unwrap_or(&new_tip).to_string();
@@ -213,7 +222,9 @@ impl Engine<'_> {
         let info = self.repo.diff_to_files(base, &head, &self.job_dir).map_err(git_err)?;
         let cap = self.config.diff_cap_lines as usize;
         if info.changed_lines() > cap {
-            return self.park(format!("diff has {} changed lines, the cap is {cap}", info.changed_lines()));
+            let reason = format!("diff has {} changed lines, the cap is {cap}", info.changed_lines());
+            let parts = self.decision_parts(ParkKind::DiffTooLarge, &reason, job.round);
+            return self.park_with(ParkKind::DiffTooLarge, reason, parts);
         }
         let h = head.clone();
         self.update(|j| {

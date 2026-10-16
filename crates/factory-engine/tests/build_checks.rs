@@ -281,6 +281,11 @@ fn a_task_that_changes_nothing_parks_the_job_with_its_number() {
         }
         other => panic!("unexpected {other:?}"),
     }
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::NothingChanged);
+    assert!(rec.reason.contains("task 2 changed nothing"), "{}", rec.reason);
+    assert_eq!(fx.job().park_kind.as_deref(), Some("nothing-changed"));
+    assert!(!rec.next.is_empty());
     assert_eq!(fx.job().task_index, 1);
 }
 
@@ -328,6 +333,10 @@ fn a_stopped_first_task_parks_and_a_rework_resumes_at_that_task_with_the_note() 
         StageOutcome::NeedsHuman(r) => assert!(r.contains("builder stopped"), "{r}"),
         other => panic!("unexpected {other:?}"),
     }
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::BuilderStopped);
+    assert!(rec.parts[0].text.contains("Stop reason:"), "{}", rec.parts[0].text);
+    assert_eq!(rec.next, vec!["factory rework 001 <note>".to_string()]);
     assert_eq!(fx.job().task_index, 0);
     // A rework puts the job back in build and leaves a note.
     std::fs::write(fx.job_dir.join("rework-note.md"), "use the small helper").expect("note");

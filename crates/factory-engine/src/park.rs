@@ -84,9 +84,40 @@ impl Engine<'_> {
     }
 }
 
+/// Evidence for a builder that stopped: the stop reason, the error if any, and its last message.
+pub(crate) fn builder_stop_parts(run: &factory_agent::AgentRun) -> Vec<ParkPart> {
+    let mut text = format!("Stop reason: {}", run.stop_reason.as_str());
+    if let Some(error) = &run.error {
+        text.push_str(&format!("\nError: {error}"));
+    }
+    if !run.result_text.trim().is_empty() {
+        text.push_str(&format!("\n\nLast message from the builder:\n{}", run.result_text));
+    }
+    vec![ParkPart::new("Builder stopped", "builder", &text)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builder_stop_parts_carry_the_stop_reason_and_the_last_message() {
+        let mut run = factory_agent::AgentRun::failed("boom");
+        run.result_text = "I could not find the file.".to_string();
+        run.stop_reason = factory_agent::StopReason::TurnLimit;
+        let parts = builder_stop_parts(&run);
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].text.contains("turn-limit"), "{}", parts[0].text);
+        assert!(parts[0].text.contains("I could not find the file."), "{}", parts[0].text);
+    }
+
+    #[test]
+    fn builder_stop_parts_without_a_message_still_name_the_reason() {
+        let run = factory_agent::AgentRun::failed("boom");
+        let parts = builder_stop_parts(&run);
+        assert!(parts[0].text.contains("failed"), "{}", parts[0].text);
+        assert!(parts[0].text.contains("boom"), "{}", parts[0].text);
+    }
 
     #[test]
     fn blocker_lines_keeps_only_the_blockers() {
