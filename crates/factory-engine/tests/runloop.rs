@@ -105,6 +105,25 @@ fn every_agent_run_appends_a_usage_line_with_its_role() {
 }
 
 #[test]
+fn usage_lines_carry_the_run_details() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "hello", "say hello", Some(&plan), None).expect("create");
+    assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
+    let text = std::fs::read_to_string(fx.driver.job_dir(&job).join("usage.jsonl")).expect("usage log");
+    let lines: Vec<serde_json::Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    assert!(!lines.is_empty());
+    for v in &lines {
+        assert_eq!(v["usage_v"], 2, "{v}");
+        assert!(v["ts"].as_u64().unwrap_or(0) > 0, "{v}");
+        assert_eq!(v["stop"], "done", "{v}");
+        assert!(v["round"].as_u64().unwrap_or(0) >= 1, "{v}");
+        assert!(v["resumed"].is_boolean(), "{v}");
+        assert_eq!(v.get("tasks_done").is_some(), v["role"] == "builder", "{v}");
+    }
+}
+
+#[test]
 fn create_job_parks_later_plans_at_spec_with_one_series_id() {
     let fx = common::SeriesFixture::new("x");
     let a = fx.plan_file("plan-01-a.md", 2, "plan-02-b.md");
