@@ -108,6 +108,9 @@ pub struct Job {
     /// Unix seconds the job parked. New in the failure details series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub park_at: Option<u64>,
+    /// The cost estimate made when the job was created. New in the cost report series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate: Option<crate::cost::Estimate>,
 }
 
 /// One stage change, with the unix time in seconds it happened.
@@ -179,6 +182,7 @@ impl Job {
             task_index: 0,
             park_kind: None,
             park_at: None,
+            estimate: None,
         }
     }
 
@@ -258,6 +262,16 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_estimate_field_is_optional_and_round_trips() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        let json = serde_json::to_string(&job).expect("json");
+        assert!(!json.contains("estimate"), "{json}");
+        job.estimate = Some(crate::cost::Estimate { group: "small".into(), median: 250_000, low: 220_000, high: 310_000, n: 4, n_approx: 4 });
+        let back: Job = serde_json::from_str(&serde_json::to_string(&job).expect("json")).expect("load");
+        assert_eq!(back.estimate.as_ref().map(|e| e.median), Some(250_000));
+    }
 
     #[test]
     fn series_pos_id_is_optional_and_left_out_when_none() {

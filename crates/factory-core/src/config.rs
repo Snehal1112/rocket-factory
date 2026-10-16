@@ -58,6 +58,10 @@ pub struct Config {
     pub kb_budget_weighted: u64,
     /// Whether the KB refresh commits its edits in the KB folder.
     pub kb_auto_commit: bool,
+    /// A plan under this many bytes is a small job.
+    pub size_small_max_bytes: u64,
+    /// A plan up to this many bytes is a medium job, a bigger one is complex.
+    pub size_medium_max_bytes: u64,
     pub checks: Vec<CheckRule>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
@@ -81,6 +85,8 @@ impl Default for Config {
             kb_model: "sonnet".to_string(),
             kb_budget_weighted: 150_000,
             kb_auto_commit: false,
+            size_small_max_bytes: 12_288,
+            size_medium_max_bytes: 25_600,
             checks: Vec::new(),
             degraded: false,
         }
@@ -104,6 +110,9 @@ impl Config {
         let models = [&cfg.builder_model, &cfg.reviewer_model, &cfg.commit_model, &cfg.kb_model];
         if models.iter().any(|m| m.trim().is_empty()) {
             return Err(CoreError::Config("model names must not be empty".into()));
+        }
+        if cfg.size_small_max_bytes == 0 || cfg.size_small_max_bytes >= cfg.size_medium_max_bytes {
+            return Err(CoreError::Config("size_small_max_bytes must be above zero and below size_medium_max_bytes".into()));
         }
         if cfg.kb_path.as_deref().is_some_and(|p| p.trim().is_empty()) {
             return Err(CoreError::Config("kb_path must not be empty when it is set".into()));
@@ -148,6 +157,18 @@ fn expand_home(path: &str, home: Option<&str>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_thresholds_default_and_validate() {
+        let cfg = Config::default();
+        assert_eq!(cfg.size_small_max_bytes, 12_288);
+        assert_eq!(cfg.size_medium_max_bytes, 25_600);
+        assert!(Config::parse("size_small_max_bytes = 100\nsize_medium_max_bytes = 200\n").is_ok());
+        assert!(Config::parse("size_small_max_bytes = 200\nsize_medium_max_bytes = 200\n").is_err());
+        assert!(Config::parse("size_small_max_bytes = 300\nsize_medium_max_bytes = 200\n").is_err());
+        assert!(Config::parse("size_small_max_bytes = 0\n").is_err());
+        assert!(Config::parse("size_smal_max_bytes = 1\n").is_err());
+    }
 
     #[test]
     fn kb_dir_is_none_when_unset() {

@@ -3,6 +3,7 @@ pub mod board;
 pub mod budget;
 pub mod commitmsg;
 pub mod config;
+pub mod cost;
 pub mod error;
 pub mod fsutil;
 pub mod ids;
@@ -19,6 +20,7 @@ pub use commitmsg::{
     validate_message, MAX_COMMITS_PER_RUN, MAX_SUBJECT_CHARS, MESSAGE_BEGIN, MESSAGE_END,
 };
 pub use config::{CheckRule, Config};
+pub use cost::{count_tasks, group_of, usage_summary, Estimate, SizeGroup, UsageSummary};
 pub use error::CoreError;
 pub use fsutil::write_atomic;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
