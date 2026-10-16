@@ -118,6 +118,8 @@ impl Spawner for ProcessSpawner {
             return Err(SpawnError::Missing(self.bin.clone()));
         }
         let fail = |reason: String| SpawnError::Start { path: self.bin.clone(), reason };
+        // The child runs in the home, so it must exist.
+        std::fs::create_dir_all(&home.dir).map_err(|e| fail(format!("{}: {e}", home.dir.display())))?;
         for p in [out, err] {
             if let Some(dir) = p.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))?;
@@ -130,6 +132,8 @@ impl Spawner for ProcessSpawner {
         let mut cmd = Command::new(&self.bin);
         cmd.args(args_of(req))
             .env(HOME_ENV, &home.dir)
+            // The home exists (the log folders were just made), so a deleted working folder of factoryd cannot break the child.
+            .current_dir(&home.dir)
             .stdin(Stdio::null())
             .stdout(out_file)
             .stderr(err_file);
@@ -190,7 +194,7 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Home, ProcessSpawner) {
         let t = tempfile::tempdir().expect("tempdir");
         let home = Home::at(t.path().join("home"));
-        let bin = write_script(t.path(), "fake-factory", "echo \"$@\"\necho \"home=$FACTORY_HOME\"\nexit 0");
+        let bin = write_script(t.path(), "fake-factory", "echo \"$@\"\necho \"home=$FACTORY_HOME\"\necho \"cwd=$(pwd -P)\"\nexit 0");
         (t, home, ProcessSpawner::new(bin))
     }
 
@@ -211,6 +215,8 @@ mod tests {
         let text = std::fs::read_to_string(&out).expect("out");
         assert!(text.contains("--project p run 7\n"), "{text}");
         assert!(text.contains(&format!("home={}", home.dir.display())), "{text}");
+        let home_real = home.dir.canonicalize().expect("home path");
+        assert!(text.contains(&format!("cwd={}\n", home_real.display())), "{text}");
     }
 
     #[test]

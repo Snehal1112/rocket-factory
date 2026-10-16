@@ -19,6 +19,8 @@ use crate::spawn::{ChildPoll, Spawner};
 const TAIL_BYTES: u64 = 64 * 1024;
 const TAIL_LINES: usize = 20;
 const LINE_CAP: usize = 500;
+/// The most chars of a stderr tail that go into a result.
+const TAIL_CHARS: usize = 4000;
 const SLICE: Duration = Duration::from_millis(50);
 
 #[derive(Debug, thiserror::Error)]
@@ -64,8 +66,6 @@ pub struct RecoveryReport {
 /// its child record, and mark that live request `Lost`. A result is never overwritten, so the real outcome
 /// would be lost.
 pub struct Supervisor {
-    /// Held for the life of the supervisor when it was made by `new_locked`.
-    _lock: Option<InstanceLock>,
     home: Home,
     spawner: Box<dyn Spawner>,
     clock: Box<dyn Fn() -> u64>,
@@ -74,6 +74,9 @@ pub struct Supervisor {
     started_ids: HashSet<String>,
     /// True once start-up recovery ran.
     recovered: bool,
+    /// Held for the life of the supervisor when it was made by `new_locked`. It must stay the LAST field:
+    /// fields drop in declaration order, and the lock must outlive every other field.
+    _lock: Option<InstanceLock>,
 }
 
 /// True when the pid runs and is not a zombie.
@@ -119,6 +122,37 @@ fn read_tail(path: &Path) -> Result<String, String> {
     let mut buf = Vec::new();
     let _ = f.take(TAIL_BYTES).read_to_end(&mut buf);
     Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Cuts text to `max` chars on a char boundary and marks the cut with an ellipsis.
+fn cap_text(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(max).collect();
+    cut.push('…');
+    cut
+}
+
+/// Caps every text of an outcome, so the stored result is always smaller than the read cap.
+/// The tail keeps its last chars, because the end of stderr says most.
+fn cap_outcome(outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::NeedsHuman { reason } => Outcome::NeedsHuman { reason: cap_text(&reason, LINE_CAP) },
+        Outcome::Lost { reason } => Outcome::Lost { reason: cap_text(&reason, LINE_CAP) },
+        Outcome::Rejected { reason } => Outcome::Rejected { reason: cap_text(&reason, LINE_CAP) },
+        Outcome::Failed { code, stderr_tail } => {
+            let count = stderr_tail.chars().count();
+            let tail = if count > TAIL_CHARS {
+                let kept: String = stderr_tail.chars().skip(count - TAIL_CHARS).collect();
+                format!("…{kept}")
+            } else {
+                stderr_tail
+            };
+            Outcome::Failed { code, stderr_tail: tail }
+        }
+        other => other,
+    }
 }
 
 fn stderr_tail(text: &str) -> String {
@@ -173,7 +207,7 @@ impl Supervisor {
     /// Makes a supervisor without the instance lock. It requires that no other supervisor runs on this
     /// home, see the type docs. Use `new_locked` in production.
     pub fn new(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Supervisor {
-        Supervisor { _lock: None, home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new(), recovered: false }
+        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new(), recovered: false, _lock: None }
     }
 
     /// Takes the instance lock of the home and keeps it as long as the supervisor lives. Fails with the
@@ -200,6 +234,7 @@ impl Supervisor {
             let stored = records::read_results(&self.home).into_iter().flatten().find(|r| r.request_id == req_id);
             return Ok(stored.map(|r| r.outcome).unwrap_or(outcome));
         }
+        let outcome = cap_outcome(outcome);
         let rec = ResultRecord {
             request_id: req_id.to_string(),
             project: project.to_string(),
@@ -535,8 +570,11 @@ mod tests {
 
     #[test]
     fn classifies_by_the_last_stdout_line() {
-        assert_eq!(classify("a\nmerged\n\n", "", Some(Some(0))), Outcome::Merged);
-        assert_eq!(classify("needs-human: risky\n", "", None), Outcome::NeedsHuman { reason: "risky".into() });
+        use factory_core::outcome_lines::{merged_line, needs_human_line, parked_line};
+        assert_eq!(classify(&format!("a\n{}\n\n", merged_line(None)), "", Some(Some(0))), Outcome::Merged);
+        assert_eq!(classify(&format!("{}\n", needs_human_line("risky")), "", None), Outcome::NeedsHuman { reason: "risky".into() });
+        assert_eq!(classify(&format!("{}\n", merged_line(Some("abc1234"))), "", Some(Some(0))), Outcome::Merged);
+        assert_eq!(classify(&format!("{}\n", parked_line("x")), "", Some(Some(0))), Outcome::NeedsHuman { reason: "x".into() });
         assert_eq!(
             classify("x\n", "e1\n\ne2\n", Some(Some(1))),
             Outcome::Failed { code: Some(1), stderr_tail: "e1\ne2".into() }
@@ -580,5 +618,89 @@ mod tests {
         assert_eq!(tail.lines().count(), 20);
         assert!(tail.lines().all(|l| l.chars().count() <= 500));
         assert!(tail.starts_with("10x"));
+    }
+
+    struct DropProbe {
+        home: Home,
+        lock_held_at_drop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Spawner for DropProbe {
+        fn spawn(&self, _: &Home, _: &Request, _: &Path, _: &Path) -> Result<u32, crate::spawn::SpawnError> {
+            Err(crate::spawn::SpawnError::Unsupported)
+        }
+    }
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            let held = InstanceLock::acquire(&self.home).is_err();
+            self.lock_held_at_drop.store(held, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn the_instance_lock_outlives_the_other_fields() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(tmp.path().join("home"));
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let probe = DropProbe { home: home.clone(), lock_held_at_drop: flag.clone() };
+        let sup = Supervisor::new_locked(home, Box::new(probe), Box::new(|| 1)).expect("locked");
+        drop(sup);
+        assert!(flag.load(std::sync::atomic::Ordering::SeqCst), "the lock was already released when the spawner dropped");
+    }
+
+    fn result_roundtrip(outcome: Outcome) -> Outcome {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(tmp.path().join("home"));
+        let id = crate::request::make_id(1, "p", "1");
+        let sup = Supervisor::new(home.clone(), Box::new(DropProbe { home: home.clone(), lock_held_at_drop: Default::default() }), Box::new(|| 1));
+        sup.record_result(&id, "p", "1", outcome).expect("record");
+        let read = records::read_results(&home);
+        assert_eq!(read.len(), 1);
+        read.into_iter().next().expect("one").expect("readable").outcome
+    }
+
+    #[test]
+    fn a_huge_stdout_line_still_gives_a_readable_result() {
+        let huge = "x".repeat(64 * 1024);
+        for line in [format!("needs-human: {huge}"), format!("parked: {huge}")] {
+            let outcome = classify(&format!("{line}\n"), "", None);
+            match result_roundtrip(outcome) {
+                Outcome::NeedsHuman { reason } => assert!(reason.chars().count() <= LINE_CAP + 1, "{}", reason.len()),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_escape_heavy_stderr_tail_stays_readable() {
+        // Control chars cost six bytes each in JSON, and quotes and backslashes two.
+        let err: String = (0..40).map(|_| format!("{}\n", "\u{1}\"\\".repeat(400))).collect();
+        let outcome = classify("", &err, Some(Some(1)));
+        match result_roundtrip(outcome) {
+            Outcome::Failed { stderr_tail, .. } => assert!(stderr_tail.chars().count() <= TAIL_CHARS + 1),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn write_result_refuses_a_record_beyond_the_read_cap() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(tmp.path().join("home"));
+        let rec = ResultRecord {
+            request_id: crate::request::make_id(1, "p", "1"),
+            project: "p".into(),
+            job: "1".into(),
+            outcome: Outcome::Lost { reason: "x".repeat(70 * 1024) },
+            finished_ms: 1,
+        };
+        assert!(records::write_result(&home, &rec).is_err());
+        assert!(records::read_results(&home).is_empty());
+    }
+
+    #[test]
+    fn cap_text_cuts_on_a_char_boundary() {
+        assert_eq!(cap_text("héllo", 2), "hé…");
+        assert_eq!(cap_text("abc", 3), "abc");
     }
 }

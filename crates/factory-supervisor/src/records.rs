@@ -179,6 +179,10 @@ pub fn write_result(home: &Home, rec: &ResultRecord) -> Result<(), RecordError> 
     rec.validate().map_err(RecordError::Invalid)?;
     let path = home.results_dir().join(format!("{}.{EXT}", rec.request_id));
     let bytes = serde_json::to_vec_pretty(rec).map_err(CoreError::from)?;
+    // A result that is larger than the read cap could never be read back, so it is refused.
+    if bytes.len() as u64 > RECORD_CAP {
+        return Err(RecordError::Invalid(format!("result is {} bytes, the cap is {RECORD_CAP}", bytes.len())));
+    }
     write_atomic(&path, &bytes)?;
     Ok(())
 }
