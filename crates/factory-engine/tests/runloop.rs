@@ -68,6 +68,38 @@ fn run_series_stops_when_a_plan_needs_a_human() {
 }
 
 #[test]
+fn a_parked_job_gets_a_park_record_with_evidence() {
+    // No fix rounds, so the first changes verdict parks the job.
+    let fx = common::SeriesFixture::with_config("[blocker] src/a.rs wrong\nVERDICT: CHANGES", factory_core::Config { fix_rounds: 0, ..Default::default() });
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "stuck", "x", Some(&a), None).expect("create");
+    assert!(matches!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::NeedsHuman(_)));
+    let board_job = fx.driver.job(&job.id).expect("job");
+    assert_eq!(board_job.park_kind.as_deref(), Some("changes-remain"));
+    assert!(board_job.park_at.unwrap_or(0) > 0);
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&board_job)).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::ChangesRemain);
+    assert!(rec.reason.contains("changes remain"), "{}", rec.reason);
+    assert_eq!(rec.next, vec![format!("factory approve {}", job.id), format!("factory rework {} <note>", job.id)]);
+    assert!(rec.parts.iter().any(|p| p.text.contains("[blocker] src/a.rs wrong")), "{:?}", rec.parts);
+}
+
+#[test]
+fn leaving_needs_human_clears_the_board_park_fields() {
+    let fx = common::SeriesFixture::with_config("[blocker] x\nVERDICT: CHANGES", factory_core::Config { fix_rounds: 0, ..Default::default() });
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "stuck", "x", Some(&a), None).expect("create");
+    let _ = run_job(&fx.driver, &job.id).expect("run");
+    fx.driver
+        .store()
+        .update_job(&job.id, |j| j.set_stage(factory_core::Stage::Build, None, true, 9.0))
+        .expect("rework");
+    let after = fx.driver.job(&job.id).expect("job");
+    assert_eq!(after.park_kind, None);
+    assert_eq!(after.park_at, None);
+}
+
+#[test]
 fn create_job_avoids_ids_of_existing_branches() {
     let fx = common::SeriesFixture::new("x");
     let repo = git2::Repository::open(&fx.main).expect("open");

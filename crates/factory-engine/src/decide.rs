@@ -1,11 +1,11 @@
-use factory_core::{classify_paths, BudgetState, Config, DiffClass, Verdict};
+use factory_core::{classify_paths, BudgetState, Config, DiffClass, ParkKind, Verdict};
 
 /// What to do with a job after the reviewer ran.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decision {
     AutoMerge,
     FixRound,
-    NeedsHuman(String),
+    NeedsHuman { kind: ParkKind, reason: String },
 }
 
 pub struct DecideInput<'a> {
@@ -24,13 +24,16 @@ pub struct DecideInput<'a> {
 pub fn decide(i: &DecideInput) -> Decision {
     // Decision 6: a risky diff always stops for the human.
     if i.class == DiffClass::Risky {
-        return Decision::NeedsHuman(format!("risky diff: {}", i.risky_summary));
+        return Decision::NeedsHuman { kind: ParkKind::RiskyDiff, reason: format!("risky diff: {}", i.risky_summary) };
     }
     if i.budget == BudgetState::Stop {
-        return Decision::NeedsHuman("budget is stopped".to_string());
+        return Decision::NeedsHuman { kind: ParkKind::BudgetStopped, reason: "budget is stopped".to_string() };
     }
     if i.diff_lines > i.diff_cap {
-        return Decision::NeedsHuman(format!("diff has {} changed lines, the cap is {}", i.diff_lines, i.diff_cap));
+        return Decision::NeedsHuman {
+            kind: ParkKind::DiffTooLarge,
+            reason: format!("diff has {} changed lines, the cap is {}", i.diff_lines, i.diff_cap),
+        };
     }
     let used = i.round.saturating_sub(1);
     let rounds_left = used < i.fix_rounds;
@@ -38,7 +41,7 @@ pub fn decide(i: &DecideInput) -> Decision {
         return if rounds_left {
             Decision::FixRound
         } else {
-            Decision::NeedsHuman(format!("checks failed after {used} fix rounds"))
+            Decision::NeedsHuman { kind: ParkKind::ChecksFailed, reason: format!("checks failed after {used} fix rounds") }
         };
     }
     match i.verdict {
@@ -48,7 +51,7 @@ pub fn decide(i: &DecideInput) -> Decision {
             if rounds_left {
                 Decision::FixRound
             } else {
-                Decision::NeedsHuman(format!("changes remain after {used} fix rounds"))
+                Decision::NeedsHuman { kind: ParkKind::ChangesRemain, reason: format!("changes remain after {used} fix rounds") }
             }
         }
     }

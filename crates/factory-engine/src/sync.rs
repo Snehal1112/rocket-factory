@@ -57,6 +57,6 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
             _ => Ok(SyncOutcome::Parked("final checks failed after sync".into())),
         },
         Decision::FixRound => Ok(SyncOutcome::Parked("sync review asked for changes".into())),
-        Decision::NeedsHuman(why) => Ok(SyncOutcome::Parked(format!("after sync: {why}"))),
+        Decision::NeedsHuman { reason: why, .. } => Ok(SyncOutcome::Parked(format!("after sync: {why}"))),
     }
 }

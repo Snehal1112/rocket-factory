@@ -1,5 +1,5 @@
 use factory_checks::{plan_checks, run_checks, write_checks_md, ChecksReport};
-use factory_core::Stage;
+use factory_core::{ParkKind, ParkPart, Stage};
 
 use crate::ports::{git_err, io_err, now};
 use crate::{Engine, EngineError, StageOutcome};
@@ -18,11 +18,13 @@ impl Engine<'_> {
     }
 
     /// Starts a fix round with `findings`, or parks the job when the rounds are used up.
-    pub(crate) fn fix_or_park(&self, findings: &str, reason: &str) -> Result<StageOutcome, EngineError> {
+    pub(crate) fn fix_or_park(&self, findings: &str, reason: &str, kind: ParkKind, source: &str) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;
         let used = job.round.saturating_sub(1);
         if used >= self.config.fix_rounds {
-            return self.park(format!("{reason} after {used} fix rounds"));
+            let title = if kind == ParkKind::ChecksFailed { "Failing checks" } else { "Reviewer findings" };
+            let part = ParkPart::new(title, source, findings);
+            return self.park_with(kind, format!("{reason} after {used} fix rounds"), vec![part]);
         }
         let next = job.round + 1;
         std::fs::write(self.job_dir.join(format!("changes-r{next}.md")), findings).map_err(io_err)?;
@@ -46,7 +48,7 @@ impl Engine<'_> {
         }
         self.ruling(&format!("checks round {round} fail"))?;
         let findings = format!("The checks failed. Fix these failures only.\n\n{}", report.failure_text());
-        self.fix_or_park(&findings, "checks failed")
+        self.fix_or_park(&findings, "checks failed", ParkKind::ChecksFailed, "checks")
     }
 }
 

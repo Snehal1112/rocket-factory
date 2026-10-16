@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
-use factory_core::{budget_state, ReviewState, classify_paths, parse_verdict, Stage, Verdict};
+use factory_core::{budget_state, ReviewState, classify_paths, parse_verdict, ParkKind, Stage, Verdict};
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
 use crate::ports::{git_err, io_err};
@@ -79,17 +79,21 @@ impl Engine<'_> {
     /// Applies a decision to the board.
     pub fn apply_decision(&self, outcome: &ReviewOutcome) -> Result<StageOutcome, EngineError> {
         match &outcome.decision {
-            Decision::NeedsHuman(reason) => self.park(reason.clone()),
+            Decision::NeedsHuman { kind, reason } => {
+                let round = self.job()?.round;
+                let parts = self.decision_parts(*kind, reason, round);
+                self.park_with(*kind, reason.clone(), parts)
+            }
             Decision::FixRound => {
                 let text = std::fs::read_to_string(&outcome.review_path).map_err(io_err)?;
                 let findings = format!("The reviewer asked for changes. Fix these findings only.\n\n{text}");
-                self.fix_or_park(&findings, "review asked for changes")
+                self.fix_or_park(&findings, "review asked for changes", ParkKind::ChangesRemain, "review reply")
             }
             Decision::AutoMerge => {
                 let report = self.final_checks()?;
                 if !report.all_passed() {
                     let findings = format!("The final checks failed. Fix these failures only.\n\n{}", report.failure_text());
-                    return self.fix_or_park(&findings, "final checks failed");
+                    return self.fix_or_park(&findings, "final checks failed", ParkKind::ChecksFailed, "checks");
                 }
                 self.set_stage(Stage::Approve, None, false)?;
                 self.ruling("auto-merge approved, checks green, reviewer approved")?;

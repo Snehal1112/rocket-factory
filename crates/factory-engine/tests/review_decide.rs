@@ -38,7 +38,10 @@ fn risky_diff_is_always_needs_human_even_when_approved() {
     i.class = DiffClass::Risky;
     i.risky_summary = "risky paths (1): src-tauri/src/lib.rs".into();
     match decide(&i) {
-        Decision::NeedsHuman(r) => assert!(r.contains("src-tauri/src/lib.rs"), "{r}"),
+        Decision::NeedsHuman { reason: r, kind } => {
+            assert!(r.contains("src-tauri/src/lib.rs"), "{r}");
+            assert_eq!(kind, factory_core::ParkKind::RiskyDiff);
+        }
         other => panic!("unexpected {other:?}"),
     }
 }
@@ -48,7 +51,7 @@ fn stopped_budget_needs_a_human() {
     let v = Verdict::Approve;
     let mut i = input(&v);
     i.budget = BudgetState::Stop;
-    assert!(matches!(decide(&i), Decision::NeedsHuman(r) if r.contains("budget")));
+    assert!(matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("budget") && kind == factory_core::ParkKind::BudgetStopped));
 }
 
 #[test]
@@ -64,7 +67,7 @@ fn diff_over_cap_needs_a_human() {
     let v = Verdict::Approve;
     let mut i = input(&v);
     i.diff_lines = 4001;
-    assert!(matches!(decide(&i), Decision::NeedsHuman(r) if r.contains("cap")));
+    assert!(matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("cap") && kind == factory_core::ParkKind::DiffTooLarge));
 }
 
 #[test]
@@ -74,7 +77,7 @@ fn failing_checks_give_a_fix_round_then_a_human() {
     i.checks_ok = false;
     assert_eq!(decide(&i), Decision::FixRound);
     i.round = 3;
-    assert!(matches!(decide(&i), Decision::NeedsHuman(r) if r.contains("fix rounds")));
+    assert!(matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("fix rounds") && kind == factory_core::ParkKind::ChecksFailed));
 }
 
 #[test]
@@ -83,7 +86,7 @@ fn changes_and_missing_verdicts_give_a_fix_round_then_a_human() {
         let mut i = input(&v);
         assert_eq!(decide(&i), Decision::FixRound);
         i.round = 3;
-        assert!(matches!(decide(&i), Decision::NeedsHuman(_)));
+        assert!(matches!(decide(&i), Decision::NeedsHuman { kind: factory_core::ParkKind::ChangesRemain, .. }));
     }
 }
 
@@ -222,7 +225,10 @@ fn risky_diff_with_approve_needs_a_human_naming_the_path() {
     let e = fx.engine(&rr);
     let out = e.review_stage().expect("review");
     match &out.decision {
-        Decision::NeedsHuman(r) => assert!(r.contains("src-tauri/src/lib.rs"), "{r}"),
+        Decision::NeedsHuman { reason: r, kind } => {
+            assert!(r.contains("src-tauri/src/lib.rs"), "{r}");
+            assert_eq!(*kind, factory_core::ParkKind::RiskyDiff);
+        }
         other => panic!("unexpected {other:?}"),
     }
     assert!(matches!(e.apply_decision(&out).expect("apply"), StageOutcome::NeedsHuman(_)));

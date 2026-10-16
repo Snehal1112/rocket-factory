@@ -323,6 +323,10 @@ pub struct SeriesFixture {
 
 impl SeriesFixture {
     pub fn new(verdict: &str) -> SeriesFixture {
+        SeriesFixture::with_config(verdict, Config::default())
+    }
+
+    pub fn with_config(verdict: &str, config: Config) -> SeriesFixture {
         let tmp = tempfile::tempdir().expect("tempdir");
         let main = tmp.path().join("repo");
         init_repo(&main);
@@ -336,7 +340,7 @@ impl SeriesFixture {
                 counter: std::sync::atomic::AtomicUsize::new(0),
             })
         });
-        let driver = factory_engine::Driver::new(&main, Config::default(), factory).expect("driver");
+        let driver = factory_engine::Driver::new(&main, config, factory).expect("driver");
         SeriesFixture { tmp, main, driver }
     }
 
