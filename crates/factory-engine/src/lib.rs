@@ -38,7 +38,7 @@ pub use commit::{
     COMMIT_CONTEXT_FILE,
 };
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
-pub use costs::gather_costs;
+pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
 pub use compat::{Driver, RunnerFactory, KB_STOP_FILE, LEASE_TTL_SECS};
 pub use message::{fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS};
 pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};

@@ -44,12 +44,23 @@ fn add_job(
         board.jobs.push(job.clone());
         Ok(job)
     })?;
+    let mut job = job;
     let dir = driver.job_dir(&job);
     std::fs::create_dir_all(&dir)?;
     Ledger::new(dir.join("progress.md"))
         .create(&format!("# SDD ledger, plan: .superpowers/sdd/{}/plan.md", job.dir))?;
     if let Some(pos) = &job.series {
         std::fs::copy(&pos.plan_file, dir.join("plan.md"))?;
+        // The estimate is best effort: no history or a failed read gives no estimate, never an error.
+        let bytes = std::fs::metadata(dir.join("plan.md")).map(|m| m.len()).unwrap_or(0);
+        if let Some(estimate) = crate::costs::estimate_for_plan(driver, bytes) {
+            let stored = estimate.clone();
+            driver.store().update_job(&job.id, |j| {
+                j.estimate = Some(stored);
+                Ok(())
+            })?;
+            job.estimate = Some(estimate);
+        }
     }
     Ok(job)
 }

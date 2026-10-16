@@ -1,7 +1,7 @@
 mod common;
 
 use factory_core::{Job, SizeGroup, Stage};
-use factory_engine::gather_costs;
+use factory_engine::{costs_path, create_job, estimate_for_plan, gather_costs, refresh_costs, run_job, RunEnd};
 
 fn add_finished_job(fx: &common::SeriesFixture, id: &str, plan_text: &str, usage: Option<&str>) -> Job {
     let mut job = Job::new(id, &format!("2026-10-16-{id}-x"), "x", "2026-10-16", "feature", 1.0);
@@ -70,4 +70,81 @@ fn old_usage_lines_make_a_job_approximate() {
     add_finished_job(&fx, "104", "# P\n", Some(usage));
     let jobs = gather_costs(&fx.driver).expect("gather");
     assert!(jobs.iter().find(|j| j.id == "104").expect("job").approx);
+}
+
+fn make_merged(fx: &common::SeriesFixture, id: &str, plan_text: &str, weighted_input: u64) {
+    let usage = format!(
+        "{{\"job\":\"{id}\",\"role\":\"builder\",\"input\":{weighted_input},\"cache_creation\":0,\"output\":0,\"cache_read\":0,\"usage_v\":2}}\n"
+    );
+    let job = add_finished_job(fx, id, plan_text, Some(&usage));
+    fx.driver
+        .store()
+        .update_job(&job.id, |j| j.set_stage(Stage::Merged, None, true, 3.0))
+        .expect("merged");
+}
+
+#[test]
+fn refresh_costs_writes_groups_and_roles_but_no_job_list() {
+    let fx = common::SeriesFixture::new("x");
+    make_merged(&fx, "101", "# tiny\n", 200);
+    refresh_costs(&fx.driver).expect("refresh");
+    let raw = std::fs::read_to_string(costs_path(fx.driver.root())).expect("costs.json");
+    let json: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    assert_eq!(json["groups"]["small"]["n"], 1);
+    assert_eq!(json["groups"]["small"]["median"], 200);
+    assert_eq!(json["roles"]["builder"], 100);
+    assert!(json.get("jobs").is_none(), "{raw}");
+}
+
+#[test]
+fn estimate_for_plan_uses_history_and_is_none_without_it() {
+    let fx = common::SeriesFixture::new("x");
+    assert_eq!(estimate_for_plan(&fx.driver, 100), None);
+    make_merged(&fx, "101", "# tiny\n", 200);
+    make_merged(&fx, "102", "# tiny\n", 400);
+    let e = estimate_for_plan(&fx.driver, 100).expect("estimate");
+    assert_eq!((e.group.as_str(), e.median, e.low, e.high, e.n), ("small", 300, 200, 400, 2));
+    // A complex plan has no complex history, so the overall figures are used.
+    let all = estimate_for_plan(&fx.driver, 40_000).expect("fallback");
+    assert_eq!((all.group.as_str(), all.n), ("all", 2));
+}
+
+#[test]
+fn a_new_job_from_a_plan_gets_an_estimate_and_a_new_job_does_not_change_the_history() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    make_merged(&fx, "101", "# tiny\n", 200);
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "feat", "a feature", Some(&plan), None).expect("create");
+    let est = job.estimate.as_ref().expect("estimate on the returned job");
+    assert_eq!((est.group.as_str(), est.median, est.n), ("small", 200, 1));
+    let on_board = fx.driver.job(&job.id).expect("job");
+    assert_eq!(on_board.estimate, job.estimate);
+    // The new job has no usage and is not merged, so the history is unchanged.
+    let again = estimate_for_plan(&fx.driver, 100).expect("estimate");
+    assert_eq!(again.n, 1);
+}
+
+#[test]
+fn a_job_made_without_a_plan_has_no_estimate() {
+    let fx = common::SeriesFixture::new("x");
+    make_merged(&fx, "101", "# tiny\n", 200);
+    let job = create_job(&fx.driver, "bare", "no plan", None, None).expect("create");
+    assert_eq!(job.estimate, None);
+}
+
+#[test]
+fn a_merge_refreshes_costs_json_and_a_failed_refresh_does_not_fail_the_merge() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "ok", "a feature", Some(&plan), None).expect("create");
+    assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
+    let raw = std::fs::read_to_string(costs_path(fx.driver.root())).expect("costs.json after the merge");
+    assert!(raw.contains("\"groups\""), "{raw}");
+
+    // A directory where the file goes makes the write fail.
+    let fx2 = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    std::fs::create_dir_all(costs_path(fx2.driver.root())).expect("blocker dir");
+    let plan2 = fx2.plan_file("plan-01-a.md", 1, "none");
+    let job2 = create_job(&fx2.driver, "blocked", "a feature", Some(&plan2), None).expect("create");
+    assert_eq!(run_job(&fx2.driver, &job2.id).expect("run"), RunEnd::Merged);
 }

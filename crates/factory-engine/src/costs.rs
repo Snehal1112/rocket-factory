@@ -1,7 +1,10 @@
 //! Builds the cost record of every board job from its folder and git.
 
-use factory_core::{count_tasks, group_of, usage_summary, JobCost};
+use std::path::{Path, PathBuf};
 
+use factory_core::{count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, JobCost};
+
+use crate::clock::now_secs;
 use crate::{Driver, EngineError};
 
 /// One record per board job. A missing plan, usage file or commit gives an empty field, never an error.
@@ -37,4 +40,22 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
         });
     }
     Ok(out)
+}
+
+/// Where the dashboard reads the group figures.
+pub fn costs_path(root: &Path) -> PathBuf {
+    root.join(".superpowers/factory/costs.json")
+}
+
+/// Rebuilds `costs.json` from the board, the job folders and git.
+pub fn refresh_costs(driver: &Driver) -> Result<(), EngineError> {
+    let jobs = gather_costs(driver)?;
+    let file = CostsFile::build(&jobs, driver.config(), now_secs());
+    file.write(&costs_path(driver.root())).map_err(|e| EngineError::Core(e.to_string()))
+}
+
+/// The estimate for a plan of `plan_bytes` bytes, from the history now. `None` without history.
+pub fn estimate_for_plan(driver: &Driver, plan_bytes: u64) -> Option<Estimate> {
+    let jobs = gather_costs(driver).ok()?;
+    estimate_for(plan_bytes, &stats(&jobs), driver.config())
 }
