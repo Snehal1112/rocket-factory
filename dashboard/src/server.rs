@@ -483,4 +483,19 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn the_page_carries_the_park_dialog_and_its_script_and_styles() -> TestResult {
+        let (_dir, app) = app_with_board(Some(JOB))?;
+        let host = Some("127.0.0.1:1");
+        let page = route(&app, "GET", "/", host, 1, 5.0);
+        let html = String::from_utf8(page.body)?;
+        assert!(html.contains(r#"<dialog id="park-dialog""#), "dialog element");
+        assert!(html.contains(r#"id="park-content""#), "content holder");
+        let app_js = String::from_utf8(route(&app, "GET", "/app.js", host, 1, 5.0).body)?;
+        assert!(app_js.contains("/park") && app_js.contains("showModal"), "controller");
+        let css = String::from_utf8(route(&app, "GET", "/dashboard.css", host, 1, 5.0).body)?;
+        assert!(css.contains(".park-dialog") && css.contains(".ln-hit"), "styles");
+        Ok(())
+    }
 }

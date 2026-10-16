@@ -269,3 +269,28 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .agents-sum { margin-left: 0.4rem; color: var(--foreground); }
 .agents-box .agents, .facts-box .facts, .tasks-box .tasks { margin-top: 0.5rem; padding-top: 0; border-top: 0; }
 .facts-box .facts { grid-template-columns: max-content minmax(0, 1fr); }
+
+/* The failure details popup. */
+.park-link { margin: 0 0 0.45rem; }
+.chip-warn { border-color: var(--attention); background: var(--attention-wash); color: var(--attention); }
+.park-dialog { width: min(52rem, calc(100% - 2rem)); max-height: calc(100% - 2rem); margin: auto; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--foreground); overflow: hidden; }
+.park-dialog::backdrop { background: oklch(0.2 0.01 230 / 45%); }
+.park-dialog[open] { display: flex; flex-direction: column; }
+#park-content { display: flex; flex-direction: column; min-height: 0; }
+.park-head { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem 0.75rem; align-items: start; padding: 0.875rem 0.875rem 0.7rem; border-bottom: 1px solid var(--border); }
+.park-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; color: var(--muted-foreground); font-size: 11.5px; }
+.park-title { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.park-close { align-self: start; }
+.park-note { margin: 0; padding: 0.5rem 0.875rem; border-bottom: 1px solid var(--border); background: var(--attention-wash); color: var(--attention); font-size: 12px; }
+.park-body { min-height: 0; padding: 0.875rem; overflow: auto; }
+.park-part + .park-part { margin-top: 1rem; }
+.park-part-title { margin: 0 0 0.4rem; font-size: 12px; font-weight: 600; }
+.park-source { margin-left: 0.35rem; color: var(--muted-foreground); font-weight: 400; }
+.park-cut { margin: 0 0 0.4rem; color: var(--attention); font-size: 12px; }
+.park-text { margin: 0; max-height: 22rem; padding: 0.5rem 0; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); overflow: auto; font: 12px/1.55 var(--font); }
+.park-text:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ln { display: block; padding: 0 0.75rem 0 0.6rem; border-left: 2px solid transparent; white-space: pre; }
+.ln-hit { border-left-color: var(--destructive); background: var(--destructive-wash); }
+.park-empty { margin: 0; color: var(--muted-foreground); }
+.park-foot { padding: 0.7rem 0.875rem 0.875rem; border-top: 1px solid var(--border); }
+.park-next-label { margin: 0 0 0.4rem; color: var(--muted-foreground); font-size: 12px; }
