@@ -26,6 +26,7 @@ pub struct StreamState {
     usage_by_message: BTreeMap<String, Usage>,
     seen_tools: BTreeSet<String>,
     result_usage: Option<Usage>,
+    first_usage: Option<Usage>,
 }
 
 fn trim_chars(s: &str, max: usize) -> String {
@@ -84,6 +85,9 @@ impl StreamState {
                 Some(old) => old.max_with(&seen),
                 None => seen,
             };
+            if self.first_usage.is_none() {
+                self.first_usage = Some(seen);
+            }
             self.usage_by_message.insert(id.to_string(), merged);
         }
         let Some(items) = message.get("content").and_then(Value::as_array) else {
@@ -122,6 +126,21 @@ impl StreamState {
             return self.result_usage.map_or(sum, |u| u);
         }
         sum
+    }
+
+    /// Usage of a finished run: per field, the larger of the message sum and the result event.
+    /// The message snapshots carry partial output counts, the result event carries the run total.
+    pub fn final_usage(&self) -> Usage {
+        let sum = self.usage();
+        match self.result_usage {
+            Some(result) => sum.max_with(&result),
+            None => sum,
+        }
+    }
+
+    /// Context the run started with: cache creation plus cache read of the first message.
+    pub fn start_ctx(&self) -> u64 {
+        self.first_usage.map_or(0, |u| u.cache_creation_input_tokens.saturating_add(u.cache_read_input_tokens))
     }
 
     /// Number of unique assistant messages seen so far.

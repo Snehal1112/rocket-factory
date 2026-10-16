@@ -9,6 +9,19 @@ pub enum StopReason {
     Failed,
 }
 
+impl StopReason {
+    /// Stable name for logs.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StopReason::Done => "done",
+            StopReason::BudgetStop => "budget-stop",
+            StopReason::Stalled => "stalled",
+            StopReason::TurnLimit => "turn-limit",
+            StopReason::Failed => "failed",
+        }
+    }
+}
+
 /// The outcome of one agent run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentRun {
@@ -18,6 +31,7 @@ pub struct AgentRun {
     pub result_text: String,
     pub stop_reason: StopReason,
     pub turns: u32,
+    pub start_ctx: u64,
     pub exit_code: Option<i32>,
     pub error: Option<String>,
 }
@@ -31,6 +45,7 @@ impl AgentRun {
             result_text: text.to_string(),
             stop_reason: StopReason::Done,
             turns: 0,
+            start_ctx: 0,
             exit_code: Some(0),
             error: None,
         }

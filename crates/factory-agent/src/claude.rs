@@ -176,7 +176,7 @@ impl ClaudeRunner {
             err_thread.join().map_or(String::new(), |t| t)
         };
 
-        let usage = state.usage();
+        let usage = state.final_usage();
         let weighted = usage.weighted();
         let exit_code = status.code();
         let result_text = state.result_text.clone().map_or(String::new(), |t| t);
@@ -205,6 +205,7 @@ impl ClaudeRunner {
             result_text,
             stop_reason,
             turns: state.turns(),
+            start_ctx: state.start_ctx(),
             exit_code,
             error,
         })

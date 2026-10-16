@@ -219,3 +219,80 @@ fn sink_survives_write_errors() {
 fn stop_reason_is_comparable() {
     assert_ne!(StopReason::Done, StopReason::Failed);
 }
+
+fn feed_lines(lines: &[&str]) -> StreamState {
+    let mut state = StreamState::default();
+    for line in lines {
+        state.feed(line);
+    }
+    state
+}
+
+const MSG_1: &str = r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":1}},"session_id":"s"}"#;
+const MSG_2: &str = r#"{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[],"usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":1100,"output_tokens":2}},"session_id":"s"}"#;
+
+#[test]
+fn final_usage_takes_the_larger_result_output() {
+    let result = r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","usage":{"input_tokens":15,"cache_creation_input_tokens":100,"cache_read_input_tokens":2100,"output_tokens":500}}"#;
+    let state = feed_lines(&[MSG_1, MSG_2, result]);
+    // The live sum keeps the partial snapshots, the final usage uses the result event.
+    assert_eq!(state.usage().output_tokens, 3);
+    assert_eq!(state.final_usage().output_tokens, 500);
+    assert_eq!(state.final_usage().cache_read_input_tokens, 2100);
+}
+
+#[test]
+fn final_usage_never_drops_below_the_message_sum() {
+    let result = r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}"#;
+    let state = feed_lines(&[MSG_1, MSG_2, result]);
+    assert_eq!(state.final_usage(), state.usage());
+}
+
+#[test]
+fn final_usage_without_a_result_event_is_the_message_sum() {
+    let state = feed_lines(&[MSG_1, MSG_2]);
+    assert!(!state.has_result());
+    assert_eq!(state.final_usage(), state.usage());
+    assert_eq!(state.final_usage().output_tokens, 3);
+}
+
+#[test]
+fn final_usage_takes_each_field_independently() {
+    // The result is larger in cache read only, the message sum is larger in input.
+    let result = r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","usage":{"input_tokens":1,"cache_creation_input_tokens":100,"cache_read_input_tokens":9000,"output_tokens":3}}"#;
+    let state = feed_lines(&[MSG_1, MSG_2, result]);
+    let u = state.final_usage();
+    assert_eq!(u.input_tokens, 15);
+    assert_eq!(u.cache_read_input_tokens, 9000);
+}
+
+#[test]
+fn start_ctx_is_the_first_messages_cache_creation_plus_read() {
+    let state = feed_lines(&[MSG_1, MSG_2]);
+    assert_eq!(state.start_ctx(), 100 + 1000);
+}
+
+#[test]
+fn start_ctx_is_zero_without_messages() {
+    assert_eq!(StreamState::default().start_ctx(), 0);
+}
+
+#[test]
+fn start_ctx_does_not_overflow() {
+    let big = format!(
+        r#"{{"type":"assistant","message":{{"id":"m","role":"assistant","content":[],"usage":{{"input_tokens":0,"cache_creation_input_tokens":{max},"cache_read_input_tokens":{max},"output_tokens":0}}}}}}"#,
+        max = u64::MAX
+    );
+    let state = feed_lines(&[&big]);
+    assert_eq!(state.start_ctx(), u64::MAX);
+}
+
+#[test]
+fn stop_reason_names_are_stable() {
+    use factory_agent::StopReason;
+    assert_eq!(StopReason::Done.as_str(), "done");
+    assert_eq!(StopReason::BudgetStop.as_str(), "budget-stop");
+    assert_eq!(StopReason::Stalled.as_str(), "stalled");
+    assert_eq!(StopReason::TurnLimit.as_str(), "turn-limit");
+    assert_eq!(StopReason::Failed.as_str(), "failed");
+}
