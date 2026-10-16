@@ -38,19 +38,24 @@ fn open_repo(path: &Path, base: &str) -> Result<Repo, String> {
     Ok(repo.with_base_branch(base))
 }
 
+/// The project name for a repo folder: the lowercased folder name, when it is a valid name.
+fn name_from_folder(path: &Path) -> Result<String, CliError> {
+    let folder = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+    let guess = folder.to_lowercase();
+    if project::validate_name(&guess).is_err() {
+        return Err(CliError::Refused(format!("cannot derive a project name from the folder {folder:?}, pass --name")));
+    }
+    Ok(guess)
+}
+
 fn add(home: &Home, path: &Path, preset: &str, base: Option<&str>, name: Option<&str>) -> Result<String, CliError> {
+    // A relative or non-canonical path (such as ".") is resolved first, so the name and the registry see the real folder.
+    let path = std::fs::canonicalize(path)
+        .map_err(|e| CliError::Refused(format!("repo path {} is not usable: {e}", path.display())))?;
+    let path = path.as_path();
     let name = match name {
         Some(n) => n.to_string(),
-        None => {
-            let folder = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-            let guess = folder.to_lowercase();
-            if project::validate_name(&guess).is_err() {
-                return Err(CliError::Refused(format!(
-                    "cannot derive a project name from the folder {folder:?}, pass --name"
-                )));
-            }
-            guess
-        }
+        None => name_from_folder(path)?,
     };
     project::validate_name(&name)?;
     let probe = open_repo(path, "").map_err(CliError::Refused)?;

@@ -201,3 +201,34 @@ fn add_without_arguments_is_a_usage_error() {
     let err = Cli::try_parse_from(["factory", "project", "add"]).expect_err("needs args");
     assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
 }
+
+#[test]
+fn add_accepts_a_non_canonical_path_and_names_it_from_the_real_folder() {
+    let e = env();
+    let repo = make_repo(e.tmp.path(), "Real", "main");
+    std::fs::create_dir_all(e.tmp.path().join("x")).expect("mkdir");
+    let odd = e.tmp.path().join("x").join("..").join("Real").join(".");
+    run(&e, &["add", s(&odd), "--preset", "rust"]).expect("add");
+    let canon = std::fs::canonicalize(&repo).expect("canon");
+    assert_eq!(run(&e, &["list"]).expect("list"), format!("real rust main {}", canon.display()));
+}
+
+#[test]
+fn add_accepts_a_relative_path() {
+    // The current directory is process wide, so only this test changes it, and it restores it.
+    let e = env();
+    make_repo(e.tmp.path(), "rel", "main");
+    let old = std::env::current_dir().expect("cwd");
+    std::env::set_current_dir(e.tmp.path().join("rel")).expect("chdir");
+    let out = run(&e, &["add", ".", "--preset", "rust"]);
+    std::env::set_current_dir(old).expect("restore");
+    out.expect("add");
+    assert!(run(&e, &["list"]).expect("list").starts_with("rel rust main "));
+}
+
+#[test]
+fn add_refuses_a_path_that_does_not_exist() {
+    let e = env();
+    let err = run(&e, &["add", "/no/such/dir", "--preset", "rust", "--name", "x"]).expect_err("refused").to_string();
+    assert!(err.contains("not usable"), "{err}");
+}
