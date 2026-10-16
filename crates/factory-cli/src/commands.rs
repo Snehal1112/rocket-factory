@@ -2,14 +2,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
-use factory_core::{Config, Stage};
+use factory_core::{Config, ParkRecord, Stage};
 use factory_engine::{
     acquire_lease, create_job_with_spec, lease_is_live, merge_stage, now_secs, release_lease, run_job, run_series, Driver,
     MergeResult, RunEnd, LEASE_TTL_SECS,
 };
 
 use crate::cli::{Cli, Command};
-use crate::status::render_status;
+use crate::status::{render_parked, render_status};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -98,7 +98,10 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Run { id, series } => run(ctx, &norm(&id)?, series),
         Command::Status => {
             let d = ctx.driver()?;
-            Ok(render_status(&d.store().load()?, d.config()))
+            let board = d.store().load()?;
+            let mut out = render_status(&board, d.config());
+            out.push_str(&render_parked(&board, |j| ParkRecord::read(&d.job_dir(j))));
+            Ok(out)
         }
         Command::Show { id } => {
             let d = ctx.driver()?;
