@@ -8,7 +8,7 @@ use std::time::Duration;
 use factory_core::{project, CoreError, Home, HomeConfig};
 use factory_engine::{owner_pid, process_gone, project_lease_status, ProjectLeaseStatus};
 
-use crate::lock::stop_file;
+use crate::lock::{stop_file, InstanceLock, LockError};
 use crate::queue::{self, QueueItem};
 use crate::records::{self, ChildRecord, Outcome, ResultRecord};
 use crate::request::Request;
@@ -57,7 +57,15 @@ pub struct RecoveryReport {
     pub report: TickReport,
 }
 
+/// Starts and watches the children of one factory home.
+///
+/// Exactly one `Supervisor` may run per home. Use `Supervisor::new_locked`, which holds the instance lock.
+/// Without it a second supervisor can run recovery while the first is between spawning a child and writing
+/// its child record, and mark that live request `Lost`. A result is never overwritten, so the real outcome
+/// would be lost.
 pub struct Supervisor {
+    /// Held for the life of the supervisor when it was made by `new_locked`.
+    _lock: Option<InstanceLock>,
     home: Home,
     spawner: Box<dyn Spawner>,
     clock: Box<dyn Fn() -> u64>,
@@ -162,8 +170,19 @@ pub fn clamp_interval(interval: Duration) -> Duration {
 }
 
 impl Supervisor {
+    /// Makes a supervisor without the instance lock. It requires that no other supervisor runs on this
+    /// home, see the type docs. Use `new_locked` in production.
     pub fn new(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Supervisor {
-        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new(), recovered: false }
+        Supervisor { _lock: None, home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new(), recovered: false }
+    }
+
+    /// Takes the instance lock of the home and keeps it as long as the supervisor lives. Fails with the
+    /// pid of the supervisor that already runs.
+    pub fn new_locked(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Result<Supervisor, LockError> {
+        let lock = InstanceLock::acquire(&home)?;
+        let mut s = Supervisor::new(home, spawner, clock);
+        s._lock = Some(lock);
+        Ok(s)
     }
 
     pub fn set_max_parallel(&mut self, n: u32) {
@@ -362,7 +381,8 @@ impl Supervisor {
     /// process is gone ends from its log files, as `Lost` when they hold no result line. A queued request
     /// with no result and no child record but with log files was started before a crash: it ends as `Lost`
     /// and is never run again. A job is never restarted. The first tick calls this once, and calling it
-    /// first by hand is fine.
+    /// first by hand is fine. Requires that no other supervisor runs on this home: a second one would
+    /// mark a request that is just being started as `Lost`, and that result is never overwritten.
     pub fn recover(&mut self) -> Result<RecoveryReport, SupervisorError> {
         self.recover_inner().map(|(report, _, _)| report)
     }
@@ -405,6 +425,8 @@ impl Supervisor {
         Ok((RecoveryReport { adopted, report }, running, blocked))
     }
 
+    /// One pass: finish what ended, then start what the scheduler allows. Like `recover`, it requires
+    /// that this is the only supervisor on the home.
     pub fn tick(&mut self) -> Result<TickReport, SupervisorError> {
         // Step 1: finish what ended. A child that cannot be finished yet keeps its project busy.
         // The first tick does this inside recovery.

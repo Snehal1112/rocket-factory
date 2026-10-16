@@ -344,3 +344,14 @@ fn a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends() {
     tick_until_finished(&mut s, &id);
     assert_eq!(e.result(&id), Some(Outcome::Merged));
 }
+
+#[test]
+fn a_second_locked_supervisor_is_refused_until_the_first_is_dropped() {
+    let e = env();
+    let spawner = || Box::new(ProcessSpawner::new(e.dir.join("factory")));
+    let first = Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)).expect("first");
+    let err = Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)).err().expect("refused");
+    assert!(err.to_string().contains(&std::process::id().to_string()), "{err}");
+    drop(first);
+    assert!(Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)).is_ok());
+}

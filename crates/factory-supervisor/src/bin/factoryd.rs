@@ -51,12 +51,12 @@ fn now_ms() -> u64 {
 }
 
 fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
-    let _lock = InstanceLock::acquire(&home).map_err(|e| e.to_string())?;
     let cfg = HomeConfig::load(&home).map_err(|e| e.to_string())?;
     let spawner = ProcessSpawner::from_env().map_err(|e| e.to_string())?;
-    // A stop file left from an earlier run must not end this one.
+    // The supervisor holds the instance lock for its whole life.
+    let mut sup = Supervisor::new_locked(home.clone(), Box::new(spawner), Box::new(now_ms)).map_err(|e| e.to_string())?;
+    // A stop file left from an earlier run must not end this one. It is cleared only under the lock.
     let _ = std::fs::remove_file(stop_file(&home));
-    let mut sup = Supervisor::new(home.clone(), Box::new(spawner), Box::new(now_ms));
     sup.set_max_parallel(cfg.max_parallel);
     if once {
         let report = sup.tick().map_err(|e| e.to_string())?;
