@@ -1,1 +1,159 @@
-fn main() {}
+//! factoryd: the supervisor daemon. It runs queued factory requests, a few at a time.
+
+use std::process::ExitCode;
+use std::time::Duration;
+
+use clap::{Parser, Subcommand};
+use factory_core::{Home, HomeConfig};
+use factory_supervisor::lock::stop_file;
+use factory_supervisor::request::{Action, Request};
+use factory_supervisor::{pid_alive, queue, records, InstanceLock, Outcome, ProcessSpawner, QueueItem, Supervisor};
+
+const DEFAULT_INTERVAL_MS: u64 = 2000;
+const RECENT_RESULTS: usize = 10;
+
+#[derive(Parser)]
+#[command(name = "factoryd", about = "Runs queued factory requests")]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Run the supervisor loop.
+    Run {
+        #[arg(long, default_value_t = DEFAULT_INTERVAL_MS)]
+        interval_ms: u64,
+        /// Do one tick and exit.
+        #[arg(long)]
+        once: bool,
+    },
+    /// Show the queue, the running children and the last results.
+    Status,
+    /// Ask a running instance to stop. Running children keep running.
+    Stop,
+    /// Add a request to the queue.
+    Enqueue {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        job: String,
+        #[arg(long)]
+        series: bool,
+        #[arg(long)]
+        approve: bool,
+    },
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
+    let _lock = InstanceLock::acquire(&home).map_err(|e| e.to_string())?;
+    let cfg = HomeConfig::load(&home).map_err(|e| e.to_string())?;
+    let spawner = ProcessSpawner::from_env().map_err(|e| e.to_string())?;
+    // A stop file left from an earlier run must not end this one.
+    let _ = std::fs::remove_file(stop_file(&home));
+    let mut sup = Supervisor::new(home.clone(), Box::new(spawner), Box::new(now_ms));
+    sup.set_max_parallel(cfg.max_parallel);
+    if once {
+        let report = sup.tick().map_err(|e| e.to_string())?;
+        println!("started {}, finished {}, rejected {}", report.started.len(), report.finished.len(), report.rejected.len());
+        return Ok(());
+    }
+    let stop_home = home.clone();
+    sup.run_loop(Duration::from_millis(interval_ms), &move || Supervisor::stop_requested(&stop_home));
+    Ok(())
+}
+
+fn describe(outcome: &Outcome) -> String {
+    match outcome {
+        Outcome::Merged => "merged".to_string(),
+        Outcome::NeedsHuman { reason } => format!("needs-human: {reason}"),
+        Outcome::Failed { code, stderr_tail } => {
+            let last = stderr_tail.lines().last().unwrap_or("");
+            format!("failed (code {}) {last}", code.map(|c| c.to_string()).unwrap_or_else(|| "none".into()))
+        }
+        Outcome::Lost { reason } => format!("lost: {reason}"),
+        Outcome::Rejected { reason } => format!("rejected: {reason}"),
+    }
+}
+
+fn status(home: &Home) -> String {
+    let mut out = String::new();
+    out.push_str("Queue:\n");
+    let items = queue::list(home);
+    if items.is_empty() {
+        out.push_str("  (empty)\n");
+    }
+    for item in items {
+        match item {
+            QueueItem::Ok(r) => out.push_str(&format!("  {} {} job {}\n", r.id, r.project, r.job)),
+            QueueItem::Bad { file, reason } => out.push_str(&format!("  bad {file}: {reason}\n")),
+        }
+    }
+    out.push_str("Running:\n");
+    let now = now_ms();
+    let mut any = false;
+    for child in records::read_children(home) {
+        any = true;
+        match child {
+            Ok(c) => {
+                let age = now.saturating_sub(c.started_ms) / 1000;
+                let state = if pid_alive(c.pid) { "" } else { " (ended, waiting for the supervisor)" };
+                out.push_str(&format!("  {} job {} pid {} age {age}s{state}\n", c.project, c.job, c.pid));
+            }
+            Err(reason) => out.push_str(&format!("  bad record: {reason}\n")),
+        }
+    }
+    if !any {
+        out.push_str("  (none)\n");
+    }
+    out.push_str("Results:\n");
+    let mut results: Vec<_> = records::read_results(home).into_iter().flatten().collect();
+    results.sort_by(|a, b| b.finished_ms.cmp(&a.finished_ms).then_with(|| b.request_id.cmp(&a.request_id)));
+    if results.is_empty() {
+        out.push_str("  (none)\n");
+    }
+    for r in results.into_iter().take(RECENT_RESULTS) {
+        out.push_str(&format!("  {} {} job {}: {}\n", r.request_id, r.project, r.job, describe(&r.outcome)));
+    }
+    out
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let result = Home::from_env().map_err(|e| e.to_string()).and_then(|home| match cli.cmd {
+        Cmd::Run { interval_ms, once } => run(home, interval_ms, once),
+        Cmd::Status => {
+            print!("{}", status(&home));
+            Ok(())
+        }
+        Cmd::Stop => {
+            let dir = home.run_dir();
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::write(stop_file(&home), b"").map_err(|e| e.to_string())?;
+            match InstanceLock::running(&home) {
+                Some(pid) => println!("stop requested, factoryd pid {pid} will end after its current tick; running jobs keep running"),
+                None => println!("no factoryd is running; the stop file is removed when the next one starts"),
+            }
+            Ok(())
+        }
+        Cmd::Enqueue { project, job, series, approve } => {
+            let action = if approve { Action::Approve } else { Action::Run };
+            let req = Request::new(&project, action, &job, series, now_ms()).map_err(|e| e.to_string())?;
+            queue::enqueue(&home, &req).map_err(|e| e.to_string())?;
+            println!("{}", req.id);
+            Ok(())
+        }
+    });
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("factoryd: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
