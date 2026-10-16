@@ -25,6 +25,14 @@ pub fn validate_name(name: &str) -> Result<(), CoreError> {
     }
 }
 
+/// Checks a base branch name exactly as `Config::parse` does and returns it.
+pub fn valid_base_branch(name: &str) -> Result<String, CoreError> {
+    let mut probe = toml::Table::new();
+    probe.insert("base_branch".into(), toml::Value::String(name.to_string()));
+    let text = toml::to_string(&probe).map_err(|e| CoreError::Config(e.to_string()))?;
+    Config::parse(&text).map(|c| c.base_branch)
+}
+
 /// The contents of `projects/<name>/project.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +43,13 @@ pub struct ProjectFile {
     /// Config keys that replace the preset's.
     #[serde(default)]
     pub settings: toml::Table,
+}
+
+impl ProjectFile {
+    /// The stored `settings.base_branch` when it is a valid branch name, else `None`.
+    pub fn base_branch(&self) -> Option<String> {
+        valid_base_branch(self.settings.get("base_branch")?.as_str()?).ok()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,35 +94,40 @@ pub fn add(
     repo_ok(&canon).map_err(|why| CoreError::Config(format!("{}: {why}", canon.display())))?;
     let mut settings = toml::Table::new();
     if let Some(b) = base {
-        let mut probe = toml::Table::new();
-        probe.insert("base_branch".into(), toml::Value::String(b.to_string()));
-        let text = toml::to_string(&probe).map_err(|e| CoreError::Config(e.to_string()))?;
-        Config::parse(&text)?;
-        settings.insert("base_branch".into(), toml::Value::String(b.to_string()));
+        settings.insert("base_branch".into(), toml::Value::String(valid_base_branch(b)?));
     }
+    let file = ProjectFile { repo: canon.clone(), preset: preset_name.to_string(), settings };
+    let text = toml::to_string(&file).map_err(|e| CoreError::Config(e.to_string()))?;
     let dir = home.project_dir(name);
-    if dir.exists() {
-        return Err(CoreError::Config(format!("project {name} already exists")));
+    let projects = home.projects_dir();
+    std::fs::create_dir_all(&projects).map_err(|e| CoreError::io(&projects, e))?;
+    // A non-recursive create is the claim: exactly one caller can make the folder.
+    match std::fs::create_dir(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(CoreError::Config(format!("project {name} already exists")));
+        }
+        Err(e) => return Err(CoreError::io(&dir, e)),
     }
-    for entry in list(home)? {
-        if let Ok(f) = entry.file {
-            if std::fs::canonicalize(&f.repo).is_ok_and(|c| c == canon) {
-                return Err(CoreError::Config(format!("repo {} is already project {}", canon.display(), entry.name)));
+    let made = (|| -> Result<(), CoreError> {
+        for entry in list(home)? {
+            if let Ok(f) = entry.file {
+                if std::fs::canonicalize(&f.repo).is_ok_and(|c| c == canon) {
+                    return Err(CoreError::Config(format!("repo {} is already project {}", canon.display(), entry.name)));
+                }
             }
         }
-    }
-    let file = ProjectFile { repo: canon, preset: preset_name.to_string(), settings };
-    let text = toml::to_string(&file).map_err(|e| CoreError::Config(e.to_string()))?;
-    preset::seed(&home.presets_dir())?;
-    let made = (|| -> Result<(), CoreError> {
+        preset::seed(&home.presets_dir())?;
         for sub in ["agents", "state", "worktrees"] {
             let p = dir.join(sub);
-            std::fs::create_dir_all(&p).map_err(|e| CoreError::io(&p, e))?;
+            std::fs::create_dir(&p).map_err(|e| CoreError::io(&p, e))?;
         }
         let f = dir.join(PROJECT_FILE);
-        std::fs::write(&f, text).map_err(|e| CoreError::io(&f, e))
+        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&f).map_err(|e| CoreError::io(&f, e))?;
+        std::io::Write::write_all(&mut out, text.as_bytes()).map_err(|e| CoreError::io(&f, e))
     })();
     if let Err(e) = made {
+        // Only the folder this call claimed is removed.
         let _ = std::fs::remove_dir_all(&dir);
         return Err(e);
     }
@@ -153,11 +173,21 @@ pub fn remove(home: &Home, name: &str) -> Result<(), CoreError> {
     std::fs::remove_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))
 }
 
-pub fn layout(home: &Home, name: &str, file: &ProjectFile) -> Layout {
+/// The layout of a project. The preset name is validated, so no path leaves the home.
+pub fn layout(home: &Home, name: &str, file: &ProjectFile) -> Result<Layout, CoreError> {
+    validate_name(&file.preset).map_err(|_| CoreError::Config(format!("preset name {:?} is not valid", file.preset)))?;
+    Ok(build_layout(home, name, file, true))
+}
+
+/// Builds the layout. With `preset_ok` false the preset folder is never named.
+pub(crate) fn build_layout(home: &Home, name: &str, file: &ProjectFile, preset_ok: bool) -> Layout {
     let dir = home.project_dir(name);
     let own = dir.join("commit-context.md");
-    let commit_context_file =
-        if own.exists() { own } else { home.presets_dir().join(&file.preset).join("commit-context.md") };
+    let commit_context_file = if own.exists() || !preset_ok {
+        own
+    } else {
+        home.presets_dir().join(&file.preset).join("commit-context.md")
+    };
     let state_dir = dir.join("state");
     Layout {
         repo: file.repo.clone(),
@@ -309,7 +339,7 @@ mod tests {
         let e = env();
         add(&e.home, "p", &e.repo, "rust", None, &ok).expect("add");
         let f = get(&e.home, "p").expect("get");
-        let l = layout(&e.home, "p", &f);
+        let l = layout(&e.home, "p", &f).expect("layout");
         let dir = e.home.project_dir("p");
         assert_eq!(l.repo, f.repo);
         assert_eq!(l.state_dir, dir.join("state"));
@@ -318,7 +348,76 @@ mod tests {
         assert_eq!(l.config_file, dir.join("project.toml"));
         assert_eq!(l.commit_context_file, e.home.presets_dir().join("rust/commit-context.md"));
         std::fs::write(dir.join("commit-context.md"), "mine\n").expect("write");
-        let l = layout(&e.home, "p", &f);
+        let l = layout(&e.home, "p", &f).expect("layout");
         assert_eq!(l.commit_context_file, dir.join("commit-context.md"));
+    }
+
+    #[test]
+    fn two_adds_of_one_name_leave_exactly_one_winner() {
+        for _ in 0..20 {
+            let e = env();
+            let (r1, r2) = (e.repo.clone(), other_repo(&e, "r2"));
+            let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let run = |repo: PathBuf| {
+                let (home, gate) = (e.home.clone(), gate.clone());
+                std::thread::spawn(move || {
+                    gate.wait();
+                    add(&home, "same", &repo, "rust", None, &ok).map_err(|e| e.to_string())
+                })
+            };
+            let (a, b) = (run(r1.clone()), run(r2.clone()));
+            let results = [(a.join().expect("a"), r1), (b.join().expect("b"), r2)];
+            let wins: Vec<_> = results.iter().filter(|(r, _)| r.is_ok()).collect();
+            assert_eq!(wins.len(), 1, "{results:?}");
+            let lost = results.iter().find(|(r, _)| r.is_err()).expect("loser");
+            assert!(lost.0.as_ref().expect_err("err").contains("already exists"), "{lost:?}");
+            let f = get(&e.home, "same").expect("winner project.toml intact");
+            assert_eq!(f.repo, std::fs::canonicalize(&wins[0].1).expect("canon"));
+            for sub in ["agents", "state", "worktrees"] {
+                assert!(e.home.project_dir("same").join(sub).is_dir());
+            }
+        }
+    }
+
+    #[test]
+    fn a_failure_after_the_claim_removes_only_our_folder() {
+        let e = env();
+        std::fs::create_dir_all(e.home.project_dir("other")).expect("other project");
+        // A file where the presets folder belongs makes seeding fail.
+        std::fs::write(e.home.presets_dir(), "not a folder").expect("blocker");
+        let err = add(&e.home, "p", &e.repo, "rust", None, &ok).expect_err("seed must fail");
+        assert!(!err.to_string().contains("already exists"), "{err}");
+        assert!(!e.home.project_dir("p").exists(), "our folder is removed");
+        assert!(e.home.project_dir("other").is_dir(), "another project is untouched");
+    }
+
+    #[test]
+    fn base_branch_is_validated_like_config_parse() {
+        assert_eq!(valid_base_branch("v-4.0.0").expect("ok"), "v-4.0.0");
+        for bad in ["bad branch", "", "-x", "a..b"] {
+            assert!(valid_base_branch(bad).is_err(), "{bad:?}");
+        }
+        let e = env();
+        add(&e.home, "p", &e.repo, "rust", Some("dev"), &ok).expect("add");
+        let mut f = get(&e.home, "p").expect("get");
+        assert_eq!(f.base_branch().as_deref(), Some("dev"));
+        f.settings.insert("base_branch".into(), toml::Value::String("bad branch".into()));
+        assert_eq!(f.base_branch(), None);
+        f.settings.insert("base_branch".into(), toml::Value::Integer(3));
+        assert_eq!(f.base_branch(), None);
+        f.settings.clear();
+        assert_eq!(f.base_branch(), None);
+    }
+
+    #[test]
+    fn layout_refuses_a_preset_name_that_could_leave_the_home() {
+        let e = env();
+        for bad in ["../x", "a/b", "..", ""] {
+            let f = ProjectFile { repo: e.repo.clone(), preset: bad.to_string(), settings: toml::Table::new() };
+            assert!(layout(&e.home, "p", &f).is_err(), "{bad:?}");
+            let safe = build_layout(&e.home, "p", &f, false);
+            assert!(safe.commit_context_file.starts_with(&e.home.dir), "{bad:?}");
+            assert!(!safe.commit_context_file.starts_with(e.home.presets_dir()), "{bad:?}");
+        }
     }
 }

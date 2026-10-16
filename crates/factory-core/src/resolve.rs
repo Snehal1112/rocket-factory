@@ -42,8 +42,12 @@ pub struct Resolved {
 /// Only an unknown project is an `Err`. Every other problem gives a fail-closed config.
 pub fn resolve(home: &Home, name: &str, tip: &dyn BaseTipFiles) -> Result<Resolved, CoreError> {
     let file = project::get(home, name)?;
-    let layout = project::layout(home, name, &file);
     let mut problems = Vec::new();
+    // A bad preset name is a problem, and the layout then never names the preset folder.
+    let layout = match project::layout(home, name, &file) {
+        Ok(l) => l,
+        Err(_) => project::build_layout(home, name, &file, false),
+    };
     let merged = merged_config(home, &file, tip, &mut problems);
     let mut notes = Vec::new();
     let agents = merged_agents(home, name, &file, tip, &mut problems, &mut notes);
@@ -56,16 +60,7 @@ pub fn resolve(home: &Home, name: &str, tip: &dyn BaseTipFiles) -> Result<Resolv
 
 /// The project's base branch when it is valid, else the default one.
 fn safe_base_branch(file: &ProjectFile) -> String {
-    let default = Config::default().base_branch;
-    let Some(b) = file.settings.get("base_branch").and_then(|v| v.as_str()) else {
-        return default;
-    };
-    let mut probe = toml::Table::new();
-    probe.insert("base_branch".into(), toml::Value::String(b.to_string()));
-    match toml::to_string(&probe).map(|t| Config::parse(&t)) {
-        Ok(Ok(cfg)) => cfg.base_branch,
-        _ => default,
-    }
+    file.base_branch().unwrap_or_else(|| Config::default().base_branch)
 }
 
 fn strings(value: Option<&toml::Value>, key: &str, problems: &mut Vec<String>) -> Vec<String> {
@@ -393,6 +388,16 @@ mod tests {
     }
 
     #[test]
+    fn an_override_with_empty_checks_leaves_the_preset_checks_intact() {
+        let e = env();
+        let preset_checks = preset_config(&e).checks;
+        assert!(!preset_checks.is_empty());
+        let r = resolve(&e.home, "p", &Tip::with_override("checks = []\n")).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert_eq!(r.config.checks, preset_checks);
+    }
+
+    #[test]
     fn any_other_override_key_fails_closed() {
         for key in ["diff_cap_lines = 10", "base_branch = \"x\"", "budget_weighted = 5", "risk_pathz = [\"a\"]"] {
             let e = env_with(Some("v-4.0.0"), "rust");
@@ -542,6 +547,19 @@ mod tests {
         let e = env();
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
         let file = project::get(&e.home, "p").expect("get");
-        assert_eq!(r.layout, project::layout(&e.home, "p", &file));
+        assert_eq!(r.layout, project::layout(&e.home, "p", &file).expect("layout"));
+    }
+
+    #[test]
+    fn a_preset_name_with_a_separator_is_a_problem_and_the_layout_stays_in_the_home() {
+        let e = env();
+        let mut file = project::get(&e.home, "p").expect("get");
+        file.preset = "../../escape".to_string();
+        std::fs::write(e.home.project_dir("p").join("project.toml"), toml::to_string(&file).expect("ser")).expect("write");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.iter().any(|p| p.contains("preset name")), "{:?}", r.problems);
+        assert!(r.layout.commit_context_file.starts_with(&e.home.dir));
+        assert!(!r.layout.commit_context_file.to_string_lossy().contains(".."));
+        assert!(r.config.degraded);
     }
 }

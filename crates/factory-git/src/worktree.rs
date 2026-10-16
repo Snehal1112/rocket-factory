@@ -86,6 +86,29 @@ impl Repo {
         Ok(Worktree { name, path, branch, base: main.id().to_string() })
     }
 
+    /// Prunes every worktree registration whose folder is inside `dir`, with the working folder.
+    /// A registration whose folder is already gone is pruned too. Branches are never touched.
+    /// Returns the names of the pruned worktrees.
+    pub fn prune_worktrees_under(&self, dir: &Path) -> Result<Vec<String>> {
+        let canon = fs::canonicalize(dir).ok();
+        let inside = |p: &Path| {
+            p.starts_with(dir)
+                || canon.as_ref().is_some_and(|c| p.starts_with(c) || fs::canonicalize(p).is_ok_and(|x| x.starts_with(c)))
+        };
+        let mut pruned = Vec::new();
+        for name in self.inner.worktrees()?.iter().flatten() {
+            let Ok(found) = self.inner.find_worktree(name) else { continue };
+            if !inside(found.path()) {
+                continue;
+            }
+            let mut opts = WorktreePruneOptions::new();
+            opts.valid(true).locked(true).working_tree(true);
+            found.prune(Some(&mut opts))?;
+            pruned.push(name.to_string());
+        }
+        Ok(pruned)
+    }
+
     /// Removes a job worktree and its branch. Refuses a dirty worktree and
     /// unmerged commits unless `force`. Never removes main, a branch outside
     /// `factory/`, the main checkout, or the branch the main checkout is on.

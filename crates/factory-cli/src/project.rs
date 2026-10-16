@@ -20,21 +20,14 @@ pub fn run(home: &Home, cmd: ProjectCmd) -> Result<String, CliError> {
     }
 }
 
-/// The central base branch of a project. Projects added by this version always store it.
+/// The central base branch of a project. A missing or invalid value gives the default, like `resolve` does.
 pub(crate) fn base_of(file: &ProjectFile) -> String {
-    file.settings
-        .get("base_branch")
-        .and_then(|v| v.as_str())
-        .map_or_else(|| Config::default().base_branch, str::to_string)
+    file.base_branch().unwrap_or_else(|| Config::default().base_branch)
 }
 
 /// The base branch only when `project.toml` holds a valid one. A project never falls back to the default.
 pub(crate) fn base_of_strict(file: &ProjectFile) -> Option<String> {
-    let b = file.settings.get("base_branch")?.as_str()?;
-    let mut probe = toml::Table::new();
-    probe.insert("base_branch".into(), toml::Value::String(b.to_string()));
-    let text = toml::to_string(&probe).ok()?;
-    Config::parse(&text).ok().map(|c| c.base_branch)
+    file.base_branch()
 }
 
 /// Opens the repo at exactly `path` (not a parent repo) with the project's base branch.
@@ -87,6 +80,14 @@ fn add(home: &Home, path: &Path, preset: &str, base: Option<&str>, name: Option<
     Ok(format!("added project {name} ({preset}, base {base}) at {}", dir.display()))
 }
 
+/// Why a readable project cannot be used, or `None` when its repo opens.
+fn disabled_reason(file: &ProjectFile) -> Option<String> {
+    if !file.repo.is_dir() {
+        return Some("repo path is missing".to_string());
+    }
+    open_repo(&file.repo, &base_of(file)).err()
+}
+
 fn list(home: &Home) -> Result<String, CliError> {
     let entries = project::list(home)?;
     if entries.is_empty() {
@@ -96,14 +97,10 @@ fn list(home: &Home) -> Result<String, CliError> {
     for e in entries {
         let line = match e.file {
             Err(why) => format!("{}  disabled: {why}", e.name),
-            Ok(f) if !f.repo.is_dir() => format!("{}  disabled: repo path is missing", e.name),
-            Ok(f) => {
-                let base = base_of(&f);
-                match open_repo(&f.repo, &base) {
-                    Err(why) => format!("{}  disabled: {why}", e.name),
-                    Ok(_) => format!("{} {} {} {}", e.name, f.preset, base, f.repo.display()),
-                }
-            }
+            Ok(f) => match disabled_reason(&f) {
+                Some(why) => format!("{}  disabled: {why}", e.name),
+                None => format!("{} {} {} {}", e.name, f.preset, base_of(&f), f.repo.display()),
+            },
         };
         lines.push(line);
     }
@@ -113,6 +110,16 @@ fn list(home: &Home) -> Result<String, CliError> {
 fn show(home: &Home, name: &str) -> Result<String, CliError> {
     let file = project::get(home, name)?;
     let base = base_of(&file);
+    if let Some(why) = disabled_reason(&file) {
+        return Ok([
+            format!("project: {name}"),
+            format!("repo: {}", file.repo.display()),
+            format!("preset: {}", file.preset),
+            format!("base branch: {base}"),
+            format!("disabled: {why}"),
+        ]
+        .join("\n"));
+    }
     let repo = open_repo(&file.repo, &base).map_err(CliError::Refused)?;
     let resolved = resolve(home, name, &RepoTip(&repo))?;
     let mut problems = resolved.problems.clone();
@@ -149,10 +156,21 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
 }
 
 fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
-    let file = project::get(home, name)?;
-    if !force {
-        let layout = project::layout(home, name, &file);
-        let board = Board::load(&layout.board_file())?;
+    project::validate_name(name)?;
+    let dir: PathBuf = home.project_dir(name);
+    let file = match project::get(home, name) {
+        Ok(f) => Some(f),
+        Err(e) if dir.is_dir() => {
+            if !force {
+                return Err(CliError::Refused(format!("project {name} is broken ({e}), use --force to remove it")));
+            }
+            None
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let worktrees = dir.join("worktrees");
+    if file.is_some() && !force {
+        let board = Board::load(&dir.join("state").join("board.json"))?;
         let open: Vec<&str> = board
             .jobs
             .iter()
@@ -166,7 +184,35 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
             )));
         }
     }
+    let mut notes = Vec::new();
+    if let Some(file) = &file {
+        match open_repo(&file.repo, &base_of(file)) {
+            Ok(repo) => {
+                match repo.prune_worktrees_under(&worktrees) {
+                    Ok(p) if !p.is_empty() => notes.push(format!("pruned {} worktree registration(s)", p.len())),
+                    Ok(_) => {}
+                    Err(e) => notes.push(format!("could not prune the worktree registrations: {e}")),
+                }
+                let left: Vec<String> = repo
+                    .local_branch_names()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|b| b.starts_with("factory/"))
+                    .collect();
+                if !left.is_empty() {
+                    notes.push(format!("job branches left in place: {}", left.join(", ")));
+                }
+            }
+            Err(why) => notes.push(format!("worktree registrations not pruned, the repo cannot be opened: {why}")),
+        }
+    } else {
+        notes.push("project.toml is unreadable, so worktree registrations and job branches were not checked".to_string());
+    }
     project::remove(home, name)?;
-    let dir: PathBuf = home.project_dir(name);
-    Ok(format!("removed project {name} ({}), the repository and the presets are untouched", dir.display()))
+    let mut out = format!("removed project {name} ({}), the repository and the presets are untouched", dir.display());
+    for n in notes {
+        out.push('\n');
+        out.push_str(&n);
+    }
+    Ok(out)
 }

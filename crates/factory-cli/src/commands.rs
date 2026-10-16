@@ -99,7 +99,7 @@ impl CliCtx {
     }
 
     /// A context for a registered project. The settings come from `resolve`, never from the layout's
-    /// config file (for a project that file is `project.toml`). 
+    /// config file (for a project that file is `project.toml`), which this function never reads.
     pub fn for_project(
         home: &Home,
         name: &str,
