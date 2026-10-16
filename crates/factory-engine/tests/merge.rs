@@ -131,3 +131,17 @@ fn park_keeps_the_record_of_a_job_that_is_already_parked() {
     assert_eq!(rec.kind, factory_core::ParkKind::ChecksFailed);
     assert_eq!(rec.parts.len(), 1);
 }
+
+#[test]
+fn a_base_off_the_base_branch_parks_with_the_branch_name() {
+    let config = factory_core::Config { base_branch: "trunk".to_string(), ..factory_core::Config::default() };
+    let fx = common::approved_job_config(common::approving_runner(3), false, config);
+    // The branch trunk has its own root commit, so the job base is not on it.
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let sig = git2::Signature::now("t", "t@example.com").expect("sig");
+    let tree = repo.find_tree(repo.treebuilder(None).expect("tb").write().expect("tree")).expect("find");
+    let root = repo.commit(None, &sig, &sig, "root", &tree, &[]).expect("commit");
+    repo.branch("trunk", &repo.find_commit(root).expect("commit"), true).expect("branch");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(&r, MergeResult::Parked(m) if m.contains("not on trunk")), "got {r:?}");
+}

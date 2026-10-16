@@ -83,7 +83,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             // A crash after the merge commit but before the board update lands here.
             BaseState::Merged => return Ok(Step::Merged(check.main_sha)),
             BaseState::BaseNotMain => {
-                return Ok(Step::Park("the job base is not on main, a human must look at the branch".into()));
+                return Ok(Step::Park(format!("the job base is not on {main}, a human must look at the branch")));
             }
             BaseState::Current | BaseState::MainMoved => {}
         }
@@ -107,7 +107,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         match again.state {
             BaseState::Merged => return Ok(Step::Merged(again.main_sha)),
             BaseState::BaseNotMain => {
-                return Ok(Step::Park("the job base is not on main, a human must look at the branch".into()));
+                return Ok(Step::Park(format!("the job base is not on {main}, a human must look at the branch")));
             }
             BaseState::MainMoved => continue,
             BaseState::Current => {}

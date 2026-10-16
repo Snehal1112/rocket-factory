@@ -227,6 +227,12 @@ pub fn approved_job_config(runner: Arc<ScriptedRunner>, with_context: bool, mut 
     let tmp = tempfile::tempdir().expect("tempdir");
     let main = tmp.path().join("repo");
     init_repo(&main);
+    if config.base_branch != "main" {
+        // A non-main base branch starts at the first commit.
+        let repo = Repository::open(&main).expect("open");
+        let head = repo.head().expect("head").peel_to_commit().expect("commit");
+        repo.branch(&config.base_branch, &head, false).expect("base branch");
+    }
     if with_context {
         commit_file(&main, ".claude/factory/commit-context.md", "TEST CONTEXT\n");
     }
