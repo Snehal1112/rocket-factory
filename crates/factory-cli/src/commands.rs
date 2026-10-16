@@ -5,7 +5,7 @@ use std::time::Duration;
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
 use factory_core::{resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
 use factory_engine::{
-    acquire_lease, costs_path, create_job_with_spec, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, release_lease, run_job, run_series, Driver,
+    acquire_lease, costs_path, create_job_with_spec, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, release_lease, run_job, run_series, Driver,
     MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT, LEASE_TTL_SECS,
 };
 
@@ -267,6 +267,8 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     // The guard lives until the command returns, a series included.
     let _project = d.hold_project(id)?;
     acquire_lease(d.store(), id, &ctx.owner, LEASE_TTL_SECS, now_secs())?;
+    // The job lease is released on every exit path, an error from the run included.
+    let _guard = LeaseGuard { driver: &d, id: id.to_string(), owner: ctx.owner.clone() };
     let end = if series { run_series(&d, id)? } else { run_job(&d, id)? };
     Ok(match end {
         RunEnd::Merged => "merged".to_string(),
@@ -355,7 +357,16 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
     // The reason is folded into one line, because the ledger takes one line.
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     d.ledger(&job).ruling(&one_line)?;
-    Ok(format!("job {id} cancelled"))
+    let mut out = format!("job {id} cancelled");
+    // The process that held the project lease may be gone, so a forced cancel clears it for this job.
+    if force {
+        let cleared = force_release_project_lease(&d.layout().state_dir, &job.id, ctx.lock_wait)
+            .map_err(|e| CliError::Refused(format!("cancelled, but the project lease could not be cleared: {e}")))?;
+        if cleared {
+            out.push_str("\nproject lease released");
+        }
+    }
+    Ok(out)
 }
 
 fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {

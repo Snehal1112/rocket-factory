@@ -85,3 +85,32 @@ fn other_commands_are_not_blocked_by_a_held_lease() {
     let plans = fx.write_plan("plan-01-other.md", 1, "none");
     fx.run(&["new", "other", "more", "--plans", plans.to_str().expect("utf8")]).expect("new");
 }
+
+#[test]
+fn cancel_force_clears_the_lease_of_that_job_only() {
+    let fx = Fixture::with_risk_path("docs/**");
+    new_job(&fx);
+    let state = factory_core::Layout::in_repo(&fx.root).state_dir;
+    let lease = fx.root.join(".superpowers/factory/project.lease");
+    // A lease of another job stays.
+    hold_project(&fx, "someone-else", now_secs());
+    assert!(!fx.run(&["cancel", "1", "--force"]).expect("cancel").contains("project lease released"));
+    assert!(lease.exists());
+    // The lease of the cancelled job goes, even for a foreign owner.
+    std::fs::remove_file(&lease).expect("rm");
+    acquire_project_lease(&state, "001", "driver-4294967000-1", 600.0, now_secs(), Duration::from_secs(5)).expect("lease");
+    let out = fx.run(&["cancel", "1", "--force"]).expect("cancel");
+    assert!(out.contains("project lease released"), "{out}");
+    assert!(!lease.exists());
+}
+
+#[test]
+fn a_dead_drivers_lease_is_stale_in_status_and_does_not_block_run() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    let state = factory_core::Layout::in_repo(&fx.root).state_dir;
+    acquire_project_lease(&state, "001", "driver-4294967000-1", 100_000.0, now_secs(), Duration::from_secs(5)).expect("lease");
+    let status = fx.run(&["status"]).expect("status");
+    assert!(status.starts_with("project: stale lease from driver-4294967000-1"), "{status}");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+}

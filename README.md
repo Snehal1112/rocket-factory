@@ -63,7 +63,11 @@ At most one job is active per project. A running `run` or `approve` holds a leas
 folder and renews it while it works. `factory status` starts with `project: free`, or with
 `project: busy, job <id> (owner <who>, <n> s left)` while another process holds it. The busy message means that
 process owns the project for about that many more seconds: wait for it, or stop it. A lease of a crashed process
-expires on its own, and an expired or corrupt lease file is taken over.
+expires on its own (after up to 30 minutes), and an expired or corrupt lease file is taken over. A lease whose
+owner is a `driver-<pid>-<secs>` process that no longer runs on this machine counts as stale at once (Linux only).
+If the process that held it is gone and the lease is still shown as busy, `factory cancel <id> --force` releases
+the lease of that job, or delete `<state folder>/project.lease`. `project remove` refuses while the lease is held,
+`--force` included.
 
 ### Rust preset checks
 
