@@ -178,3 +178,34 @@ fn merge_main_into_refuses_a_worktree_with_tracked_changes() {
     }
     assert_eq!(std::fs::read_to_string(wt.path.join("base.txt")).expect("read"), "dirty\n");
 }
+
+#[test]
+fn prune_worktrees_under_removes_registrations_in_the_folder_and_keeps_branches() {
+    let fx = Fixture::new();
+    let repo = fx.repo();
+    let a = repo.create_worktree(&job()).expect("create a");
+    let b = repo.create_worktree(&JobRef { id: "002".into(), slug: "gone".into() }).expect("create b");
+    // A stale registration: the folder is gone but the registration is left.
+    std::fs::remove_dir_all(&b.path).expect("rm b");
+    repo.create_worktree(&JobRef { id: "003".into(), slug: "third".into() }).expect("create c");
+    let mut pruned = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune");
+    pruned.sort();
+    assert_eq!(pruned, ["factory-001-demo", "factory-002-gone", "factory-003-third"]);
+    assert!(!a.path.exists());
+    let raw = Repository::open(&fx.path).expect("open");
+    assert!(raw.worktrees().expect("worktrees").is_empty());
+    for branch in ["factory/001-demo", "factory/002-gone", "factory/003-third"] {
+        assert!(repo.tip(branch).is_ok(), "{branch} must stay");
+    }
+}
+
+#[test]
+fn prune_worktrees_under_leaves_worktrees_elsewhere() {
+    let fx = Fixture::new();
+    let repo = fx.repo();
+    let wt = repo.create_worktree(&job()).expect("create");
+    let other = fx.path.join("not-the-worktrees-folder");
+    std::fs::create_dir_all(&other).expect("mkdir");
+    assert!(repo.prune_worktrees_under(&other).expect("prune").is_empty());
+    assert!(wt.path.exists());
+}

@@ -213,15 +213,32 @@ fn add_accepts_a_non_canonical_path_and_names_it_from_the_real_folder() {
     assert_eq!(run(&e, &["list"]).expect("list"), format!("real rust main {}", canon.display()));
 }
 
+/// Restores the process working directory when dropped, also when the test panics.
+struct CwdGuard(PathBuf);
+
+impl CwdGuard {
+    fn change_to(dir: &Path) -> CwdGuard {
+        let old = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(dir).expect("chdir");
+        CwdGuard(old)
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
+
 #[test]
 fn add_accepts_a_relative_path() {
-    // The current directory is process wide, so only this test changes it, and it restores it.
+    // The current directory is process wide, so only this test changes it.
     let e = env();
     make_repo(e.tmp.path(), "rel", "main");
-    let old = std::env::current_dir().expect("cwd");
-    std::env::set_current_dir(e.tmp.path().join("rel")).expect("chdir");
-    let out = run(&e, &["add", ".", "--preset", "rust"]);
-    std::env::set_current_dir(old).expect("restore");
+    let out = {
+        let _cwd = CwdGuard::change_to(&e.tmp.path().join("rel"));
+        run(&e, &["add", ".", "--preset", "rust"])
+    };
     out.expect("add");
     assert!(run(&e, &["list"]).expect("list").starts_with("rel rust main "));
 }
@@ -291,4 +308,68 @@ fn a_committed_symlink_agent_file_degrades_the_project() {
     let out = run(&e, &["show", "demo"]).expect("show");
     assert!(out.contains("degraded"), "{out}");
     assert!(out.contains("not a regular file"), "{out}");
+}
+
+#[test]
+fn show_of_a_project_with_a_missing_repo_is_disabled_like_list() {
+    let e = env();
+    let repo = add_demo(&e);
+    std::fs::remove_dir_all(&repo).expect("rm");
+    let out = run(&e, &["show", "demo"]).expect("show succeeds");
+    assert!(out.contains("disabled: repo path is missing"), "{out}");
+    assert!(out.contains("project: demo"), "{out}");
+    assert!(run(&e, &["list"]).expect("list").contains("demo  disabled: repo path is missing"));
+}
+
+#[test]
+fn remove_of_a_broken_project_needs_force() {
+    let e = env();
+    add_demo(&e);
+    std::fs::write(e.home.project_dir("demo").join("project.toml"), "this is = = broken").expect("write");
+    let err = run(&e, &["remove", "demo"]).expect_err("refused").to_string();
+    assert!(err.contains("--force"), "{err}");
+    assert!(e.home.project_dir("demo").exists());
+    run(&e, &["remove", "demo", "--force"]).expect("forced");
+    assert!(!e.home.project_dir("demo").exists());
+    assert!(run(&e, &["remove", "demo", "--force"]).is_err(), "an unknown project is still an error");
+}
+
+#[test]
+fn remove_prunes_worktree_registrations_and_leaves_job_branches() {
+    use factory_git::{JobRef, Repo};
+    let e = env();
+    let repo_path = add_demo(&e);
+    let worktrees = e.home.project_dir("demo").join("worktrees");
+    let repo = Repo::open(&repo_path).expect("open").with_worktrees_dir(worktrees.clone());
+    let valid = repo.create_worktree(&JobRef { id: "001".into(), slug: "valid".into() }).expect("wt");
+    let stale = repo.create_worktree(&JobRef { id: "002".into(), slug: "stale".into() }).expect("wt");
+    std::fs::remove_dir_all(&stale.path).expect("stale folder gone");
+    let out = run(&e, &["remove", "demo"]).expect("remove");
+    assert!(out.contains("pruned 2 worktree registration(s)"), "{out}");
+    assert!(out.contains("factory/001-valid") && out.contains("factory/002-stale"), "{out}");
+    assert!(!e.home.project_dir("demo").exists());
+    assert!(!valid.path.exists());
+    let raw = Repository::open(&repo_path).expect("open");
+    assert!(raw.worktrees().expect("worktrees").is_empty());
+    assert!(raw.find_branch("factory/001-valid", git2::BranchType::Local).is_ok(), "branches are never deleted");
+    assert!(raw.find_branch("factory/002-stale", git2::BranchType::Local).is_ok());
+}
+
+#[test]
+fn show_reads_the_override_from_the_base_tip_not_from_head() {
+    let e = env();
+    let repo = add_demo(&e);
+    commit_entries(
+        &repo,
+        &[(".factory/override.toml", b"[[checks]]\npaths = [\"**\"]\ncommands = [\"cargo test --workspace\"]\n", 0o100644)],
+    );
+    let git = Repository::open(&repo).expect("open");
+    let head = git.head().expect("head").peel_to_commit().expect("commit");
+    git.branch("side", &head, false).expect("branch");
+    git.set_head("refs/heads/side").expect("set head");
+    git.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).expect("checkout");
+    commit_entries(&repo, &[(".factory/override.toml", b"risk_paths = [\"docs/**\"]\n", 0o100644)]);
+    assert_eq!(git.head().expect("head").shorthand(), Some("side"));
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("would be rejected"), "the base branch override must win:\n{out}");
 }
