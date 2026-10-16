@@ -37,6 +37,12 @@ impl Repo {
             text.push('\n');
         }
         text.push_str(&add);
-        std::fs::write(&file, text).map_err(io)
+        // Write a temp file next to it and rename, so a crash never leaves a half written exclude file.
+        let tmp = file.with_file_name(format!("exclude.tmp-{}", std::process::id()));
+        std::fs::write(&tmp, text).map_err(io)?;
+        std::fs::rename(&tmp, &file).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            io(e)
+        })
     }
 }
