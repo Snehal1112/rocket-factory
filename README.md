@@ -69,6 +69,47 @@ If the process that held it is gone and the lease is still shown as busy, `facto
 the lease of that job, or delete `<state folder>/project.lease`. `project remove` refuses while the lease is held,
 `--force` included.
 
+A running driver renews both the project lease and the job lease every 60 seconds from a background thread, so a
+long agent step does not let them expire. If a renewal finds another owner holding the lease, the run stops at the
+start of its next loop iteration with the busy error. `kb-refresh` takes the project lease like `run` does, so a
+busy project refuses it with the same message.
+
+The dead-owner check reads `/proc` on this machine only. A state folder shared through a container bind mount or a
+network filesystem can show a live owner as gone, so run the drivers of one project from one machine. On a system
+without `/proc` (macOS) the check never fires, and an adopted child (see below) looks alive until its lease ends.
+
+### factoryd
+
+`factoryd` is a small supervisor that runs `factory` for queued requests, so several projects can work in
+parallel. It lives in the factory home (`$FACTORY_HOME`, else `~/.factory`):
+
+- `queue/` holds one JSON file per waiting request.
+- `results/` holds one JSON file per finished request (`Merged`, `NeedsHuman`, `Failed`, `Rejected` or `Lost`).
+- `run/` holds the child records of running jobs, one per project.
+- `logs/<project>/<request>.out` and `.err` hold the output of each child.
+- `config.toml` may set `max_parallel` (how many projects run at once).
+
+```
+factoryd enqueue --project myproj --job 003        # add a request (--series, --approve)
+factoryd run                                       # the loop (--once does one tick)
+factoryd status                                    # queue, children, last results
+factoryd stop                                      # ask the loop to end after its tick
+```
+
+At most one child runs per project, and the project lease still decides who may work. `FACTORY_BIN` names the
+`factory` binary to start, else the one next to `factoryd` is used.
+
+Stopping `factoryd` never stops jobs: children run in their own process group. A restarted `factoryd` adopts
+them by their recorded pid and finishes them when they end. A pid that started far from the recorded time (more
+than a minute) is treated as a stranger that reused the number, so the child counts as gone. This check reads
+`/proc` and assumes 100 clock ticks per second, so it works on Linux only.
+
+A request ends as `Lost` when `factoryd` cannot tell how it ended: the child died without a result line, or the
+request was started before a crash but left no child record (its log files exist). A lost job is never restarted
+by `factoryd`. Read the `.out` and `.err` logs and the job ledger, then run `factory run <job>` again by hand or
+enqueue a new request. A project whose lease belongs to a live driver that is not a child of `factoryd` (for
+example a manual `factory run`) is reported as busy and nothing starts for it until that process ends.
+
 ### Rust preset checks
 
 The rust preset has two check rules. `crates/*/**` runs `cargo check -j4 -p {crate}` and `cargo test -j4 -p {crate}`
