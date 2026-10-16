@@ -31,6 +31,7 @@ impl Engine<'_> {
             let (cwd, base) = self.existing_worktree(&job)?;
             (cwd, base, job.head.clone(), job.branch.clone())
         };
+        self.write_agent_files(&cwd)?;
         let spec = match &job.session_id {
             Some(session) if !fresh => {
                 // A rework note from the user wins over a round findings file.
@@ -105,11 +106,11 @@ impl Engine<'_> {
             j.branch = br;
             j.set_base(&b, false)
         })?;
-        self.write_agent_files(&wt.path)?;
         Ok((wt.path, base, branch))
     }
 
-    /// Writes the agent files into a new worktree. They are git-excluded, and a file that is tracked
+    /// Writes the agent files into the job worktree. It runs on every build step, so a crash or a failed
+    /// write on the first step is repaired on the next one. They are git-excluded, and a file that is tracked
     /// on the base branch is left alone. An existing file or a symlinked folder is never written through.
     fn write_agent_files(&self, wt: &Path) -> Result<(), EngineError> {
         if self.agent_files.is_empty() {
@@ -124,16 +125,26 @@ impl Engine<'_> {
             }
         }
         std::fs::create_dir_all(&dir)?;
+        let mut shadowed = Vec::new();
         for f in &self.agent_files {
             let rel = rel_dir.join(&f.name);
             let rel_text = rel.to_string_lossy().replace('\\', "/");
             if self.repo.is_tracked_at_branch(self.repo.base_branch(), &rel_text).map_err(git_err)? {
+                shadowed.push(f.name.as_str());
                 continue;
             }
             match std::fs::OpenOptions::new().write(true).create_new(true).open(wt.join(&rel)) {
                 Ok(mut file) => std::io::Write::write_all(&mut file, f.content.as_bytes())?,
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(e.into()),
+            }
+        }
+        if !shadowed.is_empty() {
+            // Noted once per job, because this runs on every build step.
+            let note = format!("repo agent files shadow the resolved ones: {}", shadowed.join(", "));
+            let seen = std::fs::read_to_string(self.job_dir.join("progress.md")).unwrap_or_default();
+            if !seen.contains(&note) {
+                self.ruling(&note)?;
             }
         }
         Ok(())
@@ -198,6 +209,7 @@ impl Engine<'_> {
             let (cwd, base) = self.existing_worktree(job)?;
             (cwd, base, job.branch.clone())
         };
+        self.write_agent_files(&cwd)?;
         if fresh {
             self.ruling(&format!("per-task builders, {} tasks", tasks.len()))?;
         }

@@ -71,22 +71,83 @@ fn no_files_means_no_agents_folder() {
     assert!(!wt.join(".claude/agents").exists());
 }
 
-#[test]
-fn a_later_build_step_leaves_existing_files_alone() {
-    let fx = committing_fixture();
-    std::fs::write(&fx.plan_file, "# P\n\n### Task 1: first\n\nx\n\n### Task 2: second\n\ny\n").expect("plan");
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let second: Effect = Box::new(|spec| {
-        std::fs::write(spec.cwd.join("b.txt"), "b\n").expect("write");
+const TWO_TASKS: &str = "# P\n\n### Task 1: first\n\nx\n\n### Task 2: second\n\ny\n";
+
+fn write_effect(file: &'static str) -> Effect {
+    Box::new(move |spec| {
+        std::fs::write(spec.cwd.join(file), "x\n").expect("write");
         "done".to_string()
-    });
-    let runner = scripted_auto(vec![recording_effect(seen.clone()), second]);
+    })
+}
+
+fn worktree(fx: &Fixture) -> std::path::PathBuf {
+    std::path::PathBuf::from(fx.job().worktree.expect("worktree"))
+}
+
+#[test]
+fn a_later_build_step_leaves_edited_files_alone() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
     let e = fx.engine(&runner).with_agent_files(files());
     e.build_stage().expect("first");
-    let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
+    let wt = worktree(&fx);
     std::fs::write(wt.join(BUILDER), "EDITED").expect("edit");
     e.build_stage().expect("second");
     assert_eq!(std::fs::read_to_string(wt.join(BUILDER)).expect("read"), "EDITED");
+}
+
+#[test]
+fn a_resumed_step_writes_files_missed_by_the_first_step() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let second: Effect = {
+        let seen = seen.clone();
+        Box::new(move |spec| {
+            seen.lock().expect("seen").push(std::fs::read_to_string(spec.cwd.join(BUILDER)).ok());
+            std::fs::write(spec.cwd.join("b.txt"), "b\n").expect("write");
+            "done".to_string()
+        })
+    };
+    let runner = scripted_auto(vec![write_effect("a.txt"), second]);
+    // The first step runs without files, as after a crash that lost them.
+    fx.engine(&runner).build_stage().expect("first");
+    assert!(!worktree(&fx).join(".claude/agents").exists());
+    fx.engine(&runner).with_agent_files(files()).build_stage().expect("second");
+    assert_eq!(seen.lock().expect("seen").as_slice(), &[Some("BUILDER".to_string())]);
+}
+
+#[test]
+fn a_write_failure_on_a_resumed_step_is_an_error() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    fx.engine(&runner).build_stage().expect("first");
+    let wt = worktree(&fx);
+    std::fs::create_dir_all(wt.join(".claude")).expect("mkdir");
+    std::os::unix::fs::symlink(fx.tmp.path(), wt.join(".claude/agents")).expect("symlink");
+    let err = fx.engine(&runner).with_agent_files(files()).build_stage().expect_err("symlink");
+    assert!(err.to_string().contains("symlink"), "{err}");
+}
+
+#[test]
+fn a_tracked_file_missing_from_the_worktree_is_not_recreated_and_is_noted_once() {
+    let fx = committing_fixture();
+    commit_file(&fx.main, BUILDER, "REPO");
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
+    let e = fx.engine(&runner).with_agent_files(files());
+    e.build_stage().expect("first");
+    let wt = worktree(&fx);
+    // Only the tracked rule keeps the file away now, create_new alone would write it.
+    std::fs::remove_file(wt.join(BUILDER)).expect("delete");
+    e.build_stage().expect("second");
+    assert!(!wt.join(BUILDER).exists());
+    assert!(wt.join(".claude/agents/factory-reviewer.md").exists());
+    let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
+    let note = "repo agent files shadow the resolved ones: factory-builder.md";
+    assert_eq!(ledger.matches(note).count(), 1, "{ledger}");
 }
 
 #[test]
