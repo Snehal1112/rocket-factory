@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
-use factory_core::{Config, CostsFile, Layout, ParkRecord, Stage};
+use factory_core::{resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
 use factory_engine::{
     acquire_lease, costs_path, create_job_with_spec, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, release_lease, run_job, run_series, Driver,
-    MergeResult, RunEnd, DEFAULT_LOCK_WAIT, LEASE_TTL_SECS,
+    MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT, LEASE_TTL_SECS,
 };
 
 use crate::cli::{Cli, Command};
@@ -41,6 +41,14 @@ pub struct CliCtx {
     pub runner: Option<Arc<dyn AgentRunner>>,
     pub owner: String,
     pub lock_wait: Duration,
+    /// The resolved settings of a project. `None` means the settings come from the layout's config file.
+    pub config: Option<Config>,
+    /// The agent files of a project, written into each job worktree.
+    pub agents: Vec<AgentFile>,
+    /// Why a project may not start agents. Read-only commands still work.
+    pub blocked: Option<String>,
+    /// Things the resolver left out without failing, printed by the binary at start-up.
+    pub notes: Vec<String>,
 }
 
 impl CliCtx {
@@ -51,7 +59,16 @@ impl CliCtx {
 
     /// A context with an injected runner and an explicit layout.
     pub fn with_layout(layout: Layout, runner: Arc<dyn AgentRunner>, owner: &str) -> CliCtx {
-        CliCtx { layout, runner: Some(runner), owner: owner.to_string(), lock_wait: DEFAULT_LOCK_WAIT }
+        CliCtx {
+            layout,
+            runner: Some(runner),
+            owner: owner.to_string(),
+            lock_wait: DEFAULT_LOCK_WAIT,
+            config: None,
+            agents: Vec::new(),
+            blocked: None,
+            notes: Vec::new(),
+        }
     }
 
     /// The main checkout.
@@ -69,13 +86,67 @@ impl CliCtx {
                 factory_git::Repo::open(&cwd)?.root().to_path_buf()
             }
         };
-        let owner = format!("driver-{}-{}", std::process::id(), now_secs() as u64);
-        let lock_wait = std::env::var("FACTORY_LOCK_WAIT")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or(DEFAULT_LOCK_WAIT);
-        Ok(CliCtx { layout: Layout::in_repo(&root), runner: None, owner, lock_wait })
+        Ok(CliCtx {
+            layout: Layout::in_repo(&root),
+            runner: None,
+            owner: env_owner(),
+            lock_wait: env_lock_wait(),
+            config: None,
+            agents: Vec::new(),
+            blocked: None,
+            notes: Vec::new(),
+        })
+    }
+
+    /// A context for a registered project. The settings come from `resolve`, never from the layout's
+    /// config file (for a project that file is `project.toml`). 
+    pub fn for_project(
+        home: &Home,
+        name: &str,
+        runner: Option<Arc<dyn AgentRunner>>,
+        owner: &str,
+        lock_wait: Duration,
+    ) -> Result<CliCtx, CliError> {
+        let file = factory_core::project::get(home, name)?;
+        if !file.repo.is_dir() {
+            return Err(CliError::Refused(format!("repo path is missing: {}", file.repo.display())));
+        }
+        let strict = crate::project::base_of_strict(&file);
+        let base = strict.clone().unwrap_or_else(|| crate::project::base_of(&file));
+        let repo = crate::project::open_repo(&file.repo, &base).map_err(CliError::Refused)?;
+        let resolved = resolve(home, name, &RepoTip(&repo))?;
+        let mut blocked = None;
+        if resolved.config.degraded {
+            let first = resolved.problems.first().cloned().unwrap_or_else(|| "the settings failed closed".to_string());
+            blocked = Some(match resolved.problems.len() {
+                0 | 1 => first,
+                n => format!("{first} (and {} more)", n - 1),
+            });
+        } else if let Err(e) = factory_checks::validate_config(&resolved.config) {
+            blocked = Some(format!("a check command would be rejected when a job starts: {e}"));
+        }
+        if blocked.is_none() && strict.is_none() {
+            blocked = Some(format!("project {name} has no valid base_branch setting in project.toml"));
+        }
+        let ctx = CliCtx {
+            layout: resolved.layout,
+            runner,
+            owner: owner.to_string(),
+            lock_wait,
+            config: Some(resolved.config),
+            agents: resolved.agents,
+            blocked,
+            notes: resolved.notes,
+        };
+        Ok(ctx)
+    }
+
+    /// Refuses commands that start agents or merge when the project is blocked.
+    pub fn runnable(&self) -> Result<(), CliError> {
+        match &self.blocked {
+            Some(reason) => Err(CliError::Refused(format!("project is blocked: {reason}"))),
+            None => Ok(()),
+        }
     }
 
     /// The runner of one job. A real runner gets an event sink stamped with that job's id,
@@ -91,11 +162,29 @@ impl CliCtx {
     }
 
     fn driver(&self) -> Result<Driver, CliError> {
-        let config = Config::load(&self.layout.config_file);
+        let config = match &self.config {
+            Some(c) => c.clone(),
+            None => Config::load(&self.layout.config_file),
+        };
         let me = self.clone();
         let driver = Driver::new(self.layout.clone(), config, Box::new(move |id| me.runner_for(id)))?;
-        Ok(driver.with_lock_wait(self.lock_wait).with_lease_owner(&self.owner))
+        let driver = driver.with_lock_wait(self.lock_wait).with_lease_owner(&self.owner);
+        Ok(if self.agents.is_empty() { driver } else { driver.with_agent_files(self.agents.clone()) })
     }
+}
+
+/// A lease owner name that is unique per process start.
+pub fn env_owner() -> String {
+    format!("driver-{}-{}", std::process::id(), now_secs() as u64)
+}
+
+/// `FACTORY_LOCK_WAIT` (seconds), or the default.
+pub fn env_lock_wait() -> Duration {
+    std::env::var("FACTORY_LOCK_WAIT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_LOCK_WAIT)
 }
 
 pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
@@ -172,6 +261,7 @@ fn costs(ctx: &CliCtx) -> Result<String, CliError> {
 }
 
 fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
+    ctx.runnable()?;
     let d = ctx.driver()?;
     // The project lease comes first, so a second driver is refused before any stage work.
     // The guard lives until the command returns, a series included.
@@ -198,6 +288,7 @@ impl Drop for LeaseGuard<'_> {
 }
 
 fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
+    ctx.runnable()?;
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.cancelled {
@@ -308,6 +399,7 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
 
 /// Takes no lease. Refuses unless the job is merged, and refuses while another driver holds a live one on the job.
 fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
+    ctx.runnable()?;
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.stage != Stage::Merged {

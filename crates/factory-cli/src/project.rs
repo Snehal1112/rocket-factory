@@ -21,15 +21,24 @@ pub fn run(home: &Home, cmd: ProjectCmd) -> Result<String, CliError> {
 }
 
 /// The central base branch of a project. Projects added by this version always store it.
-fn base_of(file: &ProjectFile) -> String {
+pub(crate) fn base_of(file: &ProjectFile) -> String {
     file.settings
         .get("base_branch")
         .and_then(|v| v.as_str())
         .map_or_else(|| Config::default().base_branch, str::to_string)
 }
 
+/// The base branch only when `project.toml` holds a valid one. A project never falls back to the default.
+pub(crate) fn base_of_strict(file: &ProjectFile) -> Option<String> {
+    let b = file.settings.get("base_branch")?.as_str()?;
+    let mut probe = toml::Table::new();
+    probe.insert("base_branch".into(), toml::Value::String(b.to_string()));
+    let text = toml::to_string(&probe).ok()?;
+    Config::parse(&text).ok().map(|c| c.base_branch)
+}
+
 /// Opens the repo at exactly `path` (not a parent repo) with the project's base branch.
-fn open_repo(path: &Path, base: &str) -> Result<Repo, String> {
+pub(crate) fn open_repo(path: &Path, base: &str) -> Result<Repo, String> {
     let repo = Repo::open(path).map_err(|e| format!("not a git repository: {e}"))?;
     let same = std::fs::canonicalize(repo.root()).ok() == std::fs::canonicalize(path).ok();
     if !same {

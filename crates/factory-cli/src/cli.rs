@@ -7,6 +7,9 @@ pub struct Cli {
     /// Main checkout root. Defaults to the repository containing the current directory.
     #[arg(long, global = true)]
     pub root: Option<PathBuf>,
+    /// Run against a registered project instead of the current repository.
+    #[arg(long, global = true, conflicts_with = "root")]
+    pub project: Option<String>,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -113,6 +116,14 @@ mod tests {
     fn spec_without_plans_is_a_usage_error() {
         let err = Cli::try_parse_from(["factory", "new", "s", "f", "--spec", "x.md"]).expect_err("needs --plans");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn project_conflicts_with_root() {
+        let err = Cli::try_parse_from(["factory", "--project", "p", "--root", "/x", "status"]).expect_err("conflict");
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+        let cli = Cli::try_parse_from(["factory", "--project", "p", "status"]).expect("parses");
+        assert_eq!(cli.project.as_deref(), Some("p"));
     }
 
     #[test]
