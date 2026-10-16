@@ -232,3 +232,63 @@ fn add_refuses_a_path_that_does_not_exist() {
     let err = run(&e, &["add", "/no/such/dir", "--preset", "rust", "--name", "x"]).expect_err("refused").to_string();
     assert!(err.contains("not usable"), "{err}");
 }
+
+/// Commits `entries` (path, content, filemode) on top of HEAD, creating folders in the tree.
+fn commit_entries(repo: &Path, entries: &[(&str, &[u8], i32)]) {
+    let git = Repository::open(repo).expect("open");
+    let parent = git.head().expect("head").peel_to_commit().expect("commit");
+    let mut index = git.index().expect("index");
+    for (path, content, mode) in entries {
+        let entry = git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode: *mode as u32,
+            uid: 0,
+            gid: 0,
+            file_size: content.len() as u32,
+            id: git2::Oid::zero(),
+            flags: 0,
+            flags_extended: 0,
+            path: path.as_bytes().to_vec(),
+        };
+        index.add_frombuffer(&entry, content).expect("add");
+    }
+    let tree = git.find_tree(index.write_tree().expect("tree")).expect("find");
+    let sig = Signature::now("t", "t@t").expect("sig");
+    git.commit(Some("HEAD"), &sig, &sig, "files", &tree, &[&parent]).expect("commit");
+}
+
+#[test]
+fn stray_agent_files_are_noted_and_do_not_degrade() {
+    let e = env();
+    let repo = add_demo(&e);
+    std::fs::write(e.home.project_dir("demo").join("agents/README.md"), "stray").expect("write");
+    commit_entries(&repo, &[(".factory/agents/README.md", b"stray", 0o100644)]);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("note: ignored agent file README.md: names must be factory-<name>.md"), "{out}");
+    assert!(!out.contains("degraded"), "{out}");
+    assert!(out.contains("problems: none"), "{out}");
+    assert!(!out.contains("agent files: README.md") && !out.contains(", README.md"), "{out}");
+}
+
+#[test]
+fn a_committed_symlink_override_degrades_the_project() {
+    let e = env();
+    let repo = add_demo(&e);
+    commit_entries(&repo, &[(".factory/override.toml", b"/etc/passwd", 0o120000)]);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("degraded"), "{out}");
+    assert!(out.contains("not a regular file"), "{out}");
+}
+
+#[test]
+fn a_committed_symlink_agent_file_degrades_the_project() {
+    let e = env();
+    let repo = add_demo(&e);
+    commit_entries(&repo, &[(".factory/agents/factory-builder.md", b"/etc/passwd", 0o120000)]);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("degraded"), "{out}");
+    assert!(out.contains("not a regular file"), "{out}");
+}

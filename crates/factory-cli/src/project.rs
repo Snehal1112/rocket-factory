@@ -68,7 +68,7 @@ fn add(home: &Home, path: &Path, preset: &str, base: Option<&str>, name: Option<
     let check = |p: &Path| -> Result<(), String> {
         let repo = open_repo(p, &base)?;
         let names = repo.local_branch_names().map_err(|e| e.to_string())?;
-        if names.iter().any(|n| *n == base) {
+        if names.contains(&base) {
             Ok(())
         } else {
             Err(format!("base branch {base} does not exist in the repository"))
@@ -126,6 +126,9 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     out.push(format!("agent files: {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
     if resolved.config.degraded {
         out.push("status: degraded (the settings failed closed)".to_string());
+    }
+    for n in &resolved.notes {
+        out.push(format!("note: {n}"));
     }
     if problems.is_empty() {
         out.push("problems: none".to_string());
