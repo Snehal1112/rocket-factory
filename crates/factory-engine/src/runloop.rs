@@ -276,12 +276,14 @@ pub fn create_job_with_spec(
 
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
 pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
-    let result = run_job_inner(driver, id);
+    // The guard keeps the project lease renewed for the whole run and is dropped after the job lease is released.
+    let guard = driver.hold_project(id)?;
+    let result = run_job_inner(driver, id, &guard);
     driver.release_lease(id);
     result
 }
 
-fn run_job_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
+fn run_job_inner(driver: &Driver, id: &str, guard: &crate::ProjectGuard<'_>) -> Result<RunEnd, EngineError> {
     // Each plan task costs one build call, so the allowance grows with the task count.
     let task_calls = {
         let job = driver.job(id)?;
@@ -290,6 +292,9 @@ fn run_job_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
     };
     let limit = driver.config().fix_rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
+        if guard.lost() {
+            return Err(EngineError::Msg("project is busy: the lease was taken over by another owner, this run stops".into()));
+        }
         // A live lease of another driver stops this one here, before any stage work.
         driver.renew_lease(id)?;
         let job = driver.job(id)?;

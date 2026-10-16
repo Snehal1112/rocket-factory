@@ -1,9 +1,10 @@
 //! The multi-job driver that bridges to plan 04's single-job `Engine`.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use factory_agent::{AgentRunner, EventSink};
 use factory_core::{Config, CoreError, Job, Layout, Ledger};
@@ -66,6 +67,45 @@ pub struct Driver {
     agent_files: Vec<factory_core::AgentFile>,
     /// How many `ProjectGuard`s are alive. While one is, `run_job` keeps the project lease.
     project_holds: AtomicU32,
+    /// How long a lease lasts without a renewal.
+    lease_ttl: f64,
+    /// How often the heartbeat renews the leases.
+    heartbeat: Duration,
+    /// The jobs the heartbeat renews. The heartbeat thread gets a clone of this, never the driver.
+    shared: Arc<Mutex<Held>>,
+    /// Set by the heartbeat when another owner holds a lease.
+    lost: Arc<AtomicBool>,
+    /// The running heartbeat, one for all nested guards.
+    beat: Mutex<Option<Heartbeat>>,
+}
+
+/// What the heartbeat renews right now.
+#[derive(Default)]
+struct Held {
+    /// The job named in the project lease.
+    project_job: String,
+    /// The job whose board lease is renewed. None while no job runs.
+    job_lease: Option<String>,
+}
+
+/// The thread that renews the leases while a guard is alive.
+struct Heartbeat {
+    stop: Arc<AtomicBool>,
+    handle: JoinHandle<()>,
+}
+
+impl Heartbeat {
+    /// Stops the thread and waits for it. It wakes at once, so this returns quickly.
+    fn finish(self) {
+        self.stop.store(true, Ordering::SeqCst);
+        self.handle.thread().unpark();
+        // A panic in the thread is not an error of the run.
+        let _ = self.handle.join();
+    }
+}
+
+fn lock_held(m: &Mutex<Held>) -> MutexGuard<'_, Held> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Holds the project lease until it is dropped. A driver with no lease owner gets a guard that does nothing.
@@ -74,10 +114,22 @@ pub struct ProjectGuard<'a> {
     driver: Option<&'a Driver>,
 }
 
+impl ProjectGuard<'_> {
+    /// True when the heartbeat found another owner holding a lease. The run must stop.
+    pub fn lost(&self) -> bool {
+        self.driver.is_some_and(|d| d.lease_lost())
+    }
+}
+
 impl Drop for ProjectGuard<'_> {
     fn drop(&mut self) {
         if let Some(driver) = self.driver {
             if driver.project_holds.fetch_sub(1, Ordering::SeqCst) == 1 {
+                // The thread ends first, so it cannot write the lease again after the release.
+                let beat = driver.beat.lock().unwrap_or_else(|e| e.into_inner()).take();
+                if let Some(beat) = beat {
+                    beat.finish();
+                }
                 driver.release_project();
             }
         }
@@ -87,13 +139,71 @@ impl Drop for ProjectGuard<'_> {
 /// How long a lease lasts without a renewal.
 pub const LEASE_TTL_SECS: f64 = 1800.0;
 
+/// How often the heartbeat renews the leases by default.
+pub const HEARTBEAT_SECS: u64 = 60;
+
+/// The heartbeat loop. It uses only cloned values and its own board store.
+struct BeatCtx {
+    state_dir: PathBuf,
+    board_file: PathBuf,
+    owner: String,
+    ttl: f64,
+    wait: Duration,
+    heartbeat: Duration,
+    shared: Arc<Mutex<Held>>,
+    lost: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+}
+
+impl BeatCtx {
+    fn run(self) {
+        let store = BoardStore::new(&self.board_file, self.wait);
+        loop {
+            let deadline = Instant::now() + self.heartbeat;
+            while !self.stop.load(Ordering::SeqCst) {
+                let now = Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                std::thread::park_timeout(deadline - now);
+            }
+            if self.stop.load(Ordering::SeqCst) {
+                return;
+            }
+            // The lock keeps a release of the job lease from racing with a renewal.
+            let held = lock_held(&self.shared);
+            let at = crate::now_secs();
+            let project = crate::acquire_project_lease(&self.state_dir, &held.project_job, &self.owner, self.ttl, at, self.wait);
+            if matches!(project, Err(crate::ProjectLeaseError::Held { .. })) {
+                self.lost.store(true, Ordering::SeqCst);
+                return;
+            }
+            if let Some(job) = &held.job_lease {
+                let lease = crate::acquire_lease(&store, job, &self.owner, self.ttl, at);
+                if matches!(lease, Err(crate::LeaseError::Held { .. })) {
+                    self.lost.store(true, Ordering::SeqCst);
+                    return;
+                }
+            }
+            // Any other error is a busy lock or a full disk. The next beat tries again.
+        }
+    }
+}
+
 impl Driver {
     pub fn new(layout: Layout, config: Config, runner_for: RunnerFactory) -> Result<Driver, EngineError> {
         let repo = Repo::open(&layout.repo)?
             .with_base_branch(&config.base_branch)
             .with_worktrees_dir(layout.worktrees_dir.clone());
         let store = BoardStore::new(&layout.board_file(), DEFAULT_LOCK_WAIT);
-        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT, agent_files: Vec::new(), project_holds: AtomicU32::new(0) })
+        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT, agent_files: Vec::new(),
+            project_holds: AtomicU32::new(0),
+            lease_ttl: LEASE_TTL_SECS,
+            heartbeat: Duration::from_secs(HEARTBEAT_SECS),
+            shared: Arc::new(Mutex::new(Held::default())),
+            lost: Arc::new(AtomicBool::new(false)),
+            beat: Mutex::new(None),
+        })
     }
 
     /// Changes how long board writes wait for the lock.
@@ -119,13 +229,28 @@ impl Driver {
         self
     }
 
+    /// Sets how long a lease lasts and how often the heartbeat renews it. Meant for tests.
+    pub fn with_lease_timing(mut self, ttl: f64, heartbeat: Duration) -> Driver {
+        self.lease_ttl = ttl;
+        self.heartbeat = heartbeat;
+        self
+    }
+
+    /// True when the heartbeat found another owner holding a lease.
+    pub fn lease_lost(&self) -> bool {
+        self.lost.load(Ordering::SeqCst)
+    }
+
     /// Takes or renews the project lease and the job lease when this driver has an owner.
     /// A live lease of another owner is an error. The project lease comes first, so a busy project
     /// leaves the job lease untouched.
     pub(crate) fn renew_lease(&self, id: &str) -> Result<(), EngineError> {
         if let Some(owner) = &self.lease_owner {
+            let mut held = lock_held(&self.shared);
             self.take_project(id, owner)?;
-            crate::acquire_lease(&self.store, id, owner, LEASE_TTL_SECS, crate::now_secs())?;
+            held.project_job = id.to_string();
+            crate::acquire_lease(&self.store, id, owner, self.lease_ttl, crate::now_secs())?;
+            held.job_lease = Some(id.to_string());
         }
         Ok(())
     }
@@ -135,7 +260,7 @@ impl Driver {
             &self.layout.state_dir,
             id,
             owner,
-            LEASE_TTL_SECS,
+            self.lease_ttl,
             crate::now_secs(),
             self.lock_wait,
         )?)
@@ -155,15 +280,41 @@ impl Driver {
             return Ok(ProjectGuard { driver: None });
         };
         self.take_project(job, owner)?;
-        self.project_holds.fetch_add(1, Ordering::SeqCst);
+        if self.project_holds.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.lost.store(false, Ordering::SeqCst);
+            lock_held(&self.shared).project_job = job.to_string();
+            self.start_heartbeat(owner);
+        }
         Ok(ProjectGuard { driver: Some(self) })
+    }
+
+    fn start_heartbeat(&self, owner: &str) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let ctx = BeatCtx {
+            state_dir: self.layout.state_dir.clone(),
+            board_file: self.layout.board_file(),
+            owner: owner.to_string(),
+            ttl: self.lease_ttl,
+            wait: self.lock_wait,
+            heartbeat: self.heartbeat,
+            shared: self.shared.clone(),
+            lost: self.lost.clone(),
+            stop: stop.clone(),
+        };
+        // When the thread cannot start, the lease still works but is not renewed.
+        if let Ok(handle) = std::thread::Builder::new().name("lease-heartbeat".into()).spawn(move || ctx.run()) {
+            *self.beat.lock().unwrap_or_else(|e| e.into_inner()) = Some(Heartbeat { stop, handle });
+        }
     }
 
     /// Drops this driver's lease. A failed release is not fatal, because a lease expires by itself.
     /// The project lease stays while a `ProjectGuard` is alive.
     pub(crate) fn release_lease(&self, id: &str) {
         if let Some(owner) = &self.lease_owner {
+            let mut held = lock_held(&self.shared);
+            held.job_lease = None;
             let _ = crate::release_lease(&self.store, id, owner, crate::now_secs());
+            drop(held);
             if self.project_holds.load(Ordering::SeqCst) == 0 {
                 self.release_project();
             }

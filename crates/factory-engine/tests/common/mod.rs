@@ -411,6 +411,14 @@ impl SeriesFixture {
         SeriesFixture { tmp, main, driver }
     }
 
+    /// Like `owned`, with the lease ttl and the heartbeat interval set.
+    pub fn owned_timed(owner: &str, hook: RunHook, ttl: f64, beat: std::time::Duration) -> SeriesFixture {
+        let mut fx = SeriesFixture::owned(owner, hook);
+        let tmp_driver = fx.driver;
+        fx.driver = tmp_driver.with_lease_timing(ttl, beat);
+        fx
+    }
+
     /// A second driver on the same layout with another lease owner. Its runner must never be used.
     pub fn other_driver(&self, owner: &str) -> factory_engine::Driver {
         let factory: factory_engine::RunnerFactory = Box::new(|_| panic!("the second driver must not run an agent"));
