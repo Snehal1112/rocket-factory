@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn shipped_context_file_has_the_style_and_the_standing_answers() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../.claude/factory/commit-context.md");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../.claude/factory/commit-context.md");
         let text = std::fs::read_to_string(path).expect("shipped context file");
         for want in [
             "Conventional Commits",

@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn shipped_config_loads_and_maps_the_expected_paths() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../.claude/factory/config.toml");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../.claude/factory/config.toml");
         let cfg = Config::try_load(std::path::Path::new(path)).expect("shipped config is valid");
         assert!(!cfg.degraded);
         let cmds = |p: &str| -> Vec<String> {

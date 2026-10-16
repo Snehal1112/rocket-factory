@@ -2,11 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is the software factory driver, a Rust workspace of its own (not part of the root Cargo workspace, not shipped with the app). Read `../../.claude/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here.
+This is rocket-factory, the standalone software factory: a Rust driver workspace at the repo root and a local dashboard in `dashboard/` (its own workspace). It was extracted from Rocket's `tools/factory` and `tools/factory-server` with history. Read `.claude/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here. The design for the standalone version is `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`.
 
 ## Commands
 
-Run from `tools/factory/`. Harness rules still apply: always `-j4`, never `--workspace` or `--all`, never set `CARGO_TARGET_DIR`.
+Run from the repo root. Always `-j4`, never `--workspace` or `--all`, never set `CARGO_TARGET_DIR`. Rocket's hooks enforced these, and this repo has no hooks yet, so follow them by hand.
 
 ```bash
 cargo check -j4
@@ -29,6 +29,10 @@ factory-cli     clap commands over the engine (`factory new|run|status|approve|r
 
 - `factory-engine` talks to git, agents and checks through the traits in `ports.rs`. Tests use fakes, so keep new engine logic behind a port rather than calling a crate directly.
 - `tick.rs` and `runloop.rs` drive one job through the stages. `decide.rs` holds the merge/fix/needs-human choice, `tasks.rs` the per-task builder loop, `series.rs` and `specs.rs` the multi-plan series.
-- Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`../factory-server`, separate workspace), so add fields as optional.
+- Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`dashboard/`, separate workspace), so add fields as optional.
 - The repo-level config is `.claude/factory/config.toml`. A missing or broken config must make every diff risky, so never default it to permissive.
 - `factory-cli/tests/agent_lint.rs` lints `.claude/agents/factory-*.md`. Run it after editing an agent file.
+
+## Carried over from Rocket
+
+These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), `commands/factory.md` becomes a global command (plan 7), and `software-factory.md` is rewritten for the standalone design.
