@@ -73,7 +73,6 @@ fn a_job_merges_into_a_non_main_base_with_state_kept_outside_the_repo() {
     assert_ne!(fx.tip("v-4.0.0"), base_before, "the base branch advanced");
     assert_eq!(fx.tip("main"), main_before, "the other branch main is untouched");
     assert!(fx.layout.board_file().exists(), "board kept in the state folder");
-    assert!(fx.layout.events_file().exists() || fx.layout.state_dir.exists());
     assert!(fx.layout.worktrees_dir.join("factory-001-hello").exists(), "worktree kept in the worktrees folder");
     assert!(!fx.repo.join(".superpowers").exists(), "nothing written to .superpowers in the repo");
     assert!(!fx.repo.join(".claude").exists(), "nothing written to .claude in the repo");

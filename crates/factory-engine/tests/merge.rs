@@ -145,3 +145,46 @@ fn a_base_off_the_base_branch_parks_with_the_branch_name() {
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
     assert!(matches!(&r, MergeResult::Parked(m) if m.contains("not on trunk")), "got {r:?}");
 }
+
+/// A fixture whose base is `trunk` while a local branch `main` also exists. The checkout sits on trunk.
+fn trunk_fixture() -> common::MergeFixture {
+    let config = factory_core::Config { base_branch: "trunk".to_string(), ..factory_core::Config::default() };
+    let fx = common::approved_job_config(common::approving_runner(3), false, config);
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    repo.set_head("refs/heads/trunk").expect("head on trunk");
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).expect("checkout");
+    fx
+}
+
+fn tip_of(fx: &common::MergeFixture, branch: &str) -> String {
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let id = repo.revparse_single(branch).expect("branch").peel_to_commit().expect("commit").id();
+    id.to_string()
+}
+
+#[test]
+fn a_sync_merges_the_base_branch_and_leaves_main_alone() {
+    let fx = trunk_fixture();
+    let main_before = tip_of(&fx, "main");
+    common::commit_file(&fx.main, "other.txt", "o");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
+    assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
+    assert_eq!(tip_of(&fx, "main"), main_before, "the branch main is untouched");
+    assert!(fx.main.join("docs/hello.txt").exists(), "the job reached trunk");
+}
+
+#[test]
+fn the_sync_cap_text_names_the_base_branch() {
+    let fx = trunk_fixture();
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.syncs = 2;
+            Ok(())
+        })
+        .expect("syncs");
+    common::commit_file(&fx.main, "other.txt", "o");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(&r, MergeResult::Parked(m) if m.starts_with("trunk moved again after 2 syncs")), "got {r:?}");
+}

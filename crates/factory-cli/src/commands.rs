@@ -282,7 +282,10 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
         _ => false,
     };
     if unmerged && !discard {
-        return Err(CliError::Refused("the branch has commits that are not in main, use --discard-commits".into()));
+        return Err(CliError::Refused(format!(
+            "the branch has commits that are not in {}, use --discard-commits",
+            repo.base_branch()
+        )));
     }
     // remove_worktree also deletes the job branch. It refuses a dirty worktree and unmerged commits unless forced.
     repo.remove_worktree(&wt, discard)

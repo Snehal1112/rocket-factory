@@ -15,7 +15,7 @@ pub enum SyncOutcome {
 pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError> {
     let job = driver.job(id)?;
     if job.syncs >= MAX_SYNCS {
-        return Ok(SyncOutcome::Parked(format!("main moved again after {} syncs", job.syncs)));
+        return Ok(SyncOutcome::Parked(format!("{} moved again after {} syncs", driver.repo().base_branch(), job.syncs)));
     }
     let path = job.worktree.clone().ok_or_else(|| EngineError::Msg("job has no worktree to sync".into()))?;
     let old_head = job.head.clone().unwrap_or_default();

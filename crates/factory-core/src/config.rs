@@ -330,6 +330,11 @@ mod tests {
         let bad = dir.path().join("bad.toml");
         std::fs::write(&bad, "risk_path = 1").expect("write");
         assert!(Config::load(&bad).degraded);
+        let bad_base = dir.path().join("bad_base.toml");
+        std::fs::write(&bad_base, "base_branch = \"a b\"").expect("write");
+        let degraded = Config::load(&bad_base);
+        assert!(degraded.degraded);
+        assert_eq!(degraded.risk_paths, vec!["**".to_string()]);
         let good = dir.path().join("good.toml");
         std::fs::write(&good, "fix_rounds = 3").expect("write");
         let cfg = Config::load(&good);
