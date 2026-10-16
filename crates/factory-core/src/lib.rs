@@ -16,6 +16,8 @@ pub mod preset;
 pub mod resolve;
 pub mod risk;
 pub mod stage;
+#[cfg(test)]
+mod test_support;
 pub mod verdict;
 
 pub use board::{Board, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry};

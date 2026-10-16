@@ -47,9 +47,7 @@ fn from_values(factory_home: Option<&str>, home: Option<&str>) -> Result<Home, C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV: Mutex<()> = Mutex::new(());
+    use crate::test_support::EnvVarGuard;
 
     #[test]
     fn at_gives_the_folders() {
@@ -70,14 +68,10 @@ mod tests {
 
     #[test]
     fn from_env_honors_factory_home() {
-        let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let old = std::env::var("FACTORY_HOME").ok();
-        std::env::set_var("FACTORY_HOME", "/tmp/some-factory-home");
-        let got = Home::from_env();
-        match old {
-            Some(v) => std::env::set_var("FACTORY_HOME", v),
-            None => std::env::remove_var("FACTORY_HOME"),
-        }
+        let got = {
+            let _guard = EnvVarGuard::set("FACTORY_HOME", "/tmp/some-factory-home");
+            Home::from_env()
+        };
         assert_eq!(got.expect("home").dir, PathBuf::from("/tmp/some-factory-home"));
     }
 }
