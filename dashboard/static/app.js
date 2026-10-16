@@ -119,29 +119,37 @@
     if (note) note.hidden = !job || job.stage === "needs-human";
   }
 
+  // Replacing the content drops the focused node, so focus goes back into the dialog.
+  function setParkContent(html) {
+    parkContent.innerHTML = html;
+    if (dialog.contains(document.activeElement)) return;
+    const close = parkContent.querySelector("[data-park-close]");
+    (close || dialog).focus();
+  }
+
   async function loadPark(id) {
     const job = findJob(id) || { id, reason: null };
     try {
       const response = await fetch(`/api/jobs/${encodeURIComponent(id)}/park`, { cache: "no-store" });
       if (parkJobId !== id) return;
       if (response.status === 404) {
-        parkContent.innerHTML = FactoryBoard.parkMessage(job, "No details were recorded for this job.", false);
+        setParkContent(FactoryBoard.parkMessage(job, "No details were recorded for this job.", false));
         return;
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const view = await response.json();
       if (parkJobId !== id) return;
-      parkContent.innerHTML = FactoryBoard.renderParkDialog(job, view, nowSeconds());
+      setParkContent(FactoryBoard.renderParkDialog(job, view, nowSeconds()));
       syncParkNote();
       const hit = parkContent.querySelector(".ln-hit");
       if (hit) hit.scrollIntoView({ block: "center" });
     } catch (error) {
       if (parkJobId !== id) return;
-      parkContent.innerHTML = FactoryBoard.parkMessage(
+      setParkContent(FactoryBoard.parkMessage(
         job,
         `The details could not be loaded (${error.message}). Check that the server is running, then try again.`,
         true,
-      );
+      ));
     }
   }
 
@@ -149,7 +157,7 @@
     const job = findJob(id) || { id, reason: null };
     parkJobId = id;
     parkOpener = opener || null;
-    parkContent.innerHTML = FactoryBoard.parkMessage(job, "Loading the details.", false);
+    setParkContent(FactoryBoard.parkMessage(job, "Loading the details.", false));
     if (!dialog.open) dialog.showModal();
     loadPark(id);
   }
