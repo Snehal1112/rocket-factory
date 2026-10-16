@@ -372,6 +372,54 @@ impl SeriesFixture {
     }
 }
 
+/// A call hook that runs before every agent run of an owned series fixture.
+pub type RunHook = Arc<dyn Fn(&AgentSpec) + Send + Sync>;
+
+struct HookRunner {
+    inner: RoleRunner,
+    hook: RunHook,
+}
+
+impl AgentRunner for HookRunner {
+    fn run(&self, spec: &AgentSpec) -> AgentRun {
+        (self.hook)(spec);
+        self.inner.run(spec)
+    }
+}
+
+impl SeriesFixture {
+    /// Like `new`, with a lease owner on the driver and a hook that runs before every agent run.
+    pub fn owned(owner: &str, hook: RunHook) -> SeriesFixture {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let main = tmp.path().join("repo");
+        init_repo(&main);
+        write_commit_context(&main);
+        let events = main.join(".superpowers/factory/events.jsonl");
+        let factory: factory_engine::RunnerFactory = Box::new(move |job_id| {
+            Arc::new(HookRunner {
+                inner: RoleRunner {
+                    sink: EventSink::new(events.clone(), job_id),
+                    verdict: "fine\nVERDICT: APPROVE".to_string(),
+                    counter: std::sync::atomic::AtomicUsize::new(0),
+                },
+                hook: hook.clone(),
+            })
+        });
+        let driver = factory_engine::Driver::new(factory_core::Layout::in_repo(&main), Config::default(), factory)
+            .expect("driver")
+            .with_lease_owner(owner);
+        SeriesFixture { tmp, main, driver }
+    }
+
+    /// A second driver on the same layout with another lease owner. Its runner must never be used.
+    pub fn other_driver(&self, owner: &str) -> factory_engine::Driver {
+        let factory: factory_engine::RunnerFactory = Box::new(|_| panic!("the second driver must not run an agent"));
+        factory_engine::Driver::new(factory_core::Layout::in_repo(&self.main), Config::default(), factory)
+            .expect("driver")
+            .with_lease_owner(owner)
+    }
+}
+
 /// Moves main to `head` by hand, as a person merging outside the driver would.
 pub fn merge_by_hand(fx: &MergeFixture) -> String {
     let repo = Repository::open(&fx.main).expect("open");

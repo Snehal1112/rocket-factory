@@ -206,6 +206,7 @@ dependencies = [
  "factory-git",
  "fs2",
  "git2",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

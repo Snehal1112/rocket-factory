@@ -330,6 +330,8 @@ fn run_job_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
 
 /// Runs plan k, then creates and runs plan k+1, one at a time. Stops on needs-human.
 pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
+    // One guard for the whole series, so no other driver gets in between two plans.
+    let _project = driver.hold_project(id)?;
     let mut current = id.to_string();
     loop {
         let end = run_job(driver, &current)?;

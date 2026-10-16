@@ -8,6 +8,7 @@ mod ports;
 mod review;
 mod lease;
 mod lock;
+mod project_lease;
 mod runloop;
 mod series;
 mod specs;
@@ -40,10 +41,13 @@ pub use commit::{
 };
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
-pub use compat::{Driver, RunnerFactory, LEASE_TTL_SECS};
+pub use compat::{Driver, ProjectGuard, RunnerFactory, LEASE_TTL_SECS};
 pub use message::{fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS};
 pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
+pub use project_lease::{
+    acquire_project_lease, project_lease_status, release_project_lease, LeaseTake, ProjectLease, ProjectLeaseError, ProjectLeaseStatus,
+};
 pub use lock::{lock_board, BoardLock};
 pub use runloop::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
 pub use series::{parse_series, Series, SeriesError, SeriesPlan, MAX_PLANS};

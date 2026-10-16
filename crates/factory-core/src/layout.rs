@@ -17,6 +17,9 @@ pub fn is_agent_file_name(name: &str) -> bool {
     !stem.is_empty() && stem.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// The file name of the project lease, inside the state folder.
+pub const PROJECT_LEASE_FILE: &str = "project.lease";
+
 /// The folders and files of one project. `in_repo` gives the layout Rocket uses today.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
@@ -64,6 +67,11 @@ impl Layout {
         self.state_dir.join("kb-stopped")
     }
 
+    /// The project lease: at most one active job per project.
+    pub fn project_lease_file(&self) -> PathBuf {
+        self.state_dir.join(PROJECT_LEASE_FILE)
+    }
+
     pub fn job_dir(&self, dir: &str) -> PathBuf {
         self.jobs_dir.join(dir)
     }
@@ -81,6 +89,7 @@ mod tests {
         assert_eq!(l.events_file(), PathBuf::from("/r/.superpowers/factory/events.jsonl"));
         assert_eq!(l.costs_file(), PathBuf::from("/r/.superpowers/factory/costs.json"));
         assert_eq!(l.kb_stop_file(), PathBuf::from("/r/.superpowers/factory/kb-stopped"));
+        assert_eq!(l.project_lease_file(), PathBuf::from("/r/.superpowers/factory/project.lease"));
         assert_eq!(l.job_dir("2026-10-16-001-x"), PathBuf::from("/r/.superpowers/sdd/2026-10-16-001-x"));
         assert_eq!(l.worktrees_dir, PathBuf::from("/r/.claude/worktrees"));
         assert_eq!(l.config_file, PathBuf::from("/r/.claude/factory/config.toml"));

@@ -10,6 +10,7 @@ factory-git = { path = "../factory-git" }
 factory-agent = { path = "../factory-agent" }
 factory-checks = { path = "../factory-checks" }
 thiserror.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 fs2.workspace = true
 

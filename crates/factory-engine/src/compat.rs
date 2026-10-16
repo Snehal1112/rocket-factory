@@ -1,6 +1,7 @@
 //! The multi-job driver that bridges to plan 04's single-job `Engine`.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +38,12 @@ impl From<crate::LeaseError> for EngineError {
     }
 }
 
+impl From<crate::ProjectLeaseError> for EngineError {
+    fn from(e: crate::ProjectLeaseError) -> Self {
+        EngineError::Msg(e.to_string())
+    }
+}
+
 impl From<crate::SeriesError> for EngineError {
     fn from(e: crate::SeriesError) -> Self {
         EngineError::Msg(e.to_string())
@@ -57,6 +64,24 @@ pub struct Driver {
     lease_owner: Option<String>,
     lock_wait: Duration,
     agent_files: Vec<factory_core::AgentFile>,
+    /// How many `ProjectGuard`s are alive. While one is, `run_job` keeps the project lease.
+    project_holds: AtomicU32,
+}
+
+/// Holds the project lease until it is dropped. A driver with no lease owner gets a guard that does nothing.
+#[must_use = "the project lease is released when the guard is dropped"]
+pub struct ProjectGuard<'a> {
+    driver: Option<&'a Driver>,
+}
+
+impl Drop for ProjectGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(driver) = self.driver {
+            if driver.project_holds.fetch_sub(1, Ordering::SeqCst) == 1 {
+                driver.release_project();
+            }
+        }
+    }
 }
 
 /// How long a lease lasts without a renewal.
@@ -68,7 +93,7 @@ impl Driver {
             .with_base_branch(&config.base_branch)
             .with_worktrees_dir(layout.worktrees_dir.clone());
         let store = BoardStore::new(&layout.board_file(), DEFAULT_LOCK_WAIT);
-        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT, agent_files: Vec::new() })
+        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT, agent_files: Vec::new(), project_holds: AtomicU32::new(0) })
     }
 
     /// Changes how long board writes wait for the lock.
@@ -94,18 +119,54 @@ impl Driver {
         self
     }
 
-    /// Takes or renews the lease when this driver has an owner. A live lease of another owner is an error.
+    /// Takes or renews the project lease and the job lease when this driver has an owner.
+    /// A live lease of another owner is an error. The project lease comes first, so a busy project
+    /// leaves the job lease untouched.
     pub(crate) fn renew_lease(&self, id: &str) -> Result<(), EngineError> {
         if let Some(owner) = &self.lease_owner {
+            self.take_project(id, owner)?;
             crate::acquire_lease(&self.store, id, owner, LEASE_TTL_SECS, crate::now_secs())?;
         }
         Ok(())
     }
 
+    fn take_project(&self, id: &str, owner: &str) -> Result<crate::LeaseTake, EngineError> {
+        Ok(crate::acquire_project_lease(
+            &self.layout.state_dir,
+            id,
+            owner,
+            LEASE_TTL_SECS,
+            crate::now_secs(),
+            self.lock_wait,
+        )?)
+    }
+
+    fn release_project(&self) {
+        if let Some(owner) = &self.lease_owner {
+            // A failed release is not fatal, because the lease expires by itself.
+            let _ = crate::release_project_lease(&self.layout.state_dir, owner, self.lock_wait);
+        }
+    }
+
+    /// Takes the project lease for `job` and keeps it until the guard is dropped. Without a lease owner
+    /// it takes nothing and returns a guard that does nothing.
+    pub fn hold_project(&self, job: &str) -> Result<ProjectGuard<'_>, EngineError> {
+        let Some(owner) = &self.lease_owner else {
+            return Ok(ProjectGuard { driver: None });
+        };
+        self.take_project(job, owner)?;
+        self.project_holds.fetch_add(1, Ordering::SeqCst);
+        Ok(ProjectGuard { driver: Some(self) })
+    }
+
     /// Drops this driver's lease. A failed release is not fatal, because a lease expires by itself.
+    /// The project lease stays while a `ProjectGuard` is alive.
     pub(crate) fn release_lease(&self, id: &str) {
         if let Some(owner) = &self.lease_owner {
             let _ = crate::release_lease(&self.store, id, owner, crate::now_secs());
+            if self.project_holds.load(Ordering::SeqCst) == 0 {
+                self.release_project();
+            }
         }
     }
 
