@@ -73,3 +73,32 @@ fn a_missing_branch_is_an_error() {
     assert!(repo.file_at_branch("nope", "base.txt").is_err());
     assert!(repo.dir_at_branch("nope", "x").is_err());
 }
+
+#[test]
+fn a_path_through_a_file_is_absent() {
+    let fx = fixture_with_factory_files();
+    let repo = fx.repo();
+    // libgit2 reports NotFound (class Tree) for a child of a blob, so it is plainly absent.
+    assert_eq!(repo.file_at_branch("v-4.0.0", "base.txt/x").expect("absent"), None);
+    assert!(repo.dir_at_branch("v-4.0.0", "base.txt/x").expect("absent").is_empty());
+}
+
+#[test]
+fn a_missing_object_is_an_error_not_an_absent_file() {
+    let fx = fixture_with_factory_files();
+    let git = fx.git();
+    let tree = git.find_branch("v-4.0.0", git2::BranchType::Local).expect("b").get().peel_to_tree().expect("tree");
+    let sub = tree.get_name(".factory").expect(".factory entry").id().to_string();
+    drop(tree);
+    drop(git);
+    // Simulate corruption: delete the loose object of the .factory folder.
+    let obj = fx.path.join(".git/objects").join(&sub[..2]).join(&sub[2..]);
+    assert!(obj.exists(), "loose object expected at {}", obj.display());
+    std::fs::remove_file(&obj).expect("remove object");
+    let repo = fx.repo();
+    assert!(repo.file_at_branch("v-4.0.0", ".factory/override.toml").is_err());
+    assert!(repo.dir_at_branch("v-4.0.0", ".factory/agents").is_err());
+    // A path that is plainly absent from the root tree is still just absent.
+    assert_eq!(repo.file_at_branch("v-4.0.0", "nothing-here").expect("absent"), None);
+    assert!(repo.dir_at_branch("v-4.0.0", "no/such").expect("absent").is_empty());
+}

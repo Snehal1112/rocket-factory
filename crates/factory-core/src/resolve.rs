@@ -407,6 +407,16 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_override_fails_closed_instead_of_meaning_no_override() {
+        let e = env_with(Some("v-4.0.0"), "rust");
+        let tip = Tip { fail: true, ..Tip::default() };
+        let r = resolve(&e.home, "p", &tip).expect("resolve");
+        assert_fail_closed(&r);
+        assert!(r.problems.iter().any(|p| p.contains(OVERRIDE_FILE)), "{:?}", r.problems);
+        assert_eq!(r.config.base_branch, "v-4.0.0");
+    }
+
+    #[test]
     fn broken_inputs_give_a_degraded_config_and_a_problem() {
         let e = env();
         assert_fail_closed(&resolve(&e.home, "p", &Tip::with_override("not = = toml")).expect("r"));

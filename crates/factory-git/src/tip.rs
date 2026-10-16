@@ -2,8 +2,18 @@
 
 use crate::error::{GitError, Result};
 use crate::repo::Repo;
-use git2::{BranchType, ObjectType, Tree};
+use git2::{BranchType, ErrorCode, ObjectType, Tree, TreeEntry};
 use std::path::Path;
+
+/// The tree entry at `rel`. Only a plain NotFound means absent. Any other error
+/// (a missing or corrupt object, a path through a file) is an error, so the caller fails closed.
+fn entry_at(tree: &Tree<'_>, rel: &str) -> Result<Option<TreeEntry<'static>>> {
+    match tree.get_path(Path::new(rel)) {
+        Ok(e) => Ok(Some(e)),
+        Err(e) if e.code() == ErrorCode::NotFound && e.class() == git2::ErrorClass::Tree => Ok(None),
+        Err(e) => Err(GitError::Git(e)),
+    }
+}
 
 impl Repo {
     fn tree_at_branch(&self, branch: &str) -> Result<Tree<'_>> {
@@ -18,7 +28,7 @@ impl Repo {
     /// The text of the file `rel` at the tip of `branch`, or `None` when the file is absent.
     pub fn file_at_branch(&self, branch: &str, rel: &str) -> Result<Option<String>> {
         let tree = self.tree_at_branch(branch)?;
-        let Ok(entry) = tree.get_path(Path::new(rel)) else {
+        let Some(entry) = entry_at(&tree, rel)? else {
             return Ok(None);
         };
         if entry.kind() != Some(ObjectType::Blob) {
@@ -34,7 +44,7 @@ impl Repo {
     /// An absent folder gives an empty list.
     pub fn dir_at_branch(&self, branch: &str, rel: &str) -> Result<Vec<(String, String)>> {
         let tree = self.tree_at_branch(branch)?;
-        let Ok(entry) = tree.get_path(Path::new(rel)) else {
+        let Some(entry) = entry_at(&tree, rel)? else {
             return Ok(Vec::new());
         };
         if entry.kind() != Some(ObjectType::Tree) {
