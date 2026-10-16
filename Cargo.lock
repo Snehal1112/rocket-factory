@@ -222,6 +222,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "factory-supervisor"
+version = "0.1.0"
+dependencies = [
+ "factory-core",
+ "factory-engine",
+ "fs2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
