@@ -1,4 +1,5 @@
 use factory_core::{Board, Config, Job, ParkRecord, ReviewState, Stage};
+use factory_engine::ProjectLeaseStatus;
 
 /// How many lines of the first evidence part `factory status` prints.
 pub const PARK_EXCERPT_LINES: usize = 12;
@@ -71,6 +72,18 @@ fn reviews_text(job: &Job) -> String {
 
 fn stage_name(stage: Stage) -> &'static str {
     stage.as_str()
+}
+
+/// The first line of `factory status`: who holds the project.
+pub fn render_project_line(status: &ProjectLeaseStatus) -> String {
+    match status {
+        ProjectLeaseStatus::Free => "project: free\n".to_string(),
+        ProjectLeaseStatus::Held { owner, job, secs_left } => {
+            format!("project: busy, job {job} (owner {owner}, {secs_left} s left)\n")
+        }
+        ProjectLeaseStatus::Stale { owner, job } => format!("project: stale lease from {owner} (job {job}), parked\n"),
+        ProjectLeaseStatus::Unreadable(reason) => format!("project: lease file unreadable: {reason}\n"),
+    }
 }
 
 pub fn render_status(board: &Board, cfg: &Config) -> String {

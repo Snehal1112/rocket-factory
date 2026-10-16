@@ -5,13 +5,13 @@ use std::time::Duration;
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
 use factory_core::{Config, CostsFile, Layout, ParkRecord, Stage};
 use factory_engine::{
-    acquire_lease, costs_path, create_job_with_spec, gather_costs, lease_is_live, merge_stage, now_secs, release_lease, run_job, run_series, Driver,
+    acquire_lease, costs_path, create_job_with_spec, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, release_lease, run_job, run_series, Driver,
     MergeResult, RunEnd, DEFAULT_LOCK_WAIT, LEASE_TTL_SECS,
 };
 
 use crate::cli::{Cli, Command};
 use crate::costs::{estimate_lines, render_costs};
-use crate::status::{render_parked, render_status};
+use crate::status::{render_parked, render_project_line, render_status};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -119,7 +119,9 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Status => {
             let d = ctx.driver()?;
             let board = d.store().load()?;
-            let mut out = render_status(&board, d.config());
+            let lease = project_lease_status(&d.layout().state_dir, now_secs());
+            let mut out = render_project_line(&lease);
+            out.push_str(&render_status(&board, d.config()));
             out.push_str(&render_parked(&board, |j| ParkRecord::read(&d.job_dir(j))));
             Ok(out)
         }
@@ -171,7 +173,9 @@ fn costs(ctx: &CliCtx) -> Result<String, CliError> {
 
 fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
-    // The lease check comes first, so a second driver is refused before any stage work.
+    // The project lease comes first, so a second driver is refused before any stage work.
+    // The guard lives until the command returns, a series included.
+    let _project = d.hold_project(id)?;
     acquire_lease(d.store(), id, &ctx.owner, LEASE_TTL_SECS, now_secs())?;
     let end = if series { run_series(&d, id)? } else { run_job(&d, id)? };
     Ok(match end {
@@ -205,6 +209,8 @@ fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
             job.stage
         )));
     }
+    // The project lease is held through the merge and released on every exit path.
+    let _project = d.hold_project(id)?;
     acquire_lease(d.store(), id, &ctx.owner, LEASE_TTL_SECS, now_secs())?;
     let _guard = LeaseGuard { driver: &d, id: id.to_string(), owner: ctx.owner.clone() };
     let now = now_secs();
