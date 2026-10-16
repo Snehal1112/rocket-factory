@@ -107,7 +107,7 @@ impl Fixture {
     }
 
     pub fn engine<'a>(&'a self, runner: &'a dyn AgentRunner) -> Engine<'a> {
-        Engine::new(
+        let engine = Engine::new(
             self.board_path.clone(),
             self.job_dir.clone(),
             "001".to_string(),
@@ -117,7 +117,13 @@ impl Fixture {
             self.config.clone(),
             &self.events,
         )
-        .expect("engine")
+        .expect("engine");
+        let context = self.main.join(".claude/factory/commit-context.md");
+        if context.exists() {
+            engine.with_commit_context(context)
+        } else {
+            engine
+        }
     }
 
     pub fn job(&self) -> Job {
@@ -203,7 +209,7 @@ pub fn init_repo(main: &Path) {
 /// A driver whose runner factory hands every job the same shared scripted runner.
 pub fn driver_for(main: &Path, runner: Arc<ScriptedRunner>, config: Config) -> factory_engine::Driver {
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
-    factory_engine::Driver::new(main, config, factory).expect("driver")
+    factory_engine::Driver::new(factory_core::Layout::in_repo(main), config, factory).expect("driver")
 }
 
 /// Creates a repo, a job branch with one commit adding `docs/hello.txt`, a plan file and a board entry at `approve`.
@@ -340,7 +346,7 @@ impl SeriesFixture {
                 counter: std::sync::atomic::AtomicUsize::new(0),
             })
         });
-        let driver = factory_engine::Driver::new(&main, config, factory).expect("driver");
+        let driver = factory_engine::Driver::new(factory_core::Layout::in_repo(&main), config, factory).expect("driver");
         SeriesFixture { tmp, main, driver }
     }
 

@@ -22,7 +22,7 @@ fn add_job(
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
     // Folder and branch names keep a new id from colliding with a leftover of an older job.
-    let dirs: Vec<String> = std::fs::read_dir(driver.root().join(".superpowers/sdd"))
+    let dirs: Vec<String> = std::fs::read_dir(&driver.layout().jobs_dir)
         .map(|rd| rd.filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).collect())
         .unwrap_or_default();
     let branches = driver.repo().local_branch_names()?;
@@ -48,7 +48,7 @@ fn add_job(
     let dir = driver.job_dir(&job);
     std::fs::create_dir_all(&dir)?;
     Ledger::new(dir.join("progress.md"))
-        .create(&format!("# SDD ledger, plan: .superpowers/sdd/{}/plan.md", job.dir))?;
+        .create(&format!("# SDD ledger, plan: {}", dir.join("plan.md").display()))?;
     if let Some(pos) = &job.series {
         std::fs::copy(&pos.plan_file, dir.join("plan.md"))?;
         // The estimate is best effort: no history or a failed read gives no estimate, never an error.

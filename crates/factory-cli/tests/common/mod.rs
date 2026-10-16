@@ -44,6 +44,12 @@ pub struct RoleRunner {
     counter: AtomicUsize,
 }
 
+impl RoleRunner {
+    pub fn new() -> RoleRunner {
+        RoleRunner { counter: AtomicUsize::new(0) }
+    }
+}
+
 impl AgentRunner for RoleRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         let text = if spec.role == "builder" {
@@ -86,7 +92,7 @@ impl Fixture {
         std::fs::write(root.join(".claude/factory/config.toml"), format!("risk_paths = [\"{risk}\"]\n"))
             .expect("config");
         std::fs::write(root.join(".claude/factory/commit-context.md"), "TEST CONTEXT\n").expect("context");
-        let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner { counter: AtomicUsize::new(0) });
+        let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::new());
         let ctx = CliCtx::new(root.clone(), runner, "tester");
         Fixture { tmp, root, ctx }
     }
@@ -136,7 +142,10 @@ impl Fixture {
 
     /// Takes a live lease as another driver.
     pub fn hold_lease(&self, id: &str, owner: &str) {
-        let store = factory_engine::BoardStore::new(&self.root);
+        let store = factory_engine::BoardStore::new(
+            &factory_core::Layout::in_repo(&self.root).board_file(),
+            std::time::Duration::from_secs(15),
+        );
         factory_engine::acquire_lease(&store, id, owner, 600.0, factory_engine::now_secs()).expect("lease");
     }
 }

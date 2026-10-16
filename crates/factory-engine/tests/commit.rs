@@ -4,7 +4,7 @@ use std::path::Path;
 
 use common::*;
 use factory_agent::AgentSpec;
-use factory_engine::{CommitKind, CommitOutcome, CommitRequest, COMMIT_CONTEXT_FILE};
+use factory_engine::{CommitKind, CommitOutcome, CommitRequest};
 use factory_git::{JobRef, Worktree};
 use git2::{Repository, ResetType, Signature};
 
@@ -12,7 +12,7 @@ const GOOD: &str = "feat(x): add the thing\n\nThe thing was missing.";
 
 /// Writes the prompt context file into the main checkout, where the engine reads it.
 fn context(fx: &Fixture) {
-    let path = fx.main.join(COMMIT_CONTEXT_FILE);
+    let path = fx.main.join(".claude/factory/commit-context.md");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
     std::fs::write(path, "TEST CONTEXT\n").expect("context");
 }

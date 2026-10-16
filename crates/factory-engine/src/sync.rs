@@ -34,7 +34,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         MergeOutcome::UpToDate => return Ok(SyncOutcome::Synced),
         MergeOutcome::Merged { merge_sha } => merge_sha,
     };
-    let main7: String = driver.repo().tip("main")?.chars().take(7).collect();
+    let main7: String = driver.repo().tip(driver.repo().base_branch())?.chars().take(7).collect();
     let now = now_secs();
     driver.store().update_job(id, |j| {
         j.prev_head = Some(old_head.clone());

@@ -88,7 +88,7 @@ fn refresh_costs_writes_groups_and_roles_but_no_job_list() {
     let fx = common::SeriesFixture::new("x");
     make_merged(&fx, "101", "# tiny\n", 200);
     refresh_costs(&fx.driver).expect("refresh");
-    let raw = std::fs::read_to_string(costs_path(fx.driver.root())).expect("costs.json");
+    let raw = std::fs::read_to_string(costs_path(fx.driver.layout())).expect("costs.json");
     let json: serde_json::Value = serde_json::from_str(&raw).expect("json");
     assert_eq!(json["groups"]["small"]["n"], 1);
     assert_eq!(json["groups"]["small"]["median"], 200);
@@ -138,7 +138,7 @@ fn a_merge_refreshes_costs_json_and_a_failed_refresh_does_not_fail_the_merge() {
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "ok", "a feature", Some(&plan), None).expect("create");
     assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
-    let raw = std::fs::read_to_string(costs_path(fx.driver.root())).expect("costs.json after the merge");
+    let raw = std::fs::read_to_string(costs_path(fx.driver.layout())).expect("costs.json after the merge");
     assert!(raw.contains("\"groups\""), "{raw}");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("costs.json parses");
     assert_eq!(value["groups"]["all"]["n"], 1, "the merged job is counted: {raw}");
@@ -149,7 +149,7 @@ fn a_merge_refreshes_costs_json_and_a_failed_refresh_does_not_fail_the_merge() {
 
     // A directory where the file goes makes the write fail.
     let fx2 = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
-    std::fs::create_dir_all(costs_path(fx2.driver.root())).expect("blocker dir");
+    std::fs::create_dir_all(costs_path(fx2.driver.layout())).expect("blocker dir");
     let plan2 = fx2.plan_file("plan-01-a.md", 1, "none");
     let job2 = create_job(&fx2.driver, "blocked", "a feature", Some(&plan2), None).expect("create");
     assert_eq!(run_job(&fx2.driver, &job2.id).expect("run"), RunEnd::Merged);
@@ -163,7 +163,7 @@ fn the_costs_refresh_after_a_merge_includes_the_kb_run_of_that_job() {
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "kb", "a feature", Some(&plan), None).expect("create");
     assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
-    let raw = std::fs::read_to_string(costs_path(fx.driver.root())).expect("costs.json");
+    let raw = std::fs::read_to_string(costs_path(fx.driver.layout())).expect("costs.json");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("parses");
     assert!(value["roles"].to_string().contains("\"kb\""), "roles must list kb: {raw}");
 }

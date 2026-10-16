@@ -24,6 +24,7 @@ mod tasks;
 mod tick;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use factory_agent::{AgentRunner, EventSink};
 use factory_checks::validate_config;
@@ -35,18 +36,17 @@ pub use build::build_stage;
 pub use clock::{date_from_days, now_secs, today};
 pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
-    COMMIT_CONTEXT_FILE,
 };
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
-pub use compat::{Driver, RunnerFactory, KB_STOP_FILE, LEASE_TTL_SECS};
+pub use compat::{Driver, RunnerFactory, LEASE_TTL_SECS};
 pub use message::{fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS};
 pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
 pub use lock::{lock_board, BoardLock};
 pub use runloop::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
 pub use series::{parse_series, Series, SeriesError, SeriesPlan, MAX_PLANS};
-pub use store::{next_id, BoardStore, StoreError};
+pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
 pub use tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 pub use tick::tick_plan;
@@ -86,6 +86,8 @@ pub struct Engine<'a> {
     pub runner: &'a dyn AgentRunner,
     pub config: Config,
     pub events: &'a EventSink,
+    pub lock_wait: Duration,
+    pub commit_context: Option<PathBuf>,
 }
 
 impl<'a> Engine<'a> {
@@ -101,6 +103,37 @@ impl<'a> Engine<'a> {
         events: &'a EventSink,
     ) -> Result<Self, EngineError> {
         validate_config(&config).map_err(|e| EngineError::Check(e.to_string()))?;
-        Ok(Self { board_path, job_dir, job_id, plan_file, repo, runner, config, events })
+        Ok(Self {
+            board_path,
+            job_dir,
+            job_id,
+            plan_file,
+            repo,
+            runner,
+            config,
+            events,
+            lock_wait: DEFAULT_LOCK_WAIT,
+            commit_context: None,
+        })
+    }
+
+    /// Changes how long board writes wait for the lock.
+    pub fn with_lock_wait(mut self, wait: Duration) -> Self {
+        self.lock_wait = wait;
+        self
+    }
+
+    /// Sets the file the committer prompt text is read from. Without it the committer step is skipped.
+    pub fn with_commit_context(mut self, path: PathBuf) -> Self {
+        self.commit_context = Some(path);
+        self
+    }
+
+    /// The commit context text, or the reason it cannot be read.
+    pub(crate) fn commit_context_text(&self) -> Result<String, String> {
+        match &self.commit_context {
+            Some(path) => std::fs::read_to_string(path).map_err(|e| e.to_string()),
+            None => Err("no commit context file is set".to_string()),
+        }
     }
 }

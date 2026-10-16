@@ -92,7 +92,7 @@ mod merge_hook {
     use crate::common::{approved_job_config, scripted, Effect, MergeFixture};
     use factory_agent::AgentSpec;
     use factory_core::{Config, Stage};
-    use factory_engine::{merge_stage, MergeResult, KB_STOP_FILE};
+    use factory_engine::{merge_stage, MergeResult};
     use std::sync::Arc;
 
     fn fixture(effects: Vec<Effect>, kb: bool) -> MergeFixture {
@@ -155,7 +155,7 @@ mod merge_hook {
         let fx = fixture(vec![tamper(), reply("docs/a.md")], true);
         merge(&fx);
         assert!(ledger(&fx).contains("changed the main checkout"));
-        assert!(fx.main.join(KB_STOP_FILE).exists());
+        assert!(fx.driver.layout().kb_stop_file().exists());
         let line = fx.driver.kb_refresh(&fx.id, false).expect("skip");
         assert!(line.contains("kb refresh skipped"), "{line}");
         assert!(ledger(&fx).contains("kb refresh skipped"));
@@ -165,7 +165,7 @@ mod merge_hook {
     #[test]
     fn a_manual_run_clears_the_marker() {
         let fx = fixture(vec![reply("docs/a.md")], true);
-        let marker = fx.main.join(KB_STOP_FILE);
+        let marker = fx.driver.layout().kb_stop_file();
         std::fs::create_dir_all(marker.parent().expect("parent")).expect("mkdir");
         std::fs::write(&marker, "old\n").expect("marker");
         let line = fx.driver.kb_refresh(&fx.id, true).expect("manual");
@@ -190,7 +190,7 @@ mod merge_hook {
     #[test]
     fn a_manual_failed_run_keeps_the_marker() {
         let fx = fixture(vec![], true);
-        let marker = fx.main.join(KB_STOP_FILE);
+        let marker = fx.driver.layout().kb_stop_file();
         std::fs::create_dir_all(marker.parent().expect("parent")).expect("mkdir");
         std::fs::write(&marker, "old\n").expect("marker");
         let line = fx.driver.kb_refresh(&fx.id, true).expect("manual");
@@ -202,10 +202,10 @@ mod merge_hook {
     fn the_marker_holds_the_reason_and_an_up_to_date_manual_run_clears_it() {
         let fx = fixture(vec![tamper(), reply("No relevant changes")], true);
         merge(&fx);
-        let text = std::fs::read_to_string(fx.main.join(KB_STOP_FILE)).expect("marker");
+        let text = std::fs::read_to_string(fx.driver.layout().kb_stop_file()).expect("marker");
         assert!(text.contains("the main checkout changed during the KB refresh"), "{text}");
         let line = fx.driver.kb_refresh(&fx.id, true).expect("manual");
         assert_eq!(line, "kb up to date");
-        assert!(!fx.main.join(KB_STOP_FILE).exists());
+        assert!(!fx.driver.layout().kb_stop_file().exists());
     }
 }

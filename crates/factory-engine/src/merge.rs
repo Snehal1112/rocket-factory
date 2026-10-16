@@ -72,6 +72,7 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
 
 fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
     let repo = driver.repo();
+    let main = repo.base_branch().to_string();
     for _ in 0..=MAX_SYNCS {
         let job = driver.job(id)?;
         let head = job.head.clone().ok_or_else(|| EngineError::Msg("job has no recorded head".into()))?;
@@ -92,7 +93,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             return Ok(Step::Park(format!("branch tip {tip} differs from the reviewed head {head}")));
         }
         if let Preflight::Busy { reason } = repo.preflight_main()? {
-            return Ok(Step::Park(format!("main busy: {reason}")));
+            return Ok(Step::Park(format!("{main} busy: {reason}")));
         }
         if check.state == BaseState::MainMoved {
             match sync_stage(driver, id)? {
@@ -114,11 +115,11 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         return match repo.merge_no_ff(&job.branch, &head, &message)? {
             MergeOutcome::Merged { merge_sha } => Ok(Step::Merged(merge_sha)),
             MergeOutcome::Conflict { paths } => Ok(Step::Park(format!("merge conflict in {}", paths.join(", ")))),
-            MergeOutcome::UpToDate => Ok(Step::Park("nothing to merge, head already in main".into())),
+            MergeOutcome::UpToDate => Ok(Step::Park(format!("nothing to merge, head already in {main}"))),
             MergeOutcome::Refused { reason } => Ok(Step::Park(format!("merge refused: {reason}"))),
         };
     }
-    Ok(Step::Park("main moved again after the maximum number of syncs".into()))
+    Ok(Step::Park(format!("{main} moved again after the maximum number of syncs")))
 }
 
 fn finish_merge(driver: &Driver, id: &str, sha: &str) -> Result<(), EngineError> {

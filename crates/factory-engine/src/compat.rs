@@ -2,12 +2,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use factory_agent::{AgentRunner, EventSink};
-use factory_core::{Config, CoreError, Job, Ledger};
+use factory_core::{Config, CoreError, Job, Layout, Ledger};
 use factory_git::{GitError, Repo};
 
-use crate::{BoardStore, Engine, EngineError, ReviewOutcome, StageOutcome, StoreError};
+use crate::{BoardStore, Engine, DEFAULT_LOCK_WAIT, EngineError, ReviewOutcome, StageOutcome, StoreError};
 
 impl From<CoreError> for EngineError {
     fn from(e: CoreError) -> Self {
@@ -48,31 +49,36 @@ pub type RunnerFactory = Box<dyn Fn(&str) -> Arc<dyn AgentRunner>>;
 
 /// Owns the repo, config and board store, and builds a plan 04 `Engine` per job.
 pub struct Driver {
-    root: PathBuf,
+    layout: Layout,
     repo: Repo,
     config: Config,
     store: BoardStore,
     runner_for: RunnerFactory,
     lease_owner: Option<String>,
+    lock_wait: Duration,
 }
-
-/// The marker that stops automatic KB refreshes, relative to the repo root.
-pub const KB_STOP_FILE: &str = ".superpowers/factory/kb-stopped";
 
 /// How long a lease lasts without a renewal.
 pub const LEASE_TTL_SECS: f64 = 1800.0;
 
 impl Driver {
-    pub fn new(root: &Path, config: Config, runner_for: RunnerFactory) -> Result<Driver, EngineError> {
-        let repo = Repo::open(root)?;
-        Ok(Driver {
-            root: root.to_path_buf(),
-            repo,
-            config,
-            store: BoardStore::new(root),
-            runner_for,
-            lease_owner: None,
-        })
+    pub fn new(layout: Layout, config: Config, runner_for: RunnerFactory) -> Result<Driver, EngineError> {
+        let repo = Repo::open(&layout.repo)?
+            .with_base_branch(&config.base_branch)
+            .with_worktrees_dir(layout.worktrees_dir.clone());
+        let store = BoardStore::new(&layout.board_file(), DEFAULT_LOCK_WAIT);
+        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT })
+    }
+
+    /// Changes how long board writes wait for the lock.
+    pub fn with_lock_wait(mut self, wait: Duration) -> Driver {
+        self.store = BoardStore::new(&self.layout.board_file(), wait);
+        self.lock_wait = wait;
+        self
+    }
+
+    pub fn layout(&self) -> &Layout {
+        &self.layout
     }
 
     /// Makes `run_job` take and renew a lease for `owner` on every job it drives.
@@ -97,7 +103,7 @@ impl Driver {
     }
 
     pub fn root(&self) -> &Path {
-        &self.root
+        &self.layout.repo
     }
     pub fn config(&self) -> &Config {
         &self.config
@@ -110,7 +116,7 @@ impl Driver {
     }
     /// The path of `events.jsonl`, next to the board.
     pub fn events_path(&self) -> PathBuf {
-        self.root.join(".superpowers/factory/events.jsonl")
+        self.layout.events_file()
     }
 
     pub fn job(&self, id: &str) -> Result<Job, EngineError> {
@@ -118,7 +124,7 @@ impl Driver {
         Ok(board.find(id)?.clone())
     }
     pub fn job_dir(&self, job: &Job) -> PathBuf {
-        self.root.join(".superpowers/sdd").join(&job.dir)
+        self.layout.job_dir(&job.dir)
     }
     pub fn ledger(&self, job: &Job) -> Ledger {
         Ledger::new(self.job_dir(job).join("progress.md"))
@@ -143,7 +149,13 @@ impl Driver {
             runner.as_ref(),
             self.config.clone(),
             &events,
-        )?;
+        )?
+        .with_lock_wait(self.lock_wait);
+        let engine = if self.layout.commit_context_file.exists() {
+            engine.with_commit_context(self.layout.commit_context_file.clone())
+        } else {
+            engine
+        };
         f(&engine)
     }
 
@@ -154,9 +166,9 @@ impl Driver {
         let base = job.base.clone().unwrap_or_default();
         let tip = match kind {
             crate::MessageKind::Merge => job.head.clone().unwrap_or_default(),
-            crate::MessageKind::Sync => self.repo.tip("main")?,
+            crate::MessageKind::Sync => self.repo.tip(self.repo.base_branch())?,
         };
-        let cwd = job.worktree.as_ref().map(PathBuf::from).unwrap_or_else(|| self.root.clone());
+        let cwd = job.worktree.as_ref().map(PathBuf::from).unwrap_or_else(|| self.layout.repo.clone());
         self.with_engine(id, |e| {
             e.message_step(&cwd, &crate::MessageRequest {
                 kind,
@@ -178,7 +190,7 @@ impl Driver {
         }
         let job = self.job(id)?;
         let ledger = self.ledger(&job);
-        let marker = self.root.join(KB_STOP_FILE);
+        let marker = self.layout.kb_stop_file();
         let say = |text: String| -> Result<String, EngineError> {
             // The ledger takes one line, so the text is folded into a single line.
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -186,7 +198,7 @@ impl Driver {
             Ok(text)
         };
         if !manual && marker.exists() {
-            return say(format!("kb refresh skipped, stopped by an earlier change to the main checkout (see {KB_STOP_FILE})"));
+            return say(format!("kb refresh skipped, stopped by an earlier change to the main checkout (see {})", marker.display()));
         }
         let outcome = match self.with_engine(id, |e| e.kb_refresh_step(Some((&job.id, &job.slug)))) {
             Ok(o) => o,

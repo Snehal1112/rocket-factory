@@ -15,8 +15,6 @@ pub const COMMITTER_AGENT: &str = "factory-committer";
 pub const COMMITTER_MAX_TURNS: u32 = 40;
 /// The tools a committer run may use. It never edits files, so there is no Edit or Write.
 pub const COMMITTER_TOOLS: &str = "Bash,Read,Skill";
-/// Repo relative path of the prompt text, read from the main checkout like `config.toml`.
-pub const COMMIT_CONTEXT_FILE: &str = ".claude/factory/commit-context.md";
 /// The staged diff in the prompt is cut at this many bytes.
 const MAX_DIFF_BYTES: usize = 60_000;
 
@@ -225,7 +223,7 @@ impl Engine<'_> {
         let tip = self.repo.tip(&wt.branch).map_err(git_err)?;
         let above = self.repo.commits_above(req.floor, &tip).map_err(git_err)?;
         let before = above.clone();
-        let context = match std::fs::read_to_string(self.repo.root().join(COMMIT_CONTEXT_FILE)) {
+        let context = match self.commit_context_text() {
             Ok(text) => text,
             Err(e) => return self.fallback_commit(wt, req, &format!("commit context unreadable: {e}")),
         };

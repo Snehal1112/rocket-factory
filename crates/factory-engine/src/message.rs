@@ -43,10 +43,10 @@ pub struct MessageRequest<'a> {
 }
 
 /// The message the driver used before the committer existed. It is the fallback.
-pub fn fixed_message(kind: MessageKind, job_id: &str, slug: &str) -> String {
+pub fn fixed_message(kind: MessageKind, job_id: &str, slug: &str, base: &str) -> String {
     match kind {
         MessageKind::Merge => format!("chore(factory): merge job {job_id} {slug}"),
-        MessageKind::Sync => format!("chore(factory): sync main into job {job_id} {slug}"),
+        MessageKind::Sync => format!("chore(factory): sync {base} into job {job_id} {slug}"),
     }
 }
 
@@ -63,7 +63,7 @@ pub fn driver_footers(req: &MessageRequest<'_>) -> Vec<String> {
 }
 
 /// The prompt of one message run. `commits` is the list above `base`, oldest first.
-pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[CommitInfo]) -> String {
+pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[CommitInfo], base_branch: &str) -> String {
     let mut listed = String::new();
     if commits.is_empty() {
         listed.push_str("(none)\n");
@@ -76,12 +76,12 @@ pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[Commit
         }
     }
     let what = match req.kind {
-        MessageKind::Merge => "the merge commit that brings the job branch into main",
-        MessageKind::Sync => "the merge commit that brings main into the job branch",
+        MessageKind::Merge => format!("the merge commit that brings the job branch into {base_branch}"),
+        MessageKind::Sync => format!("the merge commit that brings {base_branch} into the job branch"),
     };
     let list_title = match req.kind {
-        MessageKind::Merge => "Commits on the job branch above the base, newest first",
-        MessageKind::Sync => "Commits that main gained since the base, newest first",
+        MessageKind::Merge => "Commits on the job branch above the base, newest first".to_string(),
+        MessageKind::Sync => format!("Commits that {base_branch} gained since the base, newest first"),
     };
     let footers = driver_footers(req).join(", ");
     format!(
@@ -132,8 +132,8 @@ impl Engine<'_> {
     /// on a message problem, only on a board or git error.
     pub fn message_step(&self, cwd: &Path, req: &MessageRequest<'_>) -> Result<String, EngineError> {
         let footers = driver_footers(req);
-        let fixed = append_footers(&fixed_message(req.kind, req.job_id, req.slug), &footers);
-        let context = match std::fs::read_to_string(self.repo.root().join(crate::COMMIT_CONTEXT_FILE)) {
+        let fixed = append_footers(&fixed_message(req.kind, req.job_id, req.slug, self.repo.base_branch()), &footers);
+        let context = match self.commit_context_text() {
             Ok(text) => text,
             Err(e) => {
                 self.ruling(&format!("{} message: commit context unreadable ({e}), fixed message used", req.kind.as_str()))?;
@@ -141,7 +141,7 @@ impl Engine<'_> {
             }
         };
         let commits = self.repo.commits_above(req.base, req.tip).map_err(crate::ports::git_err)?;
-        let prompt = message_prompt(&context, req, &commits);
+        let prompt = message_prompt(&context, req, &commits, self.repo.base_branch());
 
         let run = self.run_agent(message_spec(&self.job_id, &self.config, cwd, &prompt))?;
         let first = pick(&run.result_text);
@@ -180,37 +180,37 @@ mod tests {
 
     #[test]
     fn fixed_messages_match_the_old_driver_text() {
-        assert_eq!(fixed_message(MessageKind::Merge, "001", "hello"), "chore(factory): merge job 001 hello");
-        assert_eq!(fixed_message(MessageKind::Sync, "001", "hello"), "chore(factory): sync main into job 001 hello");
+        assert_eq!(fixed_message(MessageKind::Merge, "001", "hello", "main"), "chore(factory): merge job 001 hello");
+        assert_eq!(fixed_message(MessageKind::Sync, "001", "hello", "main"), "chore(factory): sync main into job 001 hello");
     }
 
     #[test]
     fn prompt_says_no_floor_and_no_commit_and_lists_the_commits() {
         let req = MessageRequest { kind: MessageKind::Merge, job_id: "001", slug: "hello", title: "hello feature", base: "abc1234", tip: "def5678", issues: &[] };
         let commits = vec![CommitInfo { sha: "aaaaaaa1111".into(), subject: "feat(x): one".into(), message: "feat(x): one".into(), files: vec!["a.txt".into()] }];
-        let prompt = message_prompt("CONTEXT", &req, &commits);
+        let prompt = message_prompt("CONTEXT", &req, &commits, "main");
         assert!(prompt.starts_with("CONTEXT"));
         for want in ["Kind: merge", "Job: 001 hello", "Title: hello feature", "aaaaaaa feat(x): one", "  a.txt", "no floor", "Do not run git commit", "---BEGIN MESSAGE---", "---END MESSAGE---", "Commits on the job branch above the base, newest first"] {
             assert!(prompt.contains(want), "missing {want}");
         }
         let sync = MessageRequest { kind: MessageKind::Sync, ..req };
-        assert!(message_prompt("c", &sync, &commits).contains("Commits that main gained since the base, newest first"));
+        assert!(message_prompt("c", &sync, &commits, "main").contains("Commits that main gained since the base, newest first"));
     }
 
     #[test]
     fn prompt_names_the_footer_lines_the_driver_adds() {
         let req = MessageRequest { kind: MessageKind::Merge, job_id: "001", slug: "hello", title: "t", base: "a", tip: "b", issues: &[20] };
-        let prompt = message_prompt("c", &req, &[]);
+        let prompt = message_prompt("c", &req, &[], "main");
         assert!(prompt.contains("Fixes: #20, Factory-Job: 001"), "{prompt}");
         assert!(!prompt.contains("the driver adds any footer itself"));
         let sync = MessageRequest { kind: MessageKind::Sync, issues: &[], ..req };
-        assert!(message_prompt("c", &sync, &[]).contains("footer lines after your message: Factory-Job: 001."));
+        assert!(message_prompt("c", &sync, &[], "main").contains("footer lines after your message: Factory-Job: 001."));
     }
 
     #[test]
     fn prompt_with_no_commits_says_none() {
         let req = MessageRequest { kind: MessageKind::Sync, job_id: "001", slug: "hello", title: "t", base: "a", tip: "b", issues: &[] };
-        assert!(message_prompt("c", &req, &[]).contains("(none)"));
+        assert!(message_prompt("c", &req, &[], "main").contains("(none)"));
     }
 
     #[test]

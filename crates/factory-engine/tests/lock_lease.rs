@@ -3,7 +3,7 @@ use std::time::Duration;
 
 fn store_with_job() -> (tempfile::TempDir, BoardStore) {
     let d = tempfile::tempdir().expect("tmp");
-    let store = BoardStore::new(d.path()).with_wait(Duration::from_millis(200));
+    let store = BoardStore::new(&d.path().join(".superpowers/factory/board.json"), Duration::from_millis(200));
     store
         .update(|b| {
             b.jobs.push(factory_core::Job::new("001", "d-001-x", "x", "2026-10-13", "f", 0.0));
@@ -31,7 +31,7 @@ fn concurrent_creators_never_collide_on_ids() {
         .map(|_| {
             let root = root.clone();
             std::thread::spawn(move || {
-                let store = BoardStore::new(&root).with_wait(Duration::from_secs(10));
+                let store = BoardStore::new(&root.join("board.json"), Duration::from_secs(10));
                 for _ in 0..5 {
                     store
                         .update(|b| {
@@ -47,7 +47,7 @@ fn concurrent_creators_never_collide_on_ids() {
     for h in handles {
         h.join().expect("join");
     }
-    let mut ids: Vec<String> = BoardStore::new(&root).load().expect("load").jobs.into_iter().map(|j| j.id).collect();
+    let mut ids: Vec<String> = BoardStore::new(&root.join("board.json"), Duration::from_secs(10)).load().expect("load").jobs.into_iter().map(|j| j.id).collect();
     assert_eq!(ids.len(), 20);
     ids.sort();
     ids.dedup();

@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
-use factory_core::{Config, CostsFile, ParkRecord, Stage};
+use factory_core::{Config, CostsFile, Layout, ParkRecord, Stage};
 use factory_engine::{
     acquire_lease, costs_path, create_job_with_spec, gather_costs, lease_is_live, merge_stage, now_secs, release_lease, run_job, run_series, Driver,
-    MergeResult, RunEnd, LEASE_TTL_SECS,
+    MergeResult, RunEnd, DEFAULT_LOCK_WAIT, LEASE_TTL_SECS,
 };
 
 use crate::cli::{Cli, Command};
@@ -32,21 +33,34 @@ pub enum CliError {
     Io(#[from] std::io::Error),
 }
 
-/// What a command needs: the checkout, an optional injected runner (tests) and the lease owner name.
+/// What a command needs: the folder layout, an optional injected runner (tests), the lease owner name
+/// and how long board writes wait for the lock.
 #[derive(Clone)]
 pub struct CliCtx {
-    pub root: PathBuf,
+    pub layout: Layout,
     pub runner: Option<Arc<dyn AgentRunner>>,
     pub owner: String,
+    pub lock_wait: Duration,
 }
 
 impl CliCtx {
-    /// A context with an injected runner, used by tests.
+    /// A context with an injected runner and the default layout inside `root`, used by tests.
     pub fn new(root: PathBuf, runner: Arc<dyn AgentRunner>, owner: &str) -> CliCtx {
-        CliCtx { root, runner: Some(runner), owner: owner.to_string() }
+        CliCtx::with_layout(Layout::in_repo(&root), runner, owner)
+    }
+
+    /// A context with an injected runner and an explicit layout.
+    pub fn with_layout(layout: Layout, runner: Arc<dyn AgentRunner>, owner: &str) -> CliCtx {
+        CliCtx { layout, runner: Some(runner), owner: owner.to_string(), lock_wait: DEFAULT_LOCK_WAIT }
+    }
+
+    /// The main checkout.
+    pub fn root(&self) -> &std::path::Path {
+        &self.layout.repo
     }
 
     /// A context for the real binary. The root is the main checkout of the current directory.
+    /// `FACTORY_LOCK_WAIT` (seconds) is read here, once.
     pub fn from_env(root: Option<PathBuf>) -> Result<CliCtx, CliError> {
         let root = match root {
             Some(r) => r,
@@ -56,7 +70,12 @@ impl CliCtx {
             }
         };
         let owner = format!("driver-{}-{}", std::process::id(), now_secs() as u64);
-        Ok(CliCtx { root, runner: None, owner })
+        let lock_wait = std::env::var("FACTORY_LOCK_WAIT")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(DEFAULT_LOCK_WAIT);
+        Ok(CliCtx { layout: Layout::in_repo(&root), runner: None, owner, lock_wait })
     }
 
     /// The runner of one job. A real runner gets an event sink stamped with that job's id,
@@ -65,17 +84,17 @@ impl CliCtx {
         match &self.runner {
             Some(r) => r.clone(),
             None => {
-                let sink = EventSink::new(self.root.join(".superpowers/factory/events.jsonl"), job_id);
+                let sink = EventSink::new(self.layout.events_file(), job_id);
                 Arc::new(ClaudeRunner::new("claude", Caps::default(), sink))
             }
         }
     }
 
     fn driver(&self) -> Result<Driver, CliError> {
-        let config = Config::load(&self.root.join(".claude/factory/config.toml"));
+        let config = Config::load(&self.layout.config_file);
         let me = self.clone();
-        let driver = Driver::new(&self.root, config, Box::new(move |id| me.runner_for(id)))?;
-        Ok(driver.with_lease_owner(&self.owner))
+        let driver = Driver::new(self.layout.clone(), config, Box::new(move |id| me.runner_for(id)))?;
+        Ok(driver.with_lock_wait(self.lock_wait).with_lease_owner(&self.owner))
     }
 }
 
@@ -141,7 +160,7 @@ fn costs(ctx: &CliCtx) -> Result<String, CliError> {
     let jobs = gather_costs(&d)?;
     let file = CostsFile::build(&jobs, d.config(), now_secs());
     let mut out = render_costs(&jobs, &file.groups);
-    if let Err(e) = file.write(&costs_path(d.root())) {
+    if let Err(e) = file.write(&costs_path(d.layout())) {
         out.push_str(&format!("\nwarning: could not write costs.json: {e}\n"));
     }
     Ok(out)
@@ -253,7 +272,7 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
             .worktree
             .as_deref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| d.root().join(".claude/worktrees").join(jr.dir_name())),
+            .unwrap_or_else(|| d.repo().worktrees_dir().join(jr.dir_name())),
         branch: job.branch.clone(),
         base: job.base.clone().unwrap_or_default(),
     };

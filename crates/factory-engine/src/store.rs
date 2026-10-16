@@ -25,23 +25,17 @@ pub struct BoardStore {
     wait: Duration,
 }
 
-/// Seconds a write waits for the board lock, unless `FACTORY_LOCK_WAIT` says otherwise.
-const DEFAULT_WAIT_SECS: u64 = 15;
+/// How long a write waits for the board lock when the caller does not say.
+pub const DEFAULT_LOCK_WAIT: Duration = Duration::from_secs(15);
 
 impl BoardStore {
-    pub fn new(root: &Path) -> BoardStore {
-        let secs = std::env::var("FACTORY_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_WAIT_SECS);
-        BoardStore {
-            board_path: root.join(".superpowers/factory/board.json"),
-            wait: Duration::from_secs(secs),
-        }
+    /// A store over a board file. The lock file sits next to it.
+    pub fn new(board_path: &Path, wait: Duration) -> BoardStore {
+        BoardStore { board_path: board_path.to_path_buf(), wait }
     }
 
-    /// A store over an explicit board file. The lock file sits next to it.
-    pub fn at(board_path: &Path) -> BoardStore {
-        let mut store = BoardStore::new(Path::new(""));
-        store.board_path = board_path.to_path_buf();
-        store
+    pub fn wait(&self) -> Duration {
+        self.wait
     }
 
     /// The same store with a different lock wait.
