@@ -9,7 +9,7 @@ Each plan has at most 3 tasks and runs after the one before it. Plans 1 to 3 are
 | Plan | File | What it delivers | Status |
 |---|---|---|---|
 | 1 | `plan-01-extract-into-rocket-factory.md` | `tools/factory` and `tools/factory-server` extracted into `rocket-factory` with history, tests green, spec and plans copied in | written |
-| 2 | to be written before it runs | Layout struct, injectable paths, lock wait parameter, `base_branch` setting | not written |
+| 2 | `plan-02-layout-and-base-branch.md` | `Layout` struct, injectable paths, lock wait parameter, `base_branch` setting | written |
 | 3 | to be written before it runs | Project registry commands, `project.toml`, three-layer settings, `rust` and `go` presets, agent files written into worktrees | not written |
 | 4 | to be written before it runs | Project lease (one job per project), `--project` CLI flag | not written |
 | 5 | to be written before it runs | `factoryd`: registry, spawning drivers, limits, recovery | not written |
@@ -28,4 +28,4 @@ They name functions, files and line numbers in the extracted code. Plan 1 moves 
 - Rust: no `unwrap()` in production paths, no shelling out to `git` (use `git2`).
 - Board JSON stays compatible with the dashboard: new fields are optional.
 - Rocket's `tools/factory` stays in Rocket until plan 8 has run a real job there.
-- Open risk: a series about accurate usage numbers (branch `factory-accurate-usage`) changes `tools/factory` in Rocket and is not merged. Anything merged into Rocket's `tools/factory` after plan 1 must be ported by hand.
+- Rocket's accurate-usage series merged before plan 1 was re-run (2026-10-17), so the extracted copy has it. Anything merged into Rocket's `tools/factory` after that must be ported the same way: re-run `git filter-repo` on a fresh clone and rebase the local commits.
