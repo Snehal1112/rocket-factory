@@ -606,3 +606,22 @@ fn the_resume_prompt_names_check_hints_only_when_set() {
         }
     }
 }
+
+#[test]
+fn the_task_builder_prompt_takes_read_first_and_rules_from_the_config() {
+    let mut fx = two_task_fixture();
+    fx.config.read_first = vec!["CLAUDE.md".into()];
+    fx.config.builder_rules = vec!["Keep it small.".into()];
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(prompt.contains(&format!("Read CLAUDE.md, and the plan at {}.", fx.plan_file.display())), "{prompt}");
+    assert!(prompt.contains("Rules: Keep it small."), "{prompt}");
+
+    let off = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    off.engine(&runner).build_stage().expect("build");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(!prompt.contains("Rules:") && !prompt.contains("CLAUDE.md"), "{prompt}");
+    assert!(prompt.contains(&format!("Read the plan at {}.", off.plan_file.display())), "{prompt}");
+}

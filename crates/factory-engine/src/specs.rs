@@ -109,16 +109,18 @@ impl Engine<'_> {
         };
         let prompt = format!(
             "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
-             The plan is at {plan}. Never edit the plan.\n{spec_line}\
+             {read} Never edit the plan.\n{spec_line}\
              Base commit: {base}. Current tip: {tip}.\n{done}\n\
              Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
              Write the failing test first, then the code, then run the checks the task names.\n\
+             {rules}\
              Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
              {kb}If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}.",
             branch = job.branch,
-            plan = self.plan_file.display(),
+            read = self.read_line(),
+            rules = self.rules_line(),
             kb = self.kb_line(),
             n = task.n,
             title = task.title,
