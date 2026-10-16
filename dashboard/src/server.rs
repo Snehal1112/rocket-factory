@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::events::{pump, Registry, Tailer, LOG_WINDOW_BYTES};
+use crate::park::{load_park, ParkReply};
 use crate::state::{build_state, load_board};
 
 const DASHBOARD_HTML: &str = include_str!("../static/dashboard.html");
@@ -100,6 +101,12 @@ pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, 
         return text(405, "method not allowed");
     }
     let path = url.split('?').next().unwrap_or("/");
+    if let Some(id) = path
+        .strip_prefix("/api/jobs/")
+        .and_then(|rest| rest.strip_suffix("/park"))
+    {
+        return api_park(app, id);
+    }
     match path {
         "/" | "/dashboard.html" => Reply {
             status: 200,
@@ -113,6 +120,27 @@ pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, 
         "/healthz" => text(200, "ok"),
         "/api/state" => api_state(app, now),
         _ => text(404, "not found"),
+    }
+}
+
+fn api_park(app: &App, id: &str) -> Reply {
+    let board_path = app
+        .root
+        .join(".superpowers")
+        .join("factory")
+        .join("board.json");
+    let (board, _) = load_board(&board_path);
+    match load_park(&app.root, &board, id) {
+        ParkReply::Found(view) => match serde_json::to_vec(&view) {
+            Ok(body) => Reply {
+                status: 200,
+                content_type: "application/json",
+                body,
+            },
+            Err(_) => text(500, "could not encode park details"),
+        },
+        ParkReply::NotFound => text(404, "no park details for this job"),
+        ParkReply::Broken => text(422, "park details are not readable"),
     }
 }
 
@@ -398,5 +426,61 @@ mod tests {
         for part in ["default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'"] {
             assert!(CSP.contains(part), "missing {part}");
         }
+    }
+
+    #[test]
+    fn the_park_route_answers_200_404_422_and_refuses_other_methods() -> TestResult {
+        let (dir, app) = app_with_board(Some(JOB))?;
+        let host = Some("127.0.0.1:1");
+        // No file yet.
+        assert_eq!(
+            route(&app, "GET", "/api/jobs/001/park", host, 1, 5.0).status,
+            404
+        );
+        let folder = dir.path().join(".superpowers/sdd/d");
+        std::fs::create_dir_all(&folder)?;
+        std::fs::write(
+            folder.join("park.json"),
+            r#"{"kind":"checks-failed","reason":"why","at":5,"round":1,"next":[],"parts":[]}"#,
+        )?;
+        let ok = route(&app, "GET", "/api/jobs/001/park?x=1", host, 1, 5.0);
+        assert_eq!(ok.status, 200);
+        assert_eq!(ok.content_type, "application/json");
+        let json: serde_json::Value = serde_json::from_slice(&ok.body)?;
+        assert_eq!(json["kind"], "checks-failed");
+        std::fs::write(folder.join("park.json"), "not json")?;
+        assert_eq!(
+            route(&app, "GET", "/api/jobs/001/park", host, 1, 5.0).status,
+            422
+        );
+        assert_eq!(
+            route(&app, "POST", "/api/jobs/001/park", host, 1, 5.0).status,
+            405
+        );
+        assert_eq!(
+            route(
+                &app,
+                "GET",
+                "/api/jobs/001/park",
+                Some("evil.example"),
+                1,
+                5.0
+            )
+            .status,
+            403
+        );
+        assert_eq!(
+            route(&app, "GET", "/api/jobs/zzz/park", host, 1, 5.0).status,
+            404
+        );
+        assert_eq!(
+            route(&app, "GET", "/api/jobs/001", host, 1, 5.0).status,
+            404
+        );
+        assert_eq!(
+            route(&app, "GET", "/api/jobs/001/park/extra", host, 1, 5.0).status,
+            404
+        );
+        Ok(())
     }
 }
