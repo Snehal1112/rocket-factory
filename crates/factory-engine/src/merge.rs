@@ -22,14 +22,21 @@ pub fn park(driver: &Driver, id: &str, reason: &str) -> Result<(), EngineError> 
     let now = now_secs();
     let at = now.max(0.0) as u64;
     let job = driver.store().update_job(id, |job| {
-        job.park_kind = Some(ParkKind::Other.as_str().to_string());
-        job.park_at = Some(at);
+        // A park written earlier, such as a failed check in the sync, keeps its kind and evidence.
+        let already = job.stage == Stage::NeedsHuman && job.park_kind.is_some();
+        if !already {
+            job.park_kind = Some(ParkKind::Other.as_str().to_string());
+            job.park_at = Some(at);
+        }
         job.set_stage(Stage::NeedsHuman, Some(reason), false, now)?;
-        Ok(job.clone())
+        Ok((job.clone(), already))
     })?;
-    // Writing the record is best effort, the park already happened.
-    let record = ParkRecord::new(ParkKind::Other, reason, id, job.round, at, Vec::new());
-    write_record(&driver.job_dir(&job), &record);
+    let (job, already) = job;
+    if !already {
+        // Writing the record is best effort, the park already happened.
+        let record = ParkRecord::new(ParkKind::Other, reason, id, job.round, at, Vec::new());
+        write_record(&driver.job_dir(&job), &record);
+    }
     // The ledger takes one line, so the reason is folded into a single line.
     let one_line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
     driver.ledger(&job).ruling(&format!("parked in needs-human: {one_line}"))?;

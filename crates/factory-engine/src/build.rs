@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::StopReason;
-use factory_core::{ParkKind, Stage, TaskState};
+use factory_core::{ParkKind, ParkPart, Stage, TaskState};
 use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest};
@@ -223,7 +223,11 @@ impl Engine<'_> {
         let cap = self.config.diff_cap_lines as usize;
         if info.changed_lines() > cap {
             let reason = format!("diff has {} changed lines, the cap is {cap}", info.changed_lines());
-            let parts = self.decision_parts(ParkKind::DiffTooLarge, &reason, job.round);
+            // The new head is not recorded yet, so the stat comes from the diff computed above.
+            let mut parts = vec![ParkPart::new("Why it stopped", "driver", &reason)];
+            if let Ok(stat) = std::fs::read_to_string(&info.stat) {
+                parts.push(ParkPart::new("Changed files", "diff stat", &stat));
+            }
             return self.park_with(ParkKind::DiffTooLarge, reason, parts);
         }
         let h = head.clone();

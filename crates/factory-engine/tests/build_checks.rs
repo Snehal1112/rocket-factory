@@ -110,6 +110,11 @@ fn diff_over_the_cap_parks_the_job() {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("cap"), "{r}"),
         other => panic!("unexpected {other:?}"),
     }
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::DiffTooLarge);
+    let titles: Vec<&str> = rec.parts.iter().map(|p| p.title.as_str()).collect();
+    assert_eq!(titles, vec!["Why it stopped", "Changed files"]);
+    assert!(rec.parts[1].text.contains("big.txt"), "{}", rec.parts[1].text);
 }
 
 #[test]
