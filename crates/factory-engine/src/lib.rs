@@ -22,6 +22,7 @@ mod store;
 mod sync;
 mod tasks;
 mod tick;
+mod tipfiles;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -50,6 +51,7 @@ pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
 pub use tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 pub use tick::tick_plan;
+pub use tipfiles::RepoTip;
 pub use checks_stage::checks_stage;
 pub use decide::{decide, risk_summary, DecideInput, Decision};
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
