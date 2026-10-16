@@ -408,7 +408,7 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
     Ok(format!("removed worktree and branch of job {id}"))
 }
 
-/// Takes no lease. Refuses unless the job is merged, and refuses while another driver holds a live one on the job.
+/// Takes the project lease. Refuses unless the job is merged, and refuses while another driver holds a live lease on the job.
 fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     ctx.runnable()?;
     let d = ctx.driver()?;

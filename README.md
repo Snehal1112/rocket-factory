@@ -76,7 +76,10 @@ busy project refuses it with the same message.
 
 The dead-owner check reads `/proc` on this machine only. A state folder shared through a container bind mount or a
 network filesystem can show a live owner as gone, so run the drivers of one project from one machine. On a system
-without `/proc` (macOS) the check never fires, and an adopted child (see below) looks alive until its lease ends.
+without `/proc` (macOS) a recorded pid always looks alive, so an adopted child (see below) is never settled and
+its project stays blocked until a person removes the child record under `run/children` in the factory home.
+A hung agent that keeps producing output keeps the project locked as long as its driver process lives. Only
+`stall_minutes` covers a silent one.
 
 ### factoryd
 
