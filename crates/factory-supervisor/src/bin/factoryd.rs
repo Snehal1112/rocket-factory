@@ -60,6 +60,9 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
     sup.set_max_parallel(cfg.max_parallel);
     if once {
         let report = sup.tick().map_err(|e| e.to_string())?;
+        for line in factory_supervisor::supervisor::new_lines(&mut std::collections::HashSet::new(), &report) {
+            eprintln!("{line}");
+        }
         println!("started {}, finished {}, rejected {}", report.started.len(), report.finished.len(), report.rejected.len());
         return Ok(());
     }

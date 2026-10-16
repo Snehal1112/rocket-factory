@@ -1,6 +1,6 @@
 //! The supervisor loop: finish what ended, then start what the scheduler allows.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::{Read, Seek};
 use std::path::Path;
 use std::time::Duration;
@@ -50,6 +50,8 @@ pub struct Supervisor {
     spawner: Box<dyn Spawner>,
     clock: Box<dyn Fn() -> u64>,
     max_parallel: u32,
+    /// Requests whose child runs but could not be recorded. They are never started again by this process.
+    started_ids: HashSet<String>,
 }
 
 /// True when the pid runs and is not a zombie.
@@ -120,6 +122,17 @@ pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
     }
 }
 
+/// The lines worth printing for a report: its errors and bad child records. A line that was printed
+/// before is not returned again, and `prev` forgets lines that are gone, so a returning problem shows again.
+pub fn new_lines(prev: &mut HashSet<String>, report: &TickReport) -> Vec<String> {
+    let mut now: Vec<String> = report.errors.iter().map(|e| format!("factoryd: {e}")).collect();
+    now.extend(report.bad_children.iter().map(|b| format!("factoryd: bad child record {b}")));
+    let fresh: Vec<String> = now.iter().filter(|l| !prev.contains(*l)).cloned().collect();
+    *prev = now.into_iter().collect();
+    let mut seen = HashSet::new();
+    fresh.into_iter().filter(|l| seen.insert(l.clone())).collect()
+}
+
 /// The shortest pause between two ticks.
 pub const MIN_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -130,7 +143,7 @@ pub fn clamp_interval(interval: Duration) -> Duration {
 
 impl Supervisor {
     pub fn new(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Supervisor {
-        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel }
+        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new() }
     }
 
     pub fn set_max_parallel(&mut self, n: u32) {
@@ -201,20 +214,24 @@ impl Supervisor {
         Ok(states)
     }
 
-    /// Ends a request that did not start: the queue entry goes first, so the request can never run later.
-    fn fail_start(&self, req: &Request, text: String, report: &mut TickReport) -> Result<(), SupervisorError> {
-        self.drop_queued(&req.id)?;
+    /// Ends a request without a usable child. The result goes first, because a request that has a
+    /// result is never started. The queue drop is best effort: the next tick repeats it.
+    fn end_request(&self, req: &Request, text: String, report: &mut TickReport) -> Result<(), SupervisorError> {
         let outcome = self.record_result(&req.id, &req.project, &req.job, Outcome::Failed { code: None, stderr_tail: text })?;
         report.finished.push((req.id.clone(), outcome));
+        if let Err(e) = self.drop_queued(&req.id) {
+            report.errors.push(format!("drop {}: {e}", req.id));
+        }
         Ok(())
     }
 
-    fn start(&self, req: &Request, report: &mut TickReport) -> Result<(), SupervisorError> {
+    fn start(&mut self, req: &Request, report: &mut TickReport) -> Result<(), SupervisorError> {
         let dir = self.home.logs_dir(&req.project);
         let out = dir.join(format!("{}.out", req.id));
         let err = dir.join(format!("{}.err", req.id));
         match self.spawner.spawn(&self.home, req, &out, &err) {
-            Err(e) => self.fail_start(req, e.to_string(), report),
+            // No process exists. When the result cannot be written the request stays queued and may retry.
+            Err(e) => self.end_request(req, e.to_string(), report),
             Ok(pid) => {
                 let rec = ChildRecord {
                     pid,
@@ -230,11 +247,30 @@ impl Supervisor {
                         report.started.push(req.id.clone());
                         Ok(())
                     }
-                    // The child runs and holds the project lease, but it cannot be tracked. Never start it twice.
-                    Err(e) => self.fail_start(req, format!("started pid {pid} but could not record it: {e}"), report),
+                    Err(e) => {
+                        // The child runs and holds the project lease, but it cannot be tracked. Whatever else
+                        // fails now, this process never starts the request again.
+                        self.started_ids.insert(req.id.clone());
+                        let text = format!("started pid {pid} but could not record it: {e}");
+                        report.errors.push(format!("request {} {text}", req.id));
+                        if let Err(e2) = self.end_request(req, text, report) {
+                            report.errors.push(format!("request {} has no result and is blocked in memory only: {e2}", req.id));
+                        }
+                        Ok(())
+                    }
                 }
             }
         }
+    }
+
+    fn reject(&self, req: &Request, reason: String, report: &mut TickReport) -> Result<(), SupervisorError> {
+        self.record_result(&req.id, &req.project, &req.job, Outcome::Rejected { reason: reason.clone() })?;
+        // A failure here is repaired by the next tick, which drops a request that has a result.
+        if let Err(e) = self.drop_queued(&req.id) {
+            report.errors.push(format!("drop {}: {e}", req.id));
+        }
+        report.rejected.push((req.id.clone(), reason));
+        Ok(())
     }
 
     /// The project a bad child record file belongs to, from its file name.
@@ -290,7 +326,9 @@ impl Supervisor {
         let mut queue: Vec<Request> = Vec::new();
         for item in queue::list(&self.home) {
             if let QueueItem::Ok(r) = item {
-                if self.result_path(&r.id).exists() {
+                if self.started_ids.contains(&r.id) {
+                    report.errors.push(format!("request {} was started but is untracked, not starting it again", r.id));
+                } else if self.result_path(&r.id).exists() {
                     if let Err(e) = self.drop_queued(&r.id) {
                         report.errors.push(format!("drop {}: {e}", r.id));
                     }
@@ -310,16 +348,19 @@ impl Supervisor {
         };
         // Step 3: act.
         for decision in decide(&input) {
-            match decision {
+            // One failing decision never stops the others.
+            let (id, outcome) = match decision {
                 Decision::Reject { request, reason } => {
-                    self.record_result(&request.id, &request.project, &request.job, Outcome::Rejected { reason: reason.clone() })?;
-                    // A failure here is repaired by the next tick, which drops a request that has a result.
-                    if let Err(e) = self.drop_queued(&request.id) {
-                        report.errors.push(format!("drop {}: {e}", request.id));
-                    }
-                    report.rejected.push((request.id, reason));
+                    let r = self.reject(&request, reason, &mut report);
+                    (request.id, r)
                 }
-                Decision::Start(request) => self.start(&request, &mut report)?,
+                Decision::Start(request) => {
+                    let r = self.start(&request, &mut report);
+                    (request.id, r)
+                }
+            };
+            if let Err(e) = outcome {
+                report.errors.push(format!("request {id}: {e}"));
             }
         }
         Ok(report)
@@ -328,9 +369,15 @@ impl Supervisor {
     /// Ticks until `stop` says so. It never touches a running child.
     pub fn run_loop(&mut self, interval: Duration, stop: &dyn Fn() -> bool) {
         let interval = clamp_interval(interval);
+        let mut printed: HashSet<String> = HashSet::new();
         loop {
-            if let Err(e) = self.tick() {
-                eprintln!("factoryd: tick failed: {e}");
+            match self.tick() {
+                Ok(report) => {
+                    for line in new_lines(&mut printed, &report) {
+                        eprintln!("{line}");
+                    }
+                }
+                Err(e) => eprintln!("factoryd: tick failed: {e}"),
             }
             if stop() {
                 return;
@@ -379,6 +426,20 @@ mod tests {
         assert_eq!(classify("needs-human\n", "", None), Outcome::NeedsHuman { reason: String::new() });
         assert!(matches!(classify("needs-humanfoo\n", "", None), Outcome::Lost { .. }));
         assert!(matches!(classify("mergedx\n", "", Some(Some(0))), Outcome::Failed { .. }));
+    }
+
+    #[test]
+    fn new_lines_print_once_per_change() {
+        let mut prev = HashSet::new();
+        let mut r = TickReport { errors: vec!["a".into()], bad_children: vec!["x.json: bad".into()], ..TickReport::default() };
+        assert_eq!(new_lines(&mut prev, &r).len(), 2);
+        assert!(new_lines(&mut prev, &r).is_empty());
+        r.errors.push("b".into());
+        assert_eq!(new_lines(&mut prev, &r), vec!["factoryd: b".to_string()]);
+        r.errors.clear();
+        assert!(new_lines(&mut prev, &r).is_empty());
+        r.errors.push("a".into());
+        assert_eq!(new_lines(&mut prev, &r), vec!["factoryd: a".to_string()]);
     }
 
     #[test]

@@ -1,4 +1,6 @@
 //! The supervisor against a shell script that stands in for `factory`.
+//!
+//! CI must not run these as root: the read-only folder tests skip themselves for root and then prove nothing.
 #![cfg(unix)]
 
 use std::cell::Cell;
@@ -395,6 +397,17 @@ impl Drop for ReadOnly {
     }
 }
 
+/// True, with a loud message, when the user ignores folder permissions (root).
+fn permissions_ignored(dir: &Path) -> bool {
+    let probe = dir.join(".probe");
+    if std::fs::write(&probe, "").is_ok() {
+        let _ = std::fs::remove_file(&probe);
+        eprintln!("SKIPPED (running as root): folder permissions are not enforced for this user");
+        return true;
+    }
+    false
+}
+
 #[test]
 fn a_failing_queue_removal_never_restarts_the_job() {
     let e = env();
@@ -404,11 +417,7 @@ fn a_failing_queue_removal_never_restarts_the_job() {
     assert_eq!(s.tick().expect("tick").started, vec![id.clone()]);
     {
         let _guard = ReadOnly::new(&e.home.queue_dir());
-        // A user that ignores permissions (root) cannot run this check.
-        let probe = e.home.queue_dir().join(".probe");
-        if std::fs::write(&probe, "").is_ok() {
-            let _ = std::fs::remove_file(&probe);
-            eprintln!("skipped: permissions are not enforced for this user");
+        if permissions_ignored(&e.home.queue_dir()) {
             return;
         }
         let end = Instant::now() + Duration::from_secs(3);
@@ -484,4 +493,90 @@ fn the_loop_never_ticks_faster_than_the_floor() {
         calls.get() >= 3
     });
     assert!(start.elapsed() >= factory_supervisor::supervisor::MIN_INTERVAL);
+}
+
+#[test]
+fn spawn_ok_with_children_and_queue_both_failing_starts_exactly_once() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue("p", "1", "merged");
+    std::fs::create_dir_all(e.home.children_dir()).expect("children dir");
+    let _children = ReadOnly::new(&e.home.children_dir());
+    let _queue = ReadOnly::new(&e.home.queue_dir());
+    if permissions_ignored(&e.home.queue_dir()) {
+        return;
+    }
+    let mut s = e.supervisor(2);
+    let first = s.tick().expect("tick");
+    assert!(first.started.is_empty());
+    assert!(!first.errors.is_empty());
+    // Many ticks, long enough for the child to end and the project to look free.
+    let end = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < end {
+        let r = s.tick().expect("tick");
+        assert!(r.started.is_empty());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(e.runs("p", "1"), 1);
+    assert!(matches!(e.result(&id), Outcome::Failed { .. }));
+}
+
+/// A spawner that always reports a started pid and counts its calls.
+struct CountingSpawner(std::rc::Rc<Cell<u32>>);
+
+impl factory_supervisor::Spawner for CountingSpawner {
+    fn spawn(&self, _home: &Home, _req: &Request, _out: &Path, _err: &Path) -> Result<u32, factory_supervisor::SpawnError> {
+        self.0.set(self.0.get() + 1);
+        Ok(std::process::id())
+    }
+}
+
+#[test]
+fn the_in_memory_guard_blocks_a_second_start_when_nothing_can_be_written() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue("p", "1", "merged");
+    // A file where a folder is needed makes the child record and the result both unwritable, even for root.
+    std::fs::create_dir_all(e.home.run_dir()).expect("run dir");
+    std::fs::write(e.home.children_dir(), "").expect("block children");
+    std::fs::write(e.home.results_dir(), "").expect("block results");
+    let count = std::rc::Rc::new(Cell::new(0));
+    let mut s = Supervisor::new(e.home.clone(), Box::new(CountingSpawner(count.clone())), Box::new(|| 1000));
+    let first = s.tick().expect("tick");
+    assert!(first.errors.iter().any(|m| m.contains("blocked in memory")), "{:?}", first.errors);
+    for _ in 0..5 {
+        let r = s.tick().expect("tick");
+        assert!(r.started.is_empty());
+        assert!(r.errors.iter().any(|m| m.contains(&id)));
+    }
+    assert_eq!(count.get(), 1);
+    assert_eq!(e.queue_ids(), vec![id]);
+}
+
+#[test]
+fn a_failing_decision_does_not_stop_the_others() {
+    let e = env();
+    e.add_project("a");
+    e.add_project("b");
+    // The first request fails to spawn, and its result cannot be written because the folder is read-only.
+    let a = e.enqueue("a", "1", "merged");
+    let b = e.enqueue("b", "1", "merged");
+    std::fs::create_dir_all(e.home.results_dir()).expect("results dir");
+    let _results = ReadOnly::new(&e.home.results_dir());
+    if permissions_ignored(&e.home.results_dir()) {
+        return;
+    }
+    struct FailFirst(PathBuf);
+    impl factory_supervisor::Spawner for FailFirst {
+        fn spawn(&self, home: &Home, req: &Request, out: &Path, err: &Path) -> Result<u32, factory_supervisor::SpawnError> {
+            if req.project == "a" {
+                return Err(factory_supervisor::SpawnError::Missing(PathBuf::from("a-fails")));
+            }
+            ProcessSpawner::new(self.0.clone()).spawn(home, req, out, err)
+        }
+    }
+    let mut s = Supervisor::new(e.home.clone(), Box::new(FailFirst(e.dir.join("factory"))), Box::new(|| 1000));
+    let r = s.tick().expect("tick");
+    assert!(r.errors.iter().any(|m| m.contains(&a)), "{:?}", r.errors);
+    assert_eq!(r.started, vec![b]);
 }
