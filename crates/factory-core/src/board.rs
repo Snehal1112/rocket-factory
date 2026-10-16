@@ -102,6 +102,12 @@ pub struct Job {
     /// How many plan tasks have a finished, committed builder run. New in plan 09.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub task_index: u32,
+    /// Why the job is parked, see `ParkKind::as_str`. New in the failure details series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park_kind: Option<String>,
+    /// Unix seconds the job parked. New in the failure details series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park_at: Option<u64>,
 }
 
 /// One stage change, with the unix time in seconds it happened.
@@ -171,6 +177,8 @@ impl Job {
             budget_weighted: None,
             issues: Vec::new(),
             task_index: 0,
+            park_kind: None,
+            park_at: None,
         }
     }
 
@@ -193,6 +201,10 @@ impl Job {
             self.stage_history.push(StageEntry { stage: to, at: now });
         }
         self.reason = if to == Stage::NeedsHuman { reason.map(str::to_string) } else { None };
+        if to != Stage::NeedsHuman {
+            self.park_kind = None;
+            self.park_at = None;
+        }
         Ok(())
     }
 
@@ -270,6 +282,29 @@ mod tests {
         assert!(text.contains(r#""issues":[20,21]"#), "{text}");
         let back: Job = serde_json::from_str(&text).expect("round trip");
         assert_eq!(back.issues, vec![20, 21]);
+    }
+
+    #[test]
+    fn park_fields_are_set_kept_and_cleared_by_set_stage() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        job.set_stage(Stage::Build, None, false, 2.0).expect("build");
+        job.park_kind = Some("checks-failed".to_string());
+        job.park_at = Some(5);
+        job.set_stage(Stage::NeedsHuman, Some("why"), false, 3.0).expect("park");
+        assert_eq!(job.park_kind.as_deref(), Some("checks-failed"));
+        assert_eq!(job.park_at, Some(5));
+        job.set_stage(Stage::Build, None, true, 4.0).expect("back");
+        assert_eq!(job.park_kind, None);
+        assert_eq!(job.park_at, None);
+    }
+
+    #[test]
+    fn an_old_board_without_park_fields_loads_and_new_fields_are_skipped_when_empty() {
+        let job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        let json = serde_json::to_string(&job).expect("json");
+        assert!(!json.contains("park_kind") && !json.contains("park_at"), "{json}");
+        let back: Job = serde_json::from_str(&json).expect("load");
+        assert_eq!(back.park_kind, None);
     }
 
     fn job() -> Job {
