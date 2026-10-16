@@ -191,6 +191,7 @@ mod tests {
             plan: title.map(|t| PlanView { title: Some(t.to_string()), goal: None, tasks: Vec::new() }),
             stage_durations: Vec::new(),
             token_view: None,
+            has_park: false,
         }
     }
 

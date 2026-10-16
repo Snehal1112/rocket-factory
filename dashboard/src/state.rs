@@ -21,6 +21,7 @@ pub struct JobView {
     pub plan: Option<PlanView>,
     pub stage_durations: Vec<StageDuration>,
     pub token_view: Option<TokenView>,
+    pub has_park: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,6 +140,11 @@ fn keep_unassigned(agent: &AgentState, now: f64) -> bool {
     }
 }
 
+/// True when the board names a park kind and the evidence file is in the job folder.
+fn has_park(root: &Path, job: &Job) -> bool {
+    job.park_kind.is_some() && crate::park::park_path(root, &job.dir).is_some_and(|p| p.is_file())
+}
+
 pub fn build_state(
     board: &Board,
     registry: &Registry,
@@ -161,6 +167,7 @@ pub fn build_state(
             ),
             stage_durations: stage_durations(job, now),
             token_view: token_view(job),
+            has_park: has_park(root, job),
         })
         .collect();
     let mut unassigned = Vec::new();
@@ -228,6 +235,8 @@ mod tests {
             tokens: None,
             budget_weighted: None,
             cancelled: None,
+            park_kind: None,
+            park_at: None,
         }
     }
 
@@ -236,6 +245,44 @@ mod tests {
         registry.ingest_line(&format!(
             r#"{{"ts":{ts},"hook_event_name":"SubagentStart","agent_id":"{id}","agent_type":"{kind}"{job}}}"#
         ));
+    }
+
+    #[test]
+    fn has_park_needs_both_the_board_kind_and_the_file() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
+        std::fs::create_dir_all(&dir)?;
+        let mut parked = job("001", "needs-human", 0.0);
+        parked.park_kind = Some("checks-failed".to_string());
+        let board = Board { jobs: vec![parked.clone()] };
+        // The kind is on the board but the file is missing.
+        let view = build_state(&board, &Registry::new(), 10.0, None, root.path());
+        assert!(!view.jobs[0].has_park);
+        std::fs::write(dir.join("park.json"), "{}")?;
+        let view = build_state(&board, &Registry::new(), 10.0, None, root.path());
+        assert!(view.jobs[0].has_park);
+        // The file exists but the board has no kind, as for an older job.
+        let mut old = parked;
+        old.park_kind = None;
+        let view = build_state(&Board { jobs: vec![old] }, &Registry::new(), 10.0, None, root.path());
+        assert!(!view.jobs[0].has_park);
+        Ok(())
+    }
+
+    #[test]
+    fn the_state_json_carries_has_park_but_no_evidence_text() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("park.json"), r#"{"parts":[{"text":"SECRET-EVIDENCE"}]}"#)?;
+        let mut parked = job("001", "needs-human", 0.0);
+        parked.park_kind = Some("other".to_string());
+        let view = build_state(&Board { jobs: vec![parked] }, &Registry::new(), 10.0, None, root.path());
+        let json = serde_json::to_string(&view)?;
+        assert!(json.contains("\"has_park\":true"), "{json}");
+        assert!(json.contains("\"park_kind\":\"other\""), "{json}");
+        assert!(!json.contains("SECRET-EVIDENCE"), "{json}");
+        Ok(())
     }
 
     #[test]

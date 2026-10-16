@@ -136,6 +136,12 @@ pub struct Job {
     /// True once the user cancelled the job. The driver writes it, a bad value is dropped.
     #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
     pub cancelled: Option<bool>,
+    /// Why the job is parked, written by the driver. A bad value is dropped.
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub park_kind: Option<String>,
+    /// Unix seconds the job parked. A bad value is dropped.
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub park_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
