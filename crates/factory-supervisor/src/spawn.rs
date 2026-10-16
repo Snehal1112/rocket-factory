@@ -123,8 +123,10 @@ impl Spawner for ProcessSpawner {
                 std::fs::create_dir_all(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))?;
             }
         }
-        let out_file = std::fs::File::create(out).map_err(|e| fail(format!("{}: {e}", out.display())))?;
-        let err_file = std::fs::File::create(err).map_err(|e| fail(format!("{}: {e}", err.display())))?;
+        // create_new never follows a symlink and never truncates: a file already there is an error.
+        let create = |p: &Path| std::fs::OpenOptions::new().write(true).create_new(true).open(p).map_err(|e| fail(format!("{}: {e}", p.display())));
+        let out_file = create(out)?;
+        let err_file = create(err)?;
         let mut cmd = Command::new(&self.bin);
         cmd.args(args_of(req))
             .env(HOME_ENV, &home.dir)
@@ -218,9 +220,22 @@ mod tests {
         let pid = sp.spawn(&home, &req(Action::Run, true), &out, &err).expect("spawn");
         wait_exit(&sp, pid);
         assert!(std::fs::read_to_string(&out).expect("out").contains("--project p run 7 --series\n"));
-        let pid = sp.spawn(&home, &req(Action::Approve, false), &out, &err).expect("spawn");
+        let (out2, err2) = (t.path().join("o2.txt"), t.path().join("e2.txt"));
+        let pid = sp.spawn(&home, &req(Action::Approve, false), &out2, &err2).expect("spawn");
         wait_exit(&sp, pid);
-        assert!(std::fs::read_to_string(&out).expect("out").contains("--project p approve 7\n"));
+        assert!(std::fs::read_to_string(&out2).expect("out").contains("--project p approve 7\n"));
+    }
+
+    #[test]
+    fn a_symlink_at_a_log_path_is_not_followed() {
+        let (t, home, sp) = setup();
+        let target = t.path().join("target.txt");
+        std::fs::write(&target, "keep").expect("target");
+        let out = t.path().join("o.txt");
+        std::os::unix::fs::symlink(&target, &out).expect("symlink");
+        let e = sp.spawn(&home, &req(Action::Run, false), &out, &t.path().join("e.txt")).expect_err("refused");
+        assert!(matches!(e, SpawnError::Start { .. }), "{e}");
+        assert_eq!(std::fs::read_to_string(&target).expect("target"), "keep");
     }
 
     #[test]

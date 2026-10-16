@@ -64,7 +64,7 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
         return Ok(());
     }
     let stop_home = home.clone();
-    sup.run_loop(Duration::from_millis(interval_ms), &move || Supervisor::stop_requested(&stop_home));
+    sup.run_loop(factory_supervisor::supervisor::clamp_interval(Duration::from_millis(interval_ms)), &move || Supervisor::stop_requested(&stop_home));
     Ok(())
 }
 

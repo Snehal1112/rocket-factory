@@ -27,6 +27,8 @@ pub enum SupervisorError {
     Core(#[from] CoreError),
     #[error(transparent)]
     Record(#[from] records::RecordError),
+    #[error(transparent)]
+    Queue(#[from] queue::QueueError),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -37,6 +39,10 @@ pub struct TickReport {
     pub finished: Vec<(String, Outcome)>,
     /// Request ids refused in this tick, with the reason.
     pub rejected: Vec<(String, String)>,
+    /// Child records that could not be read. Their project counts as busy.
+    pub bad_children: Vec<String>,
+    /// Problems that did not stop the tick, such as a queue entry that could not be removed.
+    pub errors: Vec<String>,
 }
 
 pub struct Supervisor {
@@ -57,16 +63,33 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// The last bytes of a file as text. A missing file is empty.
-fn read_tail(path: &Path) -> String {
-    let Ok(mut f) = std::fs::File::open(path) else { return String::new() };
-    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    if len > TAIL_BYTES && f.seek(std::io::SeekFrom::Start(len - TAIL_BYTES)).is_err() {
-        return String::new();
+/// Splits a tail read into the text and the note.
+fn split_read(r: Result<String, String>) -> (String, Option<String>) {
+    match r {
+        Ok(t) => (t, None),
+        Err(n) => (String::new(), Some(n)),
+    }
+}
+
+/// The last bytes of a file as text. Only a regular file is opened: a FIFO, a symlink or a device
+/// is never read, because opening it could block forever. The Err text says why nothing was read.
+fn read_tail(path: &Path) -> Result<String, String> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    if !meta.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let len = meta.len();
+    if len > TAIL_BYTES {
+        f.seek(std::io::SeekFrom::Start(len - TAIL_BYTES)).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let mut buf = Vec::new();
     let _ = f.take(TAIL_BYTES).read_to_end(&mut buf);
-    String::from_utf8_lossy(&buf).into_owned()
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn stderr_tail(text: &str) -> String {
@@ -76,19 +99,33 @@ fn stderr_tail(text: &str) -> String {
 }
 
 /// Decides how a finished child ended. `code` is Some only for a child this process started.
+/// The last non-empty stdout line is what `factory run` and `factory approve` print:
+/// `merged`, `merged <sha>`, `needs-human: <reason>` or `parked: <reason>`.
 pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
     let last = out.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-    if last == "merged" {
+    if last == "merged" || last.starts_with("merged ") {
         return Outcome::Merged;
     }
     if let Some(rest) = last.strip_prefix("needs-human") {
-        let reason = rest.trim_start_matches(':').trim().to_string();
-        return Outcome::NeedsHuman { reason };
+        if rest.is_empty() || rest.starts_with(':') || rest.starts_with(' ') {
+            return Outcome::NeedsHuman { reason: rest.trim().trim_start_matches(':').trim().to_string() };
+        }
+    }
+    if let Some(rest) = last.strip_prefix("parked:") {
+        return Outcome::NeedsHuman { reason: rest.trim().to_string() };
     }
     match code {
         Some(code) => Outcome::Failed { code, stderr_tail: stderr_tail(err) },
         None => Outcome::Lost { reason: "the process ended and left no result line".to_string() },
     }
+}
+
+/// The shortest pause between two ticks.
+pub const MIN_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Raises an interval below the minimum.
+pub fn clamp_interval(interval: Duration) -> Duration {
+    interval.max(MIN_INTERVAL)
 }
 
 impl Supervisor {
@@ -100,22 +137,41 @@ impl Supervisor {
         self.max_parallel = n;
     }
 
-    fn record_result(&self, req_id: &str, project: &str, job: &str, outcome: Outcome) -> Result<(), SupervisorError> {
+    fn result_path(&self, id: &str) -> std::path::PathBuf {
+        self.home.results_dir().join(format!("{id}.json"))
+    }
+
+    /// Writes the result unless one exists for the id. An existing result is never overwritten, and
+    /// the outcome that is stored is the one returned.
+    fn record_result(&self, req_id: &str, project: &str, job: &str, outcome: Outcome) -> Result<Outcome, SupervisorError> {
+        if self.result_path(req_id).exists() {
+            let stored = records::read_results(&self.home).into_iter().flatten().find(|r| r.request_id == req_id);
+            return Ok(stored.map(|r| r.outcome).unwrap_or(outcome));
+        }
         let rec = ResultRecord {
             request_id: req_id.to_string(),
             project: project.to_string(),
             job: job.to_string(),
-            outcome,
+            outcome: outcome.clone(),
             finished_ms: (self.clock)(),
         };
         records::write_result(&self.home, &rec)?;
-        Ok(())
+        Ok(outcome)
     }
 
-    /// Result first, then the queue entry, then the child record. A crash between them is repaired by the next tick.
+    /// Removes a queue entry. A missing entry is fine, any other error is returned.
+    fn drop_queued(&self, id: &str) -> Result<(), SupervisorError> {
+        match queue::remove(&self.home, id) {
+            Ok(()) | Err(queue::QueueError::Unknown(_)) => Ok(()),
+            Err(e) => Err(SupervisorError::Queue(e)),
+        }
+    }
+
+    /// Result first, then the queue entry, then the child record. An error before the last step keeps
+    /// the child record, so the project stays busy and the next tick retries.
     fn finish(&self, child: &ChildRecord, outcome: Outcome, report: &mut TickReport) -> Result<(), SupervisorError> {
-        self.record_result(&child.request_id, &child.project, &child.job, outcome.clone())?;
-        let _ = queue::remove(&self.home, &child.request_id);
+        let outcome = self.record_result(&child.request_id, &child.project, &child.job, outcome)?;
+        self.drop_queued(&child.request_id)?;
         records::remove_child(&self.home, &child.project)?;
         report.finished.push((child.request_id.clone(), outcome));
         Ok(())
@@ -145,19 +201,20 @@ impl Supervisor {
         Ok(states)
     }
 
+    /// Ends a request that did not start: the queue entry goes first, so the request can never run later.
+    fn fail_start(&self, req: &Request, text: String, report: &mut TickReport) -> Result<(), SupervisorError> {
+        self.drop_queued(&req.id)?;
+        let outcome = self.record_result(&req.id, &req.project, &req.job, Outcome::Failed { code: None, stderr_tail: text })?;
+        report.finished.push((req.id.clone(), outcome));
+        Ok(())
+    }
+
     fn start(&self, req: &Request, report: &mut TickReport) -> Result<(), SupervisorError> {
         let dir = self.home.logs_dir(&req.project);
         let out = dir.join(format!("{}.out", req.id));
         let err = dir.join(format!("{}.err", req.id));
-        let fail = |this: &Supervisor, text: String, report: &mut TickReport| -> Result<(), SupervisorError> {
-            let outcome = Outcome::Failed { code: None, stderr_tail: text };
-            this.record_result(&req.id, &req.project, &req.job, outcome.clone())?;
-            let _ = queue::remove(&this.home, &req.id);
-            report.finished.push((req.id.clone(), outcome));
-            Ok(())
-        };
         match self.spawner.spawn(&self.home, req, &out, &err) {
-            Err(e) => fail(self, e.to_string(), report),
+            Err(e) => self.fail_start(req, e.to_string(), report),
             Ok(pid) => {
                 let rec = ChildRecord {
                     pid,
@@ -174,17 +231,35 @@ impl Supervisor {
                         Ok(())
                     }
                     // The child runs and holds the project lease, but it cannot be tracked. Never start it twice.
-                    Err(e) => fail(self, format!("started pid {pid} but could not record it: {e}"), report),
+                    Err(e) => self.fail_start(req, format!("started pid {pid} but could not record it: {e}"), report),
                 }
             }
         }
     }
 
+    /// The project a bad child record file belongs to, from its file name.
+    fn bad_child_project(reason: &str) -> Option<String> {
+        let name = reason.split(": ").next()?.strip_suffix(".json")?;
+        project::validate_name(name).ok()?;
+        Some(name.to_string())
+    }
+
     pub fn tick(&mut self) -> Result<TickReport, SupervisorError> {
         let mut report = TickReport::default();
-        // Step 1: finish what ended.
+        // Step 1: finish what ended. A child that cannot be finished yet keeps its project busy.
         let mut running: Vec<ChildRecord> = Vec::new();
-        for child in records::read_children(&self.home).into_iter().flatten() {
+        let mut blocked: Vec<String> = Vec::new();
+        for child in records::read_children(&self.home) {
+            let child = match child {
+                Ok(c) => c,
+                Err(reason) => {
+                    if let Some(p) = Self::bad_child_project(&reason) {
+                        blocked.push(p);
+                    }
+                    report.bad_children.push(reason);
+                    continue;
+                }
+            };
             let (ended, code) = match self.spawner.poll(child.pid) {
                 ChildPoll::Running => (false, None),
                 ChildPoll::Exited(code) => (true, Some(code)),
@@ -194,22 +269,43 @@ impl Supervisor {
                 running.push(child);
                 continue;
             }
-            let outcome = classify(&read_tail(&child.out), &read_tail(&child.err), code);
-            self.finish(&child, outcome, &mut report)?;
+            let (out, out_note) = split_read(read_tail(&child.out));
+            let (err, err_note) = split_read(read_tail(&child.err));
+            let mut outcome = classify(&out, &err, code);
+            let notes: Vec<String> = [out_note, err_note].into_iter().flatten().collect();
+            if !notes.is_empty() {
+                let note = format!("(log not read: {})", notes.join("; "));
+                match &mut outcome {
+                    Outcome::Failed { stderr_tail, .. } => stderr_tail.push_str(&format!("\n{note}")),
+                    Outcome::Lost { reason } => reason.push_str(&format!(" {note}")),
+                    _ => {}
+                }
+            }
+            if let Err(e) = self.finish(&child, outcome, &mut report) {
+                report.errors.push(format!("finish {}: {e}", child.request_id));
+                running.push(child);
+            }
         }
-        // Step 2: the snapshot.
+        // Step 2: the snapshot. A request that already has a result is dropped and never started.
+        let mut queue: Vec<Request> = Vec::new();
+        for item in queue::list(&self.home) {
+            if let QueueItem::Ok(r) = item {
+                if self.result_path(&r.id).exists() {
+                    if let Err(e) = self.drop_queued(&r.id) {
+                        report.errors.push(format!("drop {}: {e}", r.id));
+                    }
+                } else {
+                    queue.push(r);
+                }
+            }
+        }
         let child_pids: BTreeSet<u32> = running.iter().map(|c| c.pid).collect();
-        let queue: Vec<Request> = queue::list(&self.home)
-            .into_iter()
-            .filter_map(|item| match item {
-                QueueItem::Ok(r) => Some(r),
-                QueueItem::Bad { .. } => None,
-            })
-            .collect();
+        let mut running_projects: Vec<String> = running.iter().map(|c| c.project.clone()).collect();
+        running_projects.extend(blocked);
         let input = SchedulerInput {
             max_parallel: self.max_parallel,
             queue,
-            running_projects: running.iter().map(|c| c.project.clone()).collect(),
+            running_projects,
             project_states: self.project_states(&child_pids)?,
         };
         // Step 3: act.
@@ -217,7 +313,10 @@ impl Supervisor {
             match decision {
                 Decision::Reject { request, reason } => {
                     self.record_result(&request.id, &request.project, &request.job, Outcome::Rejected { reason: reason.clone() })?;
-                    let _ = queue::remove(&self.home, &request.id);
+                    // A failure here is repaired by the next tick, which drops a request that has a result.
+                    if let Err(e) = self.drop_queued(&request.id) {
+                        report.errors.push(format!("drop {}: {e}", request.id));
+                    }
                     report.rejected.push((request.id, reason));
                 }
                 Decision::Start(request) => self.start(&request, &mut report)?,
@@ -228,6 +327,7 @@ impl Supervisor {
 
     /// Ticks until `stop` says so. It never touches a running child.
     pub fn run_loop(&mut self, interval: Duration, stop: &dyn Fn() -> bool) {
+        let interval = clamp_interval(interval);
         loop {
             if let Err(e) = self.tick() {
                 eprintln!("factoryd: tick failed: {e}");
@@ -270,6 +370,21 @@ mod tests {
             Outcome::Failed { code: Some(1), stderr_tail: "e1\ne2".into() }
         );
         assert!(matches!(classify("", "", None), Outcome::Lost { .. }));
+    }
+
+    #[test]
+    fn classifies_the_approve_shapes() {
+        assert_eq!(classify("merged abc1234\n", "", Some(Some(0))), Outcome::Merged);
+        assert_eq!(classify("parked: x\n", "", Some(Some(0))), Outcome::NeedsHuman { reason: "x".into() });
+        assert_eq!(classify("needs-human\n", "", None), Outcome::NeedsHuman { reason: String::new() });
+        assert!(matches!(classify("needs-humanfoo\n", "", None), Outcome::Lost { .. }));
+        assert!(matches!(classify("mergedx\n", "", Some(Some(0))), Outcome::Failed { .. }));
+    }
+
+    #[test]
+    fn the_interval_has_a_floor() {
+        assert_eq!(clamp_interval(Duration::ZERO), MIN_INTERVAL);
+        assert_eq!(clamp_interval(Duration::from_secs(3)), Duration::from_secs(3));
     }
 
     #[test]

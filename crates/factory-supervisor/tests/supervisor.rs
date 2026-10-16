@@ -4,6 +4,7 @@
 use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use factory_core::{project, Home};
@@ -17,10 +18,10 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 // The script reads a behavior file per project and job. A `hold` behavior runs until its gate file is deleted.
 const SCRIPT: &str = r#"#!/bin/sh
 d=$(dirname "$0")
+echo x >> "$d/runs-$2-$4"
 b=$(cat "$d/behavior-$2-$4")
 case "$b" in
-  merged) echo merged ;;
-  needs-human*) echo "$b" ;;
+  merged*|needs-human*|parked*) echo "$b" ;;
   fail) echo "boom" >&2; exit 1 ;;
   hold)
     while [ -f "$d/gate-$2-$4" ]; do sleep 0.02; done
@@ -61,13 +62,21 @@ impl Env {
     }
 
     fn enqueue(&self, project: &str, job: &str, behavior: &str) -> String {
+        self.enqueue_as(project, job, behavior, Action::Run)
+    }
+
+    fn runs(&self, project: &str, job: &str) -> usize {
+        std::fs::read_to_string(self.dir.join(format!("runs-{project}-{job}"))).map(|t| t.lines().count()).unwrap_or(0)
+    }
+
+    fn enqueue_as(&self, project: &str, job: &str, behavior: &str, action: Action) -> String {
         std::fs::write(self.dir.join(format!("behavior-{project}-{job}")), behavior).expect("behavior");
         if behavior == "hold" {
             self.hold(project, job);
         }
         let ts = self.ts.get();
         self.ts.set(ts + 1);
-        let req = Request::new(project, Action::Run, job, false, ts).expect("request");
+        let req = Request::new(project, action, job, false, ts).expect("request");
         queue::enqueue(&self.home, &req).expect("enqueue");
         req.id
     }
@@ -306,4 +315,173 @@ fn a_spawn_failure_is_a_failed_result_and_the_loop_continues() {
         }
     }
     assert!(e.queue_ids().is_empty());
+}
+
+#[test]
+fn approve_output_shapes_are_recognised() {
+    let e = env();
+    e.add_project("a");
+    e.add_project("b");
+    let a = e.enqueue_as("a", "1", "merged abc1234", Action::Approve);
+    let b = e.enqueue_as("b", "1", "parked: x", Action::Approve);
+    let mut s = e.supervisor(2);
+    wait_queue_empty(&mut s, &e);
+    assert_eq!(e.result(&a), Outcome::Merged);
+    assert_eq!(e.result(&b), Outcome::NeedsHuman { reason: "x".into() });
+}
+
+fn wait_queue_empty(s: &mut Supervisor, e: &Env) {
+    let end = Instant::now() + TIMEOUT;
+    while !e.queue_ids().is_empty() {
+        s.tick().expect("tick");
+        assert!(Instant::now() < end, "requests did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_request_with_a_result_is_dropped_and_not_started() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue("p", "1", "merged");
+    let rec = records::ResultRecord { request_id: id.clone(), project: "p".into(), job: "1".into(), outcome: Outcome::Merged, finished_ms: 5 };
+    records::write_result(&e.home, &rec).expect("result");
+    let mut s = e.supervisor(2);
+    let r = s.tick().expect("tick");
+    assert!(r.started.is_empty());
+    assert!(e.queue_ids().is_empty());
+    assert_eq!(e.runs("p", "1"), 0);
+}
+
+#[test]
+fn a_corrupt_child_record_blocks_only_its_project() {
+    let e = env();
+    e.add_project("a");
+    e.add_project("b");
+    std::fs::create_dir_all(e.home.children_dir()).expect("children dir");
+    std::fs::write(e.home.children_dir().join("a.json"), "{broken").expect("corrupt");
+    let a = e.enqueue("a", "1", "merged");
+    let b = e.enqueue("b", "1", "merged");
+    let mut s = e.supervisor(4);
+    for _ in 0..3 {
+        let r = s.tick().expect("tick");
+        assert_eq!(r.bad_children.len(), 1);
+        assert!(!r.started.contains(&a));
+    }
+    assert!(e.queue_ids().contains(&a));
+    assert_eq!(e.runs("a", "1"), 0);
+    let end = Instant::now() + TIMEOUT;
+    while !e.home.results_dir().join(format!("{b}.json")).exists() {
+        s.tick().expect("tick");
+        assert!(Instant::now() < end, "b did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(e.result(&b), Outcome::Merged);
+}
+
+/// Makes a folder read-only and restores it on drop, also when a test panics.
+struct ReadOnly(PathBuf);
+
+impl ReadOnly {
+    fn new(p: &Path) -> ReadOnly {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+        ReadOnly(p.to_path_buf())
+    }
+}
+
+impl Drop for ReadOnly {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[test]
+fn a_failing_queue_removal_never_restarts_the_job() {
+    let e = env();
+    e.add_project("p");
+    let id = e.enqueue("p", "1", "merged");
+    let mut s = e.supervisor(2);
+    assert_eq!(s.tick().expect("tick").started, vec![id.clone()]);
+    {
+        let _guard = ReadOnly::new(&e.home.queue_dir());
+        // A user that ignores permissions (root) cannot run this check.
+        let probe = e.home.queue_dir().join(".probe");
+        if std::fs::write(&probe, "").is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            eprintln!("skipped: permissions are not enforced for this user");
+            return;
+        }
+        let end = Instant::now() + Duration::from_secs(3);
+        let mut saw_error = false;
+        while Instant::now() < end {
+            let r = s.tick().expect("tick");
+            saw_error |= !r.errors.is_empty();
+            assert!(r.started.is_empty());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(saw_error, "the removal failure was never reported");
+        assert_eq!(e.runs("p", "1"), 1);
+    }
+    // Once the folder is writable again, the job ends and the queue entry goes.
+    tick_until_finished(&mut s, &id);
+    assert_eq!(e.runs("p", "1"), 1);
+    assert!(e.queue_ids().is_empty());
+    assert_eq!(e.result(&id), Outcome::Merged);
+}
+
+/// Runs one tick of a fresh supervisor on a thread and fails when it does not return in time.
+fn tick_within(home: Home, bin: PathBuf, secs: u64) -> TickReport {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut s = Supervisor::new(home, Box::new(ProcessSpawner::new(bin)), Box::new(|| 1000));
+        let _ = tx.send(s.tick().expect("tick"));
+    });
+    rx.recv_timeout(Duration::from_secs(secs)).expect("tick did not return in time")
+}
+
+#[test]
+fn a_fifo_or_symlink_as_a_log_path_never_blocks() {
+    for kind in ["fifo", "symlink"] {
+        let e = env();
+        e.add_project("p");
+        let id = e.enqueue("p", "1", "merged");
+        let mut s = e.supervisor(2);
+        s.tick().expect("tick");
+        let child = e.children().remove(0);
+        // Wait for the script to end, then replace its out file.
+        let end = Instant::now() + TIMEOUT;
+        while pid_alive(child.pid) && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::fs::remove_file(&child.out).expect("remove out");
+        if kind == "fifo" {
+            let made = std::process::Command::new("mkfifo").arg(&child.out).status();
+            if !made.map(|st| st.success()).unwrap_or(false) {
+                eprintln!("skipped: mkfifo is not available");
+                continue;
+            }
+        } else {
+            std::os::unix::fs::symlink(e.dir.join("behavior-p-1"), &child.out).expect("symlink");
+        }
+        let r = tick_within(e.home.clone(), e.dir.join("factory"), 10);
+        assert_eq!(r.finished.len(), 1, "{kind}");
+        match e.result(&id) {
+            Outcome::Failed { stderr_tail, .. } => assert!(stderr_tail.contains("log not read"), "{kind}: {stderr_tail}"),
+            Outcome::Lost { reason } => assert!(reason.contains("log not read"), "{kind}: {reason}"),
+            other => panic!("{kind}: unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_loop_never_ticks_faster_than_the_floor() {
+    let e = env();
+    let mut s = e.supervisor(2);
+    let calls = Cell::new(0u32);
+    let start = Instant::now();
+    s.run_loop(Duration::ZERO, &|| {
+        calls.set(calls.get() + 1);
+        calls.get() >= 3
+    });
+    assert!(start.elapsed() >= factory_supervisor::supervisor::MIN_INTERVAL);
 }
