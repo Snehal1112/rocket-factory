@@ -171,9 +171,24 @@ fn reviewer_prompt_names_the_spec_and_the_earlier_findings_when_they_exist() {
     // With a spec and a round 1 review on disk, a round 2 reviewer is pointed at both.
     std::fs::write(fx.job_dir.join("spec.md"), "# Spec\n").expect("spec");
     std::fs::write(fx.job_dir.join("review-code-r1.md"), "1. [blocker] x\n").expect("earlier review");
-    let spec = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 2);
+    let spec = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 2, &[]);
     assert!(spec.prompt.contains(&format!("The spec is at {}", fx.job_dir.join("spec.md").display())), "{}", spec.prompt);
     assert!(spec.prompt.contains("review-code-r1.md"), "{}", spec.prompt);
+}
+
+#[test]
+fn reviewer_rules_come_from_the_config_and_are_absent_by_default() {
+    let mut fx = committing_fixture();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let rr = reviewer("ok\nVERDICT: APPROVE");
+    let none = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 1, &fx.config.reviewer_rules);
+    for banned in ["unwrap", "shadcn", ".claude/rules", "DDD"] {
+        assert!(!none.prompt.contains(banned), "{banned} leaked: {}", none.prompt);
+    }
+    fx.config.reviewer_rules = vec!["Check the error handling.".into(), "Check the naming.".into()];
+    fx.engine(&rr).review_stage().expect("review");
+    let prompt = rr.last_spec().expect("spec").prompt;
+    assert!(prompt.contains("Check the error handling. Check the naming."), "{prompt}");
 }
 
 #[test]

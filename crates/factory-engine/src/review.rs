@@ -27,7 +27,7 @@ impl Engine<'_> {
         let paths = self.repo.changed_paths(&base, &head).map_err(git_err)?;
 
         let cwd = self.worktree()?;
-        let spec = self.reviewer_spec(&cwd, &round_diff.diff, &round_diff.names, job.round);
+        let spec = self.reviewer_spec(&cwd, &round_diff.diff, &round_diff.names, job.round, &self.config.reviewer_rules);
         self.update(|j| {
             j.set_review("code", ReviewState::Running);
             Ok(())

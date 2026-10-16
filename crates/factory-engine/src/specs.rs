@@ -34,6 +34,25 @@ impl Engine<'_> {
         self.config.kb_dir().into_iter().collect()
     }
 
+    /// The "Read ..." phrase for the first builder prompt. It names the `read_first` entries and the plan.
+    fn read_line(&self) -> String {
+        let plan = self.plan_file.display();
+        if self.config.read_first.is_empty() {
+            format!("Read the plan at {plan}.")
+        } else {
+            format!("Read {}, and the plan at {plan}.", self.config.read_first.join(", "))
+        }
+    }
+
+    /// The "Rules:" sentence of the builder prompt. Empty when no rule is set.
+    fn rules_line(&self) -> String {
+        if self.config.builder_rules.is_empty() {
+            String::new()
+        } else {
+            format!("Rules: {}\n", self.config.builder_rules.join(" "))
+        }
+    }
+
     /// The prompt line that names the job's spec, or nothing when the job has none.
     fn spec_line(&self) -> String {
         let spec_file = self.job_dir.join("spec.md");
@@ -53,17 +72,16 @@ impl Engine<'_> {
     pub(crate) fn builder_first_spec(&self, job: &JobView, cwd: &Path) -> AgentSpec {
         let spec_line = self.spec_line();
         let prompt = format!(
-            "You are the builder in Rocket's software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
-             Read CLAUDE.md, the rule files for the areas you touch under .claude/rules/, and the plan at {plan}. Never edit the plan.\n{spec_line}\
+            "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
+             {read} Never edit the plan.\n{spec_line}\
              Do the plan task by task: write the failing test first, then the code, then run the checks.\n\
-             Rules: run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR; \
-             run `yarn install --frozen-lockfile` once before the first yarn check; no unwrap in production Rust; no git CLI in Rust code; \
-             shadcn/ui, lucide-react, SingleLineEditor and Monaco rules apply.\n\
+             {rules}\
              Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              {kb}If you are blocked, say why in your final reply and stop.",
             branch = job.branch,
-            plan = self.plan_file.display(),
+            read = self.read_line(),
+            rules = self.rules_line(),
             kb = self.kb_line(),
         );
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
@@ -90,7 +108,7 @@ impl Engine<'_> {
             format!("Commits of earlier tasks, oldest first:\n{}", earlier.join("\n"))
         };
         let prompt = format!(
-            "You are the builder in Rocket's software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
+            "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
              The plan is at {plan}. Never edit the plan.\n{spec_line}\
              Base commit: {base}. Current tip: {tip}.\n{done}\n\
              Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
@@ -114,14 +132,21 @@ impl Engine<'_> {
 
     /// The resumed builder for a fix round.
     pub(crate) fn builder_resume_spec(&self, job: &JobView, cwd: &Path, findings: &Path, session: &str) -> AgentSpec {
+        let hints = if self.config.check_hints.is_empty() {
+            String::new()
+        } else {
+            let list: Vec<String> = self.config.check_hints.iter().map(|h| format!("`{h}`")).collect();
+            format!(" (for example {})", list.join(", "))
+        };
         let prompt = format!(
             "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
              Do not run `git add` or `git commit`: leave the fixes in the worktree and the driver commits them. \
              Do not amend or rewrite earlier commits. \
-             Run the relevant checks (`cargo check -j4`, targeted `cargo test -j4 -p <crate> <test_name>`, yarn checks) before you finish. \
+             Run the relevant checks{hints} before you finish. \
              Never push, never merge.",
             findings = findings.display(),
             branch = job.branch,
+            hints = hints,
             kb = self.kb_line(),
         );
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
@@ -135,7 +160,7 @@ impl Engine<'_> {
 
 impl Engine<'_> {
     /// The combined reviewer. It is read-only and pages the diff to stay cheap. The agent file carries the checks.
-    pub fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32) -> AgentSpec {
+    pub fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32, rules: &[String]) -> AgentSpec {
         let spec_line = self.spec_line();
         // A later round also gets the findings of the round before, so the reviewer can check they were fixed.
         let earlier = self.job_dir.join(format!("review-code-r{}.md", round.saturating_sub(1)));
@@ -144,20 +169,20 @@ impl Engine<'_> {
         } else {
             String::new()
         };
+        let rules_line = if rules.is_empty() { String::new() } else { format!("{}\n", rules.join(" ")) };
         let prompt = format!(
             "Review this round's diff for the job.\n\
              Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan}, and the worktree at {cwd}. \
              Round {round}.\n{spec_line}{earlier_line}\
              Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
-             Read .claude/rules/rust-ddd-boundaries.md, .claude/rules/tauri-ipc-boundaries.md and .claude/rules/frontend-component-guardrails.md only for the areas the diff touches.\n\
-             Check: the diff does what the plan asks and nothing else; correctness and edge cases; no unwrap in production Rust; \
-             DDD placement; camelCase serde renames on IPC DTOs only; tests that would fail without the change; \
-             hard rules (shadcn/ui, lucide-react, SingleLineEditor, Monaco, narrow Zustand selectors, no git CLI in Rust); no debug leftovers.\n\
+             {rules_line}\
+             Check: the diff does what the plan asks and nothing else; correctness and edge cases; tests that would fail without the change; no debug leftovers.\n\
              {kb}Reply in at most 60 lines. List findings as a numbered list with file:line, severity [blocker] or [minor], and a concrete fix. \
              Any blocker means CHANGES. Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
             diff = diff.display(),
             names = names.display(),
             plan = self.plan_file.display(),
+            rules_line = rules_line,
             cwd = cwd.display(),
             kb = self.kb_line(),
         );

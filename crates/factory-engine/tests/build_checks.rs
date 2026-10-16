@@ -558,3 +558,51 @@ fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
     assert!(!spec.prompt.contains("Knowledge base"));
     assert!(spec.add_dirs.is_empty());
 }
+
+#[test]
+fn the_first_builder_prompt_has_no_project_wording_by_default() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(prompt.contains(&format!("Read the plan at {}.", fx.plan_file.display())), "{prompt}");
+    for banned in ["cargo", "yarn", "Rocket", "Rules:", "CLAUDE.md"] {
+        assert!(!prompt.contains(banned), "{banned} leaked: {prompt}");
+    }
+}
+
+#[test]
+fn the_first_builder_prompt_takes_read_first_and_rules_from_the_config() {
+    let mut fx = committing_fixture();
+    fx.config.read_first = vec!["CLAUDE.md".into(), "docs/rules".into()];
+    fx.config.builder_rules = vec!["Run cargo check -j4.".into(), "Keep it small.".into()];
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(prompt.contains(&format!("Read CLAUDE.md, docs/rules, and the plan at {}.", fx.plan_file.display())), "{prompt}");
+    assert!(prompt.contains("Rules: Run cargo check -j4. Keep it small."), "{prompt}");
+}
+
+#[test]
+fn the_resume_prompt_names_check_hints_only_when_set() {
+    for hints in [vec![], vec!["make test".to_string(), "make lint".to_string()]] {
+        let mut fx = committing_fixture();
+        fx.config.check_hints = hints.clone();
+        let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+        let e = fx.engine(&runner);
+        e.build_stage().expect("first");
+        std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
+        let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+        let job = board.find_mut("001").expect("job");
+        job.round = 2;
+        job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+        board.save(&fx.board_path).expect("save");
+        e.build_stage().expect("resume");
+        let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+        if hints.is_empty() {
+            assert!(prompt.contains("Run the relevant checks before you finish."), "{prompt}");
+        } else {
+            assert!(prompt.contains("Run the relevant checks (for example `make test`, `make lint`) before you finish."), "{prompt}");
+        }
+    }
+}
