@@ -3,13 +3,15 @@ use git2::{BranchType, Commit, Diff, ErrorCode, Repository};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// The branch the factory merges into.
-pub const MAIN_BRANCH: &str = "main";
+/// The base branch of a repo opened without `with_base_branch`.
+pub const DEFAULT_BASE_BRANCH: &str = "main";
 
 /// Handle on the main checkout of a repository.
 pub struct Repo {
     pub(crate) inner: Repository,
     pub(crate) root: PathBuf,
+    pub(crate) base: String,
+    pub(crate) worktrees: PathBuf,
 }
 
 /// First 7 characters of a sha, or the whole string when it is shorter.
@@ -39,7 +41,30 @@ impl Repo {
             .workdir()
             .ok_or_else(|| GitError::Refused("bare repositories are not supported".into()))?
             .to_path_buf();
-        Ok(Repo { inner: repo, root })
+        let worktrees = root.join(".claude").join("worktrees");
+        Ok(Repo { inner: repo, root, base: DEFAULT_BASE_BRANCH.to_string(), worktrees })
+    }
+
+    /// The same repo with another base branch.
+    pub fn with_base_branch(mut self, name: &str) -> Repo {
+        self.base = name.to_string();
+        self
+    }
+
+    /// The same repo with the job worktrees kept in `dir`.
+    pub fn with_worktrees_dir(mut self, dir: PathBuf) -> Repo {
+        self.worktrees = dir;
+        self
+    }
+
+    /// The branch jobs start from and merge into.
+    pub fn base_branch(&self) -> &str {
+        &self.base
+    }
+
+    /// The folder that holds the job worktrees.
+    pub fn worktrees_dir(&self) -> &Path {
+        &self.worktrees
     }
 
     /// The working directory of the main checkout.
@@ -127,7 +152,7 @@ impl Repo {
         Ok(self.inner.graph_descendant_of(b, a)?)
     }
 
-    /// `Some(main sha)` when `head` is already on main, `None` when it is not.
+    /// `Some(base sha)` when `head` is already on the base branch, `None` when it is not.
     /// Works after a manual merge and after the branch was deleted, because it
     /// takes shas. A job with no commits is refused, as `ctl is-merged` did.
     pub fn is_merged(&self, base: &str, head: &str) -> Result<Option<String>> {
@@ -138,7 +163,7 @@ impl Repo {
         if head_id == self.commit_of(base)?.id() {
             return Err(GitError::Refused("job has no commits, head equals base".into()));
         }
-        let main = self.tip(MAIN_BRANCH)?;
+        let main = self.tip(&self.base)?;
         if self.is_ancestor(head, &main)? {
             Ok(Some(main))
         } else {

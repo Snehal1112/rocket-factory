@@ -134,7 +134,7 @@ impl Engine<'_> {
         if !kb_dir.is_dir() {
             return Ok(KbOutcome::Failed(format!("the KB folder {} does not exist", kb_dir.display())));
         }
-        let tip = self.repo.tip(factory_git::MAIN_BRANCH).map_err(git_err)?;
+        let tip = self.repo.tip(self.repo.base_branch()).map_err(git_err)?;
         let before = self.repo.checkout_fingerprint().map_err(git_err)?;
         let prompt = kb_prompt(&kb_dir, self.repo.root(), &tip, job);
         let run = self.run_agent(kb_spec(&self.job_id, &self.config, self.repo.root(), &kb_dir, &prompt))?;

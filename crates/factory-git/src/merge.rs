@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::repo::{short, Repo, MAIN_BRANCH};
+use crate::repo::{short, Repo};
 use crate::state::Preflight;
 use git2::build::CheckoutBuilder;
 use git2::{Commit, ErrorClass, ErrorCode, Repository, Signature};
@@ -115,11 +115,11 @@ impl Repo {
         if let Preflight::Busy { reason } = self.preflight_main()? {
             return Ok(MergeOutcome::Refused { reason });
         }
-        let main = self.branch_commit(MAIN_BRANCH)?;
+        let main = self.branch_commit(&self.base)?;
         if self.is_ancestor(&head_id, &main.id().to_string())? {
-            return Ok(MergeOutcome::Refused { reason: "the head is already on main".into() });
+            return Ok(MergeOutcome::Refused { reason: format!("the head is already on {}", self.base) });
         }
-        let branch_ref = format!("refs/heads/{MAIN_BRANCH}");
+        let branch_ref = format!("refs/heads/{}", self.base);
         commit_merge(&self.inner, &branch_ref, &main, &head, message)
     }
 }

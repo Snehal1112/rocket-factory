@@ -1,5 +1,5 @@
 use crate::error::{GitError, Result};
-use crate::repo::{Repo, MAIN_BRANCH};
+use crate::repo::Repo;
 use git2::{RepositoryState, StatusOptions};
 
 /// Result of the pre-merge check on the main checkout.
@@ -45,14 +45,14 @@ impl Repo {
     /// changes (untracked files are fine) and no merge or other operation is
     /// in progress. Reports the main sha so the caller can detect a race.
     pub fn preflight_main(&self) -> Result<Preflight> {
-        let main_sha = self.tip(MAIN_BRANCH)?;
+        let main_sha = self.tip(&self.base)?;
         let busy = |reason: &str| Ok(Preflight::Busy { reason: reason.to_string() });
         let head = self.inner.head()?;
-        if !head.is_branch() || head.shorthand() != Some(MAIN_BRANCH) {
-            return busy("the main checkout is not on main");
+        if !head.is_branch() || head.shorthand() != Some(self.base.as_str()) {
+            return busy(&format!("the main checkout is not on {}", self.base));
         }
         if self.inner.state() != RepositoryState::Clean {
-            return busy("a merge or another operation is in progress on main");
+            return busy(&format!("a merge or another operation is in progress on {}", self.base));
         }
         let mut opts = StatusOptions::new();
         opts.include_untracked(false).include_ignored(false);
@@ -67,7 +67,7 @@ impl Repo {
         if self.commit_of(base)?.id() == self.commit_of(head)?.id() {
             return Err(GitError::Refused("job has no commits, head equals base".into()));
         }
-        let main_sha = self.tip(MAIN_BRANCH)?;
+        let main_sha = self.tip(&self.base)?;
         let state = if self.is_ancestor(head, &main_sha)? {
             BaseState::Merged
         } else if !self.is_ancestor(base, &main_sha)? || !self.is_ancestor(base, head)? {

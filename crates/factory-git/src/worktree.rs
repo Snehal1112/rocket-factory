@@ -1,6 +1,6 @@
 use crate::error::{GitError, Result};
 use crate::merge::{commit_merge, MergeOutcome};
-use crate::repo::{Repo, MAIN_BRANCH};
+use crate::repo::Repo;
 use git2::{BranchType, Repository, StatusOptions, WorktreeAddOptions, WorktreePruneOptions};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,12 +57,12 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 
 impl Repo {
     /// Creates branch `factory/NNN-<slug>` from main and a worktree for it at
-    /// `.claude/worktrees/factory-NNN-<slug>`. The builder owns its cargo target dir.
+    /// the repo's worktrees folder, as `factory-NNN-<slug>`. The builder owns its cargo target dir.
     pub fn create_worktree(&self, job: &JobRef) -> Result<Worktree> {
         job.validate()?;
         let branch = job.branch_name();
         let name = job.dir_name();
-        let parent = self.root.join(".claude").join("worktrees");
+        let parent = self.worktrees.clone();
         let path = parent.join(&name);
         if path.exists() {
             return Err(GitError::Refused(format!("{} already exists", path.display())));
@@ -70,7 +70,7 @@ impl Repo {
         if self.inner.find_branch(&branch, BranchType::Local).is_ok() {
             return Err(GitError::Refused(format!("branch {branch} already exists")));
         }
-        let main = self.branch_commit(MAIN_BRANCH)?;
+        let main = self.branch_commit(&self.base)?;
         fs::create_dir_all(&parent)?;
         let mut created = self.inner.branch(&branch, &main, false)?;
         let added = {
@@ -90,7 +90,7 @@ impl Repo {
     /// unmerged commits unless `force`. Never removes main, a branch outside
     /// `factory/`, the main checkout, or the branch the main checkout is on.
     pub fn remove_worktree(&self, wt: &Worktree, force: bool) -> Result<()> {
-        if wt.branch == MAIN_BRANCH || !wt.branch.starts_with("factory/") {
+        if wt.branch == self.base || !wt.branch.starts_with("factory/") {
             return Err(GitError::Refused(format!("{} is not a factory job branch", wt.branch)));
         }
         if same_dir(&wt.path, &self.root) {
@@ -113,11 +113,11 @@ impl Repo {
                 }
             }
             if let Ok(tip) = self.tip(&wt.branch) {
-                let main = self.tip(MAIN_BRANCH)?;
+                let main = self.tip(&self.base)?;
                 if !self.is_ancestor(&tip, &main)? {
                     return Err(GitError::Refused(format!(
-                        "branch {} has commits that are not on main",
-                        wt.branch
+                        "branch {} has commits that are not on {}",
+                        wt.branch, self.base
                     )));
                 }
             }
@@ -140,7 +140,7 @@ impl Repo {
         let refuse = |reason: &str| Ok(MergeOutcome::Refused { reason: reason.to_string() });
         let inside = Repository::open(&wt.path)?;
         let head = inside.head()?;
-        if wt.branch == MAIN_BRANCH || !head.is_branch() || head.shorthand() != Some(wt.branch.as_str()) {
+        if wt.branch == self.base || !head.is_branch() || head.shorthand() != Some(wt.branch.as_str()) {
             return refuse("the worktree is not on the job branch");
         }
         if inside.state() != git2::RepositoryState::Clean {
@@ -152,7 +152,7 @@ impl Repo {
             return refuse("the worktree has tracked changes");
         }
         let ours = head.peel_to_commit()?;
-        let theirs = inside.find_commit(self.branch_commit(MAIN_BRANCH)?.id())?;
+        let theirs = inside.find_commit(self.branch_commit(&self.base)?.id())?;
         if ours.id() == theirs.id() || inside.graph_descendant_of(ours.id(), theirs.id())? {
             return Ok(MergeOutcome::UpToDate);
         }

@@ -12,11 +12,16 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new() -> Fixture {
+        Fixture::on_branch("main")
+    }
+
+    /// A temp repo with one commit on `base` and a file `base.txt`.
+    pub fn on_branch(base: &str) -> Fixture {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("repo");
         std::fs::create_dir_all(&path).expect("mkdir");
         let mut opts = RepositoryInitOptions::new();
-        opts.initial_head("main");
+        opts.initial_head(base);
         let repo = Repository::init_opts(&path, &opts).expect("init");
         commit_files(&repo, &[("base.txt", "base\n")], "init");
         Fixture { dir, path }
@@ -32,6 +37,10 @@ impl Fixture {
 
     pub fn main_sha(&self) -> String {
         branch_sha(&self.git(), "main")
+    }
+
+    pub fn branch_tip(&self, branch: &str) -> String {
+        branch_sha(&self.git(), branch)
     }
 
     /// Creates `branch` from main and commits `files` onto it. Returns (base, head).

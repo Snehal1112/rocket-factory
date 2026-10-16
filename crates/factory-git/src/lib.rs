@@ -15,7 +15,7 @@ pub use commits::CommitInfo;
 pub use diff::{DiffCounts, DiffFiles};
 pub use error::{GitError, Result};
 pub use merge::MergeOutcome;
-pub use repo::{Repo, MAIN_BRANCH};
+pub use repo::{Repo, DEFAULT_BASE_BRANCH};
 pub use report::StagedReport;
 pub use state::{BaseCheck, BaseState, Preflight};
 pub use worktree::{JobRef, Worktree};
