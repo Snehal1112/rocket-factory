@@ -43,4 +43,7 @@ node --test tools/factory-server/tests/board.test.js tools/factory-server/tests/
 bash tools/factory-server/tests/smoke.sh
 ```
 
+The smoke test also covers the park endpoint (404 without a file, the evidence with one, no evidence text in /api/state).
+
 `tests/seed-demo.sh <dir>` builds a demo root with a job in every stage and one five-plan series for a visual check.
+Job 003 in the demo is parked with details, so its card shows the "See what went wrong" button.

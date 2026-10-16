@@ -65,6 +65,17 @@ printf '# Spec: Baseline benchmarks\n\n## Goal\n\nMeasure the hot paths before a
 } >"$data/board.json.tmp"
 mv "$data/board.json.tmp" "$data/board.json"
 
+# Job 003 is parked with details, for a look at the popup.
+sed -e "s/{\"id\":\"003\",/{\"id\":\"003\",\"park_kind\":\"checks-failed\",\"park_at\":$((now - 120)),/" "$data/board.json" >"$data/board.json.tmp"
+mv "$data/board.json.tmp" "$data/board.json"
+mkdir -p "$sdd/2026-10-13-003-demo"
+cat >"$sdd/2026-10-13-003-demo/park.json" <<JSON
+{"kind":"checks-failed","reason":"checks failed after 2 fix rounds","at":$((now - 120)),"round":3,
+ "next":["factory rework 003 <note>"],
+ "parts":[{"title":"Failing checks","source":"checks.md","truncated":false,
+  "text":"## cargo test -j4 -p factory-engine (exit 101)\nrunning 3 tests\ntest ports::tests::usage_line_has_the_counters ... ok\ntest ports::tests::a_killed_run_names_its_stop_reason ... FAILED\n\nfailures:\n\n---- ports::tests::a_killed_run_names_its_stop_reason stdout ----\nthread 'ports::tests::a_killed_run_names_its_stop_reason' panicked at src/ports.rs:171:9:\nassertion \`left == right\` failed\n  left: \"done\"\n right: \"budget-stop\"\n\nerror: test failed, to rerun pass \`-p factory-engine --lib\`"}]}
+JSON
+
 event() { printf '%s\n' "$1" >>"$log"; }
 event "{\"ts\":$((now - 60)),\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"b-1\",\"agent_type\":\"factory-builder\",\"job_id\":\"001\"}"
 event "{\"ts\":$((now - 30)),\"hook_event_name\":\"PostToolUse\",\"agent_id\":\"b-1\",\"tool_name\":\"Edit\",\"tool_target\":\"src/components/request/TimeoutField.tsx\",\"job_id\":\"001\",\"tokens\":1200}"
