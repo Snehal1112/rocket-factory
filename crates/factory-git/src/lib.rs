@@ -20,4 +20,4 @@ pub use merge::MergeOutcome;
 pub use repo::{Repo, DEFAULT_BASE_BRANCH};
 pub use report::StagedReport;
 pub use state::{BaseCheck, BaseState, Preflight};
-pub use worktree::{JobRef, Worktree};
+pub use worktree::{JobRef, PruneReport, Worktree};

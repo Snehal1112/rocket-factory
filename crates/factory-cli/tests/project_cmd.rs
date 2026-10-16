@@ -373,3 +373,23 @@ fn show_reads_the_override_from_the_base_tip_not_from_head() {
     let out = run(&e, &["show", "demo"]).expect("show");
     assert!(out.contains("would be rejected"), "the base branch override must win:\n{out}");
 }
+
+#[test]
+fn remove_is_refused_while_the_project_lease_is_held_even_with_force() {
+    use factory_engine::{acquire_project_lease, now_secs};
+    let e = env();
+    add_demo(&e);
+    let state = e.home.project_dir("demo").join("state");
+    let wait = std::time::Duration::from_secs(5);
+    acquire_project_lease(&state, "001", "someone-else", 600.0, now_secs(), wait).expect("lease");
+    for args in [&["remove", "demo"][..], &["remove", "demo", "--force"][..]] {
+        let err = run(&e, args).expect_err("busy").to_string();
+        assert!(err.contains("busy") && err.contains("cancel 001 --force") && err.contains("project.lease"), "{err}");
+        assert!(e.home.project_dir("demo").exists());
+    }
+    // A dead driver's lease does not block the removal.
+    std::fs::remove_file(state.join("project.lease")).expect("rm");
+    acquire_project_lease(&state, "001", "driver-4294967000-1", 600.0, now_secs(), wait).expect("lease");
+    run(&e, &["remove", "demo", "--force"]).expect("removed");
+    assert!(!e.home.project_dir("demo").exists());
+}

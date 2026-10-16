@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use factory_core::project::{self, ProjectFile};
 use factory_core::{resolve, Board, Config, Home};
-use factory_engine::RepoTip;
+use factory_core::PROJECT_LEASE_FILE;
+use factory_engine::{now_secs, project_lease_status, ProjectLeaseStatus, RepoTip};
 use factory_git::Repo;
 
 use crate::cli::ProjectCmd;
@@ -169,6 +170,14 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
         Err(e) => return Err(e.into()),
     };
     let worktrees = dir.join("worktrees");
+    // A running driver owns the project, and --force does not override that.
+    if let ProjectLeaseStatus::Held { owner, job, secs_left } = project_lease_status(&dir.join("state"), now_secs()) {
+        return Err(CliError::Refused(format!(
+            "project {name} is busy: job {job} is running (leased by {owner} for another {secs_left} seconds). \
+             If the process that held it is gone, run `factory --project {name} cancel {job} --force`, or delete {}",
+            dir.join("state").join(PROJECT_LEASE_FILE).display()
+        )));
+    }
     if file.is_some() && !force {
         let board = Board::load(&dir.join("state").join("board.json"))?;
         let open: Vec<&str> = board
@@ -189,8 +198,17 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
         match open_repo(&file.repo, &base_of(file)) {
             Ok(repo) => {
                 match repo.prune_worktrees_under(&worktrees) {
-                    Ok(p) if !p.is_empty() => notes.push(format!("pruned {} worktree registration(s)", p.len())),
-                    Ok(_) => {}
+                    Ok(r) => {
+                        if !r.pruned.is_empty() {
+                            notes.push(format!("pruned {} worktree registration(s)", r.pruned.len()));
+                        }
+                        if !r.skipped.is_empty() {
+                            notes.push(format!(
+                                "left worktree registration(s) whose path leaves the worktrees folder: {}",
+                                r.skipped.join(", ")
+                            ));
+                        }
+                    }
                     Err(e) => notes.push(format!("could not prune the worktree registrations: {e}")),
                 }
                 let left: Vec<String> = repo

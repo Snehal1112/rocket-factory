@@ -3,7 +3,7 @@ use crate::merge::{commit_merge, MergeOutcome};
 use crate::repo::Repo;
 use git2::{BranchType, Repository, StatusOptions, WorktreeAddOptions, WorktreePruneOptions};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The two fields of a job that name its branch and worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,14 @@ impl JobRef {
             )))
         }
     }
+}
+
+/// What `prune_worktrees_under` did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PruneReport {
+    pub pruned: Vec<String>,
+    /// Registrations left alone because their path escapes the folder.
+    pub skipped: Vec<String>,
 }
 
 /// A linked worktree for one job.
@@ -88,25 +96,38 @@ impl Repo {
 
     /// Prunes every worktree registration whose folder is inside `dir`, with the working folder.
     /// A registration whose folder is already gone is pruned too. Branches are never touched.
-    /// Returns the names of the pruned worktrees.
-    pub fn prune_worktrees_under(&self, dir: &Path) -> Result<Vec<String>> {
+    /// A registered path with a `..` component, or one that resolves outside `dir` (such as through a
+    /// symlink), is skipped, because pruning deletes its working folder. Returns the pruned worktree
+    /// names and the skipped ones.
+    pub fn prune_worktrees_under(&self, dir: &Path) -> Result<PruneReport> {
         let canon = fs::canonicalize(dir).ok();
-        let inside = |p: &Path| {
-            p.starts_with(dir)
-                || canon.as_ref().is_some_and(|c| p.starts_with(c) || fs::canonicalize(p).is_ok_and(|x| x.starts_with(c)))
-        };
-        let mut pruned = Vec::new();
+        let mut report = PruneReport::default();
         for name in self.inner.worktrees()?.iter().flatten() {
             let Ok(found) = self.inner.find_worktree(name) else { continue };
-            if !inside(found.path()) {
+            let p = found.path();
+            let claims = p.starts_with(dir) || canon.as_ref().is_some_and(|c| p.starts_with(c));
+            if !claims {
+                continue;
+            }
+            let safe = if p.components().any(|c| c == Component::ParentDir) {
+                false
+            } else {
+                match fs::canonicalize(p) {
+                    Ok(real) => canon.as_ref().is_some_and(|c| real.starts_with(c)),
+                    // The folder is gone, so only the text can be compared.
+                    Err(_) => true,
+                }
+            };
+            if !safe {
+                report.skipped.push(name.to_string());
                 continue;
             }
             let mut opts = WorktreePruneOptions::new();
             opts.valid(true).locked(true).working_tree(true);
             found.prune(Some(&mut opts))?;
-            pruned.push(name.to_string());
+            report.pruned.push(name.to_string());
         }
-        Ok(pruned)
+        Ok(report)
     }
 
     /// Removes a job worktree and its branch. Refuses a dirty worktree and

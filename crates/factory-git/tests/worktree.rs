@@ -188,7 +188,7 @@ fn prune_worktrees_under_removes_registrations_in_the_folder_and_keeps_branches(
     // A stale registration: the folder is gone but the registration is left.
     std::fs::remove_dir_all(&b.path).expect("rm b");
     repo.create_worktree(&JobRef { id: "003".into(), slug: "third".into() }).expect("create c");
-    let mut pruned = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune");
+    let mut pruned = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune").pruned;
     pruned.sort();
     assert_eq!(pruned, ["factory-001-demo", "factory-002-gone", "factory-003-third"]);
     assert!(!a.path.exists());
@@ -206,6 +206,58 @@ fn prune_worktrees_under_leaves_worktrees_elsewhere() {
     let wt = repo.create_worktree(&job()).expect("create");
     let other = fx.path.join("not-the-worktrees-folder");
     std::fs::create_dir_all(&other).expect("mkdir");
-    assert!(repo.prune_worktrees_under(&other).expect("prune").is_empty());
+    assert!(repo.prune_worktrees_under(&other).expect("prune").pruned.is_empty());
     assert!(wt.path.exists());
+}
+
+/// A real worktree whose folder is moved to `elsewhere`, so the test controls where it really is.
+fn moved_outside(fx: &Fixture, repo: &Repo, id: &str, slug: &str) -> (Worktree, std::path::PathBuf) {
+    let wt = repo.create_worktree(&JobRef { id: id.into(), slug: slug.into() }).expect("create");
+    let elsewhere = fx.path.join(format!("outside-{id}"));
+    std::fs::rename(&wt.path, &elsewhere).expect("move");
+    (wt, elsewhere)
+}
+
+#[test]
+fn prune_skips_a_registered_path_with_a_parent_component() {
+    let fx = Fixture::new();
+    let repo = fx.repo();
+    let (wt, elsewhere) = moved_outside(&fx, &repo, "001", "dots");
+    // Hand-edit the registration so the path climbs out of the folder by text.
+    let sneaky = repo.worktrees_dir().join("..").join("..").join("outside-001/.git");
+    let gitdir = fx.path.join(".git/worktrees").join(&wt.name).join("gitdir");
+    std::fs::write(&gitdir, format!("{}\n", sneaky.display())).expect("gitdir");
+    let report = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune");
+    assert!(report.pruned.is_empty(), "{report:?}");
+    assert!(elsewhere.join("base.txt").is_file(), "the folder outside must survive");
+}
+
+#[test]
+fn prune_skips_a_path_that_resolves_outside_through_a_symlink() {
+    let fx = Fixture::new();
+    let repo = fx.repo();
+    let (wt, elsewhere) = moved_outside(&fx, &repo, "001", "link");
+    std::os::unix::fs::symlink(&elsewhere, &wt.path).expect("symlink");
+    let report = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune");
+    assert!(report.pruned.is_empty(), "{report:?}");
+    assert_eq!(report.skipped, std::slice::from_ref(&wt.name));
+    assert!(elsewhere.join("base.txt").is_file());
+}
+
+#[test]
+fn prune_leaves_a_sibling_folder_with_a_shared_prefix() {
+    let fx = Fixture::new();
+    let repo = fx.repo();
+    let mine = fx.path.join("projects/p/worktrees");
+    let sibling = fx.path.join("projects/p2/worktrees");
+    let theirs = repo.create_worktree(&JobRef { id: "001".into(), slug: "sib".into() }).expect("create");
+    std::fs::create_dir_all(&sibling).expect("mkdir");
+    let moved = sibling.join(&theirs.name);
+    std::fs::create_dir_all(&mine).expect("mkdir");
+    std::fs::rename(&theirs.path, &moved).expect("move");
+    let gitdir = fx.path.join(".git/worktrees").join(&theirs.name).join("gitdir");
+    std::fs::write(&gitdir, format!("{}\n", moved.join(".git").display())).expect("gitdir");
+    let report = repo.prune_worktrees_under(&mine).expect("prune");
+    assert_eq!(report, factory_git::PruneReport::default());
+    assert!(moved.join("base.txt").is_file());
 }
