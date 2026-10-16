@@ -171,4 +171,44 @@ mod tests {
         let c = cfg(vec![(&["**"], &["cargo test -j4 -p {crate}"])]);
         assert!(plan_checks(&paths(&["README.md"]), &c).commands.is_empty());
     }
+
+    fn rust_preset() -> Config {
+        let text = factory_core::preset::embedded("rust").expect("rust preset").config;
+        Config::parse(text).expect("preset parses")
+    }
+
+    #[test]
+    fn the_rust_preset_checks_a_single_crate_repo() {
+        let c = rust_preset();
+        for changed in ["src/x.rs", "tests/t.rs", "benches/b.rs", "examples/e.rs", "build.rs"] {
+            let plan = plan_checks(&paths(&[changed]), &c);
+            assert_eq!(plan.commands, ["cargo check -j4", "cargo test -j4"], "{changed}");
+        }
+    }
+
+    #[test]
+    fn the_rust_preset_keeps_the_crate_commands_for_a_workspace_member() {
+        let c = rust_preset();
+        let plan = plan_checks(&paths(&["crates/x/src/lib.rs", "crates/y/tests/t.rs"]), &c);
+        assert_eq!(
+            plan.commands,
+            ["cargo check -j4 -p x", "cargo check -j4 -p y", "cargo test -j4 -p x", "cargo test -j4 -p y"]
+        );
+        // The root rule must not match a member's own src folder.
+        assert!(!factory_core::glob_match("src/**", "crates/x/src/lib.rs"));
+        for pat in ["src/**", "tests/**", "benches/**", "examples/**", "build.rs"] {
+            assert!(!factory_core::glob_match(pat, "crates/x/src/lib.rs"), "{pat}");
+            assert!(!factory_core::glob_match(pat, "crates/x/build.rs"), "{pat}");
+        }
+    }
+
+    #[test]
+    fn a_mixed_diff_runs_the_crate_and_root_commands_once_each() {
+        let c = rust_preset();
+        let plan = plan_checks(&paths(&["crates/x/src/lib.rs", "src/main.rs"]), &c);
+        assert_eq!(
+            plan.commands,
+            ["cargo check -j4 -p x", "cargo test -j4 -p x", "cargo check -j4", "cargo test -j4"]
+        );
+    }
 }

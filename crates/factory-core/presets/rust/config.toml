@@ -1,4 +1,4 @@
-# Preset: Rust workspace. Edit this file in ~/.factory/presets/rust/ to change every project that uses it.
+# Preset: Rust workspace or single crate. Edit this file in ~/.factory/presets/rust/ to change every project that uses it.
 risk_paths = [
   "**/Cargo.toml",
   "**/Cargo.lock",
@@ -22,3 +22,9 @@ reviewer_rules = [
 [[checks]]
 paths = ["crates/*/**"]
 commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
+
+# A single-crate repo: the crate sits at the root. These paths never match a workspace member's own files.
+# A virtual workspace (a root Cargo.toml without a [package]) relies on the crates/*/** rule above.
+[[checks]]
+paths = ["src/**", "tests/**", "benches/**", "examples/**", "build.rs"]
+commands = ["cargo check -j4", "cargo test -j4"]
