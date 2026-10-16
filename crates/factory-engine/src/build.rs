@@ -114,10 +114,11 @@ impl Engine<'_> {
         Ok(())
     }
 
-    /// Writes the agent files into the job worktree. It runs on every build step, so a crash or a failed
-    /// write on the first step is repaired on the next one. They are git-excluded, and a file that is tracked
-    /// on the base branch is left alone. An existing file or a symlinked folder is never written through.
-    fn write_agent_files(&self, wt: &Path) -> Result<(), EngineError> {
+    /// Writes the agent files into the job worktree, and restores any that changed. It runs before every build
+    /// step and every agent run in the worktree, so a crash or an edit by an earlier agent is repaired. The files
+    /// are git-excluded, and a file that is tracked on the base branch is left alone. A symlinked folder is never
+    /// written through.
+    pub(crate) fn write_agent_files(&self, wt: &Path) -> Result<(), EngineError> {
         if self.agent_files.is_empty() {
             return Ok(());
         }
@@ -140,11 +141,7 @@ impl Engine<'_> {
                 shadowed.push(f.name.as_str());
                 continue;
             }
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(wt.join(&rel)) {
-                Ok(mut file) => std::io::Write::write_all(&mut file, f.content.as_bytes())?,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e.into()),
-            }
+            self.restore_agent_file(&wt.join(&rel), &f.content)?;
         }
         if !shadowed.is_empty() {
             // Noted once per job, because this runs on every build step.
@@ -154,6 +151,26 @@ impl Engine<'_> {
                 self.ruling(&note)?;
             }
         }
+        Ok(())
+    }
+
+    /// Makes the file at `path` hold `content`. A missing file is created, a symlink is removed (never followed)
+    /// and replaced, and a file that differs is rewritten, so an agent cannot weaken a later agent's file.
+    fn restore_agent_file(&self, path: &Path, content: &str) -> Result<(), EngineError> {
+        match std::fs::symlink_metadata(path) {
+            Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(path)?,
+            Ok(m) if m.is_file() => {
+                if std::fs::read_to_string(path).is_ok_and(|t| t == content) {
+                    return Ok(());
+                }
+                return Ok(std::fs::write(path, content)?);
+            }
+            Ok(_) => return Err(EngineError::Msg(format!("{} is not a regular file", path.display()))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+        std::io::Write::write_all(&mut file, content.as_bytes())?;
         Ok(())
     }
 

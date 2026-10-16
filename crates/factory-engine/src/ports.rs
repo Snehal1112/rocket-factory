@@ -91,6 +91,10 @@ impl Engine<'_> {
 
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
     pub(crate) fn run_agent(&self, spec: AgentSpec) -> Result<AgentRun, EngineError> {
+        // Every agent that runs in a job worktree finds the resolved agent files as resolved.
+        if !self.agent_files.is_empty() && spec.cwd.starts_with(self.repo.worktrees_dir()) {
+            self.write_agent_files(&spec.cwd)?;
+        }
         let run = self.runner.run(&spec);
         let u = run.usage;
         self.update(|j| {

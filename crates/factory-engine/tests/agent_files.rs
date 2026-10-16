@@ -85,7 +85,7 @@ fn worktree(fx: &Fixture) -> std::path::PathBuf {
 }
 
 #[test]
-fn a_later_build_step_leaves_edited_files_alone() {
+fn a_later_build_step_restores_edited_files() {
     let fx = committing_fixture();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
@@ -94,7 +94,45 @@ fn a_later_build_step_leaves_edited_files_alone() {
     let wt = worktree(&fx);
     std::fs::write(wt.join(BUILDER), "EDITED").expect("edit");
     e.build_stage().expect("second");
-    assert_eq!(std::fs::read_to_string(wt.join(BUILDER)).expect("read"), "EDITED");
+    assert_eq!(std::fs::read_to_string(wt.join(BUILDER)).expect("read"), "BUILDER");
+}
+
+#[test]
+fn a_file_edited_by_the_builder_is_restored_before_the_reviewer_runs() {
+    let fx = committing_fixture();
+    let tamper: Effect = Box::new(|spec| {
+        std::fs::write(spec.cwd.join(".claude/agents/factory-reviewer.md"), "WEAKENED").expect("tamper");
+        std::fs::write(spec.cwd.join("a.txt"), "a\n").expect("write");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![tamper]);
+    fx.engine(&runner).with_agent_files(files()).build_stage().expect("build");
+    fx.engine(&runner).with_agent_files(files()).checks_stage().expect("checks");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen2 = seen.clone();
+    let reviewer = scripted_auto(vec![Box::new(move |spec| {
+        seen2.lock().expect("seen").push(std::fs::read_to_string(spec.cwd.join(".claude/agents/factory-reviewer.md")).ok());
+        "ok\nVERDICT: APPROVE".to_string()
+    })]);
+    fx.engine(&reviewer).with_agent_files(files()).review_stage().expect("review");
+    assert_eq!(seen.lock().expect("seen").as_slice(), &[Some("REVIEWER".to_string())]);
+}
+
+#[test]
+fn a_symlink_at_an_agent_file_path_is_replaced_not_followed() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
+    let e = fx.engine(&runner).with_agent_files(files());
+    e.build_stage().expect("first");
+    let wt = worktree(&fx);
+    let outside = fx.tmp.path().join("outside.md");
+    std::fs::write(&outside, "OUTSIDE").expect("outside");
+    std::fs::remove_file(wt.join(BUILDER)).expect("rm");
+    std::os::unix::fs::symlink(&outside, wt.join(BUILDER)).expect("symlink");
+    e.build_stage().expect("second");
+    assert_eq!(std::fs::read_to_string(&outside).expect("read"), "OUTSIDE");
+    assert_eq!(std::fs::read_to_string(wt.join(BUILDER)).expect("read"), "BUILDER");
 }
 
 #[test]
