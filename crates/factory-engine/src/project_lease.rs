@@ -47,7 +47,7 @@ pub enum ProjectLeaseStatus {
 }
 
 /// The pid in an owner of the form `driver-<pid>-<secs>`. Any other owner has none.
-fn owner_pid(owner: &str) -> Option<u32> {
+pub fn owner_pid(owner: &str) -> Option<u32> {
     let rest = owner.strip_prefix("driver-")?;
     let (pid, secs) = rest.split_once('-')?;
     secs.parse::<u64>().ok()?;
@@ -55,7 +55,7 @@ fn owner_pid(owner: &str) -> Option<u32> {
 }
 
 /// True only when `/proc` exists and has no entry for `pid`. This process is never gone.
-fn process_gone(pid: u32) -> bool {
+pub fn process_gone(pid: u32) -> bool {
     if pid == std::process::id() {
         return false;
     }

@@ -304,3 +304,12 @@ fn force_release_removes_only_the_lease_of_that_job() {
     assert!(!lease_file(d.path()).exists());
     assert!(!force_release_project_lease(d.path(), "001", WAIT).expect("nothing left"));
 }
+
+#[test]
+fn the_pid_helpers_are_public() {
+    assert!(!factory_engine::process_gone(std::process::id()));
+    #[cfg(target_os = "linux")]
+    assert!(factory_engine::process_gone(4294967000));
+    assert_eq!(factory_engine::owner_pid("driver-12-3"), Some(12));
+    assert_eq!(factory_engine::owner_pid("tester"), None);
+}
