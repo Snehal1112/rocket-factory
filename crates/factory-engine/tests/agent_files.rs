@@ -219,3 +219,38 @@ fn a_resumed_step_refuses_bad_names_and_writes_nothing() {
         assert!(!wt.join("../evil.md").exists());
     }
 }
+
+#[test]
+fn a_hardlinked_agent_file_is_replaced_not_written_through() {
+    use std::os::unix::fs::MetadataExt;
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
+    let e = fx.engine(&runner).with_agent_files(files());
+    e.build_stage().expect("first");
+    let wt = worktree(&fx);
+    let outside = fx.tmp.path().join("outside-link.md");
+    std::fs::write(&outside, "OUTSIDE").expect("outside");
+    std::fs::remove_file(wt.join(BUILDER)).expect("rm");
+    std::fs::hard_link(&outside, wt.join(BUILDER)).expect("hard link");
+    e.build_stage().expect("second");
+    assert_eq!(std::fs::read_to_string(&outside).expect("read"), "OUTSIDE");
+    assert_eq!(std::fs::read_to_string(wt.join(BUILDER)).expect("read"), "BUILDER");
+    let own = std::fs::metadata(wt.join(BUILDER)).expect("meta").ino();
+    assert_ne!(own, std::fs::metadata(&outside).expect("meta").ino());
+}
+
+#[test]
+fn a_symlinked_claude_folder_is_refused() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    fx.engine(&runner).build_stage().expect("first");
+    let wt = worktree(&fx);
+    let elsewhere = fx.tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("mkdir");
+    std::os::unix::fs::symlink(&elsewhere, wt.join(".claude")).expect("symlink");
+    let err = fx.engine(&runner).with_agent_files(files()).build_stage().expect_err("symlink");
+    assert!(err.to_string().contains("symlink"), "{err}");
+    assert!(std::fs::read_dir(&elsewhere).expect("dir").next().is_none(), "nothing written through the link");
+}

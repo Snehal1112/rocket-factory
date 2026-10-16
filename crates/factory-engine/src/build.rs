@@ -155,7 +155,7 @@ impl Engine<'_> {
     }
 
     /// Makes the file at `path` hold `content`. A missing file is created, a symlink is removed (never followed)
-    /// and replaced, and a file that differs is rewritten, so an agent cannot weaken a later agent's file.
+    /// and replaced, and a file that differs is removed and created anew (a new inode), so an agent cannot weaken a later agent's file.
     fn restore_agent_file(&self, path: &Path, content: &str) -> Result<(), EngineError> {
         match std::fs::symlink_metadata(path) {
             Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(path)?,
@@ -163,7 +163,8 @@ impl Engine<'_> {
                 if std::fs::read_to_string(path).is_ok_and(|t| t == content) {
                     return Ok(());
                 }
-                return Ok(std::fs::write(path, content)?);
+                // Remove first, so a hard link to a file outside is never written through.
+                std::fs::remove_file(path)?;
             }
             Ok(_) => return Err(EngineError::Msg(format!("{} is not a regular file", path.display()))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
