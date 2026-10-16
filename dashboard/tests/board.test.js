@@ -632,3 +632,97 @@ test("a state from an older server without specs still renders the board", () =>
   assert.match(html, /column-build/);
   assert.doesNotMatch(html, /data-spec=/);
 });
+
+test("a needs-human card with details has a button, one without has none", () => {
+  const withPark = board.renderCard(makeJob({ stage: "needs-human", reason: "why", has_park: true }), 200, []);
+  assert.match(withPark, /<button type="button" class="cmd park-open" data-park="001">See what went wrong<\/button>/);
+  const without = board.renderCard(makeJob({ stage: "needs-human", reason: "why" }), 200, []);
+  assert.doesNotMatch(without, /data-park=/);
+  const building = board.renderCard(makeJob({ stage: "build", has_park: true }), 200, []);
+  assert.doesNotMatch(building, /data-park=/);
+});
+
+test("the card never contains the popup, so a repaint cannot close it", () => {
+  const html = board.renderCard(makeJob({ stage: "needs-human", reason: "why", has_park: true }), 200, []);
+  assert.doesNotMatch(html, /<dialog|park-text/);
+});
+
+test("parkKindLabel and parkKindClass cover every kind", () => {
+  const red = ["checks-failed", "changes-remain", "builder-stopped", "commit-failed"];
+  const amber = ["risky-diff", "diff-too-large", "budget-stopped", "builder-committed", "nothing-changed", "other"];
+  for (const kind of red) assert.equal(board.parkKindClass(kind), "chip-changes", kind);
+  for (const kind of amber) assert.equal(board.parkKindClass(kind), "chip-warn", kind);
+  assert.equal(board.parkKindClass("something-new"), "chip-warn");
+  assert.equal(board.parkKindLabel("checks-failed"), "Checks failed");
+  assert.equal(board.parkKindLabel("other"), "Needs a human");
+  assert.equal(board.parkKindLabel("something-new"), "Needs a human");
+});
+
+test("markLines marks the lines that matter and escapes the text", () => {
+  const html = board.markLines(
+    "error[E0432]: unresolved import\n  --> src/a.rs\ntest a::b ... FAILED\nthread 'x' panicked at src/c.rs:1\n[blocker] src/d.rs wrong\nFAIL cargo check\nall fine",
+  );
+  const hits = html.match(/class="ln ln-hit"/g) || [];
+  assert.equal(hits.length, 5);
+  assert.match(html, /<span class="ln">all fine<\/span>/);
+  assert.match(html, /<span class="ln">  --&gt; src\/a.rs<\/span>/);
+});
+
+test("markLines escapes markup and keeps empty lines at full height", () => {
+  const html = board.markLines('<script>alert("x")</script>\n\nlast\n');
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /&lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt;/);
+  assert.match(html, /<span class="ln"> <\/span>/);
+  // The trailing newline does not add a phantom last line.
+  assert.equal((html.match(/class="ln/g) || []).length, 3);
+});
+
+test("markLines renders thousands of lines", () => {
+  const text = Array.from({ length: 5000 }, (_, i) => `line ${i}`).join("\n");
+  assert.equal((board.markLines(text).match(/class="ln/g) || []).length, 5000);
+});
+
+test("renderParkDialog shows the kind, reason, parts and next commands", () => {
+  const job = makeJob({ stage: "needs-human", reason: "fallback" });
+  const view = {
+    kind: "checks-failed",
+    reason: "checks failed after 2 fix rounds",
+    at: 100,
+    round: 3,
+    next: ["factory rework 001 <note>"],
+    parts: [
+      { title: "Failing checks", source: "checks.md", text: "FAIL cargo check\nerror: boom", truncated: false },
+      { title: "Cut log", source: "log", text: "tail", truncated: true },
+    ],
+  };
+  const html = board.renderParkDialog(job, view, 220);
+  assert.match(html, /<h2 id="park-title" class="park-title">checks failed after 2 fix rounds<\/h2>/);
+  assert.match(html, /class="chip chip-changes">Checks failed</);
+  assert.match(html, /parked 2m ago/);
+  assert.match(html, /Failing checks/);
+  assert.match(html, /checks\.md/);
+  assert.match(html, /class="ln ln-hit">FAIL cargo check/);
+  assert.match(html, /The start of this text was cut/);
+  assert.match(html, /What to do next/);
+  assert.match(html, /data-copy="factory rework 001 &lt;note&gt;"/);
+  assert.match(html, /data-park-close/);
+  assert.match(html, /class="park-note" role="status" hidden/);
+});
+
+test("renderParkDialog escapes the reason and survives missing fields", () => {
+  const html = board.renderParkDialog(makeJob({ reason: null }), { reason: "<img onerror=x>" }, 10);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img onerror=x&gt;/);
+  assert.match(html, /No evidence was recorded for this park/);
+  assert.doesNotMatch(html, /What to do next/);
+  const bare = board.renderParkDialog(makeJob({ reason: null }), {}, 10);
+  assert.match(bare, /Needs a human/);
+});
+
+test("parkMessage offers a retry only when asked", () => {
+  const job = makeJob({});
+  assert.match(board.parkMessage(job, "Loading.", false), /Loading\./);
+  assert.doesNotMatch(board.parkMessage(job, "Loading.", false), /data-park-retry/);
+  assert.match(board.parkMessage(job, "It failed.", true), /data-park-retry/);
+  assert.match(board.parkMessage(job, "<b>", false), /&lt;b&gt;/);
+});

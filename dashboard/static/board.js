@@ -309,6 +309,90 @@
     return header.level === "ok" ? "Dashboard is live" : header.text;
   }
 
+  const PARK_LABEL = {
+    "checks-failed": "Checks failed",
+    "changes-remain": "Changes remain",
+    "risky-diff": "Risky diff",
+    "diff-too-large": "Diff too large",
+    "budget-stopped": "Budget stopped",
+    "builder-stopped": "Builder stopped",
+    "builder-committed": "Builder committed",
+    "nothing-changed": "Nothing changed",
+    "commit-failed": "Commit failed",
+    other: "Needs a human",
+  };
+  const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "commit-failed"];
+  // A line that starts with an error word, ends a failed test, or reports a panic is a line that matters.
+  const PARK_HIT = /^\s*(error|FAIL|\[blocker\])|\sFAILED\s*$|panicked at/;
+
+  function parkKindLabel(kind) {
+    return PARK_LABEL[kind] || PARK_LABEL.other;
+  }
+
+  function parkKindClass(kind) {
+    return PARK_RED.includes(kind) ? "chip-changes" : "chip-warn";
+  }
+
+  // One block-level span per line. Empty lines hold a space so they keep their height.
+  function markLines(text) {
+    const lines = String(text === null || text === undefined ? "" : text).split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    return lines
+      .map((line) => `<span class="ln${PARK_HIT.test(line) ? " ln-hit" : ""}">${line === "" ? " " : escapeHtml(line)}</span>`)
+      .join("");
+  }
+
+  function parkHeader(job, kindHtml, whenHtml, title) {
+    return (
+      `<header class="park-head"><div class="park-meta"><span class="job-id">${escapeHtml(job.id)}</span>${kindHtml}${whenHtml}</div>` +
+      `<h2 id="park-title" class="park-title">${escapeHtml(title)}</h2>` +
+      `<button type="button" class="cmd park-close" data-park-close>Close</button></header>`
+    );
+  }
+
+  function renderParkPart(part) {
+    const cut = part.truncated
+      ? `<p class="park-cut">The start of this text was cut. Only the last part is shown.</p>`
+      : "";
+    return (
+      `<section class="park-part"><h3 class="park-part-title">${escapeHtml(part.title)} <span class="park-source">${escapeHtml(part.source)}</span></h3>` +
+      cut +
+      `<pre class="park-text" tabindex="0" aria-label="${escapeHtml(part.title)}">${markLines(part.text)}</pre></section>`
+    );
+  }
+
+  function renderParkDialog(job, view, now) {
+    const kind = String(view.kind || "other");
+    const kindHtml = `<span class="chip ${parkKindClass(kind)}">${escapeHtml(parkKindLabel(kind))}</span>`;
+    const whenHtml =
+      Number(view.at) > 0
+        ? `<time class="park-when">parked ${escapeHtml(formatAge(Math.max(0, now - Number(view.at))))} ago</time>`
+        : "";
+    const parts = (view.parts || []).map(renderParkPart).join("");
+    const next = (view.next || []).map(copyChip).join("");
+    return (
+      parkHeader(job, kindHtml, whenHtml, view.reason || job.reason || "Needs a human") +
+      `<p class="park-note" role="status" hidden>This job is no longer waiting for you. The details below are from when it parked.</p>` +
+      `<div class="park-body">${parts || `<p class="park-empty">No evidence was recorded for this park.</p>`}</div>` +
+      (next ? `<footer class="park-foot"><p class="park-next-label">What to do next</p><p class="hint">${next}</p></footer>` : "")
+    );
+  }
+
+  // Loading, empty and error states of the popup.
+  function parkMessage(job, text, retry) {
+    return (
+      parkHeader(job, "", "", "What went wrong") +
+      `<div class="park-body"><p class="park-empty">${escapeHtml(text)}</p>` +
+      (retry ? `<p><button type="button" class="cmd" data-park-retry>Try again</button></p>` : "") +
+      `</div>`
+    );
+  }
+
+  function parkButton(job) {
+    if (job.stage !== "needs-human" || !job.has_park) return "";
+    return `<p class="park-link"><button type="button" class="cmd park-open" data-park="${escapeHtml(job.id)}">See what went wrong</button></p>`;
+  }
+
   function renderCard(job, now, specs) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
@@ -319,6 +403,7 @@
     const reason =
       job.stage === "needs-human"
         ? `<p class="reason">${escapeHtml(job.reason || "needs a human")}</p>` +
+          parkButton(job) +
           `<p class="hint">${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
     const showAge = job.stage !== "merged" && job.stage !== "needs-human";
@@ -515,6 +600,12 @@
     renderLogNotice,
     headerStatus,
     copyChip,
+    parkKindLabel,
+    parkKindClass,
+    markLines,
+    renderParkDialog,
+    parkMessage,
+    parkButton,
     seriesChip,
     specChip,
     durationsLine,
