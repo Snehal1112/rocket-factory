@@ -1,0 +1,505 @@
+//! Resolves the settings of one project from three layers: preset, project and repo override.
+//!
+//! The repo override is read from the base branch tip only. It may add risk paths and checks,
+//! nothing else. Any problem makes the config fail closed.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use crate::project::{self, ProjectFile};
+use crate::{Config, CoreError, Home, Layout};
+
+const OVERRIDE_FILE: &str = ".factory/override.toml";
+const AGENTS_DIR: &str = ".factory/agents";
+/// Always a risk path, so a repo cannot change its own factory settings without review.
+const FACTORY_RISK: &str = ".factory/**";
+
+/// Reads committed files from the tip of the base branch.
+pub trait BaseTipFiles {
+    /// The text of the file, or `None` when it is absent.
+    fn read_file(&self, rel: &str) -> Result<Option<String>, String>;
+    /// The regular files directly inside the folder as (name, text). An absent folder is empty.
+    fn list_dir(&self, rel: &str) -> Result<Vec<(String, String)>, String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentFile {
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    pub config: Config,
+    pub layout: Layout,
+    pub agents: Vec<AgentFile>,
+    pub problems: Vec<String>,
+}
+
+/// Only an unknown project is an `Err`. Every other problem gives a fail-closed config.
+pub fn resolve(home: &Home, name: &str, tip: &dyn BaseTipFiles) -> Result<Resolved, CoreError> {
+    let file = project::get(home, name)?;
+    let layout = project::layout(home, name, &file);
+    let mut problems = Vec::new();
+    let merged = merged_config(home, &file, tip, &mut problems);
+    let agents = merged_agents(home, name, &file, tip, &mut problems);
+    let config = match merged {
+        Some(cfg) if problems.is_empty() => cfg,
+        _ => Config { base_branch: safe_base_branch(&file), ..Config::fail_closed() },
+    };
+    Ok(Resolved { config, layout, agents, problems })
+}
+
+/// The project's base branch when it is valid, else the default one.
+fn safe_base_branch(file: &ProjectFile) -> String {
+    let default = Config::default().base_branch;
+    let Some(b) = file.settings.get("base_branch").and_then(|v| v.as_str()) else {
+        return default;
+    };
+    let mut probe = toml::Table::new();
+    probe.insert("base_branch".into(), toml::Value::String(b.to_string()));
+    match toml::to_string(&probe).map(|t| Config::parse(&t)) {
+        Ok(Ok(cfg)) => cfg.base_branch,
+        _ => default,
+    }
+}
+
+fn strings(value: Option<&toml::Value>, key: &str, problems: &mut Vec<String>) -> Vec<String> {
+    match value {
+        None => Vec::new(),
+        Some(toml::Value::Array(items)) => {
+            let mut out = Vec::new();
+            for item in items {
+                match item.as_str() {
+                    Some(s) => out.push(s.to_string()),
+                    None => problems.push(format!("{key} must be a list of strings")),
+                }
+            }
+            out
+        }
+        Some(_) => {
+            problems.push(format!("{key} must be a list of strings"));
+            Vec::new()
+        }
+    }
+}
+
+fn tables(value: Option<&toml::Value>, key: &str, problems: &mut Vec<String>) -> Vec<toml::Value> {
+    match value {
+        None => Vec::new(),
+        Some(toml::Value::Array(items)) if items.iter().all(toml::Value::is_table) => items.clone(),
+        Some(_) => {
+            problems.push(format!("{key} must be a list of tables"));
+            Vec::new()
+        }
+    }
+}
+
+fn merged_config(home: &Home, file: &ProjectFile, tip: &dyn BaseTipFiles, problems: &mut Vec<String>) -> Option<Config> {
+    if project::validate_name(&file.preset).is_err() {
+        problems.push(format!("preset name {:?} is not valid", file.preset));
+        return None;
+    }
+    let preset_path = home.presets_dir().join(&file.preset).join("config.toml");
+    let text = match std::fs::read_to_string(&preset_path) {
+        Ok(t) => t,
+        Err(e) => {
+            problems.push(format!("cannot read preset {}: {e}", preset_path.display()));
+            return None;
+        }
+    };
+    let mut table: toml::Table = match toml::from_str(&text) {
+        Ok(t) => t,
+        Err(e) => {
+            problems.push(format!("preset {} is not valid TOML: {e}", preset_path.display()));
+            return None;
+        }
+    };
+    for (k, v) in &file.settings {
+        table.insert(k.clone(), v.clone());
+    }
+
+    let mut risk = if table.contains_key("risk_paths") {
+        strings(table.get("risk_paths"), "risk_paths", problems)
+    } else {
+        Config::default().risk_paths
+    };
+    let mut checks = tables(table.get("checks"), "checks", problems);
+
+    match tip.read_file(OVERRIDE_FILE) {
+        Err(e) => problems.push(format!("cannot read {OVERRIDE_FILE} from the base branch: {e}")),
+        Ok(None) => {}
+        Ok(Some(text)) => match toml::from_str::<toml::Table>(&text) {
+            Err(e) => problems.push(format!("{OVERRIDE_FILE} is not valid TOML: {e}")),
+            Ok(over) => {
+                for key in over.keys() {
+                    if key != "risk_paths" && key != "checks" {
+                        problems.push(format!("{OVERRIDE_FILE} may only set risk_paths and checks, not {key:?}"));
+                    }
+                }
+                risk.extend(strings(over.get("risk_paths"), "override risk_paths", problems));
+                checks.extend(tables(over.get("checks"), "override checks", problems));
+            }
+        },
+    }
+
+    risk.push(FACTORY_RISK.to_string());
+    let mut seen = Vec::new();
+    risk.retain(|r| {
+        if seen.contains(r) {
+            false
+        } else {
+            seen.push(r.clone());
+            true
+        }
+    });
+    table.insert("risk_paths".into(), toml::Value::Array(risk.into_iter().map(toml::Value::String).collect()));
+    if !checks.is_empty() {
+        table.insert("checks".into(), toml::Value::Array(checks));
+    }
+
+    if !problems.is_empty() {
+        return None;
+    }
+    let text = match toml::to_string(&table) {
+        Ok(t) => t,
+        Err(e) => {
+            problems.push(format!("cannot write the merged settings: {e}"));
+            return None;
+        }
+    };
+    match Config::parse(&text) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            problems.push(format!("the merged settings are not valid: {e}"));
+            None
+        }
+    }
+}
+
+fn read_agent_dir(dir: &Path, problems: &mut Vec<String>) -> Vec<(String, String)> {
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            problems.push(format!("cannot read {}: {e}", dir.display()));
+            return out;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+        if !path.is_file() || !name.ends_with(".md") {
+            continue;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(text) => out.push((name, text)),
+            Err(e) => problems.push(format!("cannot read {}: {e}", path.display())),
+        }
+    }
+    out
+}
+
+fn merged_agents(
+    home: &Home,
+    name: &str,
+    file: &ProjectFile,
+    tip: &dyn BaseTipFiles,
+    problems: &mut Vec<String>,
+) -> Vec<AgentFile> {
+    let mut by_name: BTreeMap<String, String> = BTreeMap::new();
+    if project::validate_name(&file.preset).is_ok() {
+        let preset_agents = home.presets_dir().join(&file.preset).join("agents");
+        by_name.extend(read_agent_dir(&preset_agents, problems));
+    }
+    by_name.extend(read_agent_dir(&home.project_dir(name).join("agents"), problems));
+    match tip.list_dir(AGENTS_DIR) {
+        Err(e) => problems.push(format!("cannot read {AGENTS_DIR} from the base branch: {e}")),
+        Ok(files) => {
+            for (n, content) in files {
+                if n.contains('/') || n.contains('\\') || n.contains("..") {
+                    problems.push(format!("agent file name {n:?} in {AGENTS_DIR} is not valid"));
+                } else if n.ends_with(".md") {
+                    by_name.insert(n, content);
+                }
+            }
+        }
+    }
+    by_name.into_iter().map(|(name, content)| AgentFile { name, content }).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[derive(Default)]
+    struct Tip {
+        files: HashMap<String, String>,
+        dirs: HashMap<String, Vec<(String, String)>>,
+        fail: bool,
+    }
+
+    impl Tip {
+        fn with_override(text: &str) -> Tip {
+            let mut t = Tip::default();
+            t.files.insert(OVERRIDE_FILE.to_string(), text.to_string());
+            t
+        }
+    }
+
+    impl BaseTipFiles for Tip {
+        fn read_file(&self, rel: &str) -> Result<Option<String>, String> {
+            if self.fail {
+                return Err("no such branch".into());
+            }
+            Ok(self.files.get(rel).cloned())
+        }
+        fn list_dir(&self, rel: &str) -> Result<Vec<(String, String)>, String> {
+            if self.fail {
+                return Err("no such branch".into());
+            }
+            Ok(self.dirs.get(rel).cloned().unwrap_or_default())
+        }
+    }
+
+    struct Env {
+        _t: TempDir,
+        home: Home,
+    }
+
+    fn env_with(base: Option<&str>, preset: &str) -> Env {
+        let t = TempDir::new().expect("tempdir");
+        let repo: PathBuf = t.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir");
+        let home = Home::at(t.path().join("home"));
+        project::add(&home, "p", &repo, preset, base, &|_| Ok(())).expect("add");
+        Env { _t: t, home }
+    }
+
+    fn env() -> Env {
+        env_with(None, "rust")
+    }
+
+    fn set_settings(e: &Env, extra: &str) {
+        let mut file = project::get(&e.home, "p").expect("get");
+        let table: toml::Table = toml::from_str(extra).expect("settings toml");
+        file.settings.extend(table);
+        let text = toml::to_string(&file).expect("serialize");
+        std::fs::write(e.home.project_dir("p").join("project.toml"), text).expect("write");
+    }
+
+    fn preset_config(e: &Env) -> Config {
+        Config::parse(&std::fs::read_to_string(e.home.presets_dir().join("rust/config.toml")).expect("read"))
+            .expect("parse")
+    }
+
+    fn assert_fail_closed(r: &Resolved) {
+        assert!(!r.problems.is_empty());
+        assert!(r.config.degraded);
+        assert_eq!(r.config.risk_paths, vec!["**".to_string()]);
+    }
+
+    #[test]
+    fn no_override_gives_the_preset_with_the_project_base_branch() {
+        let e = env_with(Some("v-4.0.0"), "rust");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let mut want = preset_config(&e);
+        want.base_branch = "v-4.0.0".into();
+        want.risk_paths.push(FACTORY_RISK.into());
+        assert_eq!(r.config, want);
+        let names: Vec<&str> = r.agents.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["factory-builder.md", "factory-code-reviewer.md", "factory-committer.md", "factory-kb-refresher.md"]
+        );
+    }
+
+    #[test]
+    fn project_settings_replace_preset_keys() {
+        let e = env();
+        set_settings(&e, "diff_cap_lines = 123\nrisk_paths = [\"only/**\"]\n");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert_eq!(r.config.diff_cap_lines, 123);
+        assert_eq!(r.config.risk_paths, ["only/**", FACTORY_RISK]);
+    }
+
+    #[test]
+    fn override_risk_paths_are_added_never_removed() {
+        let e = env();
+        let base = resolve(&e.home, "p", &Tip::default()).expect("resolve").config.risk_paths;
+        let r = resolve(&e.home, "p", &Tip::with_override("risk_paths = [\"extra/**\"]\n")).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(r.config.risk_paths.len() > base.len());
+        assert!(r.config.risk_paths.contains(&"extra/**".to_string()));
+        for p in &base {
+            assert!(r.config.risk_paths.contains(p), "{p} was dropped");
+        }
+    }
+
+    #[test]
+    fn an_empty_override_cannot_remove_risk_paths() {
+        let e = env();
+        let base = resolve(&e.home, "p", &Tip::default()).expect("resolve").config.risk_paths;
+        let r = resolve(&e.home, "p", &Tip::with_override("risk_paths = []\n")).expect("resolve");
+        assert_eq!(r.config.risk_paths, base);
+    }
+
+    #[test]
+    fn factory_dir_is_always_a_risk_path_exactly_once() {
+        let e = env();
+        let count = |r: &Resolved| r.config.risk_paths.iter().filter(|p| *p == FACTORY_RISK).count();
+        assert_eq!(count(&resolve(&e.home, "p", &Tip::default()).expect("r")), 1);
+        let listed = Tip::with_override("risk_paths = [\".factory/**\", \"x/**\"]\n");
+        assert_eq!(count(&resolve(&e.home, "p", &listed).expect("r")), 1);
+        set_settings(&e, "risk_paths = [\".factory/**\"]\n");
+        assert_eq!(count(&resolve(&e.home, "p", &Tip::default()).expect("r")), 1);
+        // A degraded config matches everything, so it covers the folder too.
+        let bad = resolve(&e.home, "p", &Tip::with_override("diff_cap_lines = 1\n")).expect("r");
+        assert_eq!(bad.config.risk_paths, ["**"]);
+    }
+
+    #[test]
+    fn override_checks_follow_the_preset_checks() {
+        let e = env();
+        let preset_checks = preset_config(&e).checks;
+        let over = "[[checks]]\npaths = [\"web/**\"]\ncommands = [\"yarn test\"]\n";
+        let r = resolve(&e.home, "p", &Tip::with_override(over)).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert_eq!(r.config.checks.len(), preset_checks.len() + 1);
+        assert_eq!(&r.config.checks[..preset_checks.len()], &preset_checks[..]);
+        assert_eq!(r.config.checks.last().map(|c| c.commands.clone()), Some(vec!["yarn test".to_string()]));
+    }
+
+    #[test]
+    fn any_other_override_key_fails_closed() {
+        for key in ["diff_cap_lines = 10", "base_branch = \"x\"", "budget_weighted = 5", "risk_pathz = [\"a\"]"] {
+            let e = env_with(Some("v-4.0.0"), "rust");
+            let r = resolve(&e.home, "p", &Tip::with_override(&format!("{key}\n"))).expect("resolve");
+            assert_fail_closed(&r);
+            assert_eq!(r.config.base_branch, "v-4.0.0", "{key}");
+        }
+    }
+
+    #[test]
+    fn an_override_with_good_and_bad_keys_still_fails_closed() {
+        let e = env();
+        let r = resolve(&e.home, "p", &Tip::with_override("risk_paths = [\"a/**\"]\nfix_rounds = 9\n")).expect("r");
+        assert_fail_closed(&r);
+    }
+
+    #[test]
+    fn malformed_override_values_fail_closed() {
+        let e = env();
+        for text in ["risk_paths = \"a\"", "risk_paths = [1]", "checks = [1]", "checks = \"x\""] {
+            assert_fail_closed(&resolve(&e.home, "p", &Tip::with_override(text)).expect("r"));
+        }
+        // A check rule with a typo is caught by Config::parse.
+        let typo = "[[checks]]\npaths = [\"a\"]\ncommandz = [\"x\"]\n";
+        assert_fail_closed(&resolve(&e.home, "p", &Tip::with_override(typo)).expect("r"));
+    }
+
+    #[test]
+    fn broken_inputs_give_a_degraded_config_and_a_problem() {
+        let e = env();
+        assert_fail_closed(&resolve(&e.home, "p", &Tip::with_override("not = = toml")).expect("r"));
+        let tip_fail = Tip { fail: true, ..Tip::default() };
+        assert_fail_closed(&resolve(&e.home, "p", &tip_fail).expect("r"));
+
+        let preset_file = e.home.presets_dir().join("rust/config.toml");
+        let good = std::fs::read_to_string(&preset_file).expect("read");
+        std::fs::write(&preset_file, "this is = = broken").expect("write");
+        assert_fail_closed(&resolve(&e.home, "p", &Tip::default()).expect("r"));
+        std::fs::write(&preset_file, &good).expect("write");
+
+        set_settings(&e, "diff_cap_lines = 0\n");
+        assert_fail_closed(&resolve(&e.home, "p", &Tip::default()).expect("r"));
+    }
+
+    #[test]
+    fn a_missing_preset_directory_fails_closed_and_keeps_the_base_branch() {
+        let e = env_with(Some("v-4.0.0"), "rust");
+        std::fs::remove_dir_all(e.home.presets_dir().join("rust")).expect("rm");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert_fail_closed(&r);
+        assert_eq!(r.config.base_branch, "v-4.0.0");
+    }
+
+    #[test]
+    fn an_invalid_project_base_branch_falls_back_to_the_default() {
+        let e = env();
+        set_settings(&e, "base_branch = \"bad branch\"\n");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert_fail_closed(&r);
+        assert_eq!(r.config.base_branch, Config::default().base_branch);
+    }
+
+    #[test]
+    fn agent_layers_replace_by_name_and_the_result_is_sorted() {
+        let e = env();
+        let own = e.home.project_dir("p").join("agents");
+        std::fs::write(own.join("factory-builder.md"), "project builder").expect("write");
+        std::fs::write(own.join("factory-committer.md"), "project committer").expect("write");
+        std::fs::write(own.join("zzz-new.md"), "project new").expect("write");
+        std::fs::write(own.join("notes.txt"), "ignored").expect("write");
+        let mut tip = Tip::default();
+        tip.dirs.insert(
+            AGENTS_DIR.to_string(),
+            vec![
+                ("factory-committer.md".to_string(), "repo committer".to_string()),
+                ("aaa-repo.md".to_string(), "repo new".to_string()),
+                ("readme.txt".to_string(), "ignored".to_string()),
+            ],
+        );
+        let r = resolve(&e.home, "p", &tip).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let got: Vec<(&str, &str)> = r.agents.iter().map(|a| (a.name.as_str(), a.content.as_str())).collect();
+        let preset_reviewer = std::fs::read_to_string(e.home.presets_dir().join("rust/agents/factory-code-reviewer.md"))
+            .expect("read");
+        assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), [
+            "aaa-repo.md",
+            "factory-builder.md",
+            "factory-code-reviewer.md",
+            "factory-committer.md",
+            "factory-kb-refresher.md",
+            "zzz-new.md"
+        ]);
+        assert_eq!(got[0].1, "repo new");
+        assert_eq!(got[1].1, "project builder");
+        assert_eq!(got[2].1, preset_reviewer);
+        assert_eq!(got[3].1, "repo committer");
+        assert_eq!(got[5].1, "project new");
+    }
+
+    #[test]
+    fn an_agent_name_with_a_path_separator_is_a_problem() {
+        let e = env();
+        let mut tip = Tip::default();
+        tip.dirs.insert(AGENTS_DIR.to_string(), vec![("../evil.md".to_string(), "x".to_string())]);
+        let r = resolve(&e.home, "p", &tip).expect("resolve");
+        assert_fail_closed(&r);
+        assert!(r.agents.iter().all(|a| a.name != "../evil.md"));
+    }
+
+    #[test]
+    fn an_unknown_or_unsafe_project_is_an_error() {
+        let e = env();
+        assert!(resolve(&e.home, "nope", &Tip::default()).is_err());
+        assert!(resolve(&e.home, "../p", &Tip::default()).is_err());
+    }
+
+    #[test]
+    fn the_layout_matches_project_layout() {
+        let e = env();
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        let file = project::get(&e.home, "p").expect("get");
+        assert_eq!(r.layout, project::layout(&e.home, "p", &file));
+    }
+}
