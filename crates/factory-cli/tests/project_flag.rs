@@ -17,6 +17,8 @@ struct Roles {
     calls: AtomicUsize,
     builder_agent: Mutex<Option<String>>,
     reviewer_agent: Mutex<Option<String>>,
+    /// An extra file the builder writes, relative to the worktree.
+    also: Mutex<Option<&'static str>>,
 }
 
 impl AgentRunner for Roles {
@@ -29,6 +31,11 @@ impl AgentRunner for Roles {
                 let path = spec.cwd.join("docs/x.txt");
                 std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
                 std::fs::write(path, "built\n").expect("write");
+                if let Some(extra) = *self.also.lock().expect("lock") {
+                    let p = spec.cwd.join(extra);
+                    std::fs::create_dir_all(p.parent().expect("parent")).expect("mkdir");
+                    std::fs::write(p, "extra\n").expect("write");
+                }
                 "done".to_string()
             }
             "committer" => {
@@ -98,7 +105,7 @@ fn setup(extra: &[(&str, &str)]) -> Env {
         Command::Project { cmd } => project::run(&home, cmd).expect("add"),
         _ => unreachable!(),
     };
-    let runner = Arc::new(Roles { calls: AtomicUsize::new(0), builder_agent: Mutex::new(None), reviewer_agent: Mutex::new(None) });
+    let runner = Arc::new(Roles { calls: AtomicUsize::new(0), builder_agent: Mutex::new(None), reviewer_agent: Mutex::new(None), also: Mutex::new(None) });
     Env { tmp, home, repo: repo_path, runner }
 }
 
@@ -137,7 +144,8 @@ fn project_conflicts_with_root() {
 
 #[test]
 fn a_full_job_runs_through_the_project_and_leaves_the_repo_clean() {
-    let e = setup(&[]);
+    // The repo ignores .claude/, as real repos do, so the agent files and worktrees cannot dirty it.
+    let e = setup(&[(".gitignore", ".claude/\n")]);
     let ctx = e.ctx().expect("ctx");
     let main_before = e.tip("main");
     let base_before = e.tip(BASE);
@@ -147,7 +155,10 @@ fn a_full_job_runs_through_the_project_and_leaves_the_repo_clean() {
     assert_eq!(e.tip("main"), main_before, "main is untouched");
     let pdir = e.home.project_dir("p");
     assert!(pdir.join("state/board.json").exists());
-    assert!(pdir.join("worktrees").exists());
+    let shown = e.run(&ctx, &["show", "1"]).expect("show");
+    let job: serde_json::Value = serde_json::from_str(&shown).expect("show prints the job as json");
+    let wt = job["worktree"].as_str().expect("the job records its worktree");
+    assert!(std::path::Path::new(wt).starts_with(pdir.join("worktrees")), "{wt}");
     assert!(e.runner.builder_agent.lock().expect("lock").as_deref().is_some_and(|t| !t.is_empty()), "builder saw its agent file");
     assert!(e.runner.reviewer_agent.lock().expect("lock").as_deref().is_some_and(|t| !t.is_empty()), "reviewer saw its agent file");
     for dir in [".superpowers", ".claude", ".factory"] {
@@ -172,9 +183,23 @@ fn a_repo_override_adds_risk_paths() {
     assert_eq!(without.run(&ctx, &["run", "1"]).expect("run"), "merged");
 }
 
+#[test]
+fn a_job_touching_the_factory_folder_parks_for_a_human() {
+    let e = setup(&[(".gitignore", ".claude/\n")]);
+    *e.runner.also.lock().expect("lock") = Some(".factory/note.txt");
+    let ctx = e.ctx().expect("ctx");
+    e.new_job(&ctx);
+    let out = e.run(&ctx, &["run", "1"]).expect("run");
+    assert!(out.starts_with("needs-human"), "{out}");
+    assert!(out.contains("risky paths") && out.contains(".factory/note.txt"), "{out}");
+    assert!(e.run(&ctx, &["show", "1"]).expect("show").contains("\"stage\": \"needs-human\""));
+}
+
 fn assert_blocked(e: &Env, reason: &str) {
     let ctx = e.ctx().expect("ctx");
     assert!(ctx.blocked.as_deref().is_some_and(|b| b.contains(reason)), "{:?}", ctx.blocked);
+    // Job 1 exists, so `show` really reads it.
+    e.new_job(&ctx);
     let calls = e.runner.calls.load(Ordering::SeqCst);
     for cmd in [["run", "1"], ["approve", "1"]] {
         let err = e.run(&ctx, &cmd).expect_err("blocked").to_string();
@@ -182,8 +207,7 @@ fn assert_blocked(e: &Env, reason: &str) {
     }
     assert_eq!(e.runner.calls.load(Ordering::SeqCst), calls, "no agent started");
     e.run(&ctx, &["status"]).expect("status works");
-    let show = e.run(&ctx, &["show", "1"]);
-    assert!(!matches!(&show, Err(CliError::Refused(m)) if m.contains("blocked")), "show is not blocked");
+    e.run(&ctx, &["show", "1"]).expect("show is not blocked");
 }
 
 #[test]
