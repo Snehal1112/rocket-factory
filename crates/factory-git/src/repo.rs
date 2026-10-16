@@ -96,6 +96,15 @@ impl Repo {
         Ok(found.get().peel_to_commit()?)
     }
 
+    /// The short name of the branch HEAD is on, or `None` when HEAD is detached or unborn.
+    pub fn current_branch(&self) -> Option<String> {
+        let head = self.inner.head().ok()?;
+        if !head.is_branch() {
+            return None;
+        }
+        head.shorthand().map(str::to_string)
+    }
+
     /// The names of all local branches, sorted.
     pub fn local_branch_names(&self) -> Result<Vec<String>> {
         let mut names = Vec::new();

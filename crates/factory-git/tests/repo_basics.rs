@@ -130,3 +130,12 @@ fn is_merged_follows_main_and_survives_a_deleted_branch() {
         .expect("delete");
     assert_eq!(repo.is_merged(&base, &head).expect("deleted"), Some(head));
 }
+
+#[test]
+fn current_branch_names_the_checked_out_branch() {
+    let fx = Fixture::on_branch("trunk");
+    assert_eq!(fx.repo().current_branch().as_deref(), Some("trunk"));
+    let sha = fx.branch_tip("trunk");
+    fx.git().set_head_detached(git2::Oid::from_str(&sha).expect("oid")).expect("detach");
+    assert_eq!(fx.repo().current_branch(), None);
+}
