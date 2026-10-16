@@ -139,3 +139,28 @@ fn a_merge_refreshes_the_kb_and_tokens_list_the_kb_role() -> TestResult {
     assert!(text.contains("kb "), "{text}");
     Ok(())
 }
+
+#[test]
+fn factory_costs_lists_jobs_writes_costs_json_and_new_prints_estimates() -> TestResult {
+    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    let plan = sc.plan_a.to_string_lossy().to_string();
+    // No history yet, so neither of the two jobs of the series has an estimate.
+    let created = sc.run(&["new", "hello", "say hello", "--plans", &plan])?;
+    assert!(created.contains("job 001: no estimate yet"), "{created}");
+    assert!(created.contains("job 002: no estimate yet"), "{created}");
+    let end = sc.run(&["run", "1"])?;
+    assert_eq!(end, "merged", "{end}");
+
+    let out = sc.run(&["costs"])?;
+    let row = out.lines().find(|l| l.starts_with("001")).expect("job 001 row");
+    assert!(row.contains("merged") && row.contains("small"), "{out}");
+    assert!(out.contains("ROLES"), "{out}");
+    assert!(out.contains("few jobs"), "{out}");
+    assert!(sc.root.join(".superpowers/factory/costs.json").exists());
+
+    // Job 001 is now history, so the next plan gets an estimate.
+    let again = sc.run(&["new", "second", "another one", "--plans", &plan])?;
+    assert!(again.contains("job 003: estimate "), "{again}");
+    assert!(again.contains("(small, 1 job, few jobs"), "{again}");
+    Ok(())
+}

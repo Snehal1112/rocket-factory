@@ -39,7 +39,7 @@ pub fn render_parked(board: &Board, read: impl Fn(&Job) -> Option<ParkRecord>) -
 }
 
 /// Short token counts: `850`, `12.3K`, `1.2M`.
-fn human(n: u64) -> String {
+pub(crate) fn human(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     } else if n >= 1_000 {

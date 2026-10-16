@@ -2,13 +2,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
-use factory_core::{Config, ParkRecord, Stage};
+use factory_core::{Config, CostsFile, ParkRecord, Stage};
 use factory_engine::{
-    acquire_lease, create_job_with_spec, lease_is_live, merge_stage, now_secs, release_lease, run_job, run_series, Driver,
+    acquire_lease, costs_path, create_job_with_spec, gather_costs, lease_is_live, merge_stage, now_secs, release_lease, run_job, run_series, Driver,
     MergeResult, RunEnd, LEASE_TTL_SECS,
 };
 
 use crate::cli::{Cli, Command};
+use crate::costs::{estimate_lines, render_costs};
 use crate::status::{render_parked, render_status};
 
 #[derive(Debug, thiserror::Error)]
@@ -112,6 +113,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Cancel { id, reason, force } => cancel(ctx, &norm(&id)?, &reason, force),
         Command::Cleanup { id, discard_commits } => cleanup(ctx, &norm(&id)?, discard_commits),
         Command::Tokens { id } => tokens(ctx, &norm(&id)?),
+        Command::Costs => costs(ctx),
         Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
 }
@@ -130,7 +132,19 @@ fn new_job(
 ) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = create_job_with_spec(&d, slug, feature, plans.as_deref(), spec.as_deref(), model.as_deref())?;
-    Ok(format!("created job {} in {}", job.id, job.dir))
+    let board = d.store().load()?;
+    Ok(format!("created job {} in {}{}", job.id, job.dir, estimate_lines(&board, &job)))
+}
+
+fn costs(ctx: &CliCtx) -> Result<String, CliError> {
+    let d = ctx.driver()?;
+    let jobs = gather_costs(&d)?;
+    let file = CostsFile::build(&jobs, d.config(), now_secs());
+    let mut out = render_costs(&jobs, &file.groups);
+    if let Err(e) = file.write(&costs_path(d.root())) {
+        out.push_str(&format!("\nwarning: could not write costs.json: {e}\n"));
+    }
+    Ok(out)
 }
 
 fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {

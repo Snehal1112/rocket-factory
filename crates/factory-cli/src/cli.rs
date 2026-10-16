@@ -63,6 +63,8 @@ pub enum Command {
     Tokens {
         id: String,
     },
+    /// Print the cost of every job and the figures per size group, and write costs.json.
+    Costs,
     /// Refresh the knowledge base now, ignoring the stop marker.
     KbRefresh {
         /// The job whose ledger gets the rulings.
