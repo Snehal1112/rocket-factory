@@ -7,6 +7,7 @@ pub mod cost;
 pub mod error;
 pub mod fsutil;
 pub mod ids;
+pub mod layout;
 pub mod ledger;
 pub mod park;
 pub mod risk;
@@ -24,6 +25,7 @@ pub use cost::{count_tasks, estimate_for, group_of, stats, usage_summary, CostsF
 pub use error::CoreError;
 pub use fsutil::write_atomic;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
+pub use layout::Layout;
 pub use ledger::{Ledger, TaskState};
 pub use park::{ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
 pub use risk::{classify_paths, glob_match, DiffClass};

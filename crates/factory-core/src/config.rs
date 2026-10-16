@@ -62,6 +62,8 @@ pub struct Config {
     pub size_small_max_bytes: u64,
     /// A plan up to this many bytes is a medium job, a bigger one is complex.
     pub size_medium_max_bytes: u64,
+    /// The branch jobs start from and merge into.
+    pub base_branch: String,
     pub checks: Vec<CheckRule>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
@@ -87,6 +89,7 @@ impl Default for Config {
             kb_auto_commit: false,
             size_small_max_bytes: 12_288,
             size_medium_max_bytes: 25_600,
+            base_branch: "main".to_string(),
             checks: Vec::new(),
             degraded: false,
         }
@@ -116,6 +119,9 @@ impl Config {
         }
         if cfg.kb_path.as_deref().is_some_and(|p| p.trim().is_empty()) {
             return Err(CoreError::Config("kb_path must not be empty when it is set".into()));
+        }
+        if let Err(why) = check_branch_name(&cfg.base_branch) {
+            return Err(CoreError::Config(format!("base_branch: {why}")));
         }
         Ok(cfg)
     }
@@ -154,9 +160,51 @@ fn expand_home(path: &str, home: Option<&str>) -> Option<PathBuf> {
     Some(if rest.is_empty() { PathBuf::from(home) } else { Path::new(home).join(rest) })
 }
 
+/// A branch name git accepts, and not one of the factory's own job branches.
+fn check_branch_name(name: &str) -> Result<(), &'static str> {
+    if name.trim().is_empty() {
+        return Err("must not be empty");
+    }
+    if name.starts_with('-') || name.starts_with('/') || name.ends_with('/') || name.ends_with(".lock") || name == "@" {
+        return Err("is not a valid branch name");
+    }
+    if name.contains("..") || name.contains("@{") {
+        return Err("is not a valid branch name");
+    }
+    if name.chars().any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c)) {
+        return Err("is not a valid branch name");
+    }
+    if name.starts_with("factory/") {
+        return Err("must not start with factory/, that is the job branch prefix");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_branch_defaults_to_main_and_survives_fail_closed() {
+        assert_eq!(Config::default().base_branch, "main");
+        assert_eq!(Config::parse("").expect("empty").base_branch, "main");
+        assert_eq!(Config::fail_closed().base_branch, "main");
+    }
+
+    #[test]
+    fn base_branch_accepts_ordinary_names() {
+        for name in ["main", "master", "v-4.0.0", "release/2026.10", "dev_1"] {
+            let cfg = Config::parse(&format!("base_branch = \"{name}\"\n")).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(cfg.base_branch, name);
+        }
+    }
+
+    #[test]
+    fn base_branch_rejects_unsafe_names() {
+        for name in ["", "  ", "a b", "a..b", "-x", "x/", "/x", "x.lock", "a\\tb", "factory/001-x", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "@", "a@{b"] {
+            assert!(Config::parse(&format!("base_branch = \"{name}\"\n")).is_err(), "{name:?} must be refused");
+        }
+    }
 
     #[test]
     fn size_thresholds_default_and_validate() {
