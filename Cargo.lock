@@ -225,6 +225,7 @@ dependencies = [
 name = "factory-supervisor"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "factory-core",
  "factory-engine",
  "fs2",
