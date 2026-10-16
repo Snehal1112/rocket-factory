@@ -283,12 +283,17 @@ impl Driver {
         if self.project_holds.fetch_add(1, Ordering::SeqCst) == 0 {
             self.lost.store(false, Ordering::SeqCst);
             lock_held(&self.shared).project_job = job.to_string();
-            self.start_heartbeat(owner);
+            if let Err(e) = self.start_heartbeat(owner) {
+                // No guard exists yet, so the hold is undone here.
+                self.project_holds.fetch_sub(1, Ordering::SeqCst);
+                self.release_project();
+                return Err(e);
+            }
         }
         Ok(ProjectGuard { driver: Some(self) })
     }
 
-    fn start_heartbeat(&self, owner: &str) {
+    fn start_heartbeat(&self, owner: &str) -> Result<(), EngineError> {
         let stop = Arc::new(AtomicBool::new(false));
         let ctx = BeatCtx {
             state_dir: self.layout.state_dir.clone(),
@@ -301,10 +306,13 @@ impl Driver {
             lost: self.lost.clone(),
             stop: stop.clone(),
         };
-        // When the thread cannot start, the lease still works but is not renewed.
-        if let Ok(handle) = std::thread::Builder::new().name("lease-heartbeat".into()).spawn(move || ctx.run()) {
-            *self.beat.lock().unwrap_or_else(|e| e.into_inner()) = Some(Heartbeat { stop, handle });
-        }
+        // Without the thread the lease would expire during a long step, so a failed start is an error.
+        let handle = std::thread::Builder::new()
+            .name("lease-heartbeat".into())
+            .spawn(move || ctx.run())
+            .map_err(|e| EngineError::Msg(format!("cannot start the lease heartbeat: {e}")))?;
+        *self.beat.lock().unwrap_or_else(|e| e.into_inner()) = Some(Heartbeat { stop, handle });
+        Ok(())
     }
 
     /// Drops this driver's lease. A failed release is not fatal, because a lease expires by itself.

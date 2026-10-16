@@ -293,7 +293,7 @@ fn run_job_inner(driver: &Driver, id: &str, guard: &crate::ProjectGuard<'_>) -> 
     let limit = driver.config().fix_rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
         if guard.lost() {
-            return Err(EngineError::Msg("project is busy: the lease was taken over by another owner, this run stops".into()));
+            return Err(EngineError::Msg("project is busy: another owner holds the project lease (the lease was taken over), this run stops".into()));
         }
         // A live lease of another driver stops this one here, before any stage work.
         driver.renew_lease(id)?;

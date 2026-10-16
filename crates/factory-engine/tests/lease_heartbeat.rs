@@ -125,7 +125,7 @@ fn another_owner_in_the_lease_sets_lost_and_stops_the_run() {
     );
     *slot.lock().expect("slot") = Some(fx.driver.layout().project_lease_file());
     let err = run_it(&fx).expect_err("lost");
-    assert!(err.to_string().contains("project is busy"), "{err}");
+    assert!(err.to_string().contains("project is busy") && err.to_string().contains("(the lease was taken over)"), "{err}");
     assert!(fx.driver.lease_lost());
     let text = std::fs::read_to_string(fx.driver.layout().project_lease_file()).expect("lease stays");
     assert!(text.contains("\"other\""), "the other owner keeps the lease: {text}");
