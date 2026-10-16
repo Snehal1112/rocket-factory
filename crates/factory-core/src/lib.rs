@@ -11,6 +11,7 @@ pub mod homeconfig;
 pub mod ids;
 pub mod layout;
 pub mod ledger;
+pub mod outcome_lines;
 pub mod park;
 pub mod project;
 pub mod preset;

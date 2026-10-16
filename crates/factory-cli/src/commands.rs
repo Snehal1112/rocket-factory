@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
-use factory_core::{resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
+use factory_core::{outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
 use factory_engine::{
     acquire_lease, costs_path, create_job_with_spec, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, release_lease, run_job, run_series, Driver,
     MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT, LEASE_TTL_SECS,
@@ -271,8 +271,8 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     let _guard = LeaseGuard { driver: &d, id: id.to_string(), owner: ctx.owner.clone() };
     let end = if series { run_series(&d, id)? } else { run_job(&d, id)? };
     Ok(match end {
-        RunEnd::Merged => "merged".to_string(),
-        RunEnd::NeedsHuman(reason) => format!("needs-human: {reason}"),
+        RunEnd::Merged => outcome_lines::merged_line(None),
+        RunEnd::NeedsHuman(reason) => outcome_lines::needs_human_line(&reason),
     })
 }
 
@@ -310,8 +310,8 @@ fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     d.store().update_job(id, |j| j.set_stage(Stage::Approve, None, false, now))?;
     d.ledger(&job).ruling("approved by the user")?;
     Ok(match merge_stage(&d, id)? {
-        MergeResult::Merged(sha) => format!("merged {sha}"),
-        MergeResult::Parked(reason) => format!("parked: {reason}"),
+        MergeResult::Merged(sha) => outcome_lines::merged_line(Some(&sha)),
+        MergeResult::Parked(reason) => outcome_lines::parked_line(&reason),
     })
 }
 
