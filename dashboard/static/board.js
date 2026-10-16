@@ -394,7 +394,6 @@
   }
 
   const GROUP_ORDER = ["small", "medium", "complex", "all"];
-  const GROUP_LABEL = { all: "all" };
   const ROLE_CLASS = ["builder", "committer", "reviewer", "message", "kb"];
   const FEW_JOBS = 3;
 
@@ -433,14 +432,16 @@
 
   // A stacked bar of the role shares and a text legend. Widths are set from data-pct by app.js.
   function roleBar(roles) {
-    const entries = Object.entries(roles || {}).filter(([, pct]) => Number(pct) > 0);
+    const entries = Object.entries(roles || {})
+      .filter(([, pct]) => Number.isFinite(Number(pct)) && Number(pct) > 0)
+      .map(([role, pct]) => [role, Math.max(0, Math.min(100, Math.round(Number(pct))))]);
     if (!entries.length) return "";
-    const label = entries.map(([role, pct]) => `${role} ${Number(pct)}%`).join(", ");
+    const label = entries.map(([role, pct]) => `${role} ${pct}%`).join(", ");
     const segs = entries
-      .map(([role, pct]) => `<span class="role-seg ${roleClass(role)}" data-pct="${Math.max(0, Math.min(100, Number(pct)))}"></span>`)
+      .map(([role, pct]) => `<span class="role-seg ${roleClass(role)}" data-pct="${pct}"></span>`)
       .join("");
     const legend = entries
-      .map(([role, pct]) => `<li><span class="role-key ${roleClass(role)}" aria-hidden="true"></span>${escapeHtml(role)} ${Number(pct)}%</li>`)
+      .map(([role, pct]) => `<li><span class="role-key ${roleClass(role)}" aria-hidden="true"></span>${escapeHtml(role)} ${pct}%</li>`)
       .join("");
     return (
       `<div class="role-bar" role="img" aria-label="${escapeHtml(`Share of tokens by role: ${label}`)}">${segs}</div>` +
@@ -457,7 +458,7 @@
       ? ` <span class="approx" title="Output tokens were counted too low for some of these jobs, so the figure is a little low.">~</span>`
       : "";
     return (
-      `<tr><th scope="row">${escapeHtml(GROUP_LABEL[name] || name)}</th><td>${Number(g.n)}</td>` +
+      `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(g.n)}</td>` +
       `<td>${formatTokens(g.median)}${mark}</td><td>${formatTokens(g.low)} to ${formatTokens(g.high)}</td>` +
       `<td class="cost-notes">${escapeHtml(notes.join(", "))}</td></tr>`
     );
@@ -481,7 +482,7 @@
       .filter((name) => groups[name].corrected && Number(groups[name].corrected.n) > 0)
       .map((name) => {
         const c = groups[name].corrected;
-        return `<li>${escapeHtml(GROUP_LABEL[name] || name)}: median ${formatTokens(c.median)} (${jobsWord(Number(c.n))})</li>`;
+        return `<li>${escapeHtml(name)}: median ${formatTokens(c.median)} (${jobsWord(Number(c.n))})</li>`;
       });
     return (
       `<div class="cost-head"><h2>Cost per job</h2>${age}</div>` +

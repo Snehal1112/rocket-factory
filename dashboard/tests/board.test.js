@@ -783,6 +783,22 @@ test("an unknown or hostile role name is escaped and gets no class from file tex
 test("group names are escaped and an unknown group is still listed after the known ones", () => {
   const html = board.renderCostPanel({ generated_at: 1, groups: { "<b>x</b>": { n: 1, n_approx: 0, median: 5, low: 5, high: 5, roles: {} } }, roles: {} }, 2);
   assert.doesNotMatch(html, /<b>x/);
+  assert.match(html, /&lt;b&gt;x&lt;\/b&gt;/);
+});
+
+test("a group named like an object property renders as plain text", () => {
+  const html = board.renderCostPanel({ generated_at: 1, groups: JSON.parse('{"constructor":{"n":1,"n_approx":0,"median":5,"low":5,"high":5,"roles":{}}}'), roles: {} }, 2);
+  assert.match(html, /<th scope="row">constructor<\/th>/);
+  assert.doesNotMatch(html, /function|native code/);
+});
+
+test("role shares are rounded and clamped, and a non-finite share is skipped", () => {
+  const html = board.roleBar({ builder: 33.4, reviewer: Infinity, committer: 250 });
+  assert.match(html, /builder 33%/);
+  assert.match(html, /data-pct="33"/);
+  assert.doesNotMatch(html, /reviewer|Infinity/);
+  assert.match(html, /committer 100%/);
+  assert.match(html, /data-pct="100"/);
 });
 
 test("the empty panel invites an action and does not throw on missing data", () => {
