@@ -498,4 +498,17 @@ mod tests {
         assert!(css.contains(".park-dialog") && css.contains(".ln-hit"), "styles");
         Ok(())
     }
+
+    #[test]
+    fn the_page_carries_the_cost_panel_and_its_script_and_styles() -> TestResult {
+        let (_dir, app) = app_with_board(Some(JOB))?;
+        let host = Some("127.0.0.1:1");
+        let html = String::from_utf8(route(&app, "GET", "/", host, 1, 5.0).body)?;
+        assert!(html.contains(r#"id="costs""#), "costs section");
+        let app_js = String::from_utf8(route(&app, "GET", "/app.js", host, 1, 5.0).body)?;
+        assert!(app_js.contains("renderCostPanel") && app_js.contains(".role-seg"), "controller");
+        let css = String::from_utf8(route(&app, "GET", "/dashboard.css", host, 1, 5.0).body)?;
+        assert!(css.contains(".cost-table") && css.contains(".role-bar") && css.contains(".estimate"), "styles");
+        Ok(())
+    }
 }

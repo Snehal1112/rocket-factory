@@ -749,6 +749,7 @@ test("the cost panel lists a row per group in order with median, range and notes
   assert.match(html, /1 of 2 approximate/);
   assert.match(html, /few jobs/);
   assert.match(html, /updated 1m ago/);
+  assert.match(html, /<div class="cost-head"><h2>Cost per job<\/h2><span class="cost-updated">updated 1m ago<\/span><\/div>/);
 });
 
 test("approximate medians carry a tilde with an explanation", () => {

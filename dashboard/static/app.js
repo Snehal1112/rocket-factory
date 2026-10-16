@@ -28,7 +28,7 @@
 
   // Bar widths go through the CSSOM, because the CSP forbids inline style attributes.
   function applyBarWidths() {
-    for (const fill of document.querySelectorAll(".tokens-fill")) {
+    for (const fill of document.querySelectorAll(".tokens-fill, .role-seg")) {
       const width = `${fill.getAttribute("data-pct") || 0}%`;
       if (fill.style.width !== width) fill.style.width = width;
     }
@@ -39,6 +39,7 @@
     if (view) {
       setHtml("summary", FactoryBoard.renderSummary(view));
       setHtml("board", FactoryBoard.renderBoard(view));
+      setHtml("costs", FactoryBoard.renderCostPanel(view.costs, view.generated_at));
       setHtml("others", FactoryBoard.renderUnassigned(view));
       setHtml("notice", FactoryBoard.renderLogNotice(view));
       applyBarWidths();

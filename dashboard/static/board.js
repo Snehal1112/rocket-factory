@@ -484,7 +484,7 @@
         return `<li>${escapeHtml(GROUP_LABEL[name] || name)}: median ${formatTokens(c.median)} (${jobsWord(Number(c.n))})</li>`;
       });
     return (
-      `<h2>Cost per job</h2>${age}` +
+      `<div class="cost-head"><h2>Cost per job</h2>${age}</div>` +
       `<div class="cost-scroll"><table class="cost-table"><caption class="sr-only">Weighted tokens per finished job, by plan size</caption>` +
       `<thead><tr><th scope="col">size</th><th scope="col">jobs</th><th scope="col">median</th><th scope="col">range</th><th scope="col">notes</th></tr></thead>` +
       `<tbody>${rows.map((name) => costRow(name, groups[name])).join("")}</tbody></table></div>` +

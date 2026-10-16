@@ -294,3 +294,31 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .park-empty { margin: 0; color: var(--muted-foreground); }
 .park-foot { padding: 0.7rem 0.875rem 0.875rem; border-top: 1px solid var(--border); }
 .park-next-label { margin: 0 0 0.4rem; color: var(--muted-foreground); font-size: 12px; }
+
+/* The cost panel and the estimate line. */
+.costs { margin-top: 0.75rem; }
+.cost-head { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; margin: 0 0 0.7rem; }
+.cost-head h2 { margin: 0; }
+.cost-updated { color: var(--muted-foreground); font-weight: 400; }
+.cost-scroll { overflow-x: auto; }
+.cost-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cost-table th, .cost-table td { padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.cost-table th:first-child, .cost-table td:first-child, .cost-table th:last-child, .cost-table td:last-child { text-align: left; }
+.cost-table thead th { color: var(--muted-foreground); font-weight: 500; }
+.cost-table tbody th { font-weight: 600; }
+.cost-notes { color: var(--muted-foreground); }
+.approx { color: var(--attention); cursor: help; }
+.cost-note { margin: 0.7rem 0 0.2rem; color: var(--muted-foreground); font-size: 12px; }
+.cost-corrected { margin: 0; padding-left: 1rem; font-size: 12.5px; }
+.cost-sub { margin: 0.9rem 0 0.4rem; color: var(--muted-foreground); font-size: 11.5px; font-weight: 500; }
+.cost-empty { margin: 0; color: var(--muted-foreground); }
+.role-bar { display: flex; height: 0.5rem; border-radius: 999px; background: var(--muted); overflow: hidden; }
+.role-seg { display: block; height: 100%; border-right: 1px solid var(--card); }
+.role-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin: 0.5rem 0 0; padding: 0; list-style: none; font-size: 12px; }
+.role-key { display: inline-block; width: 0.6rem; height: 0.6rem; margin-right: 0.35rem; border-radius: 2px; }
+.role-builder { background: var(--primary); }
+.role-committer { background: var(--attention); }
+.role-reviewer { background: var(--muted-foreground); }
+.role-message { background: var(--input); }
+.role-kb, .role-other { background: var(--untested); }
+.estimate { margin: 0.35rem 0 0; color: var(--muted-foreground); font-size: 12px; }
