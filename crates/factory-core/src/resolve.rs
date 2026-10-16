@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::layout::is_agent_file_name;
 use crate::project::{self, ProjectFile};
 use crate::{Config, CoreError, Home, Layout};
 
@@ -34,6 +35,8 @@ pub struct Resolved {
     pub layout: Layout,
     pub agents: Vec<AgentFile>,
     pub problems: Vec<String>,
+    /// Things that were left out but do not fail the config closed, such as a stray agent file.
+    pub notes: Vec<String>,
 }
 
 /// Only an unknown project is an `Err`. Every other problem gives a fail-closed config.
@@ -42,12 +45,13 @@ pub fn resolve(home: &Home, name: &str, tip: &dyn BaseTipFiles) -> Result<Resolv
     let layout = project::layout(home, name, &file);
     let mut problems = Vec::new();
     let merged = merged_config(home, &file, tip, &mut problems);
-    let agents = merged_agents(home, name, &file, tip, &mut problems);
+    let mut notes = Vec::new();
+    let agents = merged_agents(home, name, &file, tip, &mut problems, &mut notes);
     let config = match merged {
         Some(cfg) if problems.is_empty() => cfg,
         _ => Config { base_branch: safe_base_branch(&file), ..Config::fail_closed() },
     };
-    Ok(Resolved { config, layout, agents, problems })
+    Ok(Resolved { config, layout, agents, problems, notes })
 }
 
 /// The project's base branch when it is valid, else the default one.
@@ -209,6 +213,7 @@ fn merged_agents(
     file: &ProjectFile,
     tip: &dyn BaseTipFiles,
     problems: &mut Vec<String>,
+    notes: &mut Vec<String>,
 ) -> Vec<AgentFile> {
     let mut by_name: BTreeMap<String, String> = BTreeMap::new();
     if project::validate_name(&file.preset).is_ok() {
@@ -228,7 +233,16 @@ fn merged_agents(
             }
         }
     }
-    by_name.into_iter().map(|(name, content)| AgentFile { name, content }).collect()
+    // The engine only writes factory-<name>.md. A stray file is dropped with a note, it does not degrade the config.
+    let mut out = Vec::new();
+    for (name, content) in by_name {
+        if is_agent_file_name(&name) {
+            out.push(AgentFile { name, content });
+        } else if !name.contains('/') && !name.contains('\\') && !name.contains("..") {
+            notes.push(format!("ignored agent file {name}: names must be factory-<name>.md"));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -457,14 +471,14 @@ mod tests {
         let own = e.home.project_dir("p").join("agents");
         std::fs::write(own.join("factory-builder.md"), "project builder").expect("write");
         std::fs::write(own.join("factory-committer.md"), "project committer").expect("write");
-        std::fs::write(own.join("zzz-new.md"), "project new").expect("write");
+        std::fs::write(own.join("factory-zzz-new.md"), "project new").expect("write");
         std::fs::write(own.join("notes.txt"), "ignored").expect("write");
         let mut tip = Tip::default();
         tip.dirs.insert(
             AGENTS_DIR.to_string(),
             vec![
                 ("factory-committer.md".to_string(), "repo committer".to_string()),
-                ("aaa-repo.md".to_string(), "repo new".to_string()),
+                ("factory-aaa-repo.md".to_string(), "repo new".to_string()),
                 ("readme.txt".to_string(), "ignored".to_string()),
             ],
         );
@@ -474,18 +488,36 @@ mod tests {
         let preset_reviewer = std::fs::read_to_string(e.home.presets_dir().join("rust/agents/factory-code-reviewer.md"))
             .expect("read");
         assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), [
-            "aaa-repo.md",
+            "factory-aaa-repo.md",
             "factory-builder.md",
             "factory-code-reviewer.md",
             "factory-committer.md",
             "factory-kb-refresher.md",
-            "zzz-new.md"
+            "factory-zzz-new.md"
         ]);
         assert_eq!(got[0].1, "repo new");
         assert_eq!(got[1].1, "project builder");
         assert_eq!(got[2].1, preset_reviewer);
         assert_eq!(got[3].1, "repo committer");
         assert_eq!(got[5].1, "project new");
+    }
+
+    #[test]
+    fn stray_agent_files_are_dropped_with_a_note_and_do_not_degrade() {
+        let e = env();
+        std::fs::write(e.home.project_dir("p").join("agents/README.md"), "stray").expect("write");
+        let mut tip = Tip::default();
+        tip.dirs.insert(
+            AGENTS_DIR.to_string(),
+            vec![("README.md".to_string(), "stray".to_string()), ("factory-ok.md".to_string(), "ok".to_string())],
+        );
+        let r = resolve(&e.home, "p", &tip).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(!r.config.degraded);
+        assert!(r.agents.iter().all(|a| a.name != "README.md"));
+        assert!(r.agents.iter().any(|a| a.name == "factory-ok.md"));
+        assert_eq!(r.notes.iter().filter(|n| n.contains("README.md")).count(), 1, "{:?}", r.notes);
+        assert!(r.notes[0].starts_with("ignored agent file README.md: names must be factory-<name>.md"));
     }
 
     #[test]
