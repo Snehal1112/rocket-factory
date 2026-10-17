@@ -130,8 +130,34 @@ example a manual `factory run`) is reported as busy and nothing starts for it un
 | `GET /projects/{p}/jobs` | `{jobs, queued, lastResults}` from the board, the queue and the result records |
 | `GET /usage?days=N` | `{days, projects: [{name, total, perDay: [{day, tokens}]}]}`, weighted tokens per UTC day, `N` 1 to 90 (default 14) |
 
+Write endpoints. A body is JSON of at most 64 KiB, unknown fields are refused, and everything is checked before a
+process starts or a request is queued. Commands that only `factory` implements run as `factory --project <p> <cmd>`
+child processes (60 second limit, arguments passed one by one, never through a shell). The binary is found like
+for the job children: `FACTORY_BIN`, else next to `factoryd`.
+
+| Endpoint | Body and answer |
+|---|---|
+| `POST /projects/{p}/jobs` | `{"spec": "/abs/spec.md", "plans": "/abs/plans-folder", "model"?, "feature"?, "run"?}`. Both paths must be absolute, exist and hold no `..`. `model` matches `[A-Za-z0-9._-]{1,64}`, `feature` is one line of at most 200 characters (default: the slug). The slug is the spec's folder name. Runs `factory new`, then queues a run unless `run` is `false`. `201 {"job", "requestId"}` (`requestId` is `null` when nothing was queued) |
+| `POST /projects/{p}/jobs/{id}/approve` | No body. Needs a job in `needs-human` or `approve` that is not cancelled. Queues an approve request. `202 {"requestId"}` |
+| `POST /projects/{p}/jobs/{id}/rework` | `{"note": "one line, 200 characters at most"}`. Runs `factory rework`. `200 {"output"}` |
+| `POST /projects/{p}/jobs/{id}/cancel` | `{"reason"?, "force"?}` (`force` is a boolean, an empty body is fine). Runs `factory cancel`, never a signal. A refusal by the command, such as a live job lease without `force`, is `409 conflict`. `200 {"output"}` |
+| `GET /events?project={p}` | Server-sent events, see below |
+
+A project that cannot take work (broken `project.toml`, missing repo) answers `409 project_disabled`. A failed
+`factory new` answers `500 failed` with the end of its stderr in the message.
+
+`GET /events` answers `text/event-stream`. Each `data:` line is one object of that project's `events.jsonl` with an
+added `"project"` field. The stream first replays the last 50 lines, then follows new complete lines (polled every
+500 ms). Without `project` it streams every project, and projects added later join. A `: keepalive` comment is sent
+every 15 seconds. At most 8 streams are open at once (they also use handler slots), more get `409 conflict`.
+
+```
+curl -N -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8766/events?project=rocket"
+data: {"...the original event fields...": "...", "project": "rocket"}
+```
+
 Errors are `{"error": {"code", "message"}}` with these codes: `unauthorized` (401), `bad_request` (400),
-`not_found` (404), `method_not_allowed` (405), `conflict` (409) and `failed` (500). A wrong, missing or short
+`not_found` (404), `method_not_allowed` (405), `project_disabled` (409), `conflict` (409) and `failed` (500). A wrong, missing or short
 token always gets the same 401 body.
 
 ```

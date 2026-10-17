@@ -7,6 +7,15 @@ use std::sync::Arc;
 use factory_core::Home;
 use factory_supervisor::api::{ApiDeps, ApiServer};
 use factory_supervisor::token;
+use factory_supervisor::{CliOutput, CliSpawnError, FactoryCli};
+
+struct NoCli;
+
+impl FactoryCli for NoCli {
+    fn run(&self, _project: &str, _args: &[String]) -> Result<CliOutput, CliSpawnError> {
+        Err(CliSpawnError::NoBin("the read tests run no commands".to_string()))
+    }
+}
 
 fn request(addr: SocketAddr, path: &str, host: &str, token: Option<&str>) -> (u16, serde_json::Value) {
     let mut s = TcpStream::connect(addr).expect("connect");
@@ -35,7 +44,7 @@ fn stalled_unauthenticated_bodies_do_not_hold_handler_slots() {
     let t = tempfile::tempdir().expect("tempdir");
     let home = demo_home(&t);
     let tok = token::ensure(&home).expect("token");
-    let deps = ApiDeps { now_ms: Arc::new(|| 1_700_000_000_000) };
+    let deps = ApiDeps { now_ms: Arc::new(|| 1_700_000_000_000), cli: Arc::new(NoCli) };
     let handle = ApiServer::start(home, "127.0.0.1:0".parse().expect("addr"), deps).expect("start");
     let addr = handle.addr;
     let host = format!("127.0.0.1:{}", addr.port());
@@ -62,7 +71,7 @@ fn the_server_checks_token_and_host_and_lists_projects() {
     let home = demo_home(&t);
     let tok = token::ensure(&home).expect("token");
 
-    let deps = ApiDeps { now_ms: Arc::new(|| 1_700_000_000_000) };
+    let deps = ApiDeps { now_ms: Arc::new(|| 1_700_000_000_000), cli: Arc::new(NoCli) };
     let handle = ApiServer::start(home, "127.0.0.1:0".parse().expect("addr"), deps).expect("start");
     let addr = handle.addr;
     let host = format!("127.0.0.1:{}", addr.port());

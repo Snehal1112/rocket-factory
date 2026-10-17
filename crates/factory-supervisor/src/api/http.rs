@@ -3,8 +3,11 @@
 use factory_core::Home;
 use serde_json::{json, Value};
 
-use crate::api::{read, usage, ApiDeps};
+use crate::api::{read, usage, write, ApiDeps};
 use crate::token;
+
+/// The largest request body that is accepted.
+pub const MAX_BODY: usize = 64 * 1024;
 
 /// A status code and a JSON body.
 #[derive(Debug, Clone, PartialEq)]
@@ -75,22 +78,28 @@ pub fn route(
     path: &str,
     query: &str,
     headers: &[(String, String)],
-    _body: &[u8],
+    body: &[u8],
 ) -> ApiResponse {
     if let Err(r) = authorize(home, headers) {
         return r;
     }
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let known = matches!(segments.as_slice(), ["projects"] | ["projects", _, "jobs"] | ["usage"]);
-    if !known {
-        return error_response(404, "not_found", "no such endpoint");
+    let allowed: &[&str] = match segments.as_slice() {
+        ["projects"] | ["usage"] => &["GET"],
+        ["projects", _, "jobs"] => &["GET", "POST"],
+        ["projects", _, "jobs", _, "approve" | "rework" | "cancel"] => &["POST"],
+        _ => return error_response(404, "not_found", "no such endpoint"),
+    };
+    if !allowed.contains(&method) {
+        return error_response(405, "method_not_allowed", &format!("allowed here: {}", allowed.join(", ")));
     }
-    if method != "GET" {
-        return error_response(405, "method_not_allowed", "only GET is allowed here");
-    }
-    match segments.as_slice() {
-        ["projects"] => read::projects(home, deps),
-        ["projects", name, "jobs"] => read::jobs(home, name),
+    match (method, segments.as_slice()) {
+        (_, ["projects"]) => read::projects(home, deps),
+        ("GET", ["projects", name, "jobs"]) => read::jobs(home, name),
+        (_, ["projects", name, "jobs"]) => write::create(home, deps, name, body),
+        (_, ["projects", name, "jobs", id, "approve"]) => write::approve(home, deps, name, id),
+        (_, ["projects", name, "jobs", id, "rework"]) => write::rework(home, deps, name, id, body),
+        (_, ["projects", name, "jobs", id, _]) => write::cancel(home, deps, name, id, body),
         _ => usage::report(home, deps, query),
     }
 }

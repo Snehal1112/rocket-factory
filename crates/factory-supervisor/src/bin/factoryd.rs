@@ -9,7 +9,7 @@ use factory_supervisor::api::{ApiDeps, ApiServer};
 use factory_supervisor::lock::stop_file;
 use factory_supervisor::token;
 use factory_supervisor::request::{Action, Request};
-use factory_supervisor::{pid_alive, queue, records, InstanceLock, Outcome, ProcessSpawner, QueueItem, Supervisor};
+use factory_supervisor::{pid_alive, queue, records, InstanceLock, Outcome, ProcessFactoryCli, ProcessSpawner, QueueItem, Supervisor};
 
 const DEFAULT_INTERVAL_MS: u64 = 2000;
 const RECENT_RESULTS: usize = 10;
@@ -71,7 +71,8 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
     // A bind failure ends factoryd here, before any job is taken.
     let listen: std::net::SocketAddr = cfg.listen.parse().map_err(|e| format!("listen {:?}: {e}", cfg.listen))?;
     token::ensure(&home).map_err(|e| e.to_string())?;
-    let deps = ApiDeps { now_ms: std::sync::Arc::new(now_ms) };
+    let cli = ProcessFactoryCli::from_env().map_err(|e| e.to_string())?;
+    let deps = ApiDeps { now_ms: std::sync::Arc::new(now_ms), cli: std::sync::Arc::new(cli) };
     let api = ApiServer::start(home.clone(), listen, deps).map_err(|e| e.to_string())?;
     println!("api listening on {}", api.addr);
     let stop_home = home.clone();

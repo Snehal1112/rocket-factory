@@ -4,13 +4,60 @@ use std::path::Path;
 
 use factory_core::Home;
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
 use crate::api::ApiDeps;
+use crate::factory_cli::{CliOutput, CliSpawnError, FactoryCli};
 
 pub const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 pub const NOW_MS: u64 = 1_700_000_000_000;
 
+/// Records every call and answers with the queued replies, else with the last one set.
+pub struct FakeCli {
+    calls: Mutex<Vec<(String, Vec<String>)>>,
+    replies: Mutex<VecDeque<CliOutput>>,
+    last: Mutex<CliOutput>,
+}
+
+impl Default for FakeCli {
+    fn default() -> FakeCli {
+        FakeCli {
+            calls: Mutex::new(Vec::new()),
+            replies: Mutex::new(VecDeque::new()),
+            last: Mutex::new(CliOutput { code: 0, stdout: String::new(), stderr: String::new() }),
+        }
+    }
+}
+
+impl FakeCli {
+    pub fn reply(&self, code: i32, stdout: &str, stderr: &str) {
+        *self.last.lock().expect("lock") = CliOutput { code, stdout: stdout.to_string(), stderr: stderr.to_string() };
+    }
+
+    pub fn reply_stdout(&self, stdout: &str) {
+        self.reply(0, stdout, "");
+    }
+
+    pub fn calls(&self) -> Vec<(String, Vec<String>)> {
+        self.calls.lock().expect("lock").clone()
+    }
+}
+
+impl FactoryCli for FakeCli {
+    fn run(&self, project: &str, args: &[String]) -> Result<CliOutput, CliSpawnError> {
+        self.calls.lock().expect("lock").push((project.to_string(), args.to_vec()));
+        let queued = self.replies.lock().expect("lock").pop_front();
+        Ok(queued.unwrap_or_else(|| self.last.lock().expect("lock").clone()))
+    }
+}
+
+pub fn deps_with(cli: Arc<FakeCli>) -> ApiDeps {
+    ApiDeps { now_ms: Arc::new(|| NOW_MS), cli }
+}
+
 pub fn deps() -> ApiDeps {
-    ApiDeps { now_ms: std::sync::Arc::new(|| NOW_MS) }
+    deps_with(Arc::new(FakeCli::default()))
 }
 
 pub fn headers(token: Option<&str>, host: &str) -> Vec<(String, String)> {
