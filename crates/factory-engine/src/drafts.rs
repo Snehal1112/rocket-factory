@@ -12,7 +12,15 @@ fn spec_path(driver: &Driver, date: &str, slug: &str) -> String {
 
 /// Adds a draft at stage `interviewing`. The slug is slugified and must not be taken by another draft.
 pub fn start_draft(driver: &Driver, slug: &str, feature: &str, date: &str, now: f64) -> Result<Draft, EngineError> {
+    // `slugify` falls back to `job`, so test the raw input first.
+    if !slug.chars().any(|c| c.is_ascii_alphanumeric()) {
+        return Err(EngineError::Msg(format!("the draft slug {slug:?} has no letters or digits")));
+    }
     let slug = slugify(slug);
+    // `factory cancel 12` would mean job 012, so a digits-only slug could not be cancelled.
+    if slug.chars().all(|c| c.is_ascii_digit()) {
+        return Err(EngineError::Msg("a draft slug cannot be only digits".into()));
+    }
     let spec_file = spec_path(driver, date, &slug);
     let draft = driver.store().update(|board| {
         if board.drafts.iter().any(|d| d.slug == slug) {
@@ -109,6 +117,19 @@ mod tests {
         let err = start_draft(&d, "demo-card", "g", "2026-10-18", 2.0).expect_err("duplicate");
         assert!(err.to_string().contains("already exists"), "{err}");
         assert_eq!(d.store().load().expect("load").drafts.len(), 1);
+    }
+
+    #[test]
+    fn start_refuses_digit_only_and_empty_slugs() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let err = start_draft(&d, "12", "f", "2026-10-18", 1.0).expect_err("digits");
+        assert!(err.to_string().contains("a draft slug cannot be only digits"), "{err}");
+        let err = start_draft(&d, "!!!", "f", "2026-10-18", 1.0).expect_err("empty");
+        assert!(err.to_string().contains("no letters or digits"), "{err}");
+        assert!(d.store().load().expect("load").drafts.is_empty());
+        start_draft(&d, "2048-x", "f", "2026-10-18", 1.0).expect("mixed slug");
+        start_draft(&d, "normal", "f", "2026-10-18", 1.0).expect("normal slug");
     }
 
     #[test]

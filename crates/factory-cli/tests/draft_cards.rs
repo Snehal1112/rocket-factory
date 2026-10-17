@@ -86,3 +86,12 @@ fn new_prints_the_created_line_first_then_the_warning() {
     );
     assert!(fx.run(&["spec", "resume", "demo"]).is_err(), "the draft is adopted");
 }
+
+#[test]
+fn spec_start_refuses_a_digit_only_slug() {
+    let fx = Fixture::new();
+    let err = fx.run(&["spec", "start", "12", "f"]).expect_err("digits");
+    assert!(err.to_string().contains("a draft slug cannot be only digits"), "{err}");
+    let status = fx.run(&["status"]).expect("status");
+    assert!(!status.contains("drafts:"), "{status}");
+}
