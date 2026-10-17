@@ -370,3 +370,62 @@ fn the_reviewer_spec_is_strict_and_capped() {
     assert_eq!(spec.max_turns, Some(factory_engine::REVIEWER_MAX_TURNS));
     assert_eq!(spec.max_turns, Some(40));
 }
+
+fn model_of_review(fx: &Fixture, files: &[&'static str]) -> Option<String> {
+    build_and_pass_checks(fx, files);
+    let rr = reviewer("ok\nVERDICT: APPROVE");
+    fx.engine(&rr).review_stage().expect("review");
+    rr.last_spec().expect("spec").model
+}
+
+fn large_fixture(over: u32) -> Fixture {
+    let mut fx = committing_fixture();
+    fx.config.reviewer_model = "sonnet".into();
+    fx.config.reviewer_model_large = Some("opus".into());
+    fx.config.reviewer_large_over_lines = over;
+    fx
+}
+
+#[test]
+fn a_risky_diff_uses_the_large_model_when_set() {
+    let fx = large_fixture(800);
+    assert_eq!(model_of_review(&fx, &["src-tauri/src/lib.rs"]), Some("opus".to_string()));
+}
+
+#[test]
+fn a_diff_over_the_line_threshold_uses_the_large_model() {
+    // Two files of one line each change two lines. At the threshold the normal model stays, one over it switches.
+    let at = large_fixture(2);
+    assert_eq!(model_of_review(&at, &["a.txt", "b.txt"]), Some("sonnet".to_string()));
+    let over = large_fixture(1);
+    assert_eq!(model_of_review(&over, &["a.txt", "b.txt"]), Some("opus".to_string()));
+}
+
+#[test]
+fn a_small_safe_diff_uses_the_normal_model() {
+    let fx = large_fixture(800);
+    assert_eq!(model_of_review(&fx, &["a.txt"]), Some("sonnet".to_string()));
+}
+
+#[test]
+fn with_no_large_model_set_nothing_changes() {
+    for (files, over) in [(vec!["a.txt"], 800), (vec!["a.txt", "b.txt"], 1), (vec!["src-tauri/src/lib.rs"], 800)] {
+        let mut fx = large_fixture(over);
+        fx.config.reviewer_model_large = None;
+        assert_eq!(model_of_review(&fx, &files), Some("sonnet".to_string()), "{files:?}");
+        let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default();
+        assert!(!ledger.contains("review model:"), "{ledger}");
+    }
+}
+
+#[test]
+fn the_choice_is_written_to_the_ledger() {
+    let fx = large_fixture(800);
+    model_of_review(&fx, &["src-tauri/src/lib.rs"]);
+    let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
+    assert!(ledger.contains("review model: opus (risky diff)"), "{ledger}");
+    let fx = large_fixture(1);
+    model_of_review(&fx, &["a.txt", "b.txt"]);
+    let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
+    assert!(ledger.contains("review model: opus (2 changed lines, over 1)"), "{ledger}");
+}

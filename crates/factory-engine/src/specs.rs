@@ -232,6 +232,19 @@ pub struct ReviewerExtra {
 impl Engine<'_> {
     /// The combined reviewer. It is read-only and pages the diff to stay cheap. The agent file carries the checks.
     pub fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32, rules: &[String], extra: &ReviewerExtra) -> AgentSpec {
+        self.reviewer_spec_with_model(cwd, diff, names, round, rules, extra, &self.config.reviewer_model)
+    }
+
+    /// The model for a review: the large one when it is set and the diff is risky or over the line threshold.
+    pub(crate) fn reviewer_model_for(&self, changed_lines: usize, risky: bool) -> &str {
+        match &self.config.reviewer_model_large {
+            Some(large) if risky || changed_lines > self.config.reviewer_large_over_lines as usize => large,
+            _ => &self.config.reviewer_model,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reviewer_spec_with_model(&self, cwd: &Path, diff: &Path, names: &Path, round: u32, rules: &[String], extra: &ReviewerExtra, model: &str) -> AgentSpec {
         let spec_line = self.spec_line();
         // A later round also gets the findings of the round before, so the reviewer can check they were fixed.
         let earlier = self.job_dir.join(format!("review-code-r{}.md", round.saturating_sub(1)));
@@ -275,6 +288,6 @@ impl Engine<'_> {
         // The tool list itself is limited too, so the reviewer cannot even see a write tool.
         spec.tools = Some("Read,Grep,Glob".to_string());
         spec.add_dirs = self.kb_dirs();
-        self.with_limits(spec, &self.config.reviewer_model)
+        self.with_limits(spec, model)
     }
 }

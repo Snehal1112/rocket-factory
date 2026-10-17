@@ -32,7 +32,7 @@ factory run (no LLM tokens):
 - `park.json` (job folder, written by the driver when it parks a job): `kind`, `reason`, `at`, `round`, `next` (the commands to run) and `parts` (title, source, text, truncated; each text capped at 200 KB, keeping the end). Kinds: `checks-failed`, `changes-remain`, `risky-diff`, `diff-too-large`, `budget-stopped`, `builder-stopped`, `builder-blocked`, `builder-committed`, `nothing-changed`, `commit-failed`, `other`. The board job has `park_kind` and `park_at`, cleared when the job leaves needs-human. `factory status` prints the reason, the first 12 lines of the first part and the next commands for each parked job.
 - `.superpowers/factory/events.jsonl`: events written by the driver, each with the job id.
 - Only the driver writes the ledger, board and events. Agents and the `/factory` command never do.
-- Config: `.claude/factory/config.toml` (`risk_paths`, `diff_cap_lines`, `budget_weighted`, `fix_rounds`, `stall_minutes`, `builder_model`, `reviewer_model`, `commit_model`, `commit_subagents`, `commit_budget_weighted`, `commit_batch`, `builder_excerpt`, `tickets_on_merge`, `kb_path`, `kb_model`, `kb_budget_weighted`, `kb_auto_commit`, `[[checks]]`).
+- Config: `.claude/factory/config.toml` (`risk_paths`, `diff_cap_lines`, `budget_weighted`, `fix_rounds`, `stall_minutes`, `builder_model`, `reviewer_model`, `reviewer_model_large`, `reviewer_large_over_lines`, `commit_model`, `commit_subagents`, `commit_budget_weighted`, `commit_batch`, `builder_excerpt`, `tickets_on_merge`, `kb_path`, `kb_model`, `kb_budget_weighted`, `kb_auto_commit`, `[[checks]]`).
 
 ## Modes
 
@@ -104,6 +104,8 @@ First real run checklist: after merge, set `kb_path = "~/data/rocket/Nl-knowledg
 Record that number here, then adjust `kb_budget_weighted`. Measured `kb` cost: not measured yet.
 
 ## Ticket hygiene
+
+The reviewer can use a stronger model on risky or large diffs. `reviewer_model_large` (default unset, off) names it, and `reviewer_large_over_lines` (default 800, above zero) is the threshold on the round diff's changed lines. A risky job diff always uses it, a diff exactly at the threshold does not, and the choice is written to the ledger as `review model: <name> (<reason>)`. The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
 
 The driver can file the leftover work of a ticket and close the ticket after the last plan of a job merges. It reaches GitHub only through `gh`, behind the `Tracker` port in `factory-engine/src/tracker.rs`. The command is `factory tickets <id> [--dry-run]`, and the config key `tickets_on_merge` (default `false`) runs the same step at the end of `merge_stage`.
 

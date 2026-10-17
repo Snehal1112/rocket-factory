@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
-use factory_core::{budget_state, ReviewState, classify_paths, parse_verdict, ParkKind, Stage, Verdict};
+use factory_core::{budget_state, ReviewState, classify_paths, parse_verdict, DiffClass, ParkKind, Stage, Verdict};
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
 use crate::ports::{git_err, io_err};
@@ -41,7 +41,19 @@ impl Engine<'_> {
         let cwd = self.worktree()?;
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
         let extra = ReviewerExtra { focus: review_focus(&plan), notes: self.builder_notes(), plan_outline: plan_outline(&plan) };
-        let spec = self.reviewer_spec(&cwd, &round_diff.diff, &round_diff.names, job.round, &self.config.reviewer_rules, &extra);
+        let class = classify_paths(&paths, &self.config);
+        let risky = class == DiffClass::Risky;
+        let round_lines = round_diff.changed_lines();
+        let model = self.reviewer_model_for(round_lines, risky);
+        if model != self.config.reviewer_model {
+            let reason = if risky {
+                "risky diff".to_string()
+            } else {
+                format!("{round_lines} changed lines, over {}", self.config.reviewer_large_over_lines)
+            };
+            self.ruling(&format!("review model: {model} ({reason})"))?;
+        }
+        let spec = self.reviewer_spec_with_model(&cwd, &round_diff.diff, &round_diff.names, job.round, &self.config.reviewer_rules, &extra, model);
         self.update(|j| {
             j.set_review("code", ReviewState::Running);
             Ok(())
@@ -63,7 +75,6 @@ impl Engine<'_> {
         self.ruling(&format!("review round {} verdict {:?}", job.round, verdict))?;
 
         let checks_ok = self.latest_checks_ok()?;
-        let class = classify_paths(&paths, &self.config);
         let input = DecideInput {
             checks_ok,
             verdict: &verdict,

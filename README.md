@@ -37,6 +37,15 @@ the `gh` CLI in the main checkout (the repo from `Layout`); tests use a fake.
 - A failure (no tracker, no `gh`, a failed call) never changes the merge. The job stays `merged`, and the failure
   is written to the ledger, the job output and `events.jsonl`.
 
+## Stronger reviewer model
+
+- `reviewer_model_large` (default unset, which turns the switch off) names a stronger model for the reviewer.
+- `reviewer_large_over_lines` (default `800`, must be above zero) is the size threshold.
+- The review uses the large model when the whole job diff is risky, or when this round's diff has more changed
+  lines than the threshold. A diff exactly at the threshold uses `reviewer_model`. The choice is written to the
+  ledger as `review model: <name> (<reason>)`.
+- The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
+
 ## Layout and base branch
 
 The driver gets every path as a value. `Layout` holds them. `Layout::in_repo` gives the layout Rocket uses today.

@@ -47,6 +47,10 @@ pub struct Config {
     pub stall_minutes: u32,
     pub builder_model: String,
     pub reviewer_model: String,
+    /// A stronger reviewer model for risky or large diffs. `None` turns the switch off.
+    pub reviewer_model_large: Option<String>,
+    /// A round diff with more changed lines than this uses `reviewer_model_large`.
+    pub reviewer_large_over_lines: u32,
     pub commit_model: String,
     pub commit_subagents: bool,
     /// Per-run cap on weighted tokens for one committer run.
@@ -96,6 +100,8 @@ impl Default for Config {
             stall_minutes: 10,
             builder_model: "sonnet".to_string(),
             reviewer_model: "sonnet".to_string(),
+            reviewer_model_large: None,
+            reviewer_large_over_lines: 800,
             commit_model: "sonnet".to_string(),
             commit_subagents: false,
             commit_budget_weighted: 60_000,
@@ -137,6 +143,12 @@ impl Config {
         let models = [&cfg.builder_model, &cfg.reviewer_model, &cfg.commit_model, &cfg.kb_model];
         if models.iter().any(|m| m.trim().is_empty()) {
             return Err(CoreError::Config("model names must not be empty".into()));
+        }
+        if cfg.reviewer_large_over_lines == 0 {
+            return Err(CoreError::Config("reviewer_large_over_lines must be above zero".into()));
+        }
+        if cfg.reviewer_model_large.as_deref().is_some_and(|m| m.trim().is_empty()) {
+            return Err(CoreError::Config("reviewer_model_large must not be empty when it is set".into()));
         }
         if cfg.size_small_max_bytes == 0 || cfg.size_small_max_bytes >= cfg.size_medium_max_bytes {
             return Err(CoreError::Config("size_small_max_bytes must be above zero and below size_medium_max_bytes".into()));
@@ -224,6 +236,29 @@ mod tests {
         assert!(!Config::default().tickets_on_merge);
         assert!(Config::parse("tickets_on_merge = true").expect("parse").tickets_on_merge);
         assert!(Config::parse("tickets_on_merge = \"yes\"").is_err());
+    }
+
+    #[test]
+    fn the_large_reviewer_model_is_off_by_default() {
+        let cfg = Config::default();
+        assert_eq!(cfg.reviewer_model_large, None);
+        assert_eq!(cfg.reviewer_large_over_lines, 800);
+        assert_eq!(Config::parse("").expect("parse").reviewer_model_large, None);
+    }
+
+    #[test]
+    fn reviewer_large_over_lines_rejects_zero() {
+        assert!(Config::parse("reviewer_large_over_lines = 0").is_err());
+        assert!(Config::parse("reviewer_large_over_lines = -1").is_err());
+        assert!(Config::parse("reviewer_large_over_lines = 1").is_ok());
+        assert!(Config::parse("reviewer_model_large = \" \"").is_err());
+    }
+
+    #[test]
+    fn a_config_can_set_both_keys() {
+        let cfg = Config::parse("reviewer_model_large = \"opus\"\nreviewer_large_over_lines = 500").expect("parse");
+        assert_eq!(cfg.reviewer_model_large.as_deref(), Some("opus"));
+        assert_eq!(cfg.reviewer_large_over_lines, 500);
     }
 
     #[test]
