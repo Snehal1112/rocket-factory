@@ -5,6 +5,7 @@ mod checks_stage;
 mod decide;
 mod drafts;
 mod park;
+mod planlint;
 mod ports;
 mod review;
 mod lease;
@@ -39,6 +40,7 @@ use factory_git::Repo;
 use thiserror::Error;
 
 pub use build::build_stage;
+pub use planlint::{lint_plan, PlanLint};
 pub use clock::{date_from_days, now_secs, today};
 pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,

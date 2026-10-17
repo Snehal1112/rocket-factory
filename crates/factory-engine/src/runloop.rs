@@ -114,7 +114,7 @@ const MIN_GOAL_WORDS: usize = 8;
 const PLACEHOLDERS: [&str; 3] = ["TBD", "TODO", "FIXME"];
 
 /// The first line (1-based) and word of unfinished text outside fenced code and inline code spans.
-fn find_placeholder(spec: &str) -> Option<(usize, &'static str)> {
+pub(crate) fn find_placeholder(spec: &str) -> Option<(usize, &'static str)> {
     let mut in_fence = false;
     for (index, line) in spec.lines().enumerate() {
         if line.trim_start().starts_with("```") {
@@ -286,6 +286,18 @@ pub fn create_job_with_spec(
     let spec_path = spec_buf.as_deref();
     // A broken chain fails here, before any job exists.
     let series = parse_series(driver.root(), start)?;
+    // A placeholder in any plan refuses the call before a job exists. Other findings are warnings.
+    let mut plan_warnings: Vec<String> = Vec::new();
+    for plan in &series.plans {
+        let name = plan.path.file_name().and_then(|n| n.to_str()).unwrap_or("plan").to_string();
+        let text = std::fs::read_to_string(&plan.path)
+            .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", plan.path.display())))?;
+        let lint = crate::planlint::lint_plan(&text, &name);
+        if let Some(reason) = lint.refuse {
+            return Err(EngineError::Msg(reason));
+        }
+        plan_warnings.extend(lint.warnings);
+    }
     // An explicit spec path wins. Otherwise a folder holds the spec beside the plans, and a single
     // plan file has no spec to check.
     let spec = spec_path.map(Path::to_path_buf).unwrap_or_else(|| start.join("spec.md"));
@@ -341,10 +353,14 @@ pub fn create_job_with_spec(
     }
     adopt_draft(driver, slug, &first);
     // The job is made either way. The warning only tells the reader how little the user decided.
-    match &spec_text {
-        Some(text) if user_decisions(text) == 0 => Ok(add_warning(driver, slug, first, NO_USER_DECISION)),
-        _ => Ok(first),
+    let mut first = first;
+    if spec_text.as_deref().is_some_and(|text| user_decisions(text) == 0) {
+        first = add_warning(driver, slug, first, NO_USER_DECISION);
     }
+    for warning in &plan_warnings {
+        first = add_warning(driver, slug, first, warning);
+    }
+    Ok(first)
 }
 
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.

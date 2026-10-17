@@ -77,7 +77,7 @@ fn is_task_heading(line: &str) -> bool {
 /// The lines of a text, each with whether it sits inside a fenced code block.
 /// A fence line itself counts as the text around the block, not as inside it.
 /// `str::lines` drops a trailing carriage return, so Windows line endings need no extra care.
-fn lines_with_fence(text: &str) -> Vec<(&str, bool)> {
+pub(crate) fn lines_with_fence(text: &str) -> Vec<(&str, bool)> {
     let mut in_fence = false;
     text.lines()
         .map(|line| {

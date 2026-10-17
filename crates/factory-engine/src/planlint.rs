@@ -1,0 +1,143 @@
+//! Plan lint: checks a plan against the format the factory builders rely on.
+
+use crate::runloop::find_placeholder;
+use crate::tasks::{lines_with_fence, parse_tasks, plan_header, task_section};
+
+/// What the lint found. A refusal stops `factory new`, a warning never does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanLint {
+    pub refuse: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+/// The header fields every plan names.
+const HEADER_FIELDS: [&str; 6] = ["Goal", "Architecture", "Tech Stack", "Spec", "Global Constraints", "Review Focus"];
+
+/// The executor the plan header must name.
+const EXECUTOR: &str = "superpowers:subagent-driven-development";
+
+/// True when a header line names the field as `**Field:**`, `Field:` or a heading.
+fn names_field(line: &str, field: &str) -> bool {
+    let t = line.trim();
+    let bare = t.trim_start_matches('#').trim_start_matches("**").trim();
+    bare.strip_prefix(field).is_some_and(|rest| {
+        let rest = rest.trim_start_matches("**");
+        let heading = t.starts_with('#') && rest.trim().is_empty();
+        heading || rest.starts_with(':')
+    })
+}
+
+/// True when the text has the marker outside code fences.
+fn has_outside_fence(text: &str, marker: &str) -> bool {
+    lines_with_fence(text).iter().any(|(l, fenced)| !fenced && l.contains(marker))
+}
+
+/// Lints a plan. Warning texts never contain `; ` because `factory new` splits on it.
+pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
+    let mut lint = PlanLint::default();
+    if let Some((line, word)) = find_placeholder(plan) {
+        lint.refuse = Some(format!("{name} line {line} still has `{word}`, finish it or remove it"));
+        return lint;
+    }
+    let header = plan_header(plan);
+    let header_lines = lines_with_fence(&header);
+    for field in HEADER_FIELDS {
+        if !header_lines.iter().any(|(l, fenced)| !fenced && names_field(l, field)) {
+            lint.warnings.push(format!("{name} header has no {field}"));
+        }
+    }
+    if !header.contains(EXECUTOR) {
+        lint.warnings.push(format!("{name} does not name {EXECUTOR} as its executor"));
+    }
+    for task in parse_tasks(plan) {
+        let section = task_section(plan, task.n).unwrap_or_default();
+        for marker in ["**Files:**", "**Interfaces:**"] {
+            if !has_outside_fence(&section, marker) {
+                lint.warnings.push(format!("{name} task {} has no {marker}", task.n));
+            }
+        }
+    }
+    let commit = lines_with_fence(plan).into_iter().find(|(l, fenced)| {
+        let t = l.trim_start();
+        let step = t.starts_with('#') || t.starts_with("- [ ] **Step") || t.starts_with("- [x] **Step");
+        !fenced && (t.starts_with("git commit") || (step && t.contains("Commit")))
+    });
+    if let Some((line, _)) = commit {
+        lint.warnings.push(format!("{name} has a commit step (`{}`) but the driver commits", line.trim()));
+    }
+    lint
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GOOD: &str = include_str!("../../../docs/superpowers/plans/2026-10-18-factory-execution-rework/plan-01-count-real-task-headings.md");
+
+    fn task(n: u32, files: bool, interfaces: bool) -> String {
+        let mut s = format!("### Task {n}: t\n\n");
+        if files {
+            s.push_str("**Files:**\n- Modify: `a.rs`\n\n");
+        }
+        if interfaces {
+            s.push_str("**Interfaces:**\n- Produces: x\n\n");
+        }
+        s
+    }
+
+    #[test]
+    fn a_placeholder_outside_code_refuses() {
+        let lint = lint_plan("# P\n\nTBD later\n", "plan-01.md");
+        let reason = lint.refuse.expect("refusal");
+        assert!(reason.contains("plan-01.md") && reason.contains("TBD"), "{reason}");
+    }
+
+    #[test]
+    fn a_placeholder_in_a_fence_or_backticks_is_fine() {
+        let plan = format!("{GOOD}\n```\nTODO inside a fence\n```\n\nThe word `FIXME` is quoted.\n");
+        assert_eq!(lint_plan(&plan, "p.md").refuse, None);
+    }
+
+    #[test]
+    fn a_complete_plan_in_this_repos_format_has_no_warnings() {
+        assert_eq!(lint_plan(GOOD, "p.md"), PlanLint::default());
+    }
+
+    #[test]
+    fn each_missing_header_field_is_one_warning() {
+        let plan = format!("# P\n\n> executor {EXECUTOR}\n\n**Goal:** g\n\n{}", task(1, true, true));
+        let lint = lint_plan(&plan, "p.md");
+        assert_eq!(lint.warnings.len(), 5, "{:?}", lint.warnings);
+        assert!(lint.warnings.iter().any(|w| w.contains("Review Focus")));
+        assert!(!lint.warnings.iter().any(|w| w.contains("no Goal")));
+        assert!(lint.warnings.iter().all(|w| !w.contains("; ")));
+    }
+
+    #[test]
+    fn a_missing_executor_line_warns() {
+        let plan = GOOD.replace(EXECUTOR, "something else");
+        let lint = lint_plan(&plan, "p.md");
+        assert_eq!(lint.warnings.len(), 1, "{:?}", lint.warnings);
+        assert!(lint.warnings[0].contains(EXECUTOR));
+    }
+
+    #[test]
+    fn a_task_without_files_or_interfaces_warns() {
+        let header = GOOD.split("### Task 1").next().expect("header");
+        let plan = format!("{header}{}{}\nNext plan: none\n", task(1, false, true), task(2, true, false));
+        let lint = lint_plan(&plan, "p.md");
+        assert_eq!(lint.warnings.len(), 2, "{:?}", lint.warnings);
+        assert!(lint.warnings[0].contains("task 1") && lint.warnings[0].contains("Files"));
+        assert!(lint.warnings[1].contains("task 2") && lint.warnings[1].contains("Interfaces"));
+    }
+
+    #[test]
+    fn a_commit_step_warns_but_a_fenced_one_does_not() {
+        let plan = format!("{GOOD}\n- [ ] **Step 9: Commit**\n");
+        assert_eq!(lint_plan(&plan, "p.md").warnings.len(), 1);
+        let plan = format!("{GOOD}\ngit commit -m x\n");
+        assert_eq!(lint_plan(&plan, "p.md").warnings.len(), 1);
+        let fenced = format!("{GOOD}\n```\ngit commit -m x\n### Task 7: x\n```\n");
+        assert_eq!(lint_plan(&fenced, "p.md"), PlanLint::default());
+    }
+}
