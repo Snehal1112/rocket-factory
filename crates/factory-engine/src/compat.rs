@@ -77,6 +77,7 @@ pub struct Driver {
     lost: Arc<AtomicBool>,
     /// The running heartbeat, one for all nested guards.
     beat: Mutex<Option<Heartbeat>>,
+    tracker: Box<dyn crate::Tracker>,
 }
 
 /// What the heartbeat renews right now.
@@ -196,6 +197,7 @@ impl Driver {
             .with_base_branch(&config.base_branch)
             .with_worktrees_dir(layout.worktrees_dir.clone());
         let store = BoardStore::new(&layout.board_file(), DEFAULT_LOCK_WAIT);
+        let tracker: Box<dyn crate::Tracker> = Box::new(crate::GhTracker::new(&layout.repo));
         Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT, agent_files: Vec::new(),
             project_holds: AtomicU32::new(0),
             lease_ttl: LEASE_TTL_SECS,
@@ -203,7 +205,18 @@ impl Driver {
             shared: Arc::new(Mutex::new(Held::default())),
             lost: Arc::new(AtomicBool::new(false)),
             beat: Mutex::new(None),
+            tracker,
         })
+    }
+
+    /// Replaces the issue tracker. Tests pass a fake.
+    pub fn with_tracker(mut self, tracker: Box<dyn crate::Tracker>) -> Driver {
+        self.tracker = tracker;
+        self
+    }
+
+    pub fn tracker(&self) -> &dyn crate::Tracker {
+        self.tracker.as_ref()
     }
 
     /// Changes how long board writes wait for the lock.
@@ -409,6 +422,7 @@ impl Driver {
                 base: &base,
                 tip: &tip,
                 issues: &job.issues,
+                partial: crate::message::spec_has_follow_ups(&self.job_dir(&job)),
             })
         })
     }

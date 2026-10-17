@@ -448,3 +448,107 @@ pub fn record_head(fx: &MergeFixture, sha: &str) {
         })
         .expect("record head");
 }
+
+use std::collections::{HashMap, HashSet};
+
+#[derive(Default)]
+pub struct FakeState {
+    pub repo: String,
+    pub labels: HashMap<u32, Vec<String>>,
+    pub closed: HashSet<u32>,
+    pub next: u32,
+    pub calls: Vec<String>,
+    pub created: Vec<(String, String, Vec<String>)>,
+    pub comments: Vec<(u32, String)>,
+    pub closes: Vec<u32>,
+    pub fail: HashSet<String>,
+}
+
+/// A tracker that records its calls. Clones share one state, so a test keeps a handle after the driver owns the box.
+#[derive(Clone)]
+pub struct FakeTracker {
+    pub state: Arc<Mutex<FakeState>>,
+}
+
+impl FakeTracker {
+    pub fn new(repo: &str) -> FakeTracker {
+        let state = FakeState { repo: repo.to_string(), next: 200, ..FakeState::default() };
+        FakeTracker { state: Arc::new(Mutex::new(state)) }
+    }
+    pub fn with_labels(self, issue: u32, labels: &[&str]) -> FakeTracker {
+        self.state.lock().expect("lock").labels.insert(issue, labels.iter().map(|s| s.to_string()).collect());
+        self
+    }
+    pub fn fail_on(&self, method: &str) {
+        self.state.lock().expect("lock").fail.insert(method.to_string());
+    }
+    pub fn clear_failures(&self) {
+        self.state.lock().expect("lock").fail.clear();
+    }
+    pub fn calls(&self) -> Vec<String> {
+        self.state.lock().expect("lock").calls.clone()
+    }
+    pub fn count(&self, method: &str) -> usize {
+        self.calls().iter().filter(|c| c.starts_with(method)).count()
+    }
+    fn enter(&self, call: String, method: &str) -> Result<std::sync::MutexGuard<'_, FakeState>, String> {
+        let mut s = self.state.lock().expect("lock");
+        s.calls.push(call);
+        if s.fail.contains(method) {
+            return Err(format!("fake {method} failure"));
+        }
+        Ok(s)
+    }
+}
+
+impl factory_engine::Tracker for FakeTracker {
+    fn repo_name(&self) -> Result<String, String> {
+        Ok(self.enter("repo_name".into(), "repo_name")?.repo.clone())
+    }
+    fn labels_of(&self, issue: u32) -> Result<Vec<String>, String> {
+        Ok(self.enter(format!("labels_of {issue}"), "labels_of")?.labels.get(&issue).cloned().unwrap_or_default())
+    }
+    fn is_closed(&self, issue: u32) -> Result<bool, String> {
+        Ok(self.enter(format!("is_closed {issue}"), "is_closed")?.closed.contains(&issue))
+    }
+    fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u32, String> {
+        let mut s = self.enter(format!("create {title}"), "create")?;
+        s.next += 1;
+        let number = s.next;
+        s.created.push((title.to_string(), body.to_string(), labels.to_vec()));
+        Ok(number)
+    }
+    fn comment(&self, issue: u32, body: &str) -> Result<(), String> {
+        let mut s = self.enter(format!("comment {issue}"), "comment")?;
+        s.comments.push((issue, body.to_string()));
+        Ok(())
+    }
+    fn close(&self, issue: u32) -> Result<(), String> {
+        let mut s = self.enter(format!("close {issue}"), "close")?;
+        s.closes.push(issue);
+        s.closed.insert(issue);
+        Ok(())
+    }
+}
+
+/// Gives the fixture's driver a tracker, keeping everything else.
+pub fn with_tracker(fx: MergeFixture, tracker: FakeTracker) -> MergeFixture {
+    let MergeFixture { tmp, main, driver, runner, id, head } = fx;
+    MergeFixture { tmp, main, driver: driver.with_tracker(Box::new(tracker)), runner, id, head }
+}
+
+/// Sets the feature text of a job on the board, and writes `spec.md` into its folder when given.
+pub fn set_feature(fx: &MergeFixture, feature: &str, spec: Option<&str>) {
+    let text = feature.to_string();
+    fx.driver
+        .store()
+        .update_job(&fx.id, move |j| {
+            j.feature = text;
+            Ok(())
+        })
+        .expect("feature");
+    if let Some(spec) = spec {
+        let job = fx.driver.job(&fx.id).expect("job");
+        std::fs::write(fx.driver.job_dir(&job).join("spec.md"), spec).expect("spec");
+    }
+}

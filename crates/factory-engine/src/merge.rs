@@ -52,6 +52,21 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
             if let Err(err) = driver.kb_refresh(id, false) {
                 eprintln!("kb refresh error for job {id}: {err}");
             }
+            // Ticket hygiene is best effort too: a failure is written to the ledger, the job output and the events, and never changes the merge.
+            if driver.config().tickets_on_merge {
+                match crate::tickets::tickets_step(driver, id, false) {
+                    Ok(report) if report.failed => {
+                        let text = report.lines.join("; ");
+                        eprintln!("tickets error for job {id}: {text}");
+                        crate::tickets::notify_failure(driver, id, &text);
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        eprintln!("tickets error for job {id}: {err}");
+                        crate::tickets::notify_failure(driver, id, &err.to_string());
+                    }
+                }
+            }
             // The costs refresh runs last so that it counts the kb run of this job.
             if let Err(err) = crate::costs::refresh_costs(driver) {
                 eprintln!("costs refresh error for job {id}: {err}");

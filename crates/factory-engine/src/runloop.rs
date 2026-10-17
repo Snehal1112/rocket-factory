@@ -80,7 +80,7 @@ fn heading_level(line: &str) -> usize {
 
 /// The text of a section: the lines under the `## <title>` line up to the next heading of level 1 or 2.
 /// Deeper headings and lines inside fenced code belong to the section. None when there is no such heading.
-fn section_body(spec: &str, title: &str) -> Option<String> {
+pub(crate) fn section_body(spec: &str, title: &str) -> Option<String> {
     let mut in_fence = false;
     let mut in_section = false;
     let mut found = false;
@@ -141,7 +141,7 @@ fn find_placeholder(spec: &str) -> Option<(usize, &'static str)> {
 }
 
 /// True when a line starts a list item: `- `, `* ` or `1. `.
-fn is_list_item(line: &str) -> bool {
+pub(crate) fn is_list_item(line: &str) -> bool {
     let t = line.trim_start();
     if t.starts_with("- ") || t.starts_with("* ") {
         return true;

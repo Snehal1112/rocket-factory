@@ -16,6 +16,7 @@ mod clock;
 mod commit;
 mod compat;
 mod costs;
+mod followups;
 mod kb;
 mod merge;
 mod message;
@@ -23,7 +24,9 @@ mod store;
 mod sync;
 mod tasks;
 mod tick;
+mod tickets;
 mod tipfiles;
+mod tracker;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -40,6 +43,7 @@ pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
 };
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
+pub use followups::{follow_ups, FollowUp};
 pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
 pub use compat::{Driver, ProjectGuard, RunnerFactory, HEARTBEAT_SECS, LEASE_TTL_SECS};
 pub use message::{fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS};
@@ -55,6 +59,8 @@ pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
 pub use tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 pub use tick::tick_plan;
+pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
+pub use tracker::{GhTracker, Tracker};
 pub use tipfiles::RepoTip;
 pub use checks_stage::checks_stage;
 pub use decide::{decide, risk_summary, DecideInput, Decision};
