@@ -31,6 +31,9 @@ Each entry says who decided. "User" means the user said it in the interview. "Ca
 11. **Draft location.** The draft is the spec file itself at `docs/superpowers/specs/<date>-<slug>-design.md`, uncommitted until the user approves it. Option was a separate draft in the driver's state folder. The user confirmed this after the builder check, knowing that switching branch or stashing takes the draft with it.
 12. **Interview check.** `factory new` shows a warning on the card when `## Decisions` holds no answer that came from the user. The job still runs. Options were: refuse the spec, or no check. The user confirmed the warning after the builder check.
 
+13. **Per-job budget.** Tighten the default per-job budget from 3M to a lower value; the user suggested 1M or 2M and asked for a recommendation. Recommended and recorded as 1M weighted tokens (warn at 80 percent, stop at 100 percent as today): the largest measured single job was about 0.48M and a three-plan series about 0.95M across plans, so 1M leaves about twice the worst measured job for fix rounds and still stops a runaway early, while 2M would be four times the worst job. The user limited the choice to 1M or 2M and left the pick to the author, so the number is the author's call within the user's range.
+14. **Plan lint, version pin and review prompts.** The user said yes to a sixth plan covering a plan lint, a skill-version test and the adoption of review skills (items 2 and 3 of the call list below). The user also asked whether more superpowers skills could improve quality and token use, and asked for them to be adopted where they fit.
+
 ## Calls made by the author
 
 These are not agreed. Check them while reading.
@@ -47,7 +50,11 @@ These are not agreed. Check them while reading.
 - **Card stages.** `interviewing`, `writing-spec`, `writing-plans`. Names are open to change.
 - **Stale marker.** A draft card shows the time since its last update and is marked stale after 24 hours. The threshold is a config key with that default.
 - **Builder statuses.** The driver reads `DONE`, `BLOCKED`, `NEEDS_CONTEXT` and `DONE_WITH_CONCERNS` from the builder's reply.
-- **Token controls.** Add `--strict-mcp-config` and `--tools` to builder and reviewer runs. Give the reviewer a plan excerpt (header and task sections) instead of the full plan path. Make the builder's `maxTurns` come from one place.
+- **Token controls.** Add `--strict-mcp-config` and `--tools` to builder and reviewer runs. Give the reviewer a plan excerpt (header and task headings, the full path kept as a fallback) instead of only the path. Make the builder's `maxTurns` come from one place.
+- **Plan lint (plan 6).** `factory new` refuses a plan that contains `TBD`, `TODO`, `FIXME` or `???` outside code, as it does for the spec. It warns, without refusing, about a missing header field (Goal, Architecture, Tech Stack, Spec, Global Constraints, Review Focus), a missing executor line naming `subagent-driven-development`, a task without `**Files:**` or `**Interfaces:**`, and a commit step. Warnings are printed after the `created job` line and stored on the first job.
+- **Skill drift test (plan 6).** A test checks that key phrases the command and agents rely on still exist in the installed superpowers skill text, and records the version tested against (7.0.0). It is skipped, not failed, when no superpowers install is found, so it never breaks a machine without the plugin.
+- **Review skills adopted as prompt text (plan 6).** The reviewer prompt takes the vision-document rule, the "Declined to judge" list, Critical, Important and Minor grading and the no-subagents rule from `requesting-code-review`. Fix-round reviews (round 2 onward) take the scoped re-review rule from `subagent-driven-development` (verdict each earlier finding, inspect only the fix diff, report out-of-scope notes without extending the loop). The resumed fix builder is told to follow `receiving-code-review` (verify each finding against the code, one item at a time, push back with reasons). Deferred minors are a follow-up.
+- **Builder skill digest (plan 5).** The builder agent file carries a short digest of the test-first, debugging and verification rules, because builders were not loading those skills (no Skill events in jobs 012 to 020). The skill names stay in the file.
 
 ## Design
 
@@ -93,7 +100,9 @@ Builder and reviewer runs use `--strict-mcp-config` and `--tools` as the committ
 - Changing the copies in the real Rocket repo or in the old worktree. The in-repo copies in this repository do change.
 - Refusing specs because the interview was thin. Only a warning.
 - Automatic removal of stale draft cards.
-- Changing the merge rules, risk gates or budgets.
+- Changing the merge rules or risk gates. Only the default per-job budget changes (decision 13). The daily budget stays off by default.
+- Listing deferred minor findings for the human after an approved review.
+- A superpowers skill replacing the committer's `1-git-commit` skill load.
 
 ## Anti-goals
 
@@ -140,6 +149,11 @@ The builder stops and asks the user for: anything that would let the driver writ
 - Old boards without the new field load and render unchanged.
 - The embedded command tells the session to write an executor line naming `superpowers:subagent-driven-development` in every plan header, and no plan or agent file the driver uses names `superpowers:executing-plans`.
 - The builder agent file and the builder prompt name `superpowers:subagent-driven-development` as the way the plan runs, and a test pins both.
+- The default per-job budget is 1M weighted tokens, and an existing config that sets its own value is unchanged.
+- `factory new` refuses a plan containing a placeholder outside code, and prints a warning, still creating the job, for a missing header field, executor line, `**Files:**`, `**Interfaces:**` or a commit step.
+- The skill drift test passes against superpowers 7.0.0 and is skipped when the plugin is not installed.
+- The reviewer prompt contains the vision-document rule, a "Declined to judge" list and Critical, Important and Minor grading; a round 2 review prompt contains the scoped re-review rule; the fix-round resume prompt names `superpowers:receiving-code-review`.
+- The builder agent file carries the test-first, debugging and verification digest, and a test pins it.
 - A builder reply starting with `BLOCKED:` parks the job with that reason and no partial commit is made.
 - A builder reply with rulings produces `Ruling:` lines in the ledger, and the reviewer prompt includes them and the plan's Review Focus.
 - A failing check after task 2 is reported against task 2.
@@ -152,7 +166,6 @@ The builder stops and asks the user for: anything that would let the driver writ
 
 - Explore variant B (controller session with subagents) on a real multi-task plan from the repo history.
 - Apply the same command rewrite to Rocket's `.claude/commands/factory.md` and the old worktree.
-- Add a test that records the installed superpowers version and fails when the skill text the command relies on changes.
-- Add a driver lint for plan headers, `**Files:**` and placeholders.
+- List deferred minor findings for the human after an approved review.
 - Fix the leftover bare `cargo check -j4` wording in the `rust` preset and in Rocket's `project.toml`.
 - Refresh `.claude/factory/config.toml` so it has `tickets_on_merge`.
