@@ -56,9 +56,23 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Every `#N` issue number in the text, sorted and de-duplicated. The `#` must start the text
-/// or follow a character that is not alphanumeric or `_`, and N must be at least 1 and fit `u32`.
-pub fn parse_issues(text: &str) -> Vec<u32> {
+/// One issue reference found in text. `repo` is `owner/repo` when the text was a GitHub issue URL.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IssueRef {
+    pub number: u32,
+    pub repo: Option<String>,
+}
+
+const GITHUB_PREFIX: &str = "https://github.com/";
+
+/// True for a GitHub owner or repository name: letters, digits, `-`, `_` and `.`.
+fn is_repo_name(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// The `#N` references. The `#` must start the text or follow a character that is not alphanumeric
+/// or `_`, and N must be at least 1 and fit `u32`.
+fn hash_refs(text: &str) -> Vec<IssueRef> {
     let chars: Vec<char> = text.chars().collect();
     let mut found = Vec::new();
     for (i, c) in chars.iter().enumerate() {
@@ -69,15 +83,51 @@ pub fn parse_issues(text: &str) -> Vec<u32> {
             continue;
         }
         let digits: String = chars[i + 1..].iter().take_while(|d| d.is_ascii_digit()).collect();
-        if let Ok(n) = digits.parse::<u32>() {
-            if n >= 1 {
-                found.push(n);
+        if let Ok(number) = digits.parse::<u32>() {
+            if number >= 1 {
+                found.push(IssueRef { number, repo: None });
             }
         }
     }
-    found.sort_unstable();
-    found.dedup();
     found
+}
+
+/// The `https://github.com/<owner>/<repo>/issues/N` references.
+fn url_refs(text: &str) -> Vec<IssueRef> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(GITHUB_PREFIX) {
+        let tail = &rest[at + GITHUB_PREFIX.len()..];
+        let mut parts = tail.splitn(4, '/');
+        let (owner, repo, kind, after) = (parts.next(), parts.next(), parts.next(), parts.next());
+        if let (Some(owner), Some(repo), Some("issues"), Some(after)) = (owner, repo, kind, after) {
+            let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(number) = digits.parse::<u32>() {
+                if number >= 1 && is_repo_name(owner) && is_repo_name(repo) {
+                    found.push(IssueRef { number, repo: Some(format!("{owner}/{repo}")) });
+                }
+            }
+        }
+        rest = tail;
+    }
+    found
+}
+
+/// Every issue reference in the text, `#N` and GitHub issue URLs, sorted and de-duplicated.
+pub fn parse_issue_refs(text: &str) -> Vec<IssueRef> {
+    let mut refs = hash_refs(text);
+    refs.extend(url_refs(text));
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+/// Every issue number in the text, sorted and de-duplicated. `#N` and GitHub issue URLs both count.
+pub fn parse_issues(text: &str) -> Vec<u32> {
+    let mut numbers: Vec<u32> = parse_issue_refs(text).into_iter().map(|r| r.number).collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    numbers
 }
 
 /// The footer line `<key>: #20, #21`, or `None` when there are no issues.
@@ -267,6 +317,59 @@ mod tests {
         assert_eq!(extract_message("feat(x): add y"), None);
         assert_eq!(extract_message("---BEGIN MESSAGE---\nfeat(x): y"), None);
         assert_eq!(extract_message("---BEGIN MESSAGE---\n  \n---END MESSAGE---"), None);
+    }
+
+    #[test]
+    fn refs_read_hash_numbers_and_urls() {
+        let refs = parse_issue_refs("fix #20 and https://github.com/Snehal1112/rocket/issues/76 now");
+        assert_eq!(
+            refs,
+            vec![
+                IssueRef { number: 20, repo: None },
+                IssueRef { number: 76, repo: Some("Snehal1112/rocket".to_string()) },
+            ]
+        );
+    }
+
+    #[test]
+    fn url_followed_by_punctuation() {
+        let refs = parse_issue_refs("see (https://github.com/o/r/issues/76).");
+        assert_eq!(refs, vec![IssueRef { number: 76, repo: Some("o/r".to_string()) }]);
+        let refs = parse_issue_refs("https://github.com/o/r/issues/76.");
+        assert_eq!(refs, vec![IssueRef { number: 76, repo: Some("o/r".to_string()) }]);
+    }
+
+    #[test]
+    fn url_with_fragment_counts_once() {
+        let refs = parse_issue_refs("https://github.com/o/r/issues/76#issuecomment-5");
+        assert_eq!(refs, vec![IssueRef { number: 76, repo: Some("o/r".to_string()) }]);
+    }
+
+    #[test]
+    fn pull_request_url_is_not_an_issue() {
+        assert!(parse_issue_refs("https://github.com/o/r/pull/9").is_empty());
+        assert!(parse_issue_refs("https://example.com/o/r/issues/9").is_empty());
+    }
+
+    #[test]
+    fn refs_are_sorted_and_deduplicated() {
+        let refs = parse_issue_refs("#9 #3 #9 https://github.com/o/r/issues/3");
+        assert_eq!(
+            refs,
+            vec![
+                IssueRef { number: 3, repo: None },
+                IssueRef { number: 3, repo: Some("o/r".to_string()) },
+                IssueRef { number: 9, repo: None },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_issues_keeps_hash_behavior_and_adds_url_numbers() {
+        assert_eq!(parse_issues("fix #20, #21 and #20"), vec![20, 21]);
+        assert_eq!(parse_issues("no issues here"), Vec::<u32>::new());
+        assert_eq!(parse_issues("abc#5 and #0 and #x"), Vec::<u32>::new());
+        assert_eq!(parse_issues("https://github.com/o/r/issues/76 and #5"), vec![5, 76]);
     }
 
     #[test]

@@ -55,6 +55,8 @@ pub struct Config {
     pub commit_batch: bool,
     /// Give each task builder only its own task instead of the whole plan and spec.
     pub builder_excerpt: bool,
+    /// After a merge, file the follow-up tickets and close the parent tickets. Off by default.
+    pub tickets_on_merge: bool,
     /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
     pub kb_path: Option<String>,
     pub kb_model: String,
@@ -97,6 +99,7 @@ impl Default for Config {
             commit_budget_weighted: 60_000,
             commit_batch: true,
             builder_excerpt: true,
+            tickets_on_merge: false,
             kb_path: None,
             kb_model: "sonnet".to_string(),
             kb_budget_weighted: 150_000,
@@ -211,6 +214,13 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tickets_on_merge_is_off_by_default_and_can_be_turned_on() {
+        assert!(!Config::default().tickets_on_merge);
+        assert!(Config::parse("tickets_on_merge = true").expect("parse").tickets_on_merge);
+        assert!(Config::parse("tickets_on_merge = \"yes\"").is_err());
+    }
 
     #[test]
     fn cost_switches_default_on_and_can_be_turned_off() {
@@ -400,6 +410,22 @@ mod tests {
         let cfg = Config::load(&good);
         assert!(!cfg.degraded);
         assert_eq!(cfg.fix_rounds, 3);
+    }
+
+    #[test]
+    fn rockets_current_config_loads_with_no_problems() {
+        // The fixture is a copy of Rocket's `.claude/factory/config.toml`, including `tickets_on_merge = true`.
+        let text = include_str!("../tests/fixtures/rocket-config.toml");
+        assert!(text.contains("tickets_on_merge = true") && text.contains("commit_budget_weighted"));
+        let cfg = Config::parse(text).expect("rocket config parses");
+        assert!(cfg.tickets_on_merge && !cfg.commit_subagents && !cfg.degraded);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, text).expect("write");
+        let loaded = Config::load(&path);
+        assert!(!loaded.degraded, "{loaded:?}");
+        assert!(loaded.tickets_on_merge);
+        assert!(Config::parse(&format!("{text}\nnot_a_key = 1\n")).is_err(), "an unknown key still fails");
     }
 
     #[test]

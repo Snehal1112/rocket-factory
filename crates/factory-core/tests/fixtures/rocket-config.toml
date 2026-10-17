@@ -1,0 +1,62 @@
+# Factory driver config. A missing or invalid file makes every diff risky.
+# Globs match the whole repo-relative path, ignoring case for risk_paths.
+# In check commands, {crate} is replaced with the name from crates/<name>/.
+
+diff_cap_lines = 4000
+budget_weighted = 3000000
+fix_rounds = 2
+stall_minutes = 10
+builder_model = "sonnet"
+reviewer_model = "sonnet"
+commit_model = "sonnet"
+commit_subagents = false
+commit_budget_weighted = 60000
+tickets_on_merge = true
+# kb_path accepts an absolute path or one starting with ~/. Unset turns the KB off.
+# Turn it on only after one manual `factory kb-refresh --job <id>` run went well.
+# kb_path = "/home/numericlabs/data/rocket/Nl-knowledge-base/rocketapi"
+# kb_model = "sonnet"
+# kb_budget_weighted = 150000
+# kb_auto_commit = false
+
+# Diffs touching these paths stop for the human after review.
+risk_paths = [
+  "src-tauri/**",
+  "**/Cargo.toml",
+  "**/Cargo.lock",
+  "**/package.json",
+  "**/tauri.conf.json",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*trust*",
+  "**/*csp*",
+  "crates/rocket-infra/**",
+  "crates/rocket-shared/src/event*",
+  "crates/rocket-shared/src/events/**",
+  ".claude/settings.json",
+  ".claude/settings.local.json",
+  ".claude/harness/**",
+  ".claude/factory/hooks/**",
+  ".claude/factory/config.toml",
+]
+
+[[checks]]
+paths = ["crates/*/**"]
+commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
+
+[[checks]]
+paths = ["src-tauri/**"]
+commands = ["cargo check -j4"]
+
+[[checks]]
+paths = ["src/**"]
+# Half the workers: the full suite saturates the CPU and heavy dialog tests then time out.
+commands = ["yarn tsc --noEmit", "yarn check", "yarn test --run --maxWorkers=50%"]
+
+[[checks]]
+paths = ["tools/factory/**"]
+commands = ["cargo check -j4 --manifest-path tools/factory/Cargo.toml"]
+
+[[checks]]
+paths = ["tools/factory-server/**"]
+commands = ["cargo check -j4 --manifest-path tools/factory-server/Cargo.toml"]

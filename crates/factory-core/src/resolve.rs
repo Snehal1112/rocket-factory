@@ -341,6 +341,16 @@ mod tests {
     }
 
     #[test]
+    fn tickets_on_merge_is_a_valid_project_setting() {
+        let e = env();
+        assert!(!resolve(&e.home, "p", &Tip::default()).expect("resolve").config.tickets_on_merge);
+        set_settings(&e, "tickets_on_merge = true\n");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(r.config.tickets_on_merge && !r.config.degraded);
+    }
+
+    #[test]
     fn override_risk_paths_are_added_never_removed() {
         let e = env();
         let base = resolve(&e.home, "p", &Tip::default()).expect("resolve").config.risk_paths;
