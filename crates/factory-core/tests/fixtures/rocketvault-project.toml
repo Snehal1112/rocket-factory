@@ -1,0 +1,92 @@
+# RocketVault's registration in the standalone factory (~/.factory/projects/rocketvault/project.toml).
+# Numeric limits are the same as the rocket project. budget_weighted is left at the default (3000000).
+repo = "/home/numericlabs/data/rocket/rocketvault"
+preset = "go"
+
+[settings]
+base_branch = "v-4.0.0"
+diff_cap_lines = 4000
+fix_rounds = 2
+stall_minutes = 10
+builder_model = "sonnet"
+reviewer_model = "sonnet"
+commit_model = "sonnet"
+commit_subagents = false
+commit_budget_weighted = 60000
+tickets_on_merge = true
+# Setting risk_paths replaces the preset list, so the preset entries come first.
+risk_paths = [
+  "go.mod",
+  "go.sum",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*credential*",
+  "**/Dockerfile",
+  ".github/**",
+  "internal/db/migrations/**",
+  "internal/crypto/**",
+  "internal/signing/**",
+  "internal/services/auth/**",
+  "internal/services/authorization/**",
+  "internal/services/oauth2/**",
+  "internal/middleware/**",
+  "internal/keycache/**",
+  "model/scope.go",
+  "cmd/vaultcli/**",
+  "Caddyfile",
+  "Caddyfile.local",
+  "docker-compose.yml",
+  "docker-entrypoint.sh",
+  "fly.toml",
+  "railway.json",
+  "release.sh",
+  "install.sh",
+  "build.sh",
+  ".golangci.yml",
+  "scripts/hooks/**",
+]
+read_first = ["CLAUDE.md", ".claude/known-bugs.md", ".claude/multi-vault.md"]
+builder_rules = [
+  "New CLI commands call `vaultcli.RequireDataAction` or the package's own authorization helper.",
+  "Build scopes only with `model.NewVaultScope` or `model.NewAdminScope`, and never use `NewOwnerScope`, `ownerScopeFromRequest`, `InVault`, `ReadByOwner`, `ListByUser(` or a `*Scoped` name in non-test code.",
+  "Never add an HS256 JWT fallback.",
+  "Repositories do CRUD only, and services own encryption and business logic.",
+  "Never put secrets in logs or errors.",
+  "All SQL is parameterized.",
+  "New migrations go in `internal/db/migrations/` with a test.",
+  "Use bun and never npm, yarn or pnpm.",
+  "Trust the code and CI over CLAUDE.md where they differ.",
+]
+check_hints = [
+  "go build ./...",
+  "go vet ./...",
+  "go test ./...",
+  "bun --cwd web run typecheck",
+  "bun --cwd web run lint",
+  "bun --cwd journeybook run typecheck",
+  "bun --cwd journeybook run lint",
+]
+reviewer_rules = [
+  "Judge correctness, error handling (no ignored errors), test quality and the project's own rules in CLAUDE.md.",
+  "Reject new CLI commands that skip `vaultcli.RequireDataAction` or the package's own authorization helper.",
+  "Reject scopes built any way but `model.NewVaultScope` or `model.NewAdminScope`, and any use of `NewOwnerScope`, `ownerScopeFromRequest`, `InVault`, `ReadByOwner`, `ListByUser(` or a `*Scoped` name in non-test code.",
+  "Reject an HS256 JWT fallback, secrets in logs or errors, and SQL that is not parameterized.",
+  "Reject repositories that hold business logic or encryption, and migrations without a test.",
+  "Reject npm, yarn or pnpm usage: the frontend uses bun.",
+]
+
+[[settings.checks]]
+paths = ["**/*.go", "go.mod", "go.sum"]
+commands = ["go build ./...", "go vet ./...", "go test ./..."]
+
+[[settings.checks]]
+paths = ["web/**"]
+commands = ["bun install --cwd web --frozen-lockfile", "bun --cwd web run typecheck", "bun --cwd web run lint"]
+
+[[settings.checks]]
+paths = ["journeybook/**"]
+commands = [
+  "bun install --cwd journeybook --frozen-lockfile",
+  "bun --cwd journeybook run typecheck",
+  "bun --cwd journeybook run lint",
+]
