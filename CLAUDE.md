@@ -14,6 +14,8 @@ cargo test -j4 -p factory-engine                 # one crate
 cargo test -j4 -p factory-cli --test e2e         # one integration test file
 cargo test -j4 -p factory-core <test_name>       # one test
 cargo build -j4 -p factory-cli                   # binary: target/debug/factory
+cargo test -j4 -p factory-supervisor             # factoryd
+cargo run -j4 --manifest-path dashboard/Cargo.toml -- --root <checkout> --port 8765   # dashboard
 ```
 
 ## Crate layering
@@ -24,7 +26,8 @@ factory-git     git2 layer: worktrees, diffs, no-ff merge (never shell out to gi
 factory-agent   runs `claude -p` headless, parses the stream, writes usage and events
 factory-checks  maps changed paths to check commands and runs them
 factory-engine  the run loop: build, checks, review, decide, merge, sync, series (uses all four)
-factory-cli     clap commands over the engine (`factory new|run|status|approve|rework|cancel|cleanup|tokens`)
+factory-cli     clap commands over the engine (`factory new|run|status|approve|rework|cancel|cleanup|tokens|project`)
+factory-supervisor  `factoryd`: queue of run requests, one `factory` child per project, adopts children after a restart
 ```
 
 - `factory-engine` talks to git, agents and checks through the traits in `ports.rs`. Tests use fakes, so keep new engine logic behind a port rather than calling a crate directly.
@@ -32,6 +35,13 @@ factory-cli     clap commands over the engine (`factory new|run|status|approve|r
 - Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`dashboard/`, separate workspace), so add fields as optional.
 - The repo-level config is `.claude/factory/config.toml`. A missing or broken config must make every diff risky, so never default it to permissive.
 - `factory-cli/tests/agent_lint.rs` lints `.claude/agents/factory-*.md`. Run it after editing an agent file.
+
+## Home, projects and leases
+
+- `README.md` documents the factory home (`$FACTORY_HOME`, else `~/.factory`), presets, `factory --project <name>`, the project lease and `factoryd`. Read it before touching `factory-core` (`home`, `project`, `preset`, `layout`) or `factory-supervisor`.
+- Paths reach the driver only through `Layout`. `factory-cli/tests/no_hardcoded_paths.rs` fails on hardcoded ones.
+- The lease heartbeat and the `/proc` based dead-owner checks are Linux only. Keep that in mind when changing `lease.rs`, `project_lease.rs` or `procinfo.rs`.
+- `factory-agent` ships a `fake-claude` binary that tests use instead of the real `claude`.
 
 ## Carried over from Rocket
 

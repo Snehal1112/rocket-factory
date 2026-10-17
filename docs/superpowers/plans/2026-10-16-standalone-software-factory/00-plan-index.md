@@ -10,9 +10,9 @@ Each plan has at most 3 tasks and runs after the one before it. Plans 1 to 3 are
 |---|---|---|---|
 | 1 | `plan-01-extract-into-rocket-factory.md` | `tools/factory` and `tools/factory-server` extracted into `rocket-factory` with history, tests green, spec and plans copied in | done |
 | 2 | `plan-02-layout-and-base-branch.md` | `Layout` struct, injectable paths, lock wait parameter, `base_branch` setting | done |
-| 3 | `plan-03-registry-presets-layers.md` | Project registry commands, `project.toml`, three-layer settings, `rust` and `go` presets, prompt text moved to presets, agent files written into worktrees | written |
-| 4 | to be written before it runs | Project lease (one job per project), `--project` CLI flag | not written |
-| 5 | to be written before it runs | `factoryd`: registry, spawning drivers, limits, recovery | not written |
+| 3 | `plan-03-registry-presets-layers.md` | Project registry commands, `project.toml`, three-layer settings, `rust` and `go` presets, prompt text moved to presets, agent files written into worktrees | done |
+| 4 | `plan-04-project-lease-and-project-flag.md` | Project lease (one job per project), `--project` CLI flag | done |
+| 5 | `plan-05-factoryd.md` | `factoryd`: registry, spawning drivers, limits, recovery | done |
 | 6 | to be written before it runs | API, token, event stream, multi-project dashboard | not written |
 | 7 | to be written before it runs | Global `/factory` command, daily budget | not written |
 | 8 | to be written before it runs | Move Rocket over, dry run, remove `tools/factory` from Rocket, add RocketVault | not written |
