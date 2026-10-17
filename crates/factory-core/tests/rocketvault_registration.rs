@@ -113,6 +113,8 @@ fn checks_have_exactly_the_planned_commands() {
             for bad in ["--workspace", "-race", "format"] {
                 assert!(!cmd.contains(bad), "{bad} in {cmd}");
             }
+            // With the flag before `run`, bun prints its usage and exits 0, so the check would always pass.
+            assert!(!cmd.starts_with("bun --cwd"), "bun needs `run --cwd <dir>`: {cmd}");
         }
     }
 }
