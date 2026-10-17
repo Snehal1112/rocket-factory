@@ -5,10 +5,18 @@ pub struct PlanTask {
     pub title: String,
 }
 
-/// Reads `### Task N: title` and `- [ ] Task N: title` lines, in order. A repeated number counts once.
-pub fn parse_tasks(plan: &str) -> Vec<PlanTask> {
+/// Reads `### Task N: title` and `- [ ] Task N: title` lines outside code fences, in order. A repeated number counts once.
+pub(crate) fn parse_checkbox_tasks(plan: &str) -> Vec<PlanTask> {
+    collect_tasks(plan, |_| true)
+}
+
+/// Collects the tasks of the lines outside code fences that pass `accept`.
+fn collect_tasks(plan: &str, accept: impl Fn(&str) -> bool) -> Vec<PlanTask> {
     let mut out: Vec<PlanTask> = Vec::new();
-    for line in plan.lines() {
+    for (line, fenced) in lines_with_fence(plan) {
+        if fenced || !accept(line) {
+            continue;
+        }
         let t = line.trim_start_matches("- [ ] ").trim_start_matches("- [x] ").trim_start_matches("### ");
         let Some(rest) = t.strip_prefix("Task ") else { continue };
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -20,6 +28,11 @@ pub fn parse_tasks(plan: &str) -> Vec<PlanTask> {
         out.push(PlanTask { n, title: title.trim().to_string() });
     }
     out
+}
+
+/// Reads `### Task N: title` headings outside code fences, in order. A repeated number counts once.
+pub fn parse_tasks(plan: &str) -> Vec<PlanTask> {
+    collect_tasks(plan, is_task_heading)
 }
 
 /// The text of the first `# ` heading of a plan, or `plan` when it has none.
@@ -172,9 +185,28 @@ mod tests {
     }
 
     #[test]
-    fn ignores_template_headings_and_accepts_checkboxes() {
-        let got = parse_tasks("### Task N: x\n- [ ] Task 3: third\n- [x] Task 4: fourth\n");
+    fn ignores_template_headings() {
+        let got = parse_tasks("### Task N: x\n### Task 3: third\n### Task 4: fourth\n");
         assert_eq!(got.iter().map(|t| t.n).collect::<Vec<_>>(), vec![3, 4]);
+    }
+
+    #[test]
+    fn parse_tasks_ignores_task_headings_inside_a_fence() {
+        let plan = "### Task 1: a\n### Task 2: b\n### Task 3: c\n```md\n### Task 4: quoted\n```\n";
+        let got = parse_tasks(plan);
+        assert_eq!(got.iter().map(|t| t.n).collect::<Vec<_>>(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn parse_tasks_ignores_checkbox_lines() {
+        assert!(parse_tasks("- [ ] Task 1: x\n").is_empty());
+    }
+
+    #[test]
+    fn parse_checkbox_tasks_keeps_the_old_behavior() {
+        let plan = "### Task 1: a\n- [ ] Task 2: b\n- [x] Task 3: c\n- [ ] Task 1: dup\n```\n- [ ] Task 9: fenced\n```\n";
+        let got = parse_checkbox_tasks(plan);
+        assert_eq!(got.iter().map(|t| t.n).collect::<Vec<_>>(), vec![1, 2, 3]);
     }
 
     #[test]

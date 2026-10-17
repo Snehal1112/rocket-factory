@@ -56,7 +56,7 @@ fn read_plan(root: &Path, path: &Path) -> Result<SeriesPlan, SeriesError> {
         .map(str::trim)
         .filter(|t| !t.is_empty() && !t.contains(char::is_whitespace))
         .ok_or_else(|| SeriesError::NoNextLine(path.to_path_buf()))?;
-    let tasks: Vec<u32> = crate::tasks::parse_tasks(&text).into_iter().map(|t| t.n).collect();
+    let tasks: Vec<u32> = crate::tasks::parse_checkbox_tasks(&text).into_iter().map(|t| t.n).collect();
     if tasks.is_empty() || tasks.len() > 3 {
         return Err(SeriesError::TaskCount { path: path.to_path_buf(), found: tasks.len() });
     }

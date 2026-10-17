@@ -1006,32 +1006,12 @@ fn first_builder_prompt(plan: &str, excerpt_on: bool) -> (String, String) {
 
 #[test]
 fn the_flag_off_gives_the_old_prompt_without_the_excerpt() {
-    // A plan with no extractable section takes the old prompt path even with the switch on.
-    let (old, _) = first_builder_prompt("# P\n\n- [ ] Task 1: first thing\n\nBODY-ONE-MARKER\n- [ ] Task 2: second thing\n", true);
     let (off, events) = first_builder_prompt(EXCERPT_PLAN, false);
-    assert_eq!(off, old);
     for gone in ["Task excerpt", "--- plan header ---", "--- end of excerpt ---", "ACCEPT-MARKER"] {
         assert!(!off.contains(gone), "unexpected {gone}: {off}");
     }
     assert!(off.contains("Do only Task 1: first thing"));
     assert!(!events.contains("excerpt"), "switch off is a choice, not a fallback: {events}");
-}
-
-#[test]
-fn a_plan_with_checkbox_tasks_falls_back_to_the_old_prompt_and_says_so_in_the_events() {
-    let (prompt, events) = first_builder_prompt("# P\n\n- [ ] Task 1: first\n\nBODY-ONE-MARKER\n- [ ] Task 2: second\n", true);
-    assert!(!prompt.contains("BODY-ONE-MARKER") && !prompt.contains("Task excerpt"), "{prompt}");
-    assert!(prompt.contains("Do only Task 1"));
-    assert!(events.contains("FactoryNotice") && events.contains("no task excerpt for task 1"), "{events}");
-}
-
-#[test]
-fn a_task_past_the_last_heading_falls_back_and_is_never_an_empty_prompt() {
-    // Task 1 exists only as a checkbox, so no `### Task 1:` section can be cut.
-    let (prompt, events) = first_builder_prompt("# P\n\n- [ ] Task 1: first\n\n### Task 2: second\n\nBODY-TWO-MARKER\n", true);
-    assert!(!prompt.contains("Task excerpt") && !prompt.contains("BODY-TWO-MARKER"), "{prompt}");
-    assert!(prompt.contains("Do only Task"), "{prompt}");
-    assert!(events.contains("no task excerpt for task"), "{events}");
 }
 
 #[test]

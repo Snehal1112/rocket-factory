@@ -14,7 +14,7 @@ pub fn tick_plan(plan_path: &Path, ledger: &Ledger, merge_sha: &str) -> Result<V
         .filter(|(_, state)| *state == TaskState::Complete)
         .map(|(n, _)| n)
         .collect();
-    let numbers: BTreeSet<u32> = crate::tasks::parse_tasks(&text).into_iter().map(|t| t.n).collect();
+    let numbers: BTreeSet<u32> = crate::tasks::parse_checkbox_tasks(&text).into_iter().map(|t| t.n).collect();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
         match line.strip_prefix("- [ ] Task ") {
