@@ -392,12 +392,60 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
     Ok(out)
 }
 
+/// Removes the worktree, branch and leftover folder, then the card of a cancelled job. A merged job keeps its card.
 fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.stage != Stage::Merged && !job.cancelled {
         return Err(CliError::Refused("cleanup only works on a merged or cancelled job".into()));
     }
+    let mut message = cleanup_checkout(ctx, &job, discard)?;
+    d.store().update_job(id, |j| {
+        j.cleaned = true;
+        Ok(())
+    })?;
+    if job.cancelled && job.stage != Stage::Merged {
+        match remove_cancelled_card(ctx, &job.id)? {
+            None => message.push_str("; card removed from the board"),
+            Some(why) => message.push_str(&format!("; card kept on the board: {why}")),
+        }
+    }
+    Ok(message)
+}
+
+/// Takes the card of a cancelled job off the board. The job folder stays, because the next id and the daily
+/// usage read it. Returns why the card stays, or None when it was removed.
+fn remove_cancelled_card(ctx: &CliCtx, id: &str) -> Result<Option<String>, CliError> {
+    let d = ctx.driver()?;
+    let state_dir = &d.layout().state_dir;
+    match project_lease_status(state_dir, now_secs()) {
+        factory_engine::ProjectLeaseStatus::Held { job, .. } if job == id => {
+            return Ok(Some(format!("the project lease is held by job {id}")));
+        }
+        factory_engine::ProjectLeaseStatus::Stale { job, .. } if job == id => {
+            force_release_project_lease(state_dir, id, ctx.lock_wait)
+                .map_err(|e| CliError::Refused(format!("the project lease could not be cleared: {e}")))?;
+        }
+        _ => {}
+    }
+    let kept = d.store().update(|board| {
+        let job = board.find(id)?;
+        if lease_is_live(job, now_secs()) {
+            return Ok(Some(format!("job {id} has a live lease")));
+        }
+        if let Some(sid) = board.series_with_siblings(&job.id) {
+            return Ok(Some(format!("job is part of series {sid}")));
+        }
+        board.remove_job(id)?;
+        Ok(None)
+    })?;
+    Ok(kept)
+}
+
+/// Removes the worktree, the branch and any leftover folder. Returns what was done, in words.
+fn cleanup_checkout(ctx: &CliCtx, job: &factory_core::Job, discard: bool) -> Result<String, CliError> {
+    let d = ctx.driver()?;
+    let id = job.id.as_str();
     let repo = d.repo();
     let jr = factory_git::JobRef { id: job.id.clone(), slug: job.slug.clone() };
     let wt = factory_git::Worktree {
@@ -429,10 +477,6 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
         } else {
             format!("nothing to remove for job {id}, the worktree and branch are already gone")
         };
-        d.store().update_job(id, |j| {
-            j.cleaned = true;
-            Ok(())
-        })?;
         return Ok(message);
     }
     // A head that is gone or equals the base has no commits to protect, so an error counts as merged.
@@ -455,10 +499,6 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
     // remove_worktree also deletes the job branch. It refuses a dirty worktree and unmerged commits unless forced.
     repo.remove_worktree(&wt, discard)
         .map_err(|e| CliError::Refused(format!("{e}, use --discard-commits to drop it")))?;
-    d.store().update_job(id, |j| {
-        j.cleaned = true;
-        Ok(())
-    })?;
     Ok(format!("removed worktree and branch of job {id}"))
 }
 

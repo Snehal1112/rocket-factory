@@ -244,3 +244,81 @@ fn cleanup_keeps_debris_and_branch_when_commits_are_unmerged() {
     assert!(!fx.worktree_path(1).exists());
     assert!(!branch_exists(&fx, "factory/001-hello"));
 }
+
+fn board_ids(fx: &Fixture) -> Vec<String> {
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    );
+    store.load().expect("board").jobs.into_iter().map(|j| j.id).collect()
+}
+
+fn parked_and_cancelled(fx: &Fixture, slug: &str) {
+    let plans = fx.write_plan(&format!("plan-01-{slug}.md"), 1, "none");
+    fx.run(&["new", slug, "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+}
+
+#[test]
+fn cleanup_of_a_cancelled_job_removes_its_card_and_keeps_the_job_folder() {
+    let fx = Fixture::with_risk_path("docs/**");
+    parked_and_cancelled(&fx, "hello");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let jobs_dir = factory_core::Layout::in_repo(&fx.root).jobs_dir;
+    let folders_before = std::fs::read_dir(&jobs_dir).expect("jobs").count();
+    let out = fx.run(&["cleanup", "1", "--discard-commits"]).expect("cleanup");
+    assert!(out.ends_with("; card removed from the board"), "{out}");
+    assert!(board_ids(&fx).is_empty());
+    assert_eq!(std::fs::read_dir(&jobs_dir).expect("jobs").count(), folders_before, "the job folder stays");
+    let e = fx.run(&["cleanup", "1"]).expect_err("gone");
+    assert!(e.to_string().contains("no job"), "{e}");
+}
+
+#[test]
+fn cleanup_of_a_merged_job_keeps_its_card() {
+    let fx = Fixture::new();
+    parked_and_cancelled(&fx, "hello");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    let out = fx.run(&["cleanup", "1"]).expect("cleanup");
+    assert!(!out.contains("card"), "{out}");
+    assert_eq!(board_ids(&fx), vec!["001".to_string()]);
+}
+
+#[test]
+fn cleanup_keeps_the_card_of_a_cancelled_series_member_with_a_sibling() {
+    let fx = Fixture::with_risk_path("docs/**");
+    parked_and_cancelled(&fx, "hello");
+    parked_and_cancelled(&fx, "other");
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    );
+    store
+        .update(|b| {
+            for (n, j) in b.jobs.iter_mut().enumerate() {
+                j.series = Some(factory_core::SeriesPos {
+                    plan_file: "p.md".into(),
+                    index: n as u32 + 1,
+                    total: 2,
+                    id: Some("S3".into()),
+                });
+            }
+            Ok(())
+        })
+        .expect("series");
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let out = fx.run(&["cleanup", "1", "--discard-commits"]).expect("cleanup");
+    assert!(out.ends_with("; card kept on the board: job is part of series S3"), "{out}");
+    assert_eq!(board_ids(&fx), vec!["001".to_string(), "002".to_string()]);
+}
+
+#[test]
+fn cleanup_keeps_the_card_of_a_cancelled_job_with_a_live_lease() {
+    let fx = Fixture::with_risk_path("docs/**");
+    parked_and_cancelled(&fx, "hello");
+    fx.run(&["cancel", "1"]).expect("cancel");
+    fx.hold_lease("001", "someone-else");
+    let out = fx.run(&["cleanup", "1", "--discard-commits"]).expect("cleanup");
+    assert!(out.contains("card kept on the board: job 001 has a live lease"), "{out}");
+    assert_eq!(board_ids(&fx), vec!["001".to_string()]);
+}

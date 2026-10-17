@@ -257,6 +257,26 @@ impl Board {
         self.jobs.iter().find(|j| j.id == id).ok_or(CoreError::NoJob(id))
     }
 
+    /// Takes a job out of the board and returns it. The job folder is not touched.
+    pub fn remove_job(&mut self, id: &str) -> Result<Job, CoreError> {
+        let id = crate::ids::normalize_id(id)?;
+        let at = self.jobs.iter().position(|j| j.id == id).ok_or(CoreError::NoJob(id))?;
+        Ok(self.jobs.remove(at))
+    }
+
+    /// The series id of a job that is one of a series of two or more plans and has another job
+    /// of that series on the board. Removing such a job would break the chaining.
+    pub fn series_with_siblings(&self, id: &str) -> Option<String> {
+        let job = self.jobs.iter().find(|j| j.id == id)?;
+        let pos = job.series.as_ref().filter(|p| p.total >= 2)?;
+        let sid = pos.id.as_ref()?;
+        let shared = self
+            .jobs
+            .iter()
+            .any(|o| o.id != job.id && o.series.as_ref().and_then(|p| p.id.as_ref()) == Some(sid));
+        shared.then(|| sid.clone())
+    }
+
     pub fn find_mut(&mut self, id: &str) -> Result<&mut Job, CoreError> {
         let id = crate::ids::normalize_id(id)?;
         self.jobs.iter_mut().find(|j| j.id == id).ok_or(CoreError::NoJob(id))
@@ -266,6 +286,31 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn in_series(id: &str, sid: &str, total: u32) -> Job {
+        let mut j = Job::new(id, "d", "s", "2026-10-16", "f", 1.0);
+        j.series = Some(SeriesPos { plan_file: "p.md".into(), index: 1, total, id: Some(sid.into()) });
+        j
+    }
+
+    #[test]
+    fn remove_job_takes_one_job_and_reports_a_missing_one() {
+        let mut b = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0), Job::new("002", "d", "s", "c", "f", 1.0)] };
+        assert_eq!(b.remove_job("1").expect("removed").id, "001");
+        assert_eq!(b.jobs.len(), 1);
+        assert!(matches!(b.remove_job("1"), Err(CoreError::NoJob(_))));
+    }
+
+    #[test]
+    fn series_with_siblings_needs_a_series_of_two_and_another_member() {
+        let b = Board { jobs: vec![in_series("001", "S1", 2), in_series("002", "S1", 2), in_series("003", "S2", 2)] };
+        assert_eq!(b.series_with_siblings("001"), Some("S1".to_string()));
+        assert_eq!(b.series_with_siblings("003"), None);
+        let single = Board { jobs: vec![in_series("001", "S1", 1), in_series("002", "S1", 1)] };
+        assert_eq!(single.series_with_siblings("001"), None);
+        let plain = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0)] };
+        assert_eq!(plain.series_with_siblings("001"), None);
+    }
 
     #[test]
     fn the_estimate_field_is_optional_and_round_trips() {
