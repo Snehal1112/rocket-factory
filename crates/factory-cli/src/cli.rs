@@ -57,7 +57,7 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Remove the worktree and branch of a merged or cancelled job.
+    /// Remove the worktree and branch of a merged or cancelled job. A cancelled job also loses its board card, unless it is in a series with other jobs or holds a live lease. The job folder stays.
     Cleanup {
         id: String,
         #[arg(long)]

@@ -140,7 +140,7 @@ Build once: `cargo build -j4 --manifest-path tools/factory/Cargo.toml -p factory
 | `/factory approve <id>` | Release a `needs-human` job to the merge step. |
 | `/factory rework <id> <note>` | Send a `needs-human` job back to the builder with a one-line note. |
 | `/factory cancel <id>` | Stop and park a job. |
-| `/factory cleanup <id>` | Remove the worktree of a finished job. |
+| `/factory cleanup <id>` | Remove the worktree of a finished job. A cancelled job also loses its board card (not in a series with other jobs, not while leased); the job folder stays. |
 
 The command matches subcommands by exact shape, so feature text such as `next button for pagination` stays a feature. The session does not poll while the driver runs. The harness notifies it on exit.
 
