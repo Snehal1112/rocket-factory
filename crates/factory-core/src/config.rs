@@ -51,6 +51,10 @@ pub struct Config {
     pub commit_subagents: bool,
     /// Per-run cap on weighted tokens for one committer run.
     pub commit_budget_weighted: u64,
+    /// Run one committer per job after the last task instead of one per task.
+    pub commit_batch: bool,
+    /// Give each task builder only its own task instead of the whole plan and spec.
+    pub builder_excerpt: bool,
     /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
     pub kb_path: Option<String>,
     pub kb_model: String,
@@ -91,6 +95,8 @@ impl Default for Config {
             commit_model: "sonnet".to_string(),
             commit_subagents: false,
             commit_budget_weighted: 60_000,
+            commit_batch: true,
+            builder_excerpt: true,
             kb_path: None,
             kb_model: "sonnet".to_string(),
             kb_budget_weighted: 150_000,
@@ -205,6 +211,16 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cost_switches_default_on_and_can_be_turned_off() {
+        let cfg = Config::default();
+        assert!(cfg.commit_batch && cfg.builder_excerpt);
+        let off = Config::parse("commit_batch = false\nbuilder_excerpt = false").expect("parse");
+        assert!(!off.commit_batch && !off.builder_excerpt);
+        assert!(Config::parse("commit_batch = \"yes\"").is_err());
+        assert!(Config::parse("commit_bach = true").is_err());
+    }
 
     #[test]
     fn prompt_keys_default_to_empty_and_parse() {

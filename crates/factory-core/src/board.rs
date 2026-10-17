@@ -108,6 +108,9 @@ pub struct Job {
     /// Unix seconds the job parked. New in the failure details series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub park_at: Option<u64>,
+    /// The tip of the snapshot commits while the batch commit of the job is pending. New in the cost reduction series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_snapshot: Option<String>,
     /// The cost estimate made when the job was created. New in the cost report series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimate: Option<crate::cost::Estimate>,
@@ -182,6 +185,7 @@ impl Job {
             task_index: 0,
             park_kind: None,
             park_at: None,
+            batch_snapshot: None,
             estimate: None,
         }
     }
@@ -310,6 +314,18 @@ mod tests {
         job.set_stage(Stage::Build, None, true, 4.0).expect("back");
         assert_eq!(job.park_kind, None);
         assert_eq!(job.park_at, None);
+    }
+
+    #[test]
+    fn batch_snapshot_is_optional_and_omitted_when_unset() {
+        let job = Job::new("001", "2026-10-17-001-demo", "demo", "2026-10-17", "demo", 0.0);
+        assert!(job.batch_snapshot.is_none());
+        let text = serde_json::to_string(&job).expect("json");
+        assert!(!text.contains("batch_snapshot"), "{text}");
+        let mut with = job.clone();
+        with.batch_snapshot = Some("abc1234".to_string());
+        let back: Job = serde_json::from_str(&serde_json::to_string(&with).expect("json")).expect("parse");
+        assert_eq!(back.batch_snapshot.as_deref(), Some("abc1234"));
     }
 
     #[test]

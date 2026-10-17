@@ -35,6 +35,7 @@ pub(crate) struct JobView {
     pub round: u32,
     pub task_index: u32,
     pub issues: Vec<u32>,
+    pub batch_snapshot: Option<String>,
 }
 
 impl Engine<'_> {
@@ -53,6 +54,7 @@ impl Engine<'_> {
             round: job.round.max(1),
             task_index: job.task_index,
             issues: job.issues.clone(),
+            batch_snapshot: job.batch_snapshot.clone(),
         })
     }
 
