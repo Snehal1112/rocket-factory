@@ -1,0 +1,76 @@
+# Rocket's registration in the standalone factory (~/.factory/projects/rocket/project.toml).
+# Values come from the old in-repo config (rocket-config.toml), minus the factory's own folders.
+repo = "/home/numericlabs/data/rocket/rocket"
+preset = "rust"
+
+[settings]
+base_branch = "main"
+diff_cap_lines = 4000
+budget_weighted = 3000000
+fix_rounds = 2
+stall_minutes = 10
+builder_model = "sonnet"
+reviewer_model = "sonnet"
+commit_model = "sonnet"
+commit_subagents = false
+commit_budget_weighted = 60000
+tickets_on_merge = true
+risk_paths = [
+  "src-tauri/**",
+  "**/Cargo.toml",
+  "**/Cargo.lock",
+  "**/package.json",
+  "**/tauri.conf.json",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*trust*",
+  "**/*csp*",
+  "crates/rocket-infra/**",
+  "crates/rocket-shared/src/event*",
+  "crates/rocket-shared/src/events/**",
+  ".claude/settings.json",
+  ".claude/settings.local.json",
+  ".claude/harness/**",
+]
+read_first = ["CLAUDE.md", ".claude/rules/00-shortcuts.md"]
+builder_rules = [
+  "Use shadcn/ui primitives only in the UI: no raw button, input, dialog, select or form elements.",
+  "Use lucide-react for icons only, never inline SVGs.",
+  "Use SingleLineEditor (CodeMirror 6) for single-line variable-aware fields and Monaco for multi-line editors, never Monaco for single-line fields.",
+  "Zustand: use narrow selectors and never fully destructure store state at component top level.",
+  "No unwrap in production Rust paths.",
+  "Never shell out to the git CLI from Rust code, use the git2 crate.",
+  "Use serde rename_all camelCase on IPC DTOs only, never on persistence structs.",
+  "Run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR.",
+  "Frontend uses yarn: run `yarn tsc --noEmit`, `yarn check` and `yarn test` before finishing frontend changes.",
+]
+check_hints = [
+  "cargo check -j4",
+  "cargo test -j4 -p <crate> <test_name>",
+  "yarn tsc --noEmit",
+  "yarn check",
+  "yarn test",
+]
+reviewer_rules = [
+  "Reject raw button, input, dialog, select or form elements in the UI: shadcn/ui primitives only.",
+  "Reject inline SVGs: icons come from lucide-react only.",
+  "Single-line variable-aware fields must use SingleLineEditor and multi-line editors must use Monaco.",
+  "Reject Zustand code that fully destructures store state at component top level, narrow selectors only.",
+  "Reject unwrap in production Rust paths and any shell-out to the git CLI, git2 only.",
+  "serde rename_all camelCase belongs on IPC DTOs only, never on persistence structs.",
+  "Judge DDD placement against the crate rules in CLAUDE.md and the rule files in .claude/rules.",
+  "Commit message format is handled by the committer, do not review it.",
+]
+
+[[settings.checks]]
+paths = ["crates/*/**"]
+commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
+
+[[settings.checks]]
+paths = ["src-tauri/**"]
+commands = ["cargo check -j4"]
+
+[[settings.checks]]
+paths = ["src/**"]
+# Half the workers: the full suite saturates the CPU and heavy dialog tests then time out.
+commands = ["yarn tsc --noEmit", "yarn check", "yarn test --run --maxWorkers=50%"]
