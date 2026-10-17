@@ -56,3 +56,21 @@ fn an_orphan_plan_file_and_a_seventh_plan_are_rejected() {
     }
     assert!(matches!(parse_series(e.path(), e.path()), Err(SeriesError::TooMany(_))));
 }
+
+#[test]
+fn a_fenced_task_heading_does_not_count_toward_the_task_limit() {
+    let d = tempfile::tempdir().expect("tmp");
+    let text = "# Plan\n\n### Task 1: a\n\n### Task 2: b\n\n### Task 3: c\n\n```md\n### Task 4: quoted\n```\n\nNext plan: none\n";
+    std::fs::write(d.path().join("plan-01-a.md"), text).expect("write plan");
+    let s = parse_series(d.path(), d.path()).expect("series");
+    assert_eq!(s.plans[0].tasks, vec![1, 2, 3]);
+}
+
+#[test]
+fn a_checkbox_only_plan_is_still_accepted() {
+    let d = tempfile::tempdir().expect("tmp");
+    let text = "# Plan\n\n- [ ] Task 1: a\n- [x] Task 2: b\n\nNext plan: none\n";
+    std::fs::write(d.path().join("plan-01-a.md"), text).expect("write plan");
+    let s = parse_series(d.path(), d.path()).expect("series");
+    assert_eq!(s.plans[0].tasks, vec![1, 2]);
+}
