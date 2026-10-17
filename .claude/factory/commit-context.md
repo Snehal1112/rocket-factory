@@ -22,6 +22,10 @@ The commit skill asks questions. Answer them like this:
 | The prompt says `Issue footer: none` | Add no issue footer. |
 | Anything else | Pick the option that makes a new commit and changes no existing commit. |
 
+## Batch runs
+
+For `Kind: batch` the staged change holds several tasks, listed under "Tasks in this change". Make focused commits, normally one per task in that order, never more than 4. The floor is the base of the job, so there is nothing above it to amend.
+
 ## Rules that do not change
 
 - The floor is the commit named in "This run". Never rewrite it or any commit below it.

@@ -29,6 +29,7 @@ fn request(floor: &str) -> CommitRequest<'_> {
         goal: "add the thing",
         floor,
         issues: &[],
+        snapshots: &[],
     }
 }
 
@@ -482,4 +483,81 @@ fn the_fallback_commit_carries_the_issue_footer() {
     let out = fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
     assert_eq!(messages(&fx, &wt, &wt.base), vec!["chore: Add the thing\n\nRelates to: #20"]);
+}
+
+fn batch_request<'a>(floor: &'a str, snaps: &'a [factory_engine::SnapshotRef]) -> CommitRequest<'a> {
+    CommitRequest { kind: CommitKind::Batch, task_title: "demo plan", snapshots: snaps, ..request(floor) }
+}
+
+/// Makes two snapshot commits on the job branch, then soft-resets to the base like the build stage does.
+fn two_snapshots(wt: &Worktree) -> Vec<factory_engine::SnapshotRef> {
+    write_change(wt, "a.txt");
+    let first = commit_paths(&wt.path, &["a.txt"], "wip: task 1 first thing");
+    write_change(wt, "b.txt");
+    let second = commit_paths(&wt.path, &["b.txt"], "wip: task 2 second thing");
+    reset_mixed(&wt.path, &wt.base);
+    vec![
+        factory_engine::SnapshotRef { n: 1, sha: first, title: "first thing".into(), files: vec!["a.txt".into()] },
+        factory_engine::SnapshotRef { n: 2, sha: second, title: "second thing".into(), files: vec!["b.txt".into()] },
+    ]
+}
+
+#[test]
+fn a_batch_run_is_capped_at_twice_the_commit_budget_and_names_the_tasks() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    let snaps = two_snapshots(&wt);
+    let runner = scripted(vec![effect(|dir| {
+        commit_paths(dir, &["a.txt"], "feat(x): add a");
+        commit_paths(dir, &["b.txt"], "feat(x): add b");
+        "done".to_string()
+    })]);
+    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add a", "feat(x): add b"]);
+    let spec = runner.last_spec().expect("spec");
+    assert_eq!(spec.budget_weighted, Some(120_000));
+    assert!(spec.prompt.contains("Kind: batch") && spec.prompt.contains("Task 2: second thing"), "{}", spec.prompt);
+}
+
+#[test]
+fn a_failed_batch_falls_back_to_one_chore_commit_per_snapshot() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    let snaps = two_snapshots(&wt);
+    let runner = scripted(vec![nothing(), nothing()]);
+    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: first thing", "chore: second thing"]);
+    assert!(wt.path.join("a.txt").exists() && wt.path.join("b.txt").exists());
+    assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));
+    assert!(ledger(&fx).contains("fallback commit"), "ledger: {}", ledger(&fx));
+}
+
+#[test]
+fn a_batch_fallback_skips_a_snapshot_that_changed_nothing() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let first = commit_paths(&wt.path, &["a.txt"], "wip: task 1 first thing");
+    // The second snapshot has the same tree as the first.
+    let second = {
+        let repo = Repository::open(&wt.path).expect("open");
+        let head = repo.head().expect("head").peel_to_commit().expect("commit");
+        let sig = Signature::now("t", "t@example.com").expect("sig");
+        let oid = repo.commit(Some("HEAD"), &sig, &sig, "wip: task 2 empty", &head.tree().expect("tree"), &[&head]).expect("commit");
+        oid.to_string()
+    };
+    reset_mixed(&wt.path, &wt.base);
+    let snaps = vec![
+        factory_engine::SnapshotRef { n: 1, sha: first, title: "first thing".into(), files: vec!["a.txt".into()] },
+        factory_engine::SnapshotRef { n: 2, sha: second, title: "empty thing".into(), files: vec![] },
+    ];
+    let runner = scripted(vec![nothing(), nothing()]);
+    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: first thing"]);
 }

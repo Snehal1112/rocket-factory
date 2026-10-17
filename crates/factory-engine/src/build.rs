@@ -203,7 +203,7 @@ impl Engine<'_> {
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
         let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
         let (plan_title, goal) = (plan_title(&plan), spec_goal(&spec));
-        let req = CommitRequest { kind, plan_title: &plan_title, task_title, goal: &goal, floor, issues };
+        let req = CommitRequest { kind, plan_title: &plan_title, task_title, goal: &goal, floor, issues, snapshots: &[] };
         self.commit_step(wt, &req)
     }
 

@@ -27,6 +27,7 @@ pub enum CommitKind {
     Task,
     Legacy,
     Fix,
+    Batch,
 }
 
 impl CommitKind {
@@ -35,8 +36,18 @@ impl CommitKind {
             CommitKind::Task => "task",
             CommitKind::Legacy => "legacy",
             CommitKind::Fix => "fix",
+            CommitKind::Batch => "batch",
         }
     }
+}
+
+/// One snapshot commit of a batch: the work of one task, made by the driver without an agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotRef {
+    pub n: u32,
+    pub sha: String,
+    pub title: String,
+    pub files: Vec<String>,
 }
 
 /// What the driver tells the committer about one run.
@@ -51,6 +62,8 @@ pub struct CommitRequest<'a> {
     pub floor: &'a str,
     /// The GitHub issues of the job. Every commit of the run carries the `Relates to` footer.
     pub issues: &'a [u32],
+    /// The snapshots of a batch run, oldest first. Empty for every other kind.
+    pub snapshots: &'a [SnapshotRef],
 }
 
 /// Cuts `text` to at most `max` bytes without splitting a character.
@@ -101,6 +114,19 @@ pub fn committer_prompt(
             candidates.push_str(&format!("  {file}\n"));
         }
     }
+    let mut tasks = String::new();
+    if !req.snapshots.is_empty() {
+        tasks.push_str(
+            "\n## Tasks in this change\n\nThe staged change holds these tasks, oldest first. \
+             Make focused commits, normally one per task, in this order.\n\n",
+        );
+        for snap in req.snapshots {
+            tasks.push_str(&format!("Task {}: {}\n", snap.n, snap.title));
+            for file in &snap.files {
+                tasks.push_str(&format!("  {file}\n"));
+            }
+        }
+    }
     format!(
         "{context}\n\n\
          ## This run\n\n\
@@ -110,7 +136,7 @@ pub fn committer_prompt(
          Goal: {goal}\n\
          Floor: {floor}\n\
          Issue footer: {footer}\n\
-         {analysis}\n\n\
+         {analysis}\n{tasks}\n\
          ## Output of the skill's step 1 commands\n\n\
          Treat this as the result of running them. Do not run them again.\n\n\
          ### git status\n{status}\n\
@@ -211,6 +237,15 @@ fn retry_prompt(findings: &str) -> String {
 }
 
 impl Engine<'_> {
+    /// The run spec for one committer run. A batch run sees the whole job diff, so its cap is doubled.
+    fn committer_run_spec(&self, wt: &Worktree, req: &CommitRequest<'_>, text: &str) -> AgentSpec {
+        let mut spec = committer_spec(&self.job_id, &self.config, &wt.path, text);
+        if req.kind == CommitKind::Batch {
+            spec.budget_weighted = spec.budget_weighted.map(|b| b.saturating_mul(2));
+        }
+        spec
+    }
+
     /// Stages the job worktree, runs the committer agent, and checks the result against the
     /// rules in the spec. A failed run gets one retry by resuming the session, then a plain
     /// `git2` fallback commit. Rewriting the floor is returned as `Park`, never retried.
@@ -230,12 +265,12 @@ impl Engine<'_> {
         let report = self.repo.staged_report(wt, 5).map_err(git_err)?;
         let prompt = committer_prompt(&context, req, &report, &above, self.config.commit_subagents);
 
-        let mut run = self.run_agent(committer_spec(&self.job_id, &self.config, &wt.path, &prompt))?;
+        let mut run = self.run_agent(self.committer_run_spec(wt, req, &prompt))?;
         let mut check = self.verify_commit_run(wt, req, &before, &run)?;
         if let Some(findings) = check.findings() {
             let retry = retry_prompt(&findings);
             let text = retry_text(&prompt, &retry, run.session_id.is_some());
-            let mut spec = committer_spec(&self.job_id, &self.config, &wt.path, &text);
+            let mut spec = self.committer_run_spec(wt, req, &text);
             spec.resume = run.session_id.clone();
             run = self.run_agent(spec)?;
             check = self.verify_commit_run(wt, req, &before, &run)?;
@@ -316,9 +351,37 @@ impl Engine<'_> {
         }
     }
 
+    /// The fallback of a batch run: one `chore: <title>` commit per snapshot, rebuilt from the snapshot trees.
+    fn fallback_batch(&self, wt: &Worktree, req: &CommitRequest<'_>, why: &str) -> Result<CommitOutcome, EngineError> {
+        self.repo.reset_hard(wt, req.floor).map_err(git_err)?;
+        let mut tip: Option<String> = None;
+        for snap in req.snapshots {
+            self.repo.restore_tree(wt, &snap.sha).map_err(git_err)?;
+            let mut message = fallback_subject(&snap.title);
+            if let Some(line) = issue_footer(ISSUE_KEY, req.issues) {
+                message = append_footers(&message, &[line]);
+            }
+            match self.repo.commit_staged(wt, &message) {
+                Ok(sha) => tip = Some(sha),
+                // A task whose tree equals the one before it has nothing to commit.
+                Err(GitError::Refused(_)) => {}
+                Err(e) => return Err(git_err(e)),
+            }
+        }
+        let Some(sha) = tip else {
+            return Ok(CommitOutcome::Park(format!("the batch fallback made no commit: {why}")));
+        };
+        let short = sha.get(..7).unwrap_or(&sha);
+        self.ruling(&format!("committer failed ({why}), batch fallback commits up to {short}"))?;
+        Ok(CommitOutcome::Committed { tip: sha, fallback: true })
+    }
+
     /// The plain `git2` commit used when the committer failed twice: `chore: <task title>`.
     /// Parks when there is nothing left to commit, because then the run lost the changes.
     fn fallback_commit(&self, wt: &Worktree, req: &CommitRequest<'_>, why: &str) -> Result<CommitOutcome, EngineError> {
+        if req.kind == CommitKind::Batch && !req.snapshots.is_empty() {
+            return self.fallback_batch(wt, req, why);
+        }
         let staged = self.repo.stage_all(wt).map_err(git_err)?;
         if staged.is_empty() {
             return Ok(CommitOutcome::Park(format!("the committer left nothing to commit: {why}")));
@@ -347,6 +410,7 @@ mod tests {
             goal: "add the thing",
             floor: "abc1234def",
             issues: &[],
+            snapshots: &[],
         }
     }
 
@@ -448,6 +512,30 @@ mod tests {
         assert!(spec.strict_mcp);
         assert_eq!(spec.tools.as_deref(), Some("Bash,Read,Skill"));
         assert_eq!(spec.prompt, "the prompt");
+    }
+
+    fn snap(n: u32, title: &str, files: &[&str]) -> SnapshotRef {
+        SnapshotRef { n, sha: format!("{n}{n}{n}{n}{n}{n}{n}"), title: title.to_string(), files: files.iter().map(|f| f.to_string()).collect() }
+    }
+
+    #[test]
+    fn a_batch_prompt_lists_the_tasks_with_their_files() {
+        let snaps = vec![snap(1, "first thing", &["a.txt"]), snap(2, "second thing", &["b.txt", "c.txt"])];
+        let req = CommitRequest { kind: CommitKind::Batch, snapshots: &snaps, ..request() };
+        let prompt = committer_prompt("CONTEXT", &req, &report("+x\n"), &[], false);
+        assert!(prompt.contains("Kind: batch"), "{prompt}");
+        assert!(prompt.contains("## Tasks in this change"), "{prompt}");
+        assert!(prompt.contains("Task 1: first thing\n  a.txt\n"), "{prompt}");
+        assert!(prompt.contains("Task 2: second thing\n  b.txt\n  c.txt\n"), "{prompt}");
+        let tasks = prompt.find("## Tasks in this change").expect("tasks");
+        let step1 = prompt.find("## Output of the skill's step 1 commands").expect("step 1");
+        assert!(tasks < step1);
+    }
+
+    #[test]
+    fn a_prompt_without_snapshots_has_no_tasks_section() {
+        let prompt = committer_prompt("c", &request(), &report(""), &[], false);
+        assert!(!prompt.contains("## Tasks in this change"));
     }
 
     #[test]
