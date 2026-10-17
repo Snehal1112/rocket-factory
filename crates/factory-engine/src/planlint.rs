@@ -32,9 +32,25 @@ fn has_outside_fence(text: &str, marker: &str) -> bool {
     lines_with_fence(text).iter().any(|(l, fenced)| !fenced && l.contains(marker))
 }
 
+/// True for a step line whose title is `Commit`: `### Step N: Commit` or `- [ ] **Step N: Commit**`.
+/// Only the title counts, so an identifier such as `BuilderCommitted` in the step text is fine.
+fn is_commit_step(line: &str) -> bool {
+    let title = if let Some(rest) = line.strip_prefix('#') {
+        rest.trim_start_matches('#').trim()
+    } else if let Some(rest) = line.strip_prefix("- [ ] **").or_else(|| line.strip_prefix("- [x] **")) {
+        rest.split("**").next().unwrap_or("")
+    } else {
+        return false;
+    };
+    let Some(rest) = title.strip_prefix("Step ") else { return false };
+    let Some((_, name)) = rest.split_once(':') else { return false };
+    name.trim().split(|c: char| !c.is_ascii_alphanumeric()).next() == Some("Commit")
+}
+
 /// Lints a plan. Warning texts never contain `; ` because `factory new` splits on it.
 pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
     let mut lint = PlanLint::default();
+    let name = &name.replace("; ", ", ");
     if let Some((line, word)) = find_placeholder(plan) {
         lint.refuse = Some(format!("{name} line {line} still has `{word}`, finish it or remove it"));
         return lint;
@@ -59,11 +75,14 @@ pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
     }
     let commit = lines_with_fence(plan).into_iter().find(|(l, fenced)| {
         let t = l.trim_start();
-        let step = t.starts_with('#') || t.starts_with("- [ ] **Step") || t.starts_with("- [x] **Step");
-        !fenced && (t.starts_with("git commit") || (step && t.contains("Commit")))
+        !fenced && (t.starts_with("git commit") || is_commit_step(t))
     });
     if let Some((line, _)) = commit {
         lint.warnings.push(format!("{name} has a commit step (`{}`) but the driver commits", line.trim()));
+    }
+    // `factory new` splits the stored warnings on `; `, so no warning may contain it.
+    for warning in &mut lint.warnings {
+        *warning = warning.replace("; ", ", ");
     }
     lint
 }
@@ -129,6 +148,34 @@ mod tests {
         assert_eq!(lint.warnings.len(), 2, "{:?}", lint.warnings);
         assert!(lint.warnings[0].contains("task 1") && lint.warnings[0].contains("Files"));
         assert!(lint.warnings[1].contains("task 2") && lint.warnings[1].contains("Interfaces"));
+    }
+
+    #[test]
+    fn a_commit_word_inside_an_identifier_or_task_title_is_fine() {
+        let plan = format!(
+            "{GOOD}\n- [ ] **Step 4: Implement** the `BuilderCommitted` flag.\n\n### Task 3: Commit message parsing\n"
+        );
+        assert_eq!(lint_plan(&plan, "p.md").warnings.iter().filter(|w| w.contains("commit step")).count(), 0);
+        let plan = format!("{GOOD}\n- [ ] **Step 5: Commit**\n");
+        assert_eq!(lint_plan(&plan, "p.md").warnings.len(), 1);
+    }
+
+    #[test]
+    fn no_warning_contains_the_split_separator() {
+        let plan = format!("{GOOD}\ngit commit -m \"a; b\"\n");
+        let lint = lint_plan(&plan, "my; plan.md");
+        assert!(!lint.warnings.is_empty());
+        assert!(lint.warnings.iter().all(|w| !w.contains("; ")), "{:?}", lint.warnings);
+        let lint = lint_plan("# P\n", "my; plan.md");
+        assert!(lint.warnings.iter().all(|w| !w.contains("; ")), "{:?}", lint.warnings);
+    }
+
+    #[test]
+    fn a_second_real_plan_has_no_warnings() {
+        let plan = include_str!("../../../docs/superpowers/plans/2026-10-18-factory-execution-rework/plan-04-per-task-checks-and-slim-agents.md");
+        assert_eq!(lint_plan(plan, "p.md"), PlanLint::default());
+        let plan = include_str!("../../../docs/superpowers/plans/2026-10-18-factory-execution-rework/plan-02-builder-status-and-park.md");
+        assert_eq!(lint_plan(plan, "p.md"), PlanLint::default());
     }
 
     #[test]
