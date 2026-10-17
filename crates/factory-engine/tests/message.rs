@@ -1,24 +1,15 @@
 mod common;
-use common::{approved_job_with, scripted, scripted_auto, Effect};
+use common::{approved_job_with, reply, scripted, scripted_auto, Effect};
 use factory_agent::AgentSpec;
 use factory_engine::{merge_stage, MergeResult};
 use std::sync::Arc;
 
 const GOOD: &str = "---BEGIN MESSAGE---\nfeat(hello): add the hello docs\n\nBody.\n---END MESSAGE---";
 
-fn reply(text: &'static str) -> Effect {
-    Box::new(move |_: &AgentSpec| text.to_string())
-}
-
 fn subject(fx: &common::MergeFixture, sha: &str) -> String {
     let repo = git2::Repository::open(&fx.main).expect("open");
     let commit = repo.find_commit(git2::Oid::from_str(sha).expect("oid")).expect("commit");
     commit.message().expect("msg").to_string()
-}
-
-fn ledger(fx: &common::MergeFixture) -> String {
-    let job = fx.driver.job(&fx.id).expect("job");
-    std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger")
 }
 
 fn merged(fx: &common::MergeFixture) -> String {
@@ -49,7 +40,7 @@ fn an_invalid_reply_retries_once_then_uses_the_fixed_message() {
     let specs = fx.runner.specs_for("message");
     assert_eq!(specs.len(), 2);
     assert!(specs[1].resume.is_some());
-    assert!(ledger(&fx).contains("message failed twice"));
+    assert!(fx.ledger().contains("message failed twice"));
 }
 
 #[test]
@@ -57,7 +48,7 @@ fn a_valid_retry_is_used() {
     let fx = approved_job_with(Arc::new(scripted(vec![reply("no markers"), reply(GOOD)])), true);
     let sha = merged(&fx);
     assert!(subject(&fx, &sha).starts_with("feat(hello): add the hello docs"));
-    assert!(!ledger(&fx).contains("failed twice"));
+    assert!(!fx.ledger().contains("failed twice"));
 }
 
 #[test]

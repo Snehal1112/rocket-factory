@@ -1,11 +1,7 @@
 mod common;
-use common::{scripted, Effect, Fixture};
+use common::{reply, scripted, Effect, Fixture};
 use factory_agent::AgentSpec;
 use factory_engine::KbOutcome;
-
-fn reply(text: &'static str) -> Effect {
-    Box::new(move |_: &AgentSpec| text.to_string())
-}
 
 /// A fixture whose config points at an existing KB folder.
 fn with_kb() -> Fixture {
@@ -100,11 +96,6 @@ mod merge_hook {
         approved_job_config(Arc::new(scripted(effects)), false, config)
     }
 
-    fn ledger(fx: &MergeFixture) -> String {
-        let job = fx.driver.job(&fx.id).expect("job");
-        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger")
-    }
-
     fn merge(fx: &MergeFixture) {
         match merge_stage(&fx.driver, &fx.id).expect("merge") {
             MergeResult::Merged(_) => {}
@@ -125,7 +116,7 @@ mod merge_hook {
         let fx = fixture(vec![], false);
         merge(&fx);
         assert!(fx.runner.specs_for("kb").is_empty());
-        assert!(!ledger(&fx).contains("kb "));
+        assert!(!fx.ledger().contains("kb "));
     }
 
     #[test]
@@ -133,32 +124,32 @@ mod merge_hook {
         let fx = fixture(vec![reply("docs/a.md")], true);
         merge(&fx);
         assert_eq!(fx.runner.specs_for("kb").len(), 1);
-        assert!(ledger(&fx).contains("kb refreshed, pages: docs/a.md"));
+        assert!(fx.ledger().contains("kb refreshed, pages: docs/a.md"));
     }
 
     #[test]
     fn a_failing_refresh_does_not_change_the_merge() {
         let fx = fixture(vec![], true);
         merge(&fx);
-        assert!(ledger(&fx).contains("kb refresh failed"));
+        assert!(fx.ledger().contains("kb refresh failed"));
     }
 
     #[test]
     fn up_to_date_is_recorded() {
         let fx = fixture(vec![reply("No relevant changes")], true);
         merge(&fx);
-        assert!(ledger(&fx).contains("kb up to date"));
+        assert!(fx.ledger().contains("kb up to date"));
     }
 
     #[test]
     fn tampering_stops_later_refreshes() {
         let fx = fixture(vec![tamper(), reply("docs/a.md")], true);
         merge(&fx);
-        assert!(ledger(&fx).contains("changed the main checkout"));
+        assert!(fx.ledger().contains("changed the main checkout"));
         assert!(fx.driver.layout().kb_stop_file().exists());
         let line = fx.driver.kb_refresh(&fx.id, false).expect("skip");
         assert!(line.contains("kb refresh skipped"), "{line}");
-        assert!(ledger(&fx).contains("kb refresh skipped"));
+        assert!(fx.ledger().contains("kb refresh skipped"));
         assert_eq!(fx.runner.specs_for("kb").len(), 1);
     }
 
@@ -177,14 +168,14 @@ mod merge_hook {
     fn an_unset_kb_path_writes_nothing() {
         let fx = fixture(vec![], false);
         assert_eq!(fx.driver.kb_refresh(&fx.id, true).expect("line"), "kb_path is not set");
-        assert!(!ledger(&fx).contains("Ruling: kb"));
+        assert!(!fx.ledger().contains("Ruling: kb"));
     }
 
     #[test]
     fn a_multi_line_failure_still_gets_a_ruling() {
         let fx = fixture(vec![reply("BLOCKED: one\ntwo")], true);
         merge(&fx);
-        assert!(ledger(&fx).contains("kb refresh failed"));
+        assert!(fx.ledger().contains("kb refresh failed"));
     }
 
     #[test]

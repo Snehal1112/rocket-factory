@@ -93,10 +93,6 @@ fn nothing() -> Effect {
     effect(|_| "did nothing".to_string())
 }
 
-fn ledger(fx: &Fixture) -> String {
-    std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default()
-}
-
 fn subjects(fx: &Fixture, wt: &Worktree, floor: &str) -> Vec<String> {
     let tip = fx.repo.tip(&wt.branch).expect("tip");
     fx.repo.commits_above(floor, &tip).expect("commits").into_iter().map(|c| c.subject).collect()
@@ -222,7 +218,7 @@ fn two_failed_runs_fall_back_to_a_plain_commit_and_write_a_ruling() {
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: Add the thing"]);
-    assert!(ledger(&fx).contains("fallback commit"), "ledger: {}", ledger(&fx));
+    assert!(fx.ledger().contains("fallback commit"), "ledger: {}", fx.ledger());
 }
 
 #[test]
@@ -234,7 +230,7 @@ fn a_blocked_reply_twice_falls_back_and_names_the_reason() {
     let runner = scripted(vec![effect(|_| "BLOCKED: no skill".to_string()), effect(|_| "BLOCKED: no skill".to_string())]);
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
-    assert!(ledger(&fx).contains("BLOCKED: no skill"), "ledger: {}", ledger(&fx));
+    assert!(fx.ledger().contains("BLOCKED: no skill"), "ledger: {}", fx.ledger());
 }
 
 #[test]
@@ -253,7 +249,7 @@ fn an_invalid_subject_after_the_retry_keeps_the_commit_and_writes_a_ruling() {
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["Added the thing."]);
-    assert!(ledger(&fx).contains("commit message check failed"), "ledger: {}", ledger(&fx));
+    assert!(fx.ledger().contains("commit message check failed"), "ledger: {}", fx.ledger());
 }
 
 #[test]
@@ -276,7 +272,7 @@ fn more_than_four_commits_are_kept_with_a_ruling() {
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base).len(), 5);
-    assert!(ledger(&fx).contains("5 commits were made"), "ledger: {}", ledger(&fx));
+    assert!(fx.ledger().contains("5 commits were made"), "ledger: {}", fx.ledger());
 }
 
 #[test]
@@ -299,7 +295,7 @@ fn a_missing_context_file_uses_the_fallback_without_an_agent_call() {
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
     assert!(runner.last_spec().is_none());
-    assert!(ledger(&fx).contains("commit context"), "ledger: {}", ledger(&fx));
+    assert!(fx.ledger().contains("commit context"), "ledger: {}", fx.ledger());
 }
 
 #[test]
@@ -339,7 +335,7 @@ fn a_rewritten_chain_of_earlier_commits_is_not_counted_as_new_commits() {
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base).len(), 5);
-    let log = ledger(&fx);
+    let log = fx.ledger();
     assert!(!log.contains("commits were made"), "ledger: {log}");
     assert!(!log.contains("commit message check failed"), "ledger: {log}");
 }
@@ -408,7 +404,7 @@ fn a_message_fault_fixed_by_the_retry_leaves_no_ruling() {
     let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add the thing"]);
-    assert!(!ledger(&fx).contains("commit message check failed"), "ledger: {}", ledger(&fx));
+    assert!(!fx.ledger().contains("commit message check failed"), "ledger: {}", fx.ledger());
 }
 
 #[test]
@@ -455,7 +451,7 @@ fn a_commit_without_the_issue_footer_is_kept_with_a_ruling() {
     let out = fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
     assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(test): build step"]);
-    assert!(ledger(&fx).contains("missing footer `Relates to: #20`"), "ledger: {}", ledger(&fx));
+    assert!(fx.ledger().contains("missing footer `Relates to: #20`"), "ledger: {}", fx.ledger());
 }
 
 #[test]
@@ -469,7 +465,7 @@ fn a_commit_with_the_issue_footer_is_accepted_without_a_ruling() {
         "done".to_string()
     })]);
     fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
-    assert!(!ledger(&fx).contains("missing footer"), "ledger: {}", ledger(&fx));
+    assert!(!fx.ledger().contains("missing footer"), "ledger: {}", fx.ledger());
     assert!(runner.last_spec().expect("spec").prompt.contains("Issue footer: Relates to: #20"));
 }
 
@@ -554,7 +550,7 @@ fn a_failed_batch_falls_back_to_one_chore_commit_per_snapshot() {
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: first thing", "chore: second thing"]);
     assert!(wt.path.join("a.txt").exists() && wt.path.join("b.txt").exists());
     assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));
-    assert!(ledger(&fx).contains("fallback commit"), "ledger: {}", ledger(&fx));
+    assert!(fx.ledger().contains("fallback commit"), "ledger: {}", fx.ledger());
 }
 
 #[test]

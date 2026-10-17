@@ -335,10 +335,6 @@ fn two_task_fixture() -> Fixture {
     fx
 }
 
-fn ledger_of(fx: &Fixture) -> String {
-    std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default()
-}
-
 #[test]
 fn the_first_task_call_stays_in_build_and_names_only_task_one() {
     let fx = two_task_fixture();
@@ -350,7 +346,7 @@ fn the_first_task_call_stays_in_build_and_names_only_task_one() {
     assert_eq!(job.task_index, 1);
     assert!(job.head.is_none());
     assert_eq!(job.builder_id.as_deref(), Some("sess-1"));
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains("Task 1: dispatched"), "{ledger}");
     assert!(ledger.contains("Task 1: implementer done"), "{ledger}");
     assert!(ledger.contains("Ruling: per-task builders, 2 tasks"), "{ledger}");
@@ -377,7 +373,7 @@ fn the_last_task_call_records_head_and_moves_to_review() {
     assert_eq!(job.stage, Stage::Review);
     assert!(job.prev_head.is_none());
     assert!(job.head.is_some() && job.head != job.base && job.head.as_deref() != Some(first.as_str()));
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains("Task 2: dispatched"), "{ledger}");
     assert!(ledger.contains("Task 2: implementer done"), "{ledger}");
     assert_eq!(ledger.matches("per-task builders").count(), 1, "{ledger}");
@@ -414,7 +410,7 @@ fn a_plan_without_task_headings_runs_one_whole_plan_builder() {
     let out = fx.engine(&runner).build_stage().expect("build");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
     assert_eq!(fx.job().task_index, 0);
-    assert!(!ledger_of(&fx).contains("per-task builders"));
+    assert!(!fx.ledger().contains("per-task builders"));
 }
 
 #[test]
@@ -439,7 +435,7 @@ fn a_fix_round_resumes_the_session_and_does_not_restart_the_task_loop() {
     let job = fx.job();
     assert_eq!(job.task_index, 2);
     assert_eq!(job.prev_head, head);
-    assert_eq!(ledger_of(&fx).matches("Task 1: dispatched").count(), 1);
+    assert_eq!(fx.ledger().matches("Task 1: dispatched").count(), 1);
 }
 
 #[test]
@@ -517,7 +513,7 @@ fn a_reply_without_a_status_line_is_committed_as_before() {
     let out = fx.engine(&runner).build_stage().expect("task 1");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
     assert_eq!(fx.job().task_index, 1);
-    assert!(ledger_of(&fx).contains("builder task 1: no status line, treated as done"), "{}", ledger_of(&fx));
+    assert!(fx.ledger().contains("builder task 1: no status line, treated as done"), "{}", fx.ledger());
 }
 
 fn start_fix_round(fx: &Fixture) {
@@ -641,7 +637,7 @@ fn a_committer_that_rewrites_an_earlier_task_commit_leaves_a_ruling() {
     let second = scripted(vec![change_effect("b.txt", 2), amend_effect("feat(test): tasks one and two")]);
     let out = fx.engine(&second).build_stage().expect("task 2");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains("task 2 commit rewrote earlier commits"), "{ledger}");
 }
 
@@ -997,7 +993,7 @@ fn a_finished_batch_with_a_stale_flag_is_recognised_without_a_committer_run() {
     assert_eq!(runner.specs_for("builder").len(), 0);
     let job = fx.job();
     assert!(job.batch_snapshot.is_none() && job.head.is_some());
-    assert!(ledger_of(&fx).contains("batch commit already done"), "{}", ledger_of(&fx));
+    assert!(fx.ledger().contains("batch commit already done"), "{}", fx.ledger());
 }
 
 #[test]
@@ -1187,7 +1183,7 @@ fn a_rework_note_left_by_a_batch_goes_to_the_ledger_and_a_fix_round_uses_the_fin
     let runner = scripted_auto(vec![]);
     assert_eq!(fx.engine(&runner).build_stage().expect("resume"), StageOutcome::Advanced(Stage::Review));
     assert!(!fx.job_dir.join("rework-note.md").exists());
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains("rework note not sent to a builder") && ledger.contains("please look at the batch"), "{ledger}");
     // A fix round now resumes with the findings file.
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
@@ -1210,7 +1206,7 @@ fn a_long_stale_note_is_cut_to_300_characters_in_the_ledger() {
     std::fs::write(fx.job_dir.join("rework-note.md"), format!("{}\nTAIL-MARKER", "n".repeat(400))).expect("note");
     let runner = scripted_auto(vec![]);
     fx.engine(&runner).build_stage().expect("resume");
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains(&"n".repeat(300)) && !ledger.contains(&"n".repeat(301)) && !ledger.contains("TAIL-MARKER"), "{ledger}");
 }
 
@@ -1222,7 +1218,7 @@ fn builder_rulings_land_in_the_ledger_with_a_task_prefix() {
         "Done.\nRuling: kept the old name\nRuling: used a Vec\n```\nRuling: fenced\n```\nStatus: DONE",
     )]);
     fx.engine(&runner).build_stage().expect("task 1");
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains("Ruling: builder task 1: kept the old name"), "{ledger}");
     assert!(ledger.contains("Ruling: builder task 1: used a Vec"), "{ledger}");
     assert!(!ledger.contains("fenced") && !ledger.contains("Ruling: Ruling:"), "{ledger}");
@@ -1238,7 +1234,7 @@ fn concerns_are_recorded_for_done_with_concerns() {
     let out = fx.engine(&runner).build_stage().expect("task 1");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
     assert_eq!(fx.job().task_index, 1);
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(
         ledger.contains("Ruling: builder task 1 concerns: The query is slow. The index may be missing."),
         "{ledger}"
@@ -1263,7 +1259,7 @@ fn each_task_writes_a_checks_file_for_its_own_range() {
         let two = std::fs::read_to_string(fx.job_dir.join("checks-task2.md")).expect("checks-task2.md");
         assert!(one.contains("PASS echo task-a") && !one.contains("task-b"), "{one}");
         assert!(two.contains("PASS echo task-b") && !two.contains("task-a"), "{two}");
-        assert!(ledger_of(&fx).contains("task 1 checks: pass"), "{}", ledger_of(&fx));
+        assert!(fx.ledger().contains("task 1 checks: pass"), "{}", fx.ledger());
         assert!(!fx.job_dir.join("checks.md").exists(), "the whole-branch file is not written here");
     }
 }
@@ -1280,7 +1276,7 @@ fn a_failing_task_check_is_a_ledger_line_not_a_park() {
     assert_eq!(job.task_index, 1);
     assert_eq!(job.stage, Stage::Build);
     assert_eq!(job.round, before_round);
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains("task 1 checks: fail false"), "{ledger}");
     let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
     assert!(md.contains("FAIL false"), "{md}");
@@ -1294,7 +1290,7 @@ fn a_failing_check_after_task_two_is_reported_against_task_two() {
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
-    let ledger = ledger_of(&fx);
+    let ledger = fx.ledger();
     assert!(ledger.contains("task 2 checks: fail false"), "{ledger}");
     assert!(ledger.contains("task 1 checks: pass"), "{ledger}");
     assert!(!ledger.contains("task 1 checks: fail"), "{ledger}");
@@ -1307,7 +1303,7 @@ fn a_task_with_no_mapped_checks_writes_nothing() {
     let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     assert!(!fx.job_dir.join("checks-task1.md").exists());
-    assert!(!ledger_of(&fx).contains("task 1 checks"), "{}", ledger_of(&fx));
+    assert!(!fx.ledger().contains("task 1 checks"), "{}", fx.ledger());
 }
 
 fn assert_builder_spec_is_strict(spec: &factory_agent::AgentSpec) {

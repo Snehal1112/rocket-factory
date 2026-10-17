@@ -82,11 +82,7 @@ impl Fixture {
     pub fn new() -> Self {
         let tmp = tempfile::tempdir().expect("tempdir");
         let main = tmp.path().join("main");
-        std::fs::create_dir_all(&main).expect("mkdir");
-        let mut opts = git2::RepositoryInitOptions::new();
-        opts.initial_head("main");
-        Repository::init_opts(&main, &opts).expect("init");
-        commit_file(&main, "README.md", "hello\n");
+        init_repo(&main);
         let job_dir = tmp.path().join("job");
         std::fs::create_dir_all(&job_dir).expect("mkdir job");
         let plan_file = job_dir.join("plan.md");
@@ -339,6 +335,12 @@ impl SeriesFixture {
     }
 
     pub fn with_config(verdict: &str, config: Config) -> SeriesFixture {
+        SeriesFixture::build(verdict, config, |runner| Arc::new(runner))
+    }
+
+    /// A repo with the committer context, and a driver whose runner for each job is a `RoleRunner`
+    /// with `verdict`, passed through `wrap`.
+    fn build(verdict: &str, config: Config, wrap: impl Fn(RoleRunner) -> Arc<dyn AgentRunner> + 'static) -> SeriesFixture {
         let tmp = tempfile::tempdir().expect("tempdir");
         let main = tmp.path().join("repo");
         init_repo(&main);
@@ -346,7 +348,7 @@ impl SeriesFixture {
         let events = main.join(".superpowers/factory/events.jsonl");
         let verdict = verdict.to_string();
         let factory: factory_engine::RunnerFactory = Box::new(move |job_id| {
-            Arc::new(RoleRunner {
+            wrap(RoleRunner {
                 sink: EventSink::new(events.clone(), job_id),
                 verdict: verdict.clone(),
                 counter: std::sync::atomic::AtomicUsize::new(0),
@@ -390,25 +392,12 @@ impl AgentRunner for HookRunner {
 impl SeriesFixture {
     /// Like `new`, with a lease owner on the driver and a hook that runs before every agent run.
     pub fn owned(owner: &str, hook: RunHook) -> SeriesFixture {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let main = tmp.path().join("repo");
-        init_repo(&main);
-        write_commit_context(&main);
-        let events = main.join(".superpowers/factory/events.jsonl");
-        let factory: factory_engine::RunnerFactory = Box::new(move |job_id| {
-            Arc::new(HookRunner {
-                inner: RoleRunner {
-                    sink: EventSink::new(events.clone(), job_id),
-                    verdict: "fine\nVERDICT: APPROVE".to_string(),
-                    counter: std::sync::atomic::AtomicUsize::new(0),
-                },
-                hook: hook.clone(),
-            })
+        let mut fx = SeriesFixture::build("fine\nVERDICT: APPROVE", Config::default(), move |inner| {
+            Arc::new(HookRunner { inner, hook: hook.clone() })
         });
-        let driver = factory_engine::Driver::new(factory_core::Layout::in_repo(&main), Config::default(), factory)
-            .expect("driver")
-            .with_lease_owner(owner);
-        SeriesFixture { tmp, main, driver }
+        let driver = fx.driver;
+        fx.driver = driver.with_lease_owner(owner);
+        fx
     }
 
     /// Like `owned`, with the lease ttl and the heartbeat interval set.
@@ -550,5 +539,25 @@ pub fn set_feature(fx: &MergeFixture, feature: &str, spec: Option<&str>) {
     if let Some(spec) = spec {
         let job = fx.driver.job(&fx.id).expect("job");
         std::fs::write(fx.driver.job_dir(&job).join("spec.md"), spec).expect("spec");
+    }
+}
+
+/// An agent effect that replies with `text` and touches nothing.
+pub fn reply(text: &'static str) -> Effect {
+    Box::new(move |_: &AgentSpec| text.to_string())
+}
+
+impl Fixture {
+    /// The job ledger, empty when nothing was written yet.
+    pub fn ledger(&self) -> String {
+        std::fs::read_to_string(self.job_dir.join("progress.md")).unwrap_or_default()
+    }
+}
+
+impl MergeFixture {
+    /// The ledger of the merge job.
+    pub fn ledger(&self) -> String {
+        let job = self.driver.job(&self.id).expect("job");
+        std::fs::read_to_string(self.driver.job_dir(&job).join("progress.md")).expect("ledger")
     }
 }
