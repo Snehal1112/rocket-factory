@@ -22,6 +22,7 @@ Match by exact shape only, on the whole argument string:
 
 - `status` alone
 - `approve <digits>` (nothing after the digits)
+- `approve <digits> --without-review`
 - `cancel <digits>` (nothing after the digits)
 - `cleanup <digits>` (nothing after the digits)
 - `tickets <digits>` (nothing after the digits)
@@ -34,7 +35,8 @@ Anything else is a feature text, for example `next button for pagination`, `stat
 Each is one call and a one-line report of the output, nothing more:
 
 - `status`: `<factory> --project <name> status`
-- `approve <id>`: `<factory> --project <name> approve <id>`
+- `approve <id>`: `<factory> --project <name> approve <id>`. The driver refuses a `needs-human` job whose code review has not run (the checks never passed or the reviewer never ran) and says so. Report that refusal as it is and offer `/factory rework <id> <note>`, or `/factory approve <id> --without-review` to merge unreviewed, which the user must ask for.
+- `approve <id> --without-review`: `<factory> --project <name> approve <id> --without-review`
 - `rework <id> <note>`: `<factory> --project <name> rework <id> '<note>'` (the driver accepts a one-line note of at most 200 characters and refuses anything else)
 - `cancel <id>`: `<factory> --project <name> cancel <id>`
 - `cleanup <id>`: `<factory> --project <name> cleanup <id>`
@@ -68,6 +70,6 @@ The driver validates the spec and the plans when it creates the job, so both mus
 3. Always validate before creating the job: every plan has at most 3 tasks (count the `### Task` headings), each plan's last line starts with `Next plan:`, the chain of paths leads from `plan-01-<slug>.md` to the final `Next plan: none`, every plan file in the folder is on that chain, and the spec file exists with a non-empty `## Goal` and `## Acceptance criteria` and no placeholder. If something is wrong, fix the plan with the user. Do not run an invalid series. Then list the plans for the user and wait for an explicit approval of the plans. After that approval stage the plan paths, check that `git diff --cached --name-only` lists only them, and commit through the `dev-workflow-skills:1-git-commit` skill with a pathspec (`git commit --only -- <plan paths>`). If the user asks for plan changes, edit the plans, commit them the same way and ask for approval again. Do not run `<factory> --project <name> new` before that approval.
 4. Run `<factory> --project <name> new <slug> '<feature>' --plans docs/superpowers/plans/<date>-<slug> --spec docs/superpowers/specs/<date>-<slug>-design.md`, adding `--model opus` when `--opus` was given. Escape the feature text as above, so quotes, `$`, backticks and newlines stay literal. Its output is `created job <id> in <folder>`. Read the job id and the folder name from it. The driver checks the spec and copies it into every job's folder. When the work belongs to a GitHub ticket, put it in the feature text as `#N` or as the issue URL, so the driver can write the footer and file the follow-ups.
 5. Start the run. First run `factoryd is-running`. If it exits 0, a supervisor is running: run `factoryd enqueue --project <name> --job <id> --series`, which prints a request id, then run `factoryd status` once. If the first line of that output contains `reached`, tell the user in one line that the run is queued as that request id and waits for the daily budget, giving the reset time from that line; otherwise tell the user in one line that the factory is running, with the request id. For any other exit code of `factoryd is-running` (including command not found) treat it as not running: run `<factory> --project <name> run <id> --series` as a Bash command with `run_in_background` set to true, and tell the user in one line that the factory is running. Then stop. Do not poll, do not sleep, do not read logs. The supervisor or the harness reports the end.
-6. When the run ends (the harness notifies you for a background run; with the supervisor the user asks, or the dashboard shows it), run `<factory> --project <name> status` once and report the line for this job. If it is `needs-human`, add that the user can run `/factory approve <id>` or `/factory rework <id> <note>`.
+6. When the run ends (the harness notifies you for a background run; with the supervisor the user asks, or the dashboard shows it), run `<factory> --project <name> status` once and report the line for this job. If it is `needs-human`, add that the user can run `/factory approve <id>` or `/factory rework <id> <note>`. When the status line says the review has not run, the plain approve is refused, so name `/factory approve <id> --without-review` instead.
 
 The driver never asks questions during a run, so the plans must be complete before step 5. A blocker found by the builder moves the job to `needs-human`.

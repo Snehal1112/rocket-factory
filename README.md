@@ -110,6 +110,18 @@ refused outright. A project is blocked when its settings failed closed (`factory
 check command would be rejected, or `project.toml` has no valid `base_branch`. A blocked project refuses `run`,
 `approve` and `kb-refresh`, the commands that start agents or merge.
 
+### Approving a parked job
+
+`factory approve <id>` merges a job in `needs-human` or `approve`. It refuses a `needs-human` job whose code review
+has no verdict yet (pending, running or absent), because the checks never passed or the reviewer never ran:
+`job 020 has no code review yet (...): use rework, or approve --without-review to merge anyway`. A job parked
+by the reviewer (risky diff, changes remain) has a verdict and approves as before. `factory approve <id>
+--without-review` merges anyway and the ledger says `approved by the user without a review`. The park hints in
+`park.json` and `factory status` offer that flag, not a plain approve, when the review has not run. When a fix round
+that started from failed checks changes nothing, the driver runs the checks once more: if they pass the job goes
+to the reviewer, if they still fail it parks as `checks-failed`. The board field `fix_source` (`checks` or
+`review`) records what started the latest fix round.
+
 ### The project lease
 
 At most one job is active per project. A running `run` or `approve` holds a lease file in the project's state
@@ -210,7 +222,7 @@ for the job children: `FACTORY_BIN`, else next to `factoryd`.
 | Endpoint | Body and answer |
 |---|---|
 | `POST /projects/{p}/jobs` | `{"spec": "/abs/spec.md", "plans": "/abs/plans-folder", "model"?, "feature"?, "run"?, "series"?, "slug"?}`. Both paths must be absolute, exist and hold no `..`. `model` matches `[A-Za-z0-9._-]{1,64}`, `feature` is one line of at most 200 characters (default: the slug). The slug is the plans folder name without a leading `YYYY-MM-DD-` (`plans/2026-10-16-standalone-software-factory` gives `standalone-software-factory`); a `slug` in the body overrides it and must match `[a-z0-9][a-z0-9-]{0,63}`, and a name that gives no slug is `bad_request`. Runs `factory new`, then queues a run unless `run` is `false`. `series` (boolean, default `true`) makes that run continue with the next plans of the series, like `factory run --series`; it only matters when `run` is true. The spec path may be any readable file and is canonicalized once (a swap between the check and the command is accepted, because a token is required). `201 {"job", "requestId"}` (`requestId` is `null` when nothing was queued) |
-| `POST /projects/{p}/jobs/{id}/approve` | No body. Needs a job in `needs-human` or `approve` that is not cancelled. Queues an approve request. `202 {"requestId"}` |
+| `POST /projects/{p}/jobs/{id}/approve` | `{"without_review"?}` (a boolean, an empty body is fine). Needs a job in `needs-human` or `approve` that is not cancelled. A `needs-human` job whose code review is pending or absent (the checks never passed or the reviewer never ran) is `409 conflict` with the message `job 020 has no code review yet ...`, unless `without_review` is `true`, which queues `factory approve --without-review`. Queues an approve request. `202 {"requestId"}` |
 | `POST /projects/{p}/jobs/{id}/rework` | `{"note": "one line, 200 characters at most"}`. Runs `factory rework`. `200 {"output"}` |
 | `POST /projects/{p}/jobs/{id}/cancel` | `{"reason"?, "force"?}` (`force` is a boolean, an empty body is fine). Runs `factory cancel`, never a signal. A refusal by the command, such as a live job lease without `force`, is `409 conflict`. `200 {"output"}` |
 | `GET /events?project={p}` | Server-sent events, see below |

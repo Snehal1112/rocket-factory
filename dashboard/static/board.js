@@ -19,6 +19,17 @@
     const known = ROLES.filter((role) => have.includes(role));
     return known.length ? known : ["code"];
   }
+  // True when the code review has no verdict: pending, running or absent. Approve is refused for such a job.
+  function reviewMissing(job) {
+    const state = job && job.reviews ? job.reviews.code : undefined;
+    return !["pass", "changes", "skipped"].includes(state);
+  }
+
+  // The approve command to show: a job whose review has not run needs the flag.
+  function approveCommand(job) {
+    return reviewMissing(job) ? `factory approve ${job.id} --without-review` : `factory approve ${job.id}`;
+  }
+
   const MAX_ROUNDS = 2;
   const REVIEW_STATES = ["pending", "running", "pass", "changes", "skipped"];
   const AGENT_STATUSES = ["running", "stale", "done"];
@@ -522,7 +533,8 @@
       job.stage === "needs-human"
         ? `<p class="reason">${escapeHtml(job.reason || "needs a human")}</p>` +
           parkButton(job) +
-          `<p class="hint">${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
+          (reviewMissing(job) ? `<p class="review-missing">The review has not run.</p>` : "") +
+          `<p class="hint">${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
     const showAge = job.stage !== "merged" && job.stage !== "needs-human";
     // A plan that has not started has no time, tokens, agents or branch yet, so those sections stay out.
@@ -639,7 +651,7 @@
     const actions =
       job.cancelled === true
         ? copyChip(`factory cleanup ${job.id}`)
-        : `${copyChip(`factory approve ${job.id}`)}${copyChip(`factory rework ${job.id} <note>`)}`;
+        : `${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}`;
     return (
       `<li><span class="job-id">${id}</span>` +
       `<span class="summary-feature">${escapeHtml(job.feature)}</span>` +

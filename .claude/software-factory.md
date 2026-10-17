@@ -138,7 +138,7 @@ Build once: `cargo build -j4 --manifest-path tools/factory/Cargo.toml -p factory
 |---|---|
 | `/factory <feature> [--opus]` | Brainstorm and plan with the user, then `factory new` and `factory run <id> --series` in the background. |
 | `/factory status` | `factory status`. |
-| `/factory approve <id>` | Release a `needs-human` job to the merge step. |
+| `/factory approve <id>` | Release a `needs-human` job to the merge step. Refused when the code review has not run, unless `--without-review` is given. |
 | `/factory rework <id> <note>` | Send a `needs-human` job back to the builder with a one-line note. |
 | `/factory cancel <id>` | Stop and park a job. |
 | `/factory cleanup <id>` | Remove the worktree of a finished job. A cancelled job also loses its board card (not in a series with other jobs, not while leased); the job folder stays. |

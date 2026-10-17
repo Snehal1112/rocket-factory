@@ -207,6 +207,9 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "If the user declines to answer a topic, record `n/a: <reason>` in their words",
         "`#N` or as the issue URL",
         "rework needs a note",
+        "`approve <digits> --without-review`",
+        "<factory> --project <name> approve <id> --without-review",
+        "refuses a `needs-human` job whose code review has not run",
         "argument-hint: \"<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id> | cleanup <id> | tickets <id>\"",
     ] {
         assert!(text.contains(needed), "missing phrase: {needed}");

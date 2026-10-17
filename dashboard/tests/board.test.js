@@ -473,12 +473,31 @@ test("copyChip is a button that carries the escaped command", () => {
   assert.doesNotMatch(html, /<note>/);
 });
 
+test("a needs-human card without a review verdict says so and offers approve --without-review", () => {
+  for (const reviews of [{ code: "pending" }, { code: "running" }, {}]) {
+    const card = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "r", reviews }));
+    assert.match(card, /The review has not run\./);
+    assert.match(card, /data-copy="factory approve 003 --without-review"/);
+    assert.doesNotMatch(card, /data-copy="factory approve 003"/);
+  }
+  const summary = board.renderSummary(makeState([makeJob({ id: "004", stage: "needs-human", reason: "r", reviews: { code: "pending" } })]));
+  assert.match(summary, /data-copy="factory approve 004 --without-review"/);
+});
+
+test("a needs-human card with a review verdict keeps the plain approve and no warning", () => {
+  for (const code of ["pass", "changes"]) {
+    const card = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "r", reviews: { code } }));
+    assert.doesNotMatch(card, /The review has not run/);
+    assert.match(card, /data-copy="factory approve 003"/);
+  }
+});
+
 test("needs-human cards and the summary use copy chips for approve, rework and cancel", () => {
-  const card = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "r" }));
+  const card = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "r", reviews: { code: "pass" } }));
   assert.match(card, /data-copy="factory approve 003"/);
   assert.match(card, /data-copy="factory rework 003 &lt;note&gt;"/);
   assert.match(card, /data-copy="factory cancel 003"/);
-  const summary = board.renderSummary(makeState([makeJob({ id: "004", stage: "needs-human", reason: "r" })]));
+  const summary = board.renderSummary(makeState([makeJob({ id: "004", stage: "needs-human", reason: "r", reviews: { code: "pass" } })]));
   assert.match(summary, /data-copy="factory approve 004"/);
 });
 
