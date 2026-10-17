@@ -116,6 +116,19 @@ The driver can file the leftover work of a ticket and close the ticket after the
 - A `gh` failure is written to the ledger and printed. It never changes the merge result, and `factory tickets` exits non-zero.
 - Merge footer: `Relates to: #N` when the spec has follow-ups (the ticket is not finished), `Fixes: #N` otherwise. Commit and sync footers stay `Relates to`.
 
+## Draft cards
+
+A draft card tracks a spec that is still being written, before any job exists. It lives in the board's `drafts` list.
+
+- `factory spec start <slug> '<feature>'` creates a draft at the `interviewing` stage. The slug goes through the same slugify as job names. A slug with no letters or digits is refused, and so is a slug of only digits (`a draft slug cannot be only digits`), because `factory cancel 12` means job 012.
+- `factory spec stage <slug> <interviewing|writing-spec|writing-plans>` moves the card to another stage.
+- `factory spec resume <slug>` prints the `draft`, `stage` and `file <spec path> (exists|missing)` lines.
+- `factory cancel <slug>` removes the card and keeps the spec file. A numeric argument still means a job.
+- `factory status` lists the cards in a `drafts:` block.
+- `factory new` adopts the draft with the same slug and removes it. When the spec has a `## Decisions` section and no decision was answered by the user, it prints `warning: no decision in this spec was answered by the user` lines after `created job ...`. The job still runs. A single plan file with no spec text gets no warning.
+- The dashboard shows each draft in the Spec column. A card not updated for 24 hours gets a stale marker (dashboard `--draft-stale-hours`, factoryd `draft_stale_hours`).
+- An older `factory` binary that rewrites the board drops `drafts`.
+
 ## Checks
 
 The builder runs only per-crate cargo commands (`cargo check -j4 -p <crate>`), never a bare `cargo check -j4`: in a fresh job worktree a workspace-wide check builds the whole app and V8, takes more than ten minutes and stalls the run (seen in job 012). Plans follow the same rule. The driver runs the checks itself, chosen from the changed paths by `config.toml`: `cargo check -j4`, targeted `cargo test -j4 -p <crate>`, `yarn tsc --noEmit`, `yarn check`, `yarn test --run --maxWorkers=50%` (half the workers, so the full suite does not time out under its own load), and the factory crate checks. A failure resumes the builder with trimmed output. The reviewer never sees a red build. Results go to `checks.md`.

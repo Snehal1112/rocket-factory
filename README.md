@@ -37,6 +37,19 @@ the `gh` CLI in the main checkout (the repo from `Layout`); tests use a fake.
 - A failure (no tracker, no `gh`, a failed call) never changes the merge. The job stays `merged`, and the failure
   is written to the ledger, the job output and `events.jsonl`.
 
+## Draft cards
+
+A draft card tracks a spec that is still being written, before any job exists. It lives in the board's `drafts` list.
+
+- `factory spec start <slug> '<feature>'` creates a draft at the `interviewing` stage. The slug goes through the same slugify as job names. A slug with no letters or digits is refused, and so is a slug of only digits (`a draft slug cannot be only digits`), because `factory cancel 12` means job 012.
+- `factory spec stage <slug> <interviewing|writing-spec|writing-plans>` moves the card to another stage.
+- `factory spec resume <slug>` prints the `draft`, `stage` and `file <spec path> (exists|missing)` lines.
+- `factory cancel <slug>` removes the card and keeps the spec file. A numeric argument still means a job.
+- `factory status` lists the cards in a `drafts:` block.
+- `factory new` adopts the draft with the same slug and removes it. When the spec has a `## Decisions` section and no decision was answered by the user, it prints `warning: no decision in this spec was answered by the user` lines after `created job ...`. The job still runs. A single plan file with no spec text gets no warning.
+- The dashboard shows each draft in the Spec column. A card not updated for 24 hours gets a stale marker (dashboard `--draft-stale-hours`, factoryd `draft_stale_hours`).
+- An older `factory` binary that rewrites the board drops `drafts`.
+
 ## Stronger reviewer model
 
 - `reviewer_model_large` (default unset, which turns the switch off) names a stronger model for the reviewer.
