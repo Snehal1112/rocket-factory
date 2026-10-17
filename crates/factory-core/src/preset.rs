@@ -220,6 +220,75 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).expect("read"), embedded("rust").expect("rust").agents[0].1);
     }
 
+    fn shipped(preset: &str, file: &str) -> &'static str {
+        embedded(preset)
+            .unwrap_or_else(|| panic!("{preset} missing"))
+            .agents
+            .iter()
+            .find(|(f, _)| *f == file)
+            .unwrap_or_else(|| panic!("{preset} ships no {file}"))
+            .1
+    }
+
+    fn other_preset(name: &str) -> &'static str {
+        if name == "rust" { "go" } else { "rust" }
+    }
+
+    #[test]
+    fn every_legacy_entry_names_a_shipped_agent_and_is_an_older_text() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (name, file, old) in LEGACY.iter() {
+            assert!(seen.insert((*name, *file)), "{name}/{file} appears twice");
+            assert!(!old.trim().is_empty(), "{name}/{file} legacy text is empty");
+            assert_ne!(*old, shipped(name, file), "{name}/{file} legacy text equals the shipped text");
+        }
+    }
+
+    #[test]
+    fn refresh_updates_every_legacy_entry_and_nothing_else() {
+        for (name, file, old) in LEGACY.iter() {
+            let dir = tempfile::tempdir().expect("tmp");
+            seed(dir.path()).expect("seed");
+            let path = dir.path().join(name).join("agents").join(file);
+            std::fs::write(&path, old).expect("old");
+            let r = refresh(dir.path(), false).expect("refresh");
+            assert_eq!(r.updated, vec![path.clone()], "{name}/{file}");
+            assert!(r.refused.is_empty() && r.written.is_empty(), "{name}/{file}");
+            assert_eq!(r.skipped.len(), 11, "{name}/{file}");
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), shipped(name, file), "{name}/{file}");
+        }
+    }
+
+    #[test]
+    fn refresh_refuses_a_legacy_text_that_is_not_for_that_file() {
+        for (name, file, old) in LEGACY.iter() {
+            let dir = tempfile::tempdir().expect("tmp");
+            seed(dir.path()).expect("seed");
+            let other = other_preset(name);
+            let wrong_preset = dir.path().join(other).join("agents").join(file);
+            std::fs::write(&wrong_preset, old).expect("write");
+            let r = refresh(dir.path(), false).expect("refresh");
+            assert_eq!(r.refused, vec![wrong_preset.clone()], "{name}/{file} in {other}");
+            assert!(r.updated.is_empty(), "{name}/{file} in {other}");
+            assert_eq!(std::fs::read_to_string(&wrong_preset).expect("read"), *old);
+        }
+    }
+
+    #[test]
+    fn refresh_refuses_a_legacy_text_with_a_hand_edit() {
+        for (name, file, old) in LEGACY.iter() {
+            let dir = tempfile::tempdir().expect("tmp");
+            seed(dir.path()).expect("seed");
+            let path = dir.path().join(name).join("agents").join(file);
+            let edited = format!("{old}\n# my own rule\n");
+            std::fs::write(&path, &edited).expect("edit");
+            let r = refresh(dir.path(), false).expect("refresh");
+            assert_eq!(r.refused, vec![path.clone()], "{name}/{file}");
+            assert!(r.updated.is_empty(), "{name}/{file}");
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), edited, "{name}/{file}");
+        }
+    }
+
     #[test]
     fn refresh_refuses_a_hand_edited_file_and_leaves_it_byte_identical() {
         let dir = tempfile::tempdir().expect("tmp");
