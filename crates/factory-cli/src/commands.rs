@@ -410,13 +410,30 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
         branch: job.branch.clone(),
         base: job.base.clone().unwrap_or_default(),
     };
-    // A second cleanup, or one after a rework and cancel, finds nothing left to remove.
-    if !wt.path.exists() && !repo.branch_exists(&wt.branch) {
+    let branch_exists = repo.branch_exists(&wt.branch);
+    // A folder without a `.git` is not a checkout, it is debris, for example agent files written after the worktree was removed.
+    let debris = wt.path.is_dir() && !wt.path.join(".git").exists();
+    if debris && !wt.path.starts_with(repo.worktrees_dir()) {
+        return Err(CliError::Refused(format!(
+            "{} is not a git checkout and lies outside {}, remove it by hand",
+            wt.path.display(),
+            repo.worktrees_dir().display()
+        )));
+    }
+    if !branch_exists && (debris || !wt.path.exists()) {
+        let message = if debris {
+            std::fs::remove_dir_all(&wt.path).map_err(|e| {
+                CliError::Refused(format!("could not remove leftover folder {}: {e}", wt.path.display()))
+            })?;
+            format!("removed leftover folder for job {id}; the worktree and branch were already gone")
+        } else {
+            format!("nothing to remove for job {id}, the worktree and branch are already gone")
+        };
         d.store().update_job(id, |j| {
             j.cleaned = true;
             Ok(())
         })?;
-        return Ok(format!("nothing to remove for job {id}, the worktree and branch are already gone"));
+        return Ok(message);
     }
     // A head that is gone or equals the base has no commits to protect, so an error counts as merged.
     let unmerged = match (job.base.as_deref(), job.head.as_deref()) {
@@ -428,6 +445,12 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
             "the branch has commits that are not in {}, use --discard-commits",
             repo.base_branch()
         )));
+    }
+    if debris {
+        // The unmerged check above has passed, so the leftover folder goes first and remove_worktree then drops the branch.
+        std::fs::remove_dir_all(&wt.path).map_err(|e| {
+            CliError::Refused(format!("could not remove leftover folder {}: {e}", wt.path.display()))
+        })?;
     }
     // remove_worktree also deletes the job branch. It refuses a dirty worktree and unmerged commits unless forced.
     repo.remove_worktree(&wt, discard)

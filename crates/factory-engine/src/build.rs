@@ -133,6 +133,13 @@ impl Engine<'_> {
         }
         // All or nothing: no path is joined and nothing is created before every name is checked.
         self.check_agent_names()?;
+        // A folder that is not a git checkout would be created or filled with debris, so refuse it.
+        if !wt.join(".git").exists() {
+            return Err(EngineError::Msg(format!(
+                "{} is not a git checkout, agent files are not written",
+                wt.display()
+            )));
+        }
         let rel_dir = agent_files_rel_dir();
         self.repo.exclude_paths(&[AGENT_EXCLUDE_PATTERN]).map_err(git_err)?;
         let dir = wt.join(&rel_dir);

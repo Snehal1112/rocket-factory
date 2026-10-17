@@ -195,3 +195,52 @@ fn cleanup_still_refuses_unmerged_commits_when_the_worktree_folder_is_gone() {
     assert!(e.to_string().contains("--discard-commits"), "{e}");
     assert!(branch_exists(&fx, "factory/001-hello"));
 }
+
+/// Leaves only `.claude/agents` in the worktree folder, like agent files written after the worktree was gone.
+fn leave_debris(fx: &Fixture) {
+    let wt = fx.worktree_path(1);
+    let _ = std::fs::remove_dir_all(&wt);
+    std::fs::create_dir_all(wt.join(".claude/agents")).expect("debris");
+}
+
+#[test]
+fn cleanup_removes_a_leftover_folder_when_the_branch_is_gone() {
+    let fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "say hello", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    fx.run(&["cleanup", "1"]).expect("first cleanup");
+    leave_debris(&fx);
+    let out = fx.run(&["cleanup", "1"]).expect("cleanup");
+    assert_eq!(out, "removed leftover folder for job 001; the worktree and branch were already gone");
+    assert!(!fx.worktree_path(1).exists());
+}
+
+#[test]
+fn cleanup_removes_a_leftover_folder_and_the_merged_branch() {
+    let fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "say hello", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    leave_debris(&fx);
+    fx.run(&["cleanup", "1"]).expect("cleanup");
+    assert!(!fx.worktree_path(1).exists());
+    assert!(!branch_exists(&fx, "factory/001-hello"));
+}
+
+#[test]
+fn cleanup_keeps_debris_and_branch_when_commits_are_unmerged() {
+    let fx = Fixture::with_risk_path("docs/**");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    fx.run(&["cancel", "1"]).expect("cancel");
+    leave_debris(&fx);
+    let e = fx.run(&["cleanup", "1"]).expect_err("unmerged");
+    assert!(e.to_string().contains("--discard-commits"), "{e}");
+    assert!(fx.worktree_path(1).exists());
+    assert!(branch_exists(&fx, "factory/001-hello"));
+    fx.run(&["cleanup", "1", "--discard-commits"]).expect("forced");
+    assert!(!fx.worktree_path(1).exists());
+    assert!(!branch_exists(&fx, "factory/001-hello"));
+}

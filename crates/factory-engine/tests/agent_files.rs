@@ -254,3 +254,18 @@ fn a_symlinked_claude_folder_is_refused() {
     assert!(err.to_string().contains("symlink"), "{err}");
     assert!(std::fs::read_dir(&elsewhere).expect("dir").next().is_none(), "nothing written through the link");
 }
+
+#[test]
+fn agent_files_are_not_written_into_a_folder_that_is_not_a_git_checkout() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
+    let e = fx.engine(&runner).with_agent_files(files());
+    e.build_stage().expect("first");
+    let wt = worktree(&fx);
+    std::fs::remove_dir_all(&wt).expect("rm worktree");
+    std::fs::create_dir_all(&wt).expect("empty folder");
+    let err = e.build_stage().expect_err("no checkout");
+    assert!(err.to_string().contains("not a git checkout"), "{err}");
+    assert!(!wt.join(".claude").exists(), "nothing is created in the folder");
+}
