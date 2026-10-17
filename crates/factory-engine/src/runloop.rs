@@ -160,12 +160,60 @@ pub(crate) fn user_decisions(spec: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// Removes the draft card of this slug, if there is one.
-fn adopt_draft(driver: &Driver, slug: &str) -> Result<(), EngineError> {
-    if crate::find_draft(driver, slug)?.is_some() {
-        crate::remove_draft(driver, slug)?;
+/// Notes a failed side step of `new`. The jobs exist already, so a failure must not fail the call.
+/// It goes to stderr and, when the ledger takes it, to a ruling line of the job.
+fn note_failure(driver: &Driver, job: &Job, what: &str, slug: &str, err: &EngineError) {
+    eprintln!("{what} error for {slug}: {err}");
+    let line = format!("{what} error: {err}").split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Err(ledger_err) = Ledger::new(driver.job_dir(job).join("progress.md")).ruling(&line) {
+        eprintln!("{what} ledger note error for {slug}: {ledger_err}");
     }
-    Ok(())
+}
+
+/// Removes the draft card of this slug, if there is one. A failure, such as a draft that a concurrent
+/// cancel removed first, is reported and never changes the result.
+fn adopt_draft(driver: &Driver, slug: &str, job: &Job) {
+    adopt_draft_with(driver, slug, job, |d, s| crate::remove_draft(d, s).map(|_| ()));
+}
+
+fn adopt_draft_with(
+    driver: &Driver,
+    slug: &str,
+    job: &Job,
+    remove: impl FnOnce(&Driver, &str) -> Result<(), EngineError>,
+) {
+    let result = match crate::find_draft(driver, slug) {
+        Ok(Some(_)) => remove(driver, slug),
+        Ok(None) => Ok(()),
+        Err(err) => Err(err),
+    };
+    if let Err(err) = result {
+        note_failure(driver, job, "draft adoption", slug, &err);
+    }
+}
+
+/// Adds a warning to the job. Warnings are joined with `; `, so a later check appends with this
+/// function instead of assigning. A failed write is reported and the returned job still has the warning.
+fn add_warning(driver: &Driver, slug: &str, job: Job, text: &str) -> Job {
+    let join = |job: &mut Job| {
+        job.spec_warning = Some(match job.spec_warning.take() {
+            Some(old) => format!("{old}; {text}"),
+            None => text.to_string(),
+        });
+    };
+    let stored = driver.store().update_job(&job.id, |j| {
+        join(j);
+        Ok(j.clone())
+    });
+    match stored {
+        Ok(updated) => updated,
+        Err(err) => {
+            note_failure(driver, &job, "spec warning", slug, &err.into());
+            let mut job = job;
+            join(&mut job);
+            job
+        }
+    }
 }
 
 /// A spec must name its goal and its acceptance criteria. The headings are the contract with `/factory`.
@@ -224,7 +272,7 @@ pub fn create_job_with_spec(
     }
     let Some(start) = plan else {
         let job = add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model)?;
-        adopt_draft(driver, slug)?;
+        adopt_draft(driver, slug, &job);
         return Ok(job);
     };
     // Absolute paths keep `Next plan:` lookups and the stored plan files right from any directory.
@@ -291,17 +339,12 @@ pub fn create_job_with_spec(
         let later_job = add_job(driver, &stem, feature, &issues, Some(pos(index)), Stage::Spec, model)?;
         copy_spec(&later_job)?;
     }
-    adopt_draft(driver, slug)?;
+    adopt_draft(driver, slug, &first);
     // The job is made either way. The warning only tells the reader how little the user decided.
-    let Some(text) = &spec_text else { return Ok(first) };
-    if user_decisions(text) > 0 {
-        return Ok(first);
+    match &spec_text {
+        Some(text) if user_decisions(text) == 0 => Ok(add_warning(driver, slug, first, NO_USER_DECISION)),
+        _ => Ok(first),
     }
-    let warned = driver.store().update_job(&first.id, |job| {
-        job.spec_warning = Some(NO_USER_DECISION.to_string());
-        Ok(job.clone())
-    })?;
-    Ok(warned)
 }
 
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
@@ -405,7 +448,51 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
 
 #[cfg(test)]
 mod tests {
-    use super::user_decisions;
+    use super::*;
+    use factory_agent::{AgentRunner, FakeRunner};
+    use factory_core::{Config, Layout};
+    use std::sync::Arc;
+
+    fn driver(tmp: &tempfile::TempDir) -> Driver {
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let mut opts = git2::RepositoryInitOptions::new();
+        opts.initial_head("main");
+        let repo = git2::Repository::init_opts(&root, &opts).expect("init");
+        let sig = git2::Signature::now("t", "t@example.com").expect("sig");
+        let tree = repo.find_tree(repo.index().expect("index").write_tree().expect("tree")).expect("find");
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).expect("commit");
+        let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::new(Vec::new()));
+        Driver::new(Layout::in_repo(&root), Config::default(), Box::new(move |_| runner.clone())).expect("driver")
+    }
+
+    #[test]
+    fn a_failed_draft_removal_is_reported_and_keeps_the_one_job() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        crate::start_draft(&d, "demo", "f", "2026-10-18", 1.0).expect("draft");
+        let job = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
+        adopt_draft_with(&d, "demo", &job, |_, _| Err(EngineError::Msg("no draft named demo".into())));
+        let board = d.store().load().expect("board");
+        assert_eq!(board.jobs.len(), 1);
+        assert_eq!(board.drafts.len(), 1, "the failed removal leaves the card");
+        let ledger = std::fs::read_to_string(d.job_dir(&job).join("progress.md")).expect("ledger");
+        assert!(ledger.contains("Ruling: draft adoption error: no draft named demo"), "{ledger}");
+    }
+
+    #[test]
+    fn a_failed_warning_write_still_returns_the_warning() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let mut ghost = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
+        ghost.id = "999".to_string();
+        let warned = add_warning(&d, "demo", ghost, "first");
+        assert_eq!(warned.spec_warning.as_deref(), Some("first"));
+        let real = d.store().load().expect("board").jobs.remove(0);
+        let warned = add_warning(&d, "demo", add_warning(&d, "demo", real, "one"), "two");
+        assert_eq!(warned.spec_warning.as_deref(), Some("one; two"));
+        assert_eq!(d.job(&warned.id).expect("job").spec_warning.as_deref(), Some("one; two"));
+    }
 
     #[test]
     fn user_decisions_counts_only_user_entries() {
