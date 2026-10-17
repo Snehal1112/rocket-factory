@@ -103,8 +103,8 @@ fn checks_have_exactly_the_planned_commands() {
         let c = rule(checks, &[glob.as_str()]);
         let want = [
             format!("bun install --cwd {dir} --frozen-lockfile"),
-            format!("bun --cwd {dir} run typecheck"),
-            format!("bun --cwd {dir} run lint"),
+            format!("bun run --cwd {dir} typecheck"),
+            format!("bun run --cwd {dir} lint"),
         ];
         assert_eq!(c.commands, want);
     }

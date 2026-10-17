@@ -32,8 +32,8 @@ cd "$FACTORY"
    git clone --local "$VAULT" ~/.factory/tmp/rocketvault-check
    cd ~/.factory/tmp/rocketvault-check
    go build ./... && go vet ./... && go test ./...
-   bun install --cwd web --frozen-lockfile && bun --cwd web run typecheck && bun --cwd web run lint
-   bun install --cwd journeybook --frozen-lockfile && bun --cwd journeybook run typecheck && bun --cwd journeybook run lint
+   bun install --cwd web --frozen-lockfile && bun run --cwd web typecheck && bun run --cwd web lint
+   bun install --cwd journeybook --frozen-lockfile && bun run --cwd journeybook typecheck && bun run --cwd journeybook lint
    cd "$FACTORY" && rm -rf ~/.factory/tmp/rocketvault-check
    ```
 
