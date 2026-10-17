@@ -69,6 +69,9 @@ else `factory --project <name> run <id> --series` in the background. It does not
 project's registry entry. `factoryd is-running` exits 0 while a `factoryd` holds the instance lock of this
 home and exits 1 otherwise, with no output.
 
+A project-local `.claude/commands/factory.md` (Rocket has one until plan 8) shadows the global command of the same
+name inside that repository.
+
 ### Running against a project
 
 `factory --project <name> <command>` runs a command against a registered project, from any folder. It cannot be
@@ -148,6 +151,8 @@ or reordered) and starts on the first tick after the budget is raised in `config
 Approvals are never held, running jobs are never stopped, and a waiting run never blocks a request behind it.
 `factoryd` reads `config.toml` on every tick; if the file becomes invalid while it runs, it keeps the last valid
 value and prints one line. `factoryd` also prints one line when the limit is reached and when runs may start again.
+Without a running `factoryd`, the `/factory` command falls back to `factory run` in the background, and that path
+does not check the daily budget.
 `factoryd status` shows `daily budget: <used> of <limit> weighted tokens today (<pct>%), resets at <time>`, with
 `warning` from 80% and `reached: new runs are waiting` from 100%.
 

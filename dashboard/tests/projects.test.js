@@ -156,7 +156,6 @@ test("budgetStrip is none without a dailyBudget", () => {
   assert.equal(projects.budgetStrip(budget(0, 5)).level, "none");
   assert.equal(projects.budgetStrip(budget("x", 5)).level, "none");
   assert.equal(projects.budgetStrip(budget(100, -1)).level, "none");
-  assert.equal(projects.budgetStrip(budget(100, 1)).text, projects.budgetStrip(budget(100, 1)).text);
   assert.equal(projects.budgetStrip({ days: 1 }).text, "");
 });
 
