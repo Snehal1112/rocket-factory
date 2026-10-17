@@ -150,6 +150,24 @@ pub(crate) fn is_list_item(line: &str) -> bool {
     digits > 0 && t[digits..].starts_with(". ")
 }
 
+/// The warning for a spec in which the user answered no decision.
+const NO_USER_DECISION: &str = "no decision in this spec was answered by the user";
+
+/// How many list items in the `## Decisions` section say `Decided by: user`. No section gives 0.
+pub(crate) fn user_decisions(spec: &str) -> usize {
+    section_body(spec, "Decisions")
+        .map(|body| body.lines().filter(|l| is_list_item(l) && l.contains("Decided by: user")).count())
+        .unwrap_or(0)
+}
+
+/// Removes the draft card of this slug, if there is one.
+fn adopt_draft(driver: &Driver, slug: &str) -> Result<(), EngineError> {
+    if crate::find_draft(driver, slug)?.is_some() {
+        crate::remove_draft(driver, slug)?;
+    }
+    Ok(())
+}
+
 /// A spec must name its goal and its acceptance criteria. The headings are the contract with `/factory`.
 /// The goal needs a few words, the criteria need at least one list item, and no placeholder may remain.
 fn check_spec(spec: &str, name: &str) -> Result<(), EngineError> {
@@ -205,7 +223,9 @@ pub fn create_job_with_spec(
         return Err(EngineError::Msg("--spec needs --plans".to_string()));
     }
     let Some(start) = plan else {
-        return add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model);
+        let job = add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model)?;
+        adopt_draft(driver, slug)?;
+        return Ok(job);
     };
     // Absolute paths keep `Next plan:` lookups and the stored plan files right from any directory.
     let absolute = |path: &Path| {
@@ -271,7 +291,17 @@ pub fn create_job_with_spec(
         let later_job = add_job(driver, &stem, feature, &issues, Some(pos(index)), Stage::Spec, model)?;
         copy_spec(&later_job)?;
     }
-    Ok(first)
+    adopt_draft(driver, slug)?;
+    // The job is made either way. The warning only tells the reader how little the user decided.
+    let Some(text) = &spec_text else { return Ok(first) };
+    if user_decisions(text) > 0 {
+        return Ok(first);
+    }
+    let warned = driver.store().update_job(&first.id, |job| {
+        job.spec_warning = Some(NO_USER_DECISION.to_string());
+        Ok(job.clone())
+    })?;
+    Ok(warned)
 }
 
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
@@ -370,5 +400,23 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                     .id
             }
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::user_decisions;
+
+    #[test]
+    fn user_decisions_counts_only_user_entries() {
+        let spec = "# S\n\n## Decisions\n\n- Queue. Decided by: user\n- Retry. Decided by: call\n\
+                    1. Naming. Decided by: user\n\n## Other\n\n- Late. Decided by: user\n";
+        assert_eq!(user_decisions(spec), 2);
+    }
+
+    #[test]
+    fn a_spec_without_a_decisions_section_counts_zero() {
+        assert_eq!(user_decisions("# S\n\n## Goal\n\n- Decided by: user\n"), 0);
+        assert_eq!(user_decisions("## Decisions\n\nDecided by: user, but not a list item.\n"), 0);
     }
 }

@@ -270,6 +270,10 @@ fn new_job(
     let job = create_job_with_spec(&d, slug, feature, plans.as_deref(), spec.as_deref(), model.as_deref())?;
     let board = d.store().load()?;
     let mut out = format!("created job {} in {}{}", job.id, job.dir, estimate_lines(&board, &job));
+    // The created line stays first because factoryd parses it. Each warning gets its own line.
+    for warning in job.spec_warning.iter().flat_map(|w| w.split("; ")) {
+        out.push_str(&format!("\nwarning: {warning}"));
+    }
     if plans.is_none() {
         let dir = d.job_dir(&job);
         out.push_str(&format!("\nno plan yet: put plan.md at {}/plan.md before running it", dir.display()));

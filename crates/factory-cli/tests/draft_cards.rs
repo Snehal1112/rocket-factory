@@ -67,3 +67,22 @@ fn status_lists_drafts() {
     let out = fx.run(&["status"]).expect("status");
     assert!(out.contains("hello") && out.contains("drafts:") && out.contains("demo"), "{out}");
 }
+
+#[test]
+fn new_prints_the_created_line_first_then_the_warning() {
+    let fx = Fixture::new();
+    fx.run(&["spec", "start", "demo", "f"]).expect("start");
+    let plan = fx.write_plan("plan-01-a.md", 1, "none");
+    let folder = plan.parent().expect("plans folder");
+    let spec = "# Spec\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n\
+                ## Acceptance criteria\n\n- It is done.\n";
+    std::fs::write(folder.join("spec.md"), spec).expect("spec");
+    let out = fx.run(&["new", "demo", "f", "--plans", folder.to_str().expect("utf8")]).expect("new");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with("created job "), "{out}");
+    assert!(
+        lines.contains(&"warning: no decision in this spec was answered by the user"),
+        "{out}"
+    );
+    assert!(fx.run(&["spec", "resume", "demo"]).is_err(), "the draft is adopted");
+}
