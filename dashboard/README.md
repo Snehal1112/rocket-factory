@@ -24,7 +24,7 @@ the API marks `disabled` shows its reason and an empty board. The board, events,
 API's `stateDir` and `jobsDir`; a missing file shows empty, never an error. The page can create a job and approve,
 rework or cancel one. Errors show as a banner with the stable code (`unauthorized`, `bad_request`, `not_found`,
 `method_not_allowed`, `project_disabled`, `conflict`, `failed`), plus these from the dashboard itself:
-`token_missing`, `token_rejected` (the API answered 401), `api_unreachable`, `api_error`, `forbidden` (Origin),
+`token_missing`, `token_rejected` (the API answered 401), `api_unreachable`, `api_timeout` (a write got no answer within 70 seconds and may still have completed, so check the job list before trying again; the page never retries by itself), `api_error`, `forbidden` (Origin),
 `unsupported_media_type`.
 
 ## What it reads
@@ -56,7 +56,7 @@ It never writes any of these files. If it is not running, the factory works the 
 | `POST /api/projects/{p}/jobs` | home mode: create a job, forwarded to factoryd (body: `spec`, `plans`, `model?`, `slug?`, `run`, `series`) |
 | `POST /api/projects/{p}/jobs/{id}/approve`, `rework`, `cancel` | home mode: forwarded to factoryd unchanged |
 
-Without `--home` only `GET` is accepted. In home mode a write also needs an `Origin` header equal to `http://<Host>` and `Content-Type: application/json`; a refused write (403 or 415) never reaches factoryd, and a body over 64 KiB gets 413. Only `127.0.0.1` is bound, and a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The CSP has `default-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'none'`.
+Reads wait 5 seconds for factoryd and writes 70 seconds, because factoryd allows `factory new|rework|cancel` 60 seconds. Without `--home` only `GET` is accepted. In home mode a write also needs an `Origin` header equal to `http://<Host>` and `Content-Type: application/json`; a refused write (403 or 415) never reaches factoryd, and a body over 64 KiB gets 413. Only `127.0.0.1` is bound, and a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The CSP has `default-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'none'`.
 
 ## Tests
 

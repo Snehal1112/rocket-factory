@@ -170,10 +170,10 @@ Run: `node --test dashboard/tests/projects.test.js` — Expected: FAIL.
 - [ ] **Step 4: Implement the UI**
 
 `app.js` gains a project tab strip (only when `GET /api/projects` answers 200, which means home mode), switches the polled URL to `/api/projects/{p}/state`, adds a "New job" panel (spec path, plans path, optional model, run checkbox) and Approve, Rework and Cancel buttons on jobs in the matching stages. Errors from the API show as a banner with the stable error code. The page never holds a token. In home mode the page title is "Software factory". The dashboard keeps polling; `GET /events` is for other clients.
-Run: `node --test dashboard/tests/` — Expected: PASS.
+Run: `node --test dashboard/tests/*.test.js` — Expected: PASS.
 
 - [ ] **Step 5: Smoke test with a real `factoryd`, docs, commit**
 
 Add `dashboard/tests/smoke-home.sh`: temp `FACTORY_HOME`, `factory project add` for two temp repos, `factoryd run` with `listen = "127.0.0.1:0"` style config on a free port and `FACTORY_BIN` pointing at a stub, `factory-server --home`, then `curl` checks: `/api/projects` lists both, a write with a bad `Origin` is refused, a valid create reaches the queue. Update `dashboard/README.md`, the root `README.md` and `CLAUDE.md` (the dashboard crate is no longer untouched). Mark plan 6 done in the plan index. Commit: `feat(dashboard): show every project and create jobs through the API`.
 
-Run before the final commit: `cargo test -j4 -p factory-supervisor`, `cargo test -j4 -p factory-cli --test no_hardcoded_paths`, `cargo test -j4 --manifest-path dashboard/Cargo.toml`, `node --test dashboard/tests/`, `bash dashboard/tests/smoke-home.sh` — Expected: all PASS.
+Run before the final commit: `cargo test -j4 -p factory-supervisor`, `cargo test -j4 -p factory-cli --test no_hardcoded_paths`, `cargo test -j4 --manifest-path dashboard/Cargo.toml`, `node --test dashboard/tests/*.test.js`, `bash dashboard/tests/smoke-home.sh` — Expected: all PASS.

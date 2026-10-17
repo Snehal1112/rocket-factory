@@ -14,6 +14,35 @@ use crate::paths::Paths;
 use crate::server::{api_park, json_reply, state_reply, HomeState, Project, Reply, Request};
 
 const API_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a write may wait for factoryd. factoryd gives `factory new|rework|cancel` 60 seconds, and the
+/// command can wait up to 15 seconds for the board lock first, so a write waits longer than that.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(70);
+
+/// How long an API answer is awaited: `get` for reads, `post` for writes.
+#[derive(Debug, Clone, Copy)]
+pub struct Timeouts {
+    pub get: Duration,
+    pub post: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Timeouts {
+        Timeouts { get: API_TIMEOUT, post: WRITE_TIMEOUT }
+    }
+}
+
+/// Why an API call failed.
+#[derive(Debug)]
+pub enum CallError {
+    /// The call failed before or while talking to factoryd.
+    Failed(String),
+    /// A write was sent but no answer came in time, so it may still have completed.
+    WriteTimedOut,
+}
+
+fn failed(message: &str) -> CallError {
+    CallError::Failed(message.to_string())
+}
 /// Most bytes of an API reply body that are read.
 const MAX_REPLY: usize = 4 * 1024 * 1024;
 /// Room for the status line and headers on top of the body cap.
@@ -131,15 +160,22 @@ fn parse_response(raw: &[u8]) -> Result<ApiReply, String> {
     Ok(ApiReply { status, body })
 }
 
-/// One HTTP/1.1 call with `Connection: close`, 5 second timeouts and a 4 MiB body cap.
-pub fn api_call(api: &str, method: &str, path: &str, token: &str, body: Option<&[u8]>) -> Result<ApiReply, String> {
+/// One HTTP/1.1 call with `Connection: close`, a 4 MiB body cap and `read_timeout` to wait for the answer.
+pub fn api_call(
+    api: &str,
+    method: &str,
+    path: &str,
+    token: &str,
+    body: Option<&[u8]>,
+    read_timeout: Duration,
+) -> Result<ApiReply, CallError> {
     let addr = api
         .to_socket_addrs()
-        .map_err(|_| "the API address cannot be resolved".to_string())?
+        .map_err(|_| failed("the API address cannot be resolved"))?
         .next()
-        .ok_or("the API address cannot be resolved")?;
-    let mut stream = TcpStream::connect_timeout(&addr, API_TIMEOUT).map_err(|_| "the factory API is not reachable".to_string())?;
-    let _ = stream.set_read_timeout(Some(API_TIMEOUT));
+        .ok_or_else(|| failed("the API address cannot be resolved"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, API_TIMEOUT).map_err(|_| failed("the factory API is not reachable"))?;
+    let _ = stream.set_read_timeout(Some(read_timeout));
     let _ = stream.set_write_timeout(Some(API_TIMEOUT));
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {api}\r\nAuthorization: Bearer {token}\r\nAccept: application/json\r\nConnection: close\r\n"
@@ -148,28 +184,43 @@ pub fn api_call(api: &str, method: &str, path: &str, token: &str, body: Option<&
         head.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n", bytes.len()));
     }
     head.push_str("\r\n");
-    stream.write_all(head.as_bytes()).map_err(|_| "the factory API did not take the request".to_string())?;
+    stream.write_all(head.as_bytes()).map_err(|_| failed("the factory API did not take the request"))?;
     if let Some(bytes) = body {
-        stream.write_all(bytes).map_err(|_| "the factory API did not take the request".to_string())?;
+        stream.write_all(bytes).map_err(|_| failed("the factory API did not take the request"))?;
     }
     let mut raw = Vec::new();
     let limit = (MAX_REPLY + HEADER_ROOM + 1) as u64;
     let read = stream.take(limit).read_to_end(&mut raw);
+    if let Err(error) = &read {
+        let timed_out = matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut);
+        if timed_out && method != "GET" {
+            return Err(CallError::WriteTimedOut);
+        }
+        if timed_out || raw.is_empty() {
+            return Err(failed("the factory API did not answer in time"));
+        }
+    }
     if raw.is_empty() {
-        return Err(match read {
-            Err(_) => "the factory API did not answer in time".to_string(),
-            Ok(_) => "the factory API sent an empty reply".to_string(),
-        });
+        return Err(failed("the factory API sent an empty reply"));
     }
     if raw.len() > MAX_REPLY + HEADER_ROOM {
-        return Err("the API reply is too large".to_string());
+        return Err(failed("the API reply is too large"));
     }
-    parse_response(&raw)
+    parse_response(&raw).map_err(CallError::Failed)
 }
 
-/// Turns a transport or token problem into the error the page shows.
-fn call_failed(message: &str) -> Reply {
-    error_reply(502, "api_unreachable", &format!("{message}. Check that factoryd is running."))
+/// Turns a transport problem into the error the page shows.
+fn call_failed(error: CallError) -> Reply {
+    match error {
+        CallError::Failed(message) => {
+            error_reply(502, "api_unreachable", &format!("{message}. Check that factoryd is running."))
+        }
+        CallError::WriteTimedOut => error_reply(
+            504,
+            "api_timeout",
+            "The factory API did not answer in time, so the write may still have completed. Check the job list before you try again.",
+        ),
+    }
 }
 
 /// Maps an API reply to the dashboard reply. A 401 means the token on disk is not the one factoryd uses.
@@ -178,7 +229,7 @@ fn forward(reply: ApiReply) -> Reply {
         return error_reply(
             502,
             "token_rejected",
-            "The factory API rejected the dashboard token. Restart factory-server so it reads the current api.token.",
+            "The factory API rejected the dashboard token. The api.token of this home does not match the factoryd answering on that address. Check that --home and --api name the same factoryd.",
         );
     }
     match serde_json::from_slice::<Value>(&reply.body) {
@@ -189,7 +240,7 @@ fn forward(reply: ApiReply) -> Reply {
 
 fn get_api(home: &HomeState, path: &str) -> Result<ApiReply, Reply> {
     let token = read_token(&home.dir)?;
-    api_call(&home.api, "GET", path, &token, None).map_err(|m| call_failed(&m))
+    api_call(&home.api, "GET", path, &token, None, home.timeouts.get).map_err(call_failed)
 }
 
 /// The API project list, or the reply to show instead.
@@ -297,9 +348,9 @@ fn forward_write(home: &HomeState, request: &Request, api_path: &str) -> Reply {
         Ok(token) => token,
         Err(reply) => return reply,
     };
-    match api_call(&home.api, "POST", api_path, &token, Some(request.body)) {
+    match api_call(&home.api, "POST", api_path, &token, Some(request.body), home.timeouts.post) {
         Ok(reply) => forward(reply),
-        Err(message) => call_failed(&message),
+        Err(error) => call_failed(error),
     }
 }
 
@@ -370,6 +421,11 @@ mod tests {
 
     /// A stand-in for factoryd. `GET /projects` answers `projects`, a POST answers `post_status`.
     fn fake_api(projects: Value, post_status: u16, post_body: &str) -> Fake {
+        fake_api_delayed(projects, post_status, post_body, 0, 0)
+    }
+
+    /// Like `fake_api`, but a GET answers after `get_ms` and a POST after `post_ms`.
+    fn fake_api_delayed(projects: Value, post_status: u16, post_body: &str, get_ms: u64, post_ms: u64) -> Fake {
         let server = tiny_http::Server::http("127.0.0.1:0").expect("bind fake api");
         let addr = format!("127.0.0.1:{}", server.server_addr().to_ip().expect("ip").port());
         let calls: Arc<Mutex<Vec<Call>>> = Arc::new(Mutex::new(Vec::new()));
@@ -397,6 +453,10 @@ mod tests {
                 } else {
                     (post_status, post_body.clone())
                 };
+                let wait = if method == "GET" { get_ms } else { post_ms };
+                if wait > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(wait));
+                }
                 let response = tiny_http::Response::from_string(text).with_status_code(status);
                 let _ = request.respond(response);
             }
@@ -708,6 +768,61 @@ mod tests {
         assert_eq!(s.fake.calls().len(), before);
         assert!(write(&format!("http://127.0.0.1:{port}"))?.starts_with("HTTP/1.1 201"));
         assert_eq!(s.fake.calls().len(), before + 1);
+        Ok(())
+    }
+
+    fn slow_app(get_ms: u64, post_ms: u64, timeouts: Timeouts) -> Result<(tempfile::TempDir, App, Fake), Box<dyn std::error::Error>> {
+        let home = tempfile::tempdir()?;
+        std::fs::write(home.path().join("api.token"), TOKEN)?;
+        let fake = fake_api_delayed(json!([]), 201, r#"{"job":"004","requestId":null}"#, get_ms, post_ms);
+        let app = App::for_home(home.path().to_path_buf(), fake.addr.clone()).with_timeouts(timeouts);
+        Ok((home, app, fake))
+    }
+
+    const MS: fn(u64) -> std::time::Duration = std::time::Duration::from_millis;
+
+    #[test]
+    fn a_slow_post_within_the_write_timeout_succeeds() -> TestResult {
+        let (_home, app, _fake) = slow_app(0, 700, Timeouts { get: MS(200), post: MS(3000) })?;
+        let reply = good_post(&app, "/api/projects/alpha/jobs", b"{}");
+        assert_eq!(reply.status, 201, "{}", String::from_utf8_lossy(&reply.body));
+        Ok(())
+    }
+
+    #[test]
+    fn a_slow_get_still_times_out_at_the_short_limit() -> TestResult {
+        let (_home, app, _fake) = slow_app(900, 0, Timeouts { get: MS(200), post: MS(3000) })?;
+        let started = std::time::Instant::now();
+        let reply = get(&app, "/api/projects");
+        assert!(started.elapsed() < MS(800), "waited {:?}", started.elapsed());
+        assert_eq!(reply.status, 502);
+        let json: Value = serde_json::from_slice(&reply.body)?;
+        assert_eq!(json["error"]["code"], "api_unreachable");
+        Ok(())
+    }
+
+    #[test]
+    fn a_post_timeout_says_the_write_may_have_completed() -> TestResult {
+        let (_home, app, fake) = slow_app(0, 1200, Timeouts { get: MS(200), post: MS(300) })?;
+        let reply = good_post(&app, "/api/projects/alpha/jobs", b"{}");
+        assert_eq!(reply.status, 504);
+        let json: Value = serde_json::from_slice(&reply.body)?;
+        assert_eq!(json["error"]["code"], "api_timeout");
+        let message = json["error"]["message"].as_str().ok_or("message")?;
+        assert!(message.contains("may still have completed"), "{message}");
+        assert!(message.contains("Check the job list before you try again"), "{message}");
+        // The request did reach the API exactly once and was not retried.
+        assert_eq!(fake.calls().len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_token_rejected_message_blames_a_mismatch_not_a_stale_read() -> TestResult {
+        let s = setup_with("another-token", 201, "{}")?;
+        let json: Value = serde_json::from_slice(&get(&s.app, "/api/projects").body)?;
+        let message = json["error"]["message"].as_str().ok_or("message")?;
+        assert!(!message.contains("Restart"), "{message}");
+        assert!(message.contains("--home") && message.contains("--api"), "{message}");
         Ok(())
     }
 }

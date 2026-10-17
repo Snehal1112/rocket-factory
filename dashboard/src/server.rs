@@ -46,6 +46,7 @@ impl Project {
 pub struct HomeState {
     pub dir: PathBuf,
     pub api: String,
+    pub timeouts: home_mode::Timeouts,
     projects: Mutex<HashMap<String, Arc<Project>>>,
 }
 
@@ -80,7 +81,16 @@ impl App {
     }
 
     pub fn for_home(dir: PathBuf, api: String) -> App {
-        App { mode: Mode::Home(HomeState { dir, api, projects: Mutex::new(HashMap::new()) }) }
+        App { mode: Mode::Home(HomeState { dir, api, timeouts: home_mode::Timeouts::default(), projects: Mutex::new(HashMap::new()) }) }
+    }
+
+    /// Shorter timeouts for tests.
+    #[cfg(test)]
+    pub fn with_timeouts(mut self, timeouts: home_mode::Timeouts) -> App {
+        if let Mode::Home(home) = &mut self.mode {
+            home.timeouts = timeouts;
+        }
+        self
     }
 
     /// The single project of `--root` mode.
