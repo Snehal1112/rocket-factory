@@ -7,7 +7,7 @@ use factory_agent::{AgentRun, AgentSpec, StopReason};
 use factory_core::{append_footers, blocked_reason, fallback_subject, has_footer, issue_footer, validate_message, Config, MAX_COMMITS_PER_RUN};
 use factory_git::{CommitInfo, GitError, StagedReport, Worktree};
 
-use crate::ports::git_err;
+use crate::ports::{git_err, short_sha};
 use crate::{Engine, EngineError};
 
 /// The agent file the driver passes with `--agent`.
@@ -103,17 +103,7 @@ pub fn committer_prompt(
     } else {
         String::new()
     };
-    let mut candidates = String::new();
-    if above.is_empty() {
-        candidates.push_str("(none)\n");
-    }
-    for commit in above.iter().rev() {
-        let short = commit.sha.get(..7).unwrap_or(&commit.sha);
-        candidates.push_str(&format!("{short} {}\n", commit.subject));
-        for file in &commit.files {
-            candidates.push_str(&format!("  {file}\n"));
-        }
-    }
+    let candidates = render_commit_list(above);
     let mut tasks = String::new();
     if !req.snapshots.is_empty() {
         tasks.push_str(
@@ -160,7 +150,13 @@ pub fn committer_prompt(
 /// The run spec for the committer. It does not go through `Engine::with_limits`: the cap is
 /// per run (`commit_budget_weighted`, nothing spent before), not the job budget.
 pub fn committer_spec(job_id: &str, config: &Config, cwd: &Path, prompt: &str) -> AgentSpec {
-    let mut spec = AgentSpec::new(job_id, "committer", cwd, prompt);
+    committer_base_spec(job_id, "committer", config, cwd, prompt, COMMITTER_TOOLS)
+}
+
+/// The settings every committer-agent run shares: a per-run cap, no harness gate and strict MCP.
+/// The role and the tools stay with the caller, because they differ per mode.
+pub(crate) fn committer_base_spec(job_id: &str, role: &str, config: &Config, cwd: &Path, prompt: &str, tools: &str) -> AgentSpec {
+    let mut spec = AgentSpec::new(job_id, role, cwd, prompt);
     spec.agent = Some(COMMITTER_AGENT.to_string());
     spec.model = Some(config.commit_model.clone());
     spec.max_turns = Some(COMMITTER_MAX_TURNS);
@@ -169,8 +165,32 @@ pub fn committer_spec(job_id: &str, config: &Config, cwd: &Path, prompt: &str) -
     spec.stall_after = Some(Duration::from_secs(u64::from(config.stall_minutes) * 60));
     spec.env = vec![("HARNESS_GATE".to_string(), "0".to_string())];
     spec.strict_mcp = true;
-    spec.tools = Some(COMMITTER_TOOLS.to_string());
+    spec.tools = Some(tools.to_string());
     spec
+}
+
+/// The message of a fallback commit: the fixed subject plus the issue footer when there are issues.
+fn fallback_message(title: &str, issues: &[u32]) -> String {
+    let message = fallback_subject(title);
+    match issue_footer(ISSUE_KEY, issues) {
+        Some(line) => append_footers(&message, &[line]),
+        None => message,
+    }
+}
+
+/// The commits above a base for a prompt, newest first, each with its files. `(none)` when empty.
+pub(crate) fn render_commit_list(commits: &[CommitInfo]) -> String {
+    let mut out = String::new();
+    if commits.is_empty() {
+        out.push_str("(none)\n");
+    }
+    for commit in commits.iter().rev() {
+        out.push_str(&format!("{} {}\n", short_sha(&commit.sha), commit.subject));
+        for file in &commit.files {
+            out.push_str(&format!("  {file}\n"));
+        }
+    }
+    out
 }
 
 /// What a committer step did.
@@ -335,7 +355,7 @@ impl Engine<'_> {
         }
         // A rewritten commit keeps its message, so only messages not seen before are checked.
         for commit in changed.iter().filter(|c| !before.iter().any(|b| b.message == c.message)) {
-            let short = commit.sha.get(..7).unwrap_or(&commit.sha);
+            let short = short_sha(&commit.sha);
             if let Err(reason) = validate_message(&commit.message) {
                 problems.push(format!("commit {short}: {reason}"));
             }
@@ -358,10 +378,7 @@ impl Engine<'_> {
         let mut tip: Option<String> = None;
         for snap in req.snapshots {
             self.repo.restore_tree(wt, &snap.sha).map_err(git_err)?;
-            let mut message = fallback_subject(&snap.title);
-            if let Some(line) = issue_footer(ISSUE_KEY, req.issues) {
-                message = append_footers(&message, &[line]);
-            }
+            let message = fallback_message(&snap.title, req.issues);
             match self.repo.commit_staged(wt, &message) {
                 Ok(sha) => tip = Some(sha),
                 // A task whose tree equals the one before it has nothing to commit.
@@ -372,7 +389,7 @@ impl Engine<'_> {
         let Some(sha) = tip else {
             return Ok(CommitOutcome::Park(format!("the batch fallback made no commit: {why}")));
         };
-        let short = sha.get(..7).unwrap_or(&sha);
+        let short = short_sha(&sha);
         self.ruling(&format!("committer failed ({why}), batch fallback commits up to {short}"))?;
         Ok(CommitOutcome::Committed { tip: sha, fallback: true })
     }
@@ -387,12 +404,9 @@ impl Engine<'_> {
         if staged.is_empty() {
             return Ok(CommitOutcome::Park(format!("the committer left nothing to commit: {why}")));
         }
-        let mut message = fallback_subject(req.task_title);
-        if let Some(line) = issue_footer(ISSUE_KEY, req.issues) {
-            message = append_footers(&message, &[line]);
-        }
+        let message = fallback_message(req.task_title, req.issues);
         let sha = self.repo.commit_staged(wt, &message).map_err(git_err)?;
-        let short = sha.get(..7).unwrap_or(&sha);
+        let short = short_sha(&sha);
         self.ruling(&format!("committer failed ({why}), fallback commit {short}"))?;
         Ok(CommitOutcome::Committed { tip: sha, fallback: true })
     }

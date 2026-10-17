@@ -1,6 +1,5 @@
 use std::fmt::Display;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use factory_agent::{AgentRun, AgentSpec};
 use factory_core::{Board, CoreError, Job, Ledger, Stage, TaskState};
@@ -19,7 +18,12 @@ pub(crate) fn io_err<E: Display>(e: E) -> EngineError {
 
 /// Seconds since the Unix epoch, the unit of `Job::stage_since`.
 pub(crate) fn now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    crate::clock::now_secs()
+}
+
+/// The first 7 characters of a sha, or the whole string when it is shorter.
+pub(crate) fn short_sha(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
 }
 
 /// A copy of the board fields the stages read.

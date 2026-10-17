@@ -122,13 +122,18 @@ pub fn release_project_lease(state_dir: &Path, owner: &str, wait: Duration) -> R
         Err(_) => true,
     };
     if removable {
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(ProjectLeaseError::Io(e.to_string())),
-        }
+        remove_lease_file(&path)?;
     }
     Ok(())
+}
+
+/// Deletes the lease file. A file that is already gone counts as removed.
+fn remove_lease_file(path: &Path) -> Result<(), ProjectLeaseError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(ProjectLeaseError::Io(e.to_string())),
+    }
 }
 
 /// Removes the lease when it belongs to `job`, whoever the owner is. Used when a job is cancelled with
@@ -138,11 +143,7 @@ pub fn force_release_project_lease(state_dir: &Path, job: &str, wait: Duration) 
     let path = lease_path(state_dir);
     match read_lease(&path) {
         Ok(Some(l)) if l.job == job => {
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(ProjectLeaseError::Io(e.to_string())),
-            }
+            remove_lease_file(&path)?;
             Ok(true)
         }
         _ => Ok(false),

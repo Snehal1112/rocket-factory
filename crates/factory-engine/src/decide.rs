@@ -35,7 +35,7 @@ pub fn decide(i: &DecideInput) -> Decision {
             reason: format!("diff has {} changed lines, the cap is {}", i.diff_lines, i.diff_cap),
         };
     }
-    let used = i.round.saturating_sub(1);
+    let used = fix_rounds_used(i.round);
     let rounds_left = used < i.fix_rounds;
     if !i.checks_ok {
         return if rounds_left {
@@ -55,6 +55,11 @@ pub fn decide(i: &DecideInput) -> Decision {
             }
         }
     }
+}
+
+/// The fix rounds already spent when the job is in `round`. Round 1 is the first build.
+pub(crate) fn fix_rounds_used(round: u32) -> u32 {
+    round.saturating_sub(1)
 }
 
 /// Names the risky paths for the human, at most five, with the count of the rest.

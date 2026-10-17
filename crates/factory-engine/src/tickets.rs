@@ -7,6 +7,7 @@ use std::path::Path;
 use factory_core::{parse_issue_refs, write_atomic, Job, Stage};
 use serde_json::{json, Value};
 
+use crate::ports::short_sha;
 use crate::{follow_ups, Driver, EngineError};
 
 /// The marker file in the job folder.
@@ -173,7 +174,7 @@ pub fn tickets_step(driver: &Driver, id: &str, dry_run: bool) -> Result<TicketsR
         .collect();
     let base = driver.repo().base_branch().to_string();
     let main_tip = driver.repo().tip(&base).unwrap_or_default();
-    let short = main_tip.get(..7).unwrap_or(&main_tip).to_string();
+    let short = short_sha(&main_tip).to_string();
     let pushed = driver.repo().is_ancestor(&main_tip, &format!("origin/{base}")).unwrap_or(false);
     let note = if pushed { "" } else { " (not yet pushed to origin)" };
     let remaining = if items.is_empty() {

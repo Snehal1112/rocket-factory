@@ -1,13 +1,13 @@
 //! The message-only committer mode: the agent drafts the merge or sync message, the driver commits it.
 
 use std::path::Path;
-use std::time::Duration;
 
 use factory_agent::AgentSpec;
 use factory_core::{append_footers, extract_message, issue_footer, validate_message, Config, MESSAGE_BEGIN, MESSAGE_END};
 use factory_git::CommitInfo;
 
-use crate::{Engine, EngineError, COMMITTER_AGENT, COMMITTER_MAX_TURNS};
+use crate::commit::{committer_base_spec, render_commit_list};
+use crate::{Engine, EngineError};
 
 /// The tools a message run may use. It reads files and runs the skill, nothing else.
 pub const MESSAGE_TOOLS: &str = "Read,Skill";
@@ -72,17 +72,7 @@ pub fn driver_footers(req: &MessageRequest<'_>) -> Vec<String> {
 
 /// The prompt of one message run. `commits` is the list above `base`, oldest first.
 pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[CommitInfo], base_branch: &str) -> String {
-    let mut listed = String::new();
-    if commits.is_empty() {
-        listed.push_str("(none)\n");
-    }
-    for commit in commits.iter().rev() {
-        let short = commit.sha.get(..7).unwrap_or(&commit.sha);
-        listed.push_str(&format!("{short} {}\n", commit.subject));
-        for file in &commit.files {
-            listed.push_str(&format!("  {file}\n"));
-        }
-    }
+    let listed = render_commit_list(commits);
     let what = match req.kind {
         MessageKind::Merge => format!("the merge commit that brings the job branch into {base_branch}"),
         MessageKind::Sync => format!("the merge commit that brings {base_branch} into the job branch"),
@@ -120,16 +110,7 @@ pub fn message_prompt(context: &str, req: &MessageRequest<'_>, commits: &[Commit
 
 /// The run spec of a message run: read-only tools, a per-run cap, role `message`.
 pub fn message_spec(job_id: &str, config: &Config, cwd: &Path, prompt: &str) -> AgentSpec {
-    let mut spec = AgentSpec::new(job_id, "message", cwd, prompt);
-    spec.agent = Some(COMMITTER_AGENT.to_string());
-    spec.model = Some(config.commit_model.clone());
-    spec.max_turns = Some(COMMITTER_MAX_TURNS);
-    spec.budget_weighted = Some(config.commit_budget_weighted);
-    spec.used_before = 0;
-    spec.stall_after = Some(Duration::from_secs(u64::from(config.stall_minutes) * 60));
-    spec.env = vec![("HARNESS_GATE".to_string(), "0".to_string())];
-    spec.strict_mcp = true;
-    spec.tools = Some(MESSAGE_TOOLS.to_string());
+    let mut spec = committer_base_spec(job_id, "message", config, cwd, prompt, MESSAGE_TOOLS);
     spec.allowed_tools = MESSAGE_TOOLS.split(',').map(str::to_string).collect();
     spec
 }

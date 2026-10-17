@@ -6,7 +6,7 @@ use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
 use crate::park::{builder_blocked_parts, builder_stop_parts, part_from_file};
-use crate::ports::{git_err, now, JobView};
+use crate::ports::{git_err, now, short_sha, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{Engine, EngineError, StageOutcome};
 
@@ -79,7 +79,7 @@ impl Engine<'_> {
         if self.repo.tip(&branch).map_err(git_err)? != tip_before {
             return self.park_with(
                 ParkKind::BuilderCommitted,
-                format!("builder committed on its own (the branch was at {} before the run)", tip_before.get(..7).unwrap_or(&tip_before)),
+                format!("builder committed on its own (the branch was at {} before the run)", short_sha(&tip_before)),
                 Vec::new(),
             );
         }
@@ -278,12 +278,12 @@ impl Engine<'_> {
         let gone: Vec<&str> = before
             .iter()
             .filter(|c| !after.iter().any(|a| a.sha == c.sha))
-            .map(|c| c.sha.get(..7).unwrap_or(&c.sha))
+            .map(|c| short_sha(&c.sha))
             .collect();
         if gone.is_empty() {
             return Ok(());
         }
-        let short = tip.get(..7).unwrap_or(tip);
+        let short = short_sha(tip);
         self.ruling(&format!("{label} commit rewrote earlier commits {}, the branch is now at {short}", gone.join(", ")))
     }
 
@@ -378,18 +378,18 @@ impl Engine<'_> {
         if self.repo.tip(&branch).map_err(git_err)? != tip {
             return self.park_with(
                 ParkKind::BuilderCommitted,
-                format!("builder committed on its own in task {} (the branch was at {} before the run)", task.n, tip.get(..7).unwrap_or(&tip)),
+                format!("builder committed on its own in task {} (the branch was at {} before the run)", task.n, short_sha(&tip)),
                 Vec::new(),
             );
         }
         let wt = self.job_worktree(job, &cwd, &base, &branch);
         let new_tip = if self.config.commit_batch {
             if !self.repo.head_is_on_branch(&wt).map_err(git_err)? {
-                let short = tip.get(..7).unwrap_or(&tip);
+                let short = short_sha(&tip);
                 let at = self
                     .repo
                     .head_sha(&wt)
-                    .map_or(String::new(), |id| format!(", HEAD is at {}", id.get(..7).unwrap_or(&id)));
+                    .map_or(String::new(), |id| format!(", HEAD is at {}", short_sha(&id)));
                 return self.park_with(
                     ParkKind::BuilderCommitted,
                     format!(
@@ -416,7 +416,7 @@ impl Engine<'_> {
             self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
             new_tip
         };
-        let short = new_tip.get(..7).unwrap_or(&new_tip).to_string();
+        let short = short_sha(&new_tip).to_string();
         self.note_task_checks(task.n, &tip, &new_tip)?;
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
         self.note_builder_words(task.n, &run.result_text)?;
@@ -455,7 +455,7 @@ impl Engine<'_> {
                 // The committer finished and the driver stopped before it cleared the flag.
                 return self.finish_batch(job, &base, tip, 0, &snapshot);
             }
-            let short = base.get(..7).unwrap_or(&base);
+            let short = short_sha(&base);
             let reason = format!(
                 "the branch moved during the batch commit; run `git reset --soft {short}` in the job worktree, then `factory rework {}`",
                 self.job_id
@@ -511,8 +511,8 @@ impl Engine<'_> {
 
     /// Records the end of a batch commit: a ruling, a cleared flag, then the usual build finish.
     fn finish_batch(&self, job: &JobView, base: &str, head: String, count: usize, snapshot: &str) -> Result<StageOutcome, EngineError> {
-        let short = head.get(..7).unwrap_or(&head).to_string();
-        let was = snapshot.get(..7).unwrap_or(snapshot);
+        let short = short_sha(&head).to_string();
+        let was = short_sha(snapshot);
         let what = if count == 0 { format!("batch commit already done, replaced the snapshots up to {was}") } else { format!("batch commit replaced {count} snapshots") };
         self.ruling(&format!("{what}, the branch is at {short}"))?;
         self.keep_unsent_note()?;

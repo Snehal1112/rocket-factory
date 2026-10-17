@@ -1,6 +1,7 @@
 use factory_checks::{plan_checks, run_checks, write_checks_md, ChecksReport};
 use factory_core::{ParkKind, ParkPart, Stage};
 
+use crate::decide::fix_rounds_used;
 use crate::ports::{git_err, io_err, now};
 use crate::{Engine, EngineError, StageOutcome};
 
@@ -33,7 +34,7 @@ impl Engine<'_> {
     /// Starts a fix round with `findings`, or parks the job when the rounds are used up.
     pub(crate) fn fix_or_park(&self, findings: &str, reason: &str, kind: ParkKind, source: &str) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;
-        let used = job.round.saturating_sub(1);
+        let used = fix_rounds_used(job.round);
         if used >= self.config.fix_rounds {
             let title = if kind == ParkKind::ChecksFailed { "Failing checks" } else { "Reviewer findings" };
             let part = ParkPart::new(title, source, findings);
