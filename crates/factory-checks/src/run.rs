@@ -63,10 +63,45 @@ fn one_line(text: &str) -> String {
     flat.chars().take(SUMMARY_CHARS).collect()
 }
 
+/// The counts of one `test result:` line, as passed, failed and ignored.
+fn test_counts(line: &str) -> Option<(u64, u64, u64)> {
+    let rest = line.split_once("test result:")?.1;
+    let count = |word: &str| -> Option<u64> {
+        let part = rest.split(';').find(|p| p.trim_end().ends_with(word))?;
+        part.split_whitespace().rev().nth(1)?.parse().ok()
+    };
+    Some((count("passed")?, count("failed")?, count("ignored")?))
+}
+
+/// Sums every `test result:` line, one per test binary. A single line is returned as it is.
+fn summed_test_result(lines: &[&str]) -> Option<String> {
+    let results: Vec<&&str> = lines.iter().filter(|l| l.contains("test result:")).collect();
+    match results.as_slice() {
+        [] => None,
+        [only] => Some((**only).to_string()),
+        many => {
+            let counts: Option<Vec<(u64, u64, u64)>> = many.iter().map(|l| test_counts(l)).collect();
+            let Some(counts) = counts else {
+                return many.last().map(|l| (**l).to_string());
+            };
+            let sum = |f: fn(&(u64, u64, u64)) -> u64| counts.iter().map(f).sum::<u64>();
+            let status = if many.iter().all(|l| l.contains("test result: ok.")) { "ok." } else { "FAILED." };
+            Some(format!(
+                "test result: {status} {} passed; {} failed; {} ignored across {} binaries",
+                sum(|c| c.0),
+                sum(|c| c.1),
+                sum(|c| c.2),
+                many.len()
+            ))
+        }
+    }
+}
+
 /// Picks the line that best says what a passing command did.
 fn pass_summary(output: &str) -> String {
     let lines: Vec<&str> = output.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    let pick = lines.iter().rev().find(|l| l.contains("test result:")).or_else(|| lines.last());
+    let summed = summed_test_result(&lines);
+    let pick = summed.as_deref().or_else(|| lines.last().copied());
     match pick {
         Some(l) => one_line(l),
         None => "ok".to_string(),
@@ -181,6 +216,22 @@ mod tests {
         assert_eq!(r.results[2].summary, "hello world");
         assert!(!r.all_passed());
         assert_eq!(r.failures().len(), 1);
+    }
+
+    #[test]
+    fn a_cargo_test_run_sums_every_test_result_line() {
+        let out = "running 2 tests\ntest result: ok. 100 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.10s\n\nrunning 3 tests\ntest result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n   Doc-tests foo\nrunning 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+        assert_eq!(
+            pass_summary(out),
+            "test result: ok. 151 passed; 0 failed; 1 ignored across 3 binaries"
+        );
+    }
+
+    #[test]
+    fn a_single_test_result_line_is_kept_as_it_is() {
+        let out = "running 1 test\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+        assert!(pass_summary(out).starts_with("test result: ok. 5 passed; 0 failed"), "{}", pass_summary(out));
+        assert_eq!(pass_summary("a\nb"), "b");
     }
 
     #[test]
