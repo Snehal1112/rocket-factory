@@ -134,11 +134,11 @@ fn builder_body_pins_the_rules() -> TestResult {
         &text,
         "builder",
         &[
-            "superpowers:executing-plans",
-            "inline",
-            "final whole-branch review",
-            "ledger scripts",
-            "progress file",
+            "superpowers:subagent-driven-development",
+            "Status:",
+            "DONE_WITH_CONCERNS",
+            "NEEDS_CONTEXT",
+            "Ruling:",
             "every commit step",
             "superpowers:test-driven-development",
             "superpowers:systematic-debugging",
@@ -169,13 +169,15 @@ fn builder_body_pins_the_rules() -> TestResult {
             "Monaco",
             "Zustand",
             "unwrap",
-            "No handoff lines",
         ],
     )?;
     forbid_all(
         &text,
         "builder",
         &[
+            "superpowers:executing-plans",
+            "inline fallback",
+            "No handoff lines",
             "isolation",
             "WORKTREE:",
             "BASE:",
@@ -485,6 +487,52 @@ fn reviewer_files_carry_the_vision_rule_and_declined_to_judge() -> TestResult {
             return Err(format!("{path}: both VERDICT lines must stay on their own line"));
         }
         require_all(&text, path, &["Your last line, alone, must be exactly one of:"])?;
+    }
+    Ok(())
+}
+
+const PRESET_BUILDERS: [&str; 2] = [
+    "crates/factory-core/presets/rust/agents/factory-builder.md",
+    "crates/factory-core/presets/go/agents/factory-builder.md",
+];
+
+#[test]
+fn presets_name_subagent_driven_development_and_not_executing_plans() -> TestResult {
+    for path in PRESET_BUILDERS {
+        let text = read(path)?;
+        require_all(&text, path, &["superpowers:subagent-driven-development", "Status:", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "Ruling:"])?;
+        forbid_all(&text, path, &["superpowers:executing-plans", "inline fallback", "No handoff lines"])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn reviewer_files_name_the_review_focus_and_the_builder_rulings() -> TestResult {
+    for path in [
+        ".claude/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+    ] {
+        require_all(&read(path)?, path, &["Review Focus", "rulings", "concerns"])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn builder_files_carry_the_rules_digest() -> TestResult {
+    for path in [".claude/agents/factory-builder.md", PRESET_BUILDERS[0], PRESET_BUILDERS[1]] {
+        require_all(
+            &read(path)?,
+            path,
+            &[
+                "Rules in short",
+                "no production code without a failing test first",
+                "no fix without a root cause",
+                "no completion claim without fresh evidence",
+                "watch it fail",
+                "read the output and exit code",
+            ],
+        )?;
     }
     Ok(())
 }

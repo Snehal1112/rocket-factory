@@ -81,11 +81,11 @@ impl Engine<'_> {
         let prompt = format!(
             "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
              {read} Never edit the plan.\n{spec_line}\
-             Do the plan task by task: write the failing test first, then the code, then run the checks.\n\
+             Run the plan with `superpowers:subagent-driven-development` as its implementer, task by task: write the failing test first, then the code, then run the checks.\n\
              {rules}\
              Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
-             {kb}If you are blocked, say why in your final reply and stop.",
+             {kb}Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.",
             branch = job.branch,
             read = self.read_line(false),
             rules = self.rules_line(),
@@ -118,7 +118,7 @@ impl Engine<'_> {
         let mut out = String::from(
             "Task excerpt: the plan header, your task, and the spec goal and acceptance criteria follow. \
              They replace reading the plan and the spec in full. Open those files only for something this excerpt refers to outside itself. \
-             If a skill such as superpowers:executing-plans tells you to read or load the plan file, use this excerpt instead and do not read the plan file in full.\n\
+             If a skill such as superpowers:subagent-driven-development tells you to read or load the plan file, use this excerpt instead and do not read the plan file in full.\n\
              --- plan header ---\n",
         );
         out.push_str(&header);
@@ -168,12 +168,12 @@ impl Engine<'_> {
              {read} Never edit the plan.\n{spec_line}{excerpt}\
              Base commit: {base}. Current tip: {tip}.\n{done}\n\
              Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
-             Write the failing test first, then the code, then run the checks the task names.\n\
+             Run the task with `superpowers:subagent-driven-development` as its implementer, with no per-task review here. Write the failing test first, then the code, then run the checks the task names.\n\
              {rules}\
              Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
-             {kb}If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}.",
+             {kb}Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.",
             branch = job.branch,
             read = self.read_line(!excerpt.is_empty()),
             rules = self.rules_line(),
@@ -202,7 +202,7 @@ impl Engine<'_> {
             "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
              Do not run `git add` or `git commit`: leave the fixes in the worktree and the driver commits them. \
              Do not amend or rewrite earlier commits. \
-             Follow `superpowers:receiving-code-review` for the findings. Read all the findings first, then verify each against the code. \
+             Follow `superpowers:receiving-code-review` for the findings, and `superpowers:subagent-driven-development` as the way the plan runs. Read all the findings first, then verify each against the code. \
              Work one item at a time. If a finding is wrong, push back with a reason in your reply and do not change the code for it. \
              If an item is unclear, reply with `Status: NEEDS_CONTEXT` and the question instead of guessing. \
              Run the relevant checks{hints} before you finish. \

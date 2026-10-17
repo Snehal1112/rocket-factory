@@ -15,12 +15,20 @@ Input: your prompt names the plan file, the spec file (absolute paths in the job
 
 ## Work
 
-- Invoke `superpowers:executing-plans` and follow it, treating the task excerpt in your prompt as the plan when there is one. If the Skill tool cannot load it, work inline: do the tasks in order. Skip its final whole-branch review, its ledger scripts and its progress file. The driver owns all three. Also skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
+- Run the plan through `superpowers:subagent-driven-development` as its implementer: one implementer per task, treating the task excerpt in your prompt as the plan when there is one. There is no per-task review here. The driver does the ledger, the commits and the final review. Skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
 - Invoke `superpowers:test-driven-development` for each task. Write the failing test first, then the code.
 - When a check or test fails, invoke `superpowers:systematic-debugging` before you change code.
 - Before you finish, invoke `superpowers:verification-before-completion` and run the checks the plan names. After they pass, stop. Do not run a release build.
 - Use at most 2 helper agents per task.
 - Never sleep and never poll. Run each command once, in the foreground.
+
+## Rules in short
+
+The skills below are not always loaded, so these are their iron laws.
+
+- Test-first (`superpowers:test-driven-development`): no production code without a failing test first. Write one test, run it, and watch it fail for the right reason. A test that passes at once tests existing behavior, so fix the test. Then write the minimum code, watch it pass, and run the touched crate's suite, not only your file.
+- Debugging (`superpowers:systematic-debugging`): no fix without a root cause. Read the whole error, reproduce it, compare with a working example, form one hypothesis and change one thing. For a bug, write the failing test first. After three failed fixes stop and reply `Status: NEEDS_CONTEXT` or `Status: BLOCKED` instead of a fourth guess.
+- Verification (`superpowers:verification-before-completion`): no completion claim without fresh evidence. Before `Status: DONE`, run each check the plan names in full, read the output and exit code, then claim. Report anything that failed or was skipped.
 
 ## Stack
 
@@ -39,9 +47,13 @@ This is a Go project. Run `go build ./...` and `go test ./...` for the packages 
 
 ## Blockers and resume
 
-- If the plan cannot be done (a task is ambiguous, a dependency is missing, a check still fails after systematic debugging), stop. Start your result text with `BLOCKED:` and one reason line, then stop. Nobody can answer questions during a run.
+- If the plan cannot be done (a task is ambiguous, a dependency is missing, a check still fails after systematic debugging), stop and reply `Status: BLOCKED` or `Status: NEEDS_CONTEXT` as the first line, with the reason on the lines after it. A first-line `BLOCKED: <reason>` is still accepted. Nobody can answer questions during a run.
 - On a resume, fix only the listed failures or findings and leave the fixes uncommitted. Do not rewrite earlier commits.
 
 ## Reply
 
-End with a short result text: one line for your task (one line per task when you build a whole plan), plus any blocker. No handoff lines. The driver reads the git state itself.
+Your reply is read by the driver. The first line is exactly one of `Status: DONE`, `Status: DONE_WITH_CONCERNS`, `Status: BLOCKED` or `Status: NEEDS_CONTEXT`, in plain text with no bold or backticks. After it come at most five lines: the concerns or the blocker. Then zero or more single-line rulings for judgment calls you made:
+
+`Ruling: <what> — <why> — <cost if wrong>`
+
+Do not commit and do not write a report file. The driver reads the git state itself.

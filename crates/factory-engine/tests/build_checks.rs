@@ -1367,3 +1367,35 @@ fn the_fix_resume_prompt_names_receiving_code_review_and_the_needs_context_rule(
         assert!(prompt.contains(needle), "{needle}: {prompt}");
     }
 }
+
+#[test]
+fn every_builder_prompt_names_subagent_driven_development() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2), change_effect("c.txt", 1)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    start_fix_round(&fx);
+    e.build_stage().expect("fix");
+    let specs = runner.specs_for("builder");
+    assert_eq!(specs.len(), 3);
+    for spec in &specs {
+        assert!(spec.prompt.contains("superpowers:subagent-driven-development"), "{}", spec.prompt);
+        assert!(!spec.prompt.contains("executing-plans"), "{}", spec.prompt);
+    }
+    for spec in &specs[..2] {
+        assert!(spec.prompt.contains("Status: DONE"), "{}", spec.prompt);
+        assert!(spec.prompt.contains("Ruling:"), "{}", spec.prompt);
+    }
+    assert!(
+        specs[0].prompt.contains("use this excerpt instead and do not read the plan file in full"),
+        "{}",
+        specs[0].prompt
+    );
+    let whole = committing_fixture();
+    let whole_runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    whole.engine(&whole_runner).build_stage().expect("whole plan");
+    let prompt = whole_runner.last_spec_for("builder").expect("builder spec").prompt;
+    assert!(prompt.contains("superpowers:subagent-driven-development"), "{prompt}");
+    assert!(prompt.contains("Status: DONE"), "{prompt}");
+}
