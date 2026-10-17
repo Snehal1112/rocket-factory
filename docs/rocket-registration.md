@@ -68,15 +68,26 @@ cd "$FACTORY"
    git -C "$ROCKET" status --short                      # still empty
    ```
 
-   Start `target/debug/factoryd run` in the background and check `factoryd is-running` exits 0. Call
-   `GET /projects` and `GET /usage` with the token from `~/.factory/api.token`, and open the dashboard
-   with `--home ~/.factory`. Then stop it with `factoryd stop`.
+   Start the supervisor in the background and check it, then call the API with the token (it listens on
+   `127.0.0.1:8766` by default and wants `Authorization: Bearer <token>`).
+
+   ```bash
+   target/debug/factoryd run &
+   target/debug/factoryd is-running                      # exits 0
+   TOKEN=$(cat ~/.factory/api.token)
+   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8766/projects
+   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8766/usage
+   cargo run -j4 --manifest-path dashboard/Cargo.toml -- --home ~/.factory --api 127.0.0.1:8766 --port 8765 &
+   curl -s http://127.0.0.1:8765/api/projects             # the dashboard adds the token itself
+   kill %2                                               # stop the dashboard
+   target/debug/factoryd stop
+   ```
 
 9. Clean up the dry-run job and check Rocket is untouched.
 
    ```bash
    target/debug/factory --project rocket cancel <id>
-   target/debug/factory --project rocket cleanup
+   target/debug/factory --project rocket cleanup <id>
    git -C "$ROCKET" branch --list 'factory/*'            # no new branch
    gh auth status
    git -C "$ROCKET" remote get-url origin                # a GitHub URL, the ticket step needs it

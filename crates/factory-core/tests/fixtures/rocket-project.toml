@@ -36,7 +36,7 @@ read_first = ["CLAUDE.md", ".claude/rules/00-shortcuts.md"]
 builder_rules = [
   "Use shadcn/ui primitives only in the UI: no raw button, input, dialog, select or form elements.",
   "Use lucide-react for icons only, never inline SVGs.",
-  "Use SingleLineEditor (CodeMirror 6) for single-line variable-aware fields and Monaco for multi-line editors, never Monaco for single-line fields.",
+  "Use SingleLineEditor (CodeMirror 6) for single-line variable-aware fields and Monaco for multi-line editors, except the AI Assistant PromptEditor (CodeMirror 6). Never use Monaco for single-line fields.",
   "Zustand: use narrow selectors and never fully destructure store state at component top level.",
   "No unwrap in production Rust paths.",
   "Never shell out to the git CLI from Rust code, use the git2 crate.",
@@ -54,7 +54,7 @@ check_hints = [
 reviewer_rules = [
   "Reject raw button, input, dialog, select or form elements in the UI: shadcn/ui primitives only.",
   "Reject inline SVGs: icons come from lucide-react only.",
-  "Single-line variable-aware fields must use SingleLineEditor and multi-line editors must use Monaco.",
+  "Single-line variable-aware fields must use SingleLineEditor and multi-line editors must use Monaco, except the AI Assistant PromptEditor (CodeMirror 6).",
   "Reject Zustand code that fully destructures store state at component top level, narrow selectors only.",
   "Reject unwrap in production Rust paths and any shell-out to the git CLI, git2 only.",
   "serde rename_all camelCase belongs on IPC DTOs only, never on persistence structs.",

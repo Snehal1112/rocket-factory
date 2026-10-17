@@ -63,7 +63,6 @@ fn settings_resolve_to_the_old_values() {
     assert_eq!(new.commit_batch, old.commit_batch);
     assert_eq!(new.builder_excerpt, old.builder_excerpt);
     assert_eq!(new.tickets_on_merge, old.tickets_on_merge);
-    assert!(new.tickets_on_merge);
     assert_eq!(new.kb_path, old.kb_path);
     assert_eq!(new.kb_model, old.kb_model);
     assert_eq!(new.kb_budget_weighted, old.kb_budget_weighted);

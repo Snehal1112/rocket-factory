@@ -56,7 +56,7 @@ This task touches the real home directory `~/.factory` and `~/.claude/commands/f
   - `factory --project rocket status` lists jobs 001 to 015 with the old costs.
   - `factory --project rocket new dryrun "Dry run of the standalone factory"` creates a job at stage `build`. Rocket's worktree folder must not change; check `git -C <rocket> status --short` is empty before and after.
   - Start `factoryd` in the background, check `factoryd is-running`, `GET /projects` and `GET /usage` with the token from `~/.factory/api.token`, open the dashboard in `--home` mode and fetch the project list. Stop `factoryd`.
-  - `factory --project rocket cancel <id>` then `cleanup`. Confirm `git -C <rocket> branch --list 'factory/*'` has no new branch.
+  - `factory --project rocket cancel <id>` then `cleanup <id>`. Confirm `git -C <rocket> branch --list 'factory/*'` has no new branch.
   - `gh auth status` is logged in and `git -C <rocket> remote get-url origin` is a GitHub URL, which the ticket step needs.
 - [ ] **Step 6: Record.** Add the dry run result and any difference to the plan ledger. No commit in Rocket. Commit only changes in `rocket-factory` (for example a fix to `docs/rocket-registration.md`).
 
