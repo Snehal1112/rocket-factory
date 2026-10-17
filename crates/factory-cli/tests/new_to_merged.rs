@@ -143,6 +143,50 @@ fn approve_refuses_a_job_with_a_pending_batch_commit() {
     assert!(e.to_string().contains("pending batch commit"), "{e}");
 }
 
+/// A risky job parked in needs-human, with its code review reset as if the reviewer never ran.
+fn parked_without_review(fx: &Fixture) {
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    );
+    store
+        .update_job("001", |j| {
+            j.set_review("code", factory_core::ReviewState::Pending);
+            Ok(())
+        })
+        .expect("reset review");
+}
+
+#[test]
+fn approve_refuses_a_needs_human_job_whose_review_never_ran() {
+    let fx = Fixture::with_risk_path("docs/**");
+    parked_without_review(&fx);
+    let before = fx.main_tip();
+    let e = fx.run(&["approve", "1"]).expect_err("no review");
+    let text = e.to_string();
+    assert!(text.contains("job 001 has no code review yet"), "{text}");
+    assert!(text.contains("rework") && text.contains("--without-review"), "{text}");
+    assert_eq!(fx.main_tip(), before);
+    let show = fx.run(&["show", "1"]).expect("show");
+    assert!(show.contains("\"stage\": \"needs-human\""), "{show}");
+}
+
+#[test]
+fn approve_without_review_merges_and_the_ledger_says_so() {
+    let fx = Fixture::with_risk_path("docs/**");
+    parked_without_review(&fx);
+    assert!(fx.run(&["approve", "1", "--without-review"]).expect("approve").starts_with("merged"));
+    let sdd = fx.root.join(".superpowers/sdd");
+    let mut ledgers = String::new();
+    for entry in std::fs::read_dir(&sdd).expect("sdd").flatten() {
+        ledgers.push_str(&std::fs::read_to_string(entry.path().join("progress.md")).unwrap_or_default());
+    }
+    assert!(ledgers.contains("approved by the user without a review"), "{ledgers}");
+}
+
 fn branch_exists(fx: &Fixture, name: &str) -> bool {
     git2::Repository::open(&fx.root).expect("open").find_branch(name, git2::BranchType::Local).is_ok()
 }

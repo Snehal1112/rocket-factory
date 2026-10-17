@@ -233,7 +233,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             let d = ctx.driver()?;
             Ok(serde_json::to_string_pretty(&d.job(&norm(&id)?)?)?)
         }
-        Command::Approve { id } => approve(ctx, &norm(&id)?),
+        Command::Approve { id, without_review } => approve(ctx, &norm(&id)?, without_review),
         Command::Rework { id, note } => rework(ctx, &norm(&id)?, &note),
         Command::Cancel { id, reason, force } => cancel(ctx, &norm(&id)?, &reason, force),
         Command::Cleanup { id, discard_commits } => cleanup(ctx, &norm(&id)?, discard_commits),
@@ -313,7 +313,7 @@ impl Drop for LeaseGuard<'_> {
     }
 }
 
-fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
+fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliError> {
     ctx.runnable()?;
     let d = ctx.driver()?;
     let job = d.job(id)?;
@@ -329,6 +329,10 @@ fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     if job.batch_snapshot.is_some() {
         return Err(CliError::Refused(format!("job {id} has a pending batch commit, use rework to finish it")));
     }
+    // A parked job whose review never ran must not merge unseen, unless the user says so.
+    if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
+        return Err(CliError::Refused(job.review_missing_message()));
+    }
     // The project lease is held through the merge and released on every exit path.
     let _project = d.hold_project(id)?;
     // The driver takes the job lease and its heartbeat renews it until the guard below releases it.
@@ -336,7 +340,12 @@ fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     let _guard = LeaseGuard { driver: &d, id: id.to_string() };
     let now = now_secs();
     d.store().update_job(id, |j| j.set_stage(Stage::Approve, None, false, now))?;
-    d.ledger(&job).ruling("approved by the user")?;
+    let ruling = if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
+        "approved by the user without a review"
+    } else {
+        "approved by the user"
+    };
+    d.ledger(&job).ruling(ruling)?;
     Ok(match merge_stage(&d, id)? {
         MergeResult::Merged(sha) => outcome_lines::merged_line(Some(&sha)),
         MergeResult::Parked(reason) => outcome_lines::parked_line(&reason),
@@ -358,6 +367,8 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
         // Needs-human back to build is allowed by the stage guard, so no force.
         j.set_stage(Stage::Build, None, false, now)?;
         j.round = 0;
+        // The note is the findings now, so a no-change round is not a checks case.
+        j.fix_source = None;
         // A rework revives a cancelled job, so approve does not refuse it later.
         j.cancelled = false;
         Ok(())

@@ -33,9 +33,13 @@ pub(crate) fn write_record(dir: &Path, record: &ParkRecord) {
 impl Engine<'_> {
     /// Records why the job parks, then parks it. Writing `park.json` is best effort.
     pub(crate) fn park_with(&self, kind: ParkKind, reason: String, parts: Vec<ParkPart>) -> Result<StageOutcome, EngineError> {
-        let round = self.job().map_or(1, |j| j.round);
+        let job = self.job().ok();
+        let round = job.as_ref().map_or(1, |j| j.round);
+        let review_missing = job.as_ref().is_some_and(|j| j.review_missing);
         let at = now().max(0.0) as u64;
-        let record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
+        let mut record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
+        // A park that offers approve says so when the review has not run, because a plain approve is refused.
+        record.next = kind.next_for(&self.job_id, review_missing);
         write_record(&self.job_dir, &record);
         self.update(|j| {
             j.park_kind = Some(kind.as_str().to_string());

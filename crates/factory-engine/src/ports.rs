@@ -36,6 +36,8 @@ pub(crate) struct JobView {
     pub task_index: u32,
     pub issues: Vec<u32>,
     pub batch_snapshot: Option<String>,
+    pub fix_source: Option<String>,
+    pub review_missing: bool,
 }
 
 impl Engine<'_> {
@@ -55,6 +57,8 @@ impl Engine<'_> {
             task_index: job.task_index,
             issues: job.issues.clone(),
             batch_snapshot: job.batch_snapshot.clone(),
+            fix_source: job.fix_source.clone(),
+            review_missing: job.review_missing(),
         })
     }
 

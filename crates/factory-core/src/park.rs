@@ -45,6 +45,21 @@ impl ParkKind {
         }
     }
 
+    /// Like `next`, but a park that offers approve while the code review has not run offers
+    /// `approve --without-review` instead, since a plain approve would be refused.
+    pub fn next_for(self, id: &str, review_missing: bool) -> Vec<String> {
+        let next = self.next(id);
+        let approve = format!("factory approve {id}");
+        if !review_missing || !next.contains(&approve) {
+            return next;
+        }
+        vec![
+            format!("factory rework {id} <note>"),
+            format!("factory cancel {id}"),
+            format!("factory approve {id} --without-review (the review has not run)"),
+        ]
+    }
+
     /// The commands worth running next, with the job id filled in.
     pub fn next(self, id: &str) -> Vec<String> {
         let approve = format!("factory approve {id}");
@@ -154,6 +169,22 @@ mod tests {
             ParkKind::Other.next("012"),
             vec!["factory approve 012", "factory rework 012 <note>", "factory cancel 012"]
         );
+    }
+
+    #[test]
+    fn next_without_a_review_offers_approve_without_review() {
+        let wr = "factory approve 012 --without-review (the review has not run)";
+        let want = vec!["factory rework 012 <note>".to_string(), "factory cancel 012".to_string(), wr.to_string()];
+        for kind in [ParkKind::Other, ParkKind::BudgetStopped] {
+            assert_eq!(kind.next_for("012", true), want, "{kind:?}");
+        }
+        // Parks without an approve option, and parks with a review, stay as they were.
+        for kind in [ParkKind::ChecksFailed, ParkKind::NothingChanged, ParkKind::BuilderStopped] {
+            assert_eq!(kind.next_for("012", true), kind.next("012"), "{kind:?}");
+        }
+        for kind in [ParkKind::Other, ParkKind::RiskyDiff, ParkKind::BudgetStopped] {
+            assert_eq!(kind.next_for("012", false), kind.next("012"), "{kind:?}");
+        }
     }
 
     #[test]

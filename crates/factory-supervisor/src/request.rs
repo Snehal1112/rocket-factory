@@ -14,6 +14,8 @@ pub enum RequestError {
     Job(String),
     #[error("series is only valid for a run request")]
     SeriesNotAllowed,
+    #[error("without_review is only valid for an approve request")]
+    WithoutReviewNotAllowed,
     #[error("bad request id {0:?}")]
     Id(String),
 }
@@ -34,6 +36,13 @@ pub struct Request {
     pub job: String,
     pub series: bool,
     pub ts_ms: u64,
+    /// For an approve: merge even though the code review has not run. Absent in older request files.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub without_review: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// The id of a request: `<ts_ms>-<project>-<job>` with a 13 digit timestamp.
@@ -71,9 +80,17 @@ impl Request {
             job: job.to_string(),
             series,
             ts_ms: now_ms,
+            without_review: false,
         };
         req.validate()?;
         Ok(req)
+    }
+
+    /// The same request with the approve flag set. Only an approve may carry it.
+    pub fn without_review(mut self) -> Result<Request, RequestError> {
+        self.without_review = true;
+        self.validate()?;
+        Ok(self)
     }
 
     pub fn validate(&self) -> Result<(), RequestError> {
@@ -81,6 +98,9 @@ impl Request {
         validate_job(&self.job)?;
         if self.series && self.action != Action::Run {
             return Err(RequestError::SeriesNotAllowed);
+        }
+        if self.without_review && self.action != Action::Approve {
+            return Err(RequestError::WithoutReviewNotAllowed);
         }
         validate_id_chars(&self.id)?;
         if self.id != make_id(self.ts_ms, &self.project, &self.job) {
@@ -125,6 +145,19 @@ mod tests {
 
     const GOOD_JSON: &str =
         r#"{"id":"0000000000001-p-1","project":"p","action":"run","job":"1","series":false,"ts_ms":1}"#;
+
+    #[test]
+    fn without_review_is_optional_approve_only_and_left_out_when_false() {
+        // An older request file has no such field.
+        let old: Request = serde_json::from_str(GOOD_JSON).expect("parse");
+        assert!(!old.without_review);
+        assert!(!serde_json::to_string(&old).expect("json").contains("without_review"));
+        let r = Request::new("p", Action::Approve, "1", false, 1).expect("ok").without_review().expect("approve");
+        let back: Request = serde_json::from_str(&serde_json::to_string(&r).expect("json")).expect("parse");
+        assert!(back.without_review);
+        let run = Request::new("p", Action::Run, "1", false, 1).expect("ok");
+        assert_eq!(run.without_review(), Err(RequestError::WithoutReviewNotAllowed));
+    }
 
     #[test]
     fn json_with_unknown_or_missing_fields_is_refused() {

@@ -41,6 +41,12 @@ struct ReworkBody {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ApproveBody {
+    without_review: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CancelBody {
     reason: Option<String>,
     force: Option<bool>,
@@ -175,8 +181,19 @@ fn queue_error(e: QueueError) -> ApiResponse {
     }
 }
 
-fn enqueue(home: &Home, deps: &ApiDeps, name: &str, action: Action, job: &str, series: bool) -> Result<String, ApiResponse> {
-    let req = Request::new(name, action, job, series, (deps.now_ms)()).map_err(|e| bad(&e.to_string()))?;
+fn enqueue(
+    home: &Home,
+    deps: &ApiDeps,
+    name: &str,
+    action: Action,
+    job: &str,
+    series: bool,
+    without_review: bool,
+) -> Result<String, ApiResponse> {
+    let mut req = Request::new(name, action, job, series, (deps.now_ms)()).map_err(|e| bad(&e.to_string()))?;
+    if without_review {
+        req = req.without_review().map_err(|e| bad(&e.to_string()))?;
+    }
     queue::enqueue(home, &req).map_err(queue_error)?;
     Ok(req.id)
 }
@@ -227,7 +244,7 @@ fn create_inner(home: &Home, deps: &ApiDeps, name: &str, body: &[u8]) -> Result<
     let job = created_id(&out.stdout)
         .ok_or_else(|| error_response(500, "failed", &format!("the job was created but its id is unknown: {}", tail(&out.stdout))))?;
     let request_id = if b.run.unwrap_or(true) {
-        Some(enqueue(home, deps, name, Action::Run, &job, b.series.unwrap_or(true)).map_err(|e| {
+        Some(enqueue(home, deps, name, Action::Run, &job, b.series.unwrap_or(true), false).map_err(|e| {
             let why = e.body["error"]["message"].as_str().unwrap_or("").to_string();
             error_response(e.status, e.body["error"]["code"].as_str().unwrap_or("failed"), &format!("job {job} was created but not queued: {why}"))
         })?)
@@ -238,15 +255,18 @@ fn create_inner(home: &Home, deps: &ApiDeps, name: &str, body: &[u8]) -> Result<
 }
 
 /// `POST /projects/{p}/jobs/{id}/approve`.
-pub fn approve(home: &Home, deps: &ApiDeps, name: &str, id: &str) -> ApiResponse {
-    match approve_inner(home, deps, name, id) {
+pub fn approve(home: &Home, deps: &ApiDeps, name: &str, id: &str, body: &[u8]) -> ApiResponse {
+    match approve_inner(home, deps, name, id, body) {
         Ok(r) | Err(r) => r,
     }
 }
 
-fn approve_inner(home: &Home, deps: &ApiDeps, name: &str, id: &str) -> Result<ApiResponse, ApiResponse> {
+fn approve_inner(home: &Home, deps: &ApiDeps, name: &str, id: &str, body: &[u8]) -> Result<ApiResponse, ApiResponse> {
     let layout = enabled(home, name)?;
     let id = job_id(id)?;
+    // No body at all means the defaults.
+    let b: ApproveBody = if body.is_empty() { ApproveBody::default() } else { parse(body)? };
+    let without_review = b.without_review.unwrap_or(false);
     let board = Board::load(&layout.board_file())
         .map_err(|e| error_response(500, "failed", &format!("the board of this project cannot be read: {e}")))?;
     let job = board
@@ -264,7 +284,11 @@ fn approve_inner(home: &Home, deps: &ApiDeps, name: &str, id: &str) -> Result<Ap
             &format!("job {id} is in stage {}, approve needs needs-human or approve", job.stage),
         ));
     }
-    let request_id = enqueue(home, deps, name, Action::Approve, &id, false)?;
+    // The child would refuse this, and nobody reads a child's refusal, so answer here.
+    if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
+        return Err(error_response(409, "conflict", &job.review_missing_message()));
+    }
+    let request_id = enqueue(home, deps, name, Action::Approve, &id, false, without_review)?;
     Ok(ApiResponse { status: 202, body: json!({"requestId": request_id}) })
 }
 
@@ -491,7 +515,13 @@ mod tests {
     }
 
     fn board_with(f: &Fx, stage: &str, cancelled: bool) {
-        let job = job_json("001", "001-first").replace(r#""stage":"build""#, &format!(r#""stage":"{stage}","cancelled":{cancelled}"#));
+        board_with_review(f, stage, cancelled, "pass");
+    }
+
+    fn board_with_review(f: &Fx, stage: &str, cancelled: bool, review: &str) {
+        let job = job_json("001", "001-first")
+            .replace(r#""stage":"build""#, &format!(r#""stage":"{stage}","cancelled":{cancelled}"#))
+            .replace(r#""reviews":{}"#, &format!(r#""reviews":{{"code":"{review}"}}"#));
         write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
     }
 
@@ -519,6 +549,42 @@ mod tests {
         assert_eq!(code(&post(&f, "/projects/good/jobs/001/approve", b"")), (409, "conflict".to_string()));
         board_with(&f, "approve", false);
         assert!(f.cli.calls().is_empty());
+    }
+
+    #[test]
+    fn approve_of_a_needs_human_job_without_a_review_is_a_conflict_unless_told_otherwise() {
+        let f = fx();
+        board_with_review(&f, "needs-human", false, "pending");
+        let r = post(&f, "/projects/good/jobs/1/approve", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()));
+        let msg = r.body["error"]["message"].as_str().expect("message");
+        assert!(msg.starts_with("job 001 has no code review yet") && msg.contains("--without-review"), "{msg}");
+        assert_eq!(queued(&f), 0);
+        let r = post(&f, "/projects/good/jobs/1/approve", br#"{"without_review":false}"#);
+        assert_eq!(code(&r).0, 409);
+        assert_eq!(code(&post(&f, "/projects/good/jobs/1/approve", br#"{"nope":true}"#)).1, "bad_request");
+        let r = post(&f, "/projects/good/jobs/1/approve", br#"{"without_review":true}"#);
+        assert_eq!(r.status, 202, "{}", r.body);
+        match &crate::queue::list(&f.home)[0] {
+            crate::QueueItem::Ok(req) => assert!(req.without_review),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn approve_of_a_job_in_stage_approve_or_with_a_verdict_does_not_need_the_flag() {
+        let f = fx();
+        board_with_review(&f, "approve", false, "pending");
+        assert_eq!(post(&f, "/projects/good/jobs/1/approve", b"").status, 202);
+        for verdict in ["pass", "changes"] {
+            let f = fx();
+            board_with_review(&f, "needs-human", false, verdict);
+            assert_eq!(post(&f, "/projects/good/jobs/1/approve", b"").status, 202, "{verdict}");
+            match &crate::queue::list(&f.home)[0] {
+                crate::QueueItem::Ok(req) => assert!(!req.without_review),
+                other => panic!("{other:?}"),
+            }
+        }
     }
 
     #[test]

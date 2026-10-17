@@ -44,6 +44,9 @@ pub enum Command {
     /// Merge a job in needs-human or approve.
     Approve {
         id: String,
+        /// Merge a needs-human job even though its code review has not run.
+        #[arg(long)]
+        without_review: bool,
     },
     /// Send a one-line note to the builder and reset the round counter.
     Rework {

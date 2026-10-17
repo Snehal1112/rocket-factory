@@ -34,7 +34,8 @@ pub fn park(driver: &Driver, id: &str, reason: &str) -> Result<(), EngineError> 
     let (job, already) = job;
     if !already {
         // Writing the record is best effort, the park already happened.
-        let record = ParkRecord::new(ParkKind::Other, reason, id, job.round, at, Vec::new());
+        let mut record = ParkRecord::new(ParkKind::Other, reason, id, job.round, at, Vec::new());
+        record.next = ParkKind::Other.next_for(id, job.review_missing());
         write_record(&driver.job_dir(&job), &record);
     }
     // The ledger takes one line, so the reason is folded into a single line.

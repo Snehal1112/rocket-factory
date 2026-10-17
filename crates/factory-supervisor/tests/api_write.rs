@@ -81,7 +81,7 @@ fn queued(home: &Home) -> Vec<factory_supervisor::Request> {
 
 fn write_board(home: &Home, project: &str, stage: &str) {
     let job = format!(
-        r#"{{"id":"001","dir":"001-first","slug":"first","created":"2026-10-17","feature":"F","branch":"factory/001-first","stage":"{stage}","round":1,"stage_since":1.0,"reviews":{{}},"tokens":{{"input":0,"cache_creation":0,"output":0,"cache_read":0}}}}"#
+        r#"{{"id":"001","dir":"001-first","slug":"first","created":"2026-10-17","feature":"F","branch":"factory/001-first","stage":"{stage}","round":1,"stage_since":1.0,"reviews":{{"code":"pass"}},"tokens":{{"input":0,"cache_creation":0,"output":0,"cache_read":0}}}}"#
     );
     std::fs::write(home.project_dir(project).join("state").join("board.json"), format!(r#"{{"jobs":[{job}]}}"#)).expect("board");
 }

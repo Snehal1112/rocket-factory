@@ -114,6 +114,9 @@ pub struct Job {
     /// The cost estimate made when the job was created. New in the cost report series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimate: Option<crate::cost::Estimate>,
+    /// What started the latest fix round, `checks` or `review`. New in the approve review series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_source: Option<String>,
 }
 
 /// One stage change, with the unix time in seconds it happened.
@@ -187,7 +190,24 @@ impl Job {
             park_at: None,
             batch_snapshot: None,
             estimate: None,
+            fix_source: None,
         }
+    }
+
+    /// The refusal that approve gives for a needs-human job without a code review. CLI and API share it.
+    pub fn review_missing_message(&self) -> String {
+        format!(
+            "job {} has no code review yet (the checks never passed or the reviewer never ran): use rework, or approve --without-review to merge anyway",
+            self.id
+        )
+    }
+
+    /// True when the `code` review has no verdict yet: pending, running or absent. Such a job was never reviewed.
+    pub fn review_missing(&self) -> bool {
+        !matches!(
+            self.reviews.get("code"),
+            Some(ReviewState::Pass | ReviewState::Changes | ReviewState::Skipped)
+        )
     }
 
     pub fn set_review(&mut self, role: &str, state: ReviewState) {
@@ -380,6 +400,39 @@ mod tests {
         assert!(!json.contains("park_kind") && !json.contains("park_at"), "{json}");
         let back: Job = serde_json::from_str(&json).expect("load");
         assert_eq!(back.park_kind, None);
+    }
+
+    #[test]
+    fn review_missing_is_true_until_the_code_review_has_a_verdict() {
+        let mut j = Job::new("001", "d", "s", "2026-10-17", "f", 1.0);
+        assert!(j.review_missing(), "a fresh job has a pending review");
+        j.set_review("code", ReviewState::Running);
+        assert!(j.review_missing());
+        j.set_review("code", ReviewState::Pass);
+        assert!(!j.review_missing());
+        j.set_review("code", ReviewState::Changes);
+        assert!(!j.review_missing());
+        j.reset_reviews();
+        assert!(j.review_missing(), "a fix round resets the verdict");
+        j.reviews.clear();
+        assert!(j.review_missing(), "an absent review is missing too");
+    }
+
+    #[test]
+    fn the_review_missing_message_names_the_problem_and_the_options() {
+        let j = Job::new("020", "d", "s", "2026-10-17", "f", 1.0);
+        let m = j.review_missing_message();
+        assert!(m.starts_with("job 020 has no code review yet"), "{m}");
+        assert!(m.contains("use rework") && m.contains("approve --without-review"), "{m}");
+    }
+
+    #[test]
+    fn fix_source_is_optional_and_omitted_when_unset() {
+        let mut j = Job::new("001", "d", "s", "2026-10-17", "f", 1.0);
+        assert!(!serde_json::to_string(&j).expect("json").contains("fix_source"));
+        j.fix_source = Some("checks".to_string());
+        let back: Job = serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
+        assert_eq!(back.fix_source.as_deref(), Some("checks"));
     }
 
     fn job() -> Job {

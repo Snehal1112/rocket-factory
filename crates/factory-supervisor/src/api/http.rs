@@ -97,7 +97,7 @@ pub fn route(
         (_, ["projects"]) => read::projects(home, deps),
         ("GET", ["projects", name, "jobs"]) => read::jobs(home, name),
         (_, ["projects", name, "jobs"]) => write::create(home, deps, name, body),
-        (_, ["projects", name, "jobs", id, "approve"]) => write::approve(home, deps, name, id),
+        (_, ["projects", name, "jobs", id, "approve"]) => write::approve(home, deps, name, id, body),
         (_, ["projects", name, "jobs", id, "rework"]) => write::rework(home, deps, name, id, body),
         (_, ["projects", name, "jobs", id, _]) => write::cancel(home, deps, name, id, body),
         _ => usage::report(home, deps, query),

@@ -81,6 +81,9 @@ fn args_of(req: &Request) -> Vec<String> {
         Action::Approve => {
             args.push("approve".to_string());
             args.push(req.job.clone());
+            if req.without_review {
+                args.push("--without-review".to_string());
+            }
         }
     }
     args
@@ -230,6 +233,11 @@ mod tests {
         let pid = sp.spawn(&home, &req(Action::Approve, false), &out2, &err2).expect("spawn");
         wait_exit(&sp, pid);
         assert!(std::fs::read_to_string(&out2).expect("out").contains("--project p approve 7\n"));
+        let (out3, err3) = (t.path().join("o3.txt"), t.path().join("e3.txt"));
+        let skip = req(Action::Approve, false).without_review().expect("approve");
+        let pid = sp.spawn(&home, &skip, &out3, &err3).expect("spawn");
+        wait_exit(&sp, pid);
+        assert!(std::fs::read_to_string(&out3).expect("out").contains("--project p approve 7 --without-review\n"));
     }
 
     #[test]
