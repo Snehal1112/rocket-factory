@@ -21,7 +21,7 @@ Each plan has at most 3 tasks and runs after the one before it. Plans 1 to 3 are
 
 The original step 8 of the spec is now plans 8 (this port), 9 (move Rocket: register, dry run, remove `tools/factory`) and 10 (RocketVault). Plans 9 and 10 are not written yet.
 
-## Why plans 2 to 8 are not written yet
+## Why plans 2 to 10 are not written ahead
 
 They name functions, files and line numbers in the extracted code. Plan 1 moves and edits that code, and each later plan changes what the next one touches. Writing them now would put stale names in them. Each is written from the repo as it stands when the previous plan merges.
 
@@ -31,5 +31,5 @@ They name functions, files and line numbers in the extracted code. Plan 1 moves 
 - Commits: conventional commits, written through the `dev-workflow-skills:1-git-commit` skill, never a freeform `git commit -m`. Dispatched implementers get the same instruction.
 - Rust: no `unwrap()` in production paths, no shelling out to `git` (use `git2`).
 - Board JSON stays compatible with the dashboard: new fields are optional.
-- Rocket's `tools/factory` stays in Rocket until plan 8 has run a real job there.
+- Rocket's `tools/factory` stays in Rocket until plan 9 has run a real job there.
 - Rocket's accurate-usage series merged before plan 1 was re-run (2026-10-17), so the extracted copy has it. Anything merged into Rocket's `tools/factory` after that must be ported the same way: re-run `git filter-repo` on a fresh clone and rebase the local commits.

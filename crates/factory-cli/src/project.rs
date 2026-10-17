@@ -150,6 +150,7 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         format!("state folder: {}", l.state_dir.display()),
         format!("worktrees folder: {}", l.worktrees_dir.display()),
         format!("risk paths: {}", resolved.config.risk_paths.len()),
+        format!("tickets on merge: {}", resolved.config.tickets_on_merge),
     ];
     let names: Vec<&str> = resolved.agents.iter().map(|a| a.name.as_str()).collect();
     out.push(format!("agent files: {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));

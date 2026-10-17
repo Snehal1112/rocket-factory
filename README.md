@@ -17,6 +17,8 @@ Rocket's factory gained these after the extraction. They are part of this driver
 - Ticket hygiene: the `factory tickets` command and the `tickets_on_merge` key, see below.
 - Live token bar: the dashboard card bar follows the running agent, so it moves while an agent works.
 
+Presets already seeded under `~/.factory/presets/` are not updated: `preset::seed` writes only the files that are missing and never overwrites an existing one. A preset seeded before this port lacks the batch committer kind and the task excerpt rule. `seed` runs only in `factory project add`. To pick up the new text, delete the preset folder (or just the files you have not edited) and run `factory project add` for any project, which seeds the missing files again.
+
 ## Ticket hygiene
 
 After the last plan of a job merges, the driver can file the leftover work as new GitHub tickets, comment on the
