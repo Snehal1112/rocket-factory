@@ -3,6 +3,9 @@ use crate::risk::glob_match;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+/// Default per-job budget in weighted tokens. A config file can set its own.
+pub const DEFAULT_JOB_BUDGET_WEIGHTED: u64 = 1_000_000;
+
 /// Path-based risk list from spec decision 6. Matching ignores case.
 const DEFAULT_RISK: &[&str] = &[
     "src-tauri/**",
@@ -95,7 +98,7 @@ impl Default for Config {
         Config {
             risk_paths: DEFAULT_RISK.iter().map(|s| s.to_string()).collect(),
             diff_cap_lines: 4000,
-            budget_weighted: 3_000_000,
+            budget_weighted: DEFAULT_JOB_BUDGET_WEIGHTED,
             fix_rounds: 2,
             stall_minutes: 10,
             builder_model: "sonnet".to_string(),
@@ -365,7 +368,7 @@ mod tests {
         let cfg = Config::parse("").expect("empty is valid");
         assert!(!cfg.degraded);
         assert_eq!(cfg.diff_cap_lines, 4000);
-        assert_eq!(cfg.budget_weighted, 3_000_000);
+        assert_eq!(cfg.budget_weighted, 1_000_000);
         assert_eq!(cfg.fix_rounds, 2);
         assert_eq!(cfg.stall_minutes, 10);
         assert_eq!(cfg.builder_model, "sonnet");
@@ -398,6 +401,18 @@ mod tests {
         assert_eq!(cfg.checks.len(), 1);
         assert!(cfg.checks[0].matches("src/a/b.ts"));
         assert!(!cfg.checks[0].matches("crates/a.rs"));
+    }
+
+    #[test]
+    fn the_default_job_budget_is_one_million() {
+        assert_eq!(DEFAULT_JOB_BUDGET_WEIGHTED, 1_000_000);
+        assert_eq!(Config::default().budget_weighted, DEFAULT_JOB_BUDGET_WEIGHTED);
+    }
+
+    #[test]
+    fn an_explicit_budget_is_kept() {
+        let cfg = Config::parse("budget_weighted = 3000000").expect("valid");
+        assert_eq!(cfg.budget_weighted, 3_000_000);
     }
 
     #[test]

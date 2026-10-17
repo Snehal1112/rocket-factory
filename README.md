@@ -194,7 +194,7 @@ example a manual `factory run`) is reported as busy and nothing starts for it un
 weighted tokens (cache reads count one tenth), summed over the `usage.jsonl` of every job of every registered
 project; the day is the UTC day, the same as `GET /usage`. Without the key there is no limit; `0`, a negative
 number or a non-integer makes `config.toml` invalid, and `factoryd` then refuses to start. The per-job budget is
-unchanged.
+unchanged. It is `budget_weighted` in the project config, default 1,000,000 weighted tokens per job: the agent run warns at 80 percent and stops at 100 percent.
 
 Once today's use reaches the limit, new runs wait: a `Run` request stays in the queue (nothing is rejected, lost
 or reordered) and starts on the first tick after the budget is raised in `config.toml` or the UTC day changes.
