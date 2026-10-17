@@ -244,7 +244,7 @@ impl Driver {
     /// Takes or renews the project lease and the job lease when this driver has an owner.
     /// A live lease of another owner is an error. The project lease comes first, so a busy project
     /// leaves the job lease untouched.
-    pub(crate) fn renew_lease(&self, id: &str) -> Result<(), EngineError> {
+    pub fn renew_lease(&self, id: &str) -> Result<(), EngineError> {
         if let Some(owner) = &self.lease_owner {
             let mut held = lock_held(&self.shared);
             self.take_project(id, owner)?;
@@ -279,10 +279,13 @@ impl Driver {
         let Some(owner) = &self.lease_owner else {
             return Ok(ProjectGuard { driver: None });
         };
+        // The mutex covers the take and the job name, so the heartbeat never rewrites the lease with an old job.
+        let mut held = lock_held(&self.shared);
         self.take_project(job, owner)?;
+        held.project_job = job.to_string();
+        drop(held);
         if self.project_holds.fetch_add(1, Ordering::SeqCst) == 0 {
             self.lost.store(false, Ordering::SeqCst);
-            lock_held(&self.shared).project_job = job.to_string();
             if let Err(e) = self.start_heartbeat(owner) {
                 // No guard exists yet, so the hold is undone here.
                 self.project_holds.fetch_sub(1, Ordering::SeqCst);
@@ -317,7 +320,7 @@ impl Driver {
 
     /// Drops this driver's lease. A failed release is not fatal, because a lease expires by itself.
     /// The project lease stays while a `ProjectGuard` is alive.
-    pub(crate) fn release_lease(&self, id: &str) {
+    pub fn release_lease(&self, id: &str) {
         if let Some(owner) = &self.lease_owner {
             let mut held = lock_held(&self.shared);
             held.job_lease = None;

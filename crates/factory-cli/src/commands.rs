@@ -5,8 +5,8 @@ use std::time::Duration;
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
 use factory_core::{outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
 use factory_engine::{
-    acquire_lease, costs_path, create_job_with_spec, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, release_lease, run_job, run_series, Driver,
-    MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT, LEASE_TTL_SECS,
+    costs_path, create_job_with_spec, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, run_job, run_series, Driver,
+    MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT,
 };
 
 use crate::cli::{Cli, Command};
@@ -266,9 +266,10 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     // The project lease comes first, so a second driver is refused before any stage work.
     // The guard lives until the command returns, a series included.
     let _project = d.hold_project(id)?;
-    acquire_lease(d.store(), id, &ctx.owner, LEASE_TTL_SECS, now_secs())?;
+    // The driver takes the job lease and its heartbeat renews it until the guard below releases it.
+    d.renew_lease(id)?;
     // The job lease is released on every exit path, an error from the run included.
-    let _guard = LeaseGuard { driver: &d, id: id.to_string(), owner: ctx.owner.clone() };
+    let _guard = LeaseGuard { driver: &d, id: id.to_string() };
     let end = if series { run_series(&d, id)? } else { run_job(&d, id)? };
     Ok(match end {
         RunEnd::Merged => outcome_lines::merged_line(None),
@@ -280,12 +281,11 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
 struct LeaseGuard<'a> {
     driver: &'a Driver,
     id: String,
-    owner: String,
 }
 
 impl Drop for LeaseGuard<'_> {
     fn drop(&mut self) {
-        let _ = release_lease(self.driver.store(), &self.id, &self.owner, now_secs());
+        self.driver.release_lease(&self.id);
     }
 }
 
@@ -304,8 +304,9 @@ fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     }
     // The project lease is held through the merge and released on every exit path.
     let _project = d.hold_project(id)?;
-    acquire_lease(d.store(), id, &ctx.owner, LEASE_TTL_SECS, now_secs())?;
-    let _guard = LeaseGuard { driver: &d, id: id.to_string(), owner: ctx.owner.clone() };
+    // The driver takes the job lease and its heartbeat renews it until the guard below releases it.
+    d.renew_lease(id)?;
+    let _guard = LeaseGuard { driver: &d, id: id.to_string() };
     let now = now_secs();
     d.store().update_job(id, |j| j.set_stage(Stage::Approve, None, false, now))?;
     d.ledger(&job).ruling("approved by the user")?;

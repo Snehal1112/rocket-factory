@@ -130,3 +130,22 @@ fn another_owner_in_the_lease_sets_lost_and_stops_the_run() {
     let text = std::fs::read_to_string(fx.driver.layout().project_lease_file()).expect("lease stays");
     assert!(text.contains("\"other\""), "the other owner keeps the lease: {text}");
 }
+
+#[test]
+fn a_long_section_outside_run_job_keeps_the_job_lease_alive() {
+    // This is the shape of approve and kb-refresh: the caller takes the job lease and works for a while.
+    let fx = fixture(2.0, Duration::from_millis(200), false, Arc::new(Mutex::new(Seen::default())));
+    let plan = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "hello", "say hello", Some(&plan), None).expect("create");
+    let guard = fx.driver.hold_project(&job.id).expect("hold");
+    fx.driver.renew_lease(&job.id).expect("job lease");
+    let end = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < end {
+        let lease = fx.driver.job(&job.id).expect("job").lease.expect("lease");
+        assert!(lease.expires > now_secs(), "the job lease expired");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    fx.driver.release_lease(&job.id);
+    assert!(fx.driver.job(&job.id).expect("job").lease.is_none());
+    drop(guard);
+}
