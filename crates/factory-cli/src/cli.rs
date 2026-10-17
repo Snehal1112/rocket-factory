@@ -82,6 +82,13 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// File the follow-up tickets of a merged job and close its parent tickets.
+    Tickets {
+        id: String,
+        /// Print what would happen and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Refresh the knowledge base now, ignoring the stop marker.
     KbRefresh {
         /// The job whose ledger gets the rulings.
@@ -143,5 +150,19 @@ mod tests {
     #[test]
     fn spec_with_plans_parses() {
         Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--spec", "x.md"]).expect("parses");
+    }
+
+    #[test]
+    fn tickets_parses_dry_run() {
+        let cli = Cli::try_parse_from(["factory", "tickets", "012", "--dry-run"]).expect("parses");
+        assert!(matches!(cli.command, Command::Tickets { ref id, dry_run: true } if id == "012"));
+        let cli = Cli::try_parse_from(["factory", "tickets", "012"]).expect("parses");
+        assert!(matches!(cli.command, Command::Tickets { dry_run: false, .. }));
+    }
+
+    #[test]
+    fn tickets_needs_an_id() {
+        let err = Cli::try_parse_from(["factory", "tickets"]).expect_err("needs an id");
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
     }
 }

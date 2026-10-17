@@ -49,6 +49,8 @@ pub struct CliCtx {
     pub blocked: Option<String>,
     /// Things the resolver left out without failing, printed by the binary at start-up.
     pub notes: Vec<String>,
+    /// An injected issue tracker. `None` means the real `gh` one. Tests use it.
+    pub tracker: Option<Arc<dyn factory_engine::Tracker>>,
 }
 
 impl CliCtx {
@@ -68,7 +70,14 @@ impl CliCtx {
             agents: Vec::new(),
             blocked: None,
             notes: Vec::new(),
+            tracker: None,
         }
+    }
+
+    /// A context whose driver uses this tracker instead of `gh`. Tests use it.
+    pub fn with_tracker(mut self, tracker: Arc<dyn factory_engine::Tracker>) -> CliCtx {
+        self.tracker = Some(tracker);
+        self
     }
 
     /// The main checkout.
@@ -95,6 +104,7 @@ impl CliCtx {
             agents: Vec::new(),
             blocked: None,
             notes: Vec::new(),
+            tracker: None,
         })
     }
 
@@ -137,6 +147,7 @@ impl CliCtx {
             agents: resolved.agents,
             blocked,
             notes: resolved.notes,
+            tracker: None,
         };
         Ok(ctx)
     }
@@ -169,7 +180,11 @@ impl CliCtx {
         let me = self.clone();
         let driver = Driver::new(self.layout.clone(), config, Box::new(move |id| me.runner_for(id)))?;
         let driver = driver.with_lock_wait(self.lock_wait).with_lease_owner(&self.owner);
-        Ok(if self.agents.is_empty() { driver } else { driver.with_agent_files(self.agents.clone()) })
+        let driver = if self.agents.is_empty() { driver } else { driver.with_agent_files(self.agents.clone()) };
+        Ok(match &self.tracker {
+            Some(t) => driver.with_tracker(Box::new(t.clone())),
+            None => driver,
+        })
     }
 }
 
@@ -230,6 +245,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Install { .. } => Err(CliError::Refused(
             "install needs no repository, run it through install::run".into(),
         )),
+        Command::Tickets { id, dry_run } => tickets(ctx, &norm(&id)?, dry_run),
         Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
 }
@@ -415,6 +431,30 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
     Ok(format!("removed worktree and branch of job {id}"))
 }
 
+/// Takes no lease, it only calls the tracker and writes the job folder. Refuses while another driver holds a live lease on the job.
+fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
+    let d = ctx.driver()?;
+    let job = d.job(id)?;
+    if let Some(lease) = job.lease.as_ref().filter(|_| lease_is_live(&job, now_secs())) {
+        if lease.owner != ctx.owner {
+            return Err(CliError::Refused(format!("job {id} is leased by {}", lease.owner)));
+        }
+    }
+    render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run)
+}
+
+/// The text of a tickets report. A failed report is an error, so the exit code is non-zero.
+fn render_tickets(report: factory_engine::TicketsReport, dry_run: bool) -> Result<String, CliError> {
+    let body = report.lines.join("\n");
+    if report.failed {
+        return Err(CliError::Refused(body));
+    }
+    if dry_run && !report.skipped {
+        return Ok(format!("dry run, nothing was changed\n{body}"));
+    }
+    Ok(body)
+}
+
 /// Takes the project lease. Refuses unless the job is merged, and refuses while another driver holds a live lease on the job.
 fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     ctx.runnable()?;
@@ -468,5 +508,42 @@ mod tests {
         assert!(validate_rework_note("two\nlines").is_err());
         assert!(validate_rework_note(&"x".repeat(201)).is_err());
         assert!(validate_rework_note(&"x".repeat(200)).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod tickets_tests {
+    use super::*;
+    use factory_engine::TicketsReport;
+
+    fn report(lines: &[&str], failed: bool, skipped: bool) -> TicketsReport {
+        TicketsReport { lines: lines.iter().map(|s| s.to_string()).collect(), failed, skipped }
+    }
+
+    #[test]
+    fn a_good_report_prints_its_lines() {
+        let text = render_tickets(report(&["created #201: A", "closed #76"], false, false), false).expect("ok");
+        assert_eq!(text, "created #201: A\nclosed #76");
+    }
+
+    #[test]
+    fn a_dry_run_says_so() {
+        let text = render_tickets(report(&["would close #76"], false, false), true).expect("ok");
+        assert!(text.starts_with("dry run, nothing was changed"), "{text}");
+        assert!(text.contains("would close #76"));
+    }
+
+    #[test]
+    fn a_skipped_report_is_not_an_error() {
+        let text = render_tickets(report(&["skipped: job 001 is not merged"], false, true), false).expect("ok");
+        assert!(text.contains("skipped"));
+    }
+
+    #[test]
+    fn a_failed_report_is_an_error_with_all_lines() {
+        let err = render_tickets(report(&["created #201: A", "failed: comment on #76: boom"], true, false), false)
+            .expect_err("failed");
+        let message = err.to_string();
+        assert!(message.contains("created #201: A") && message.contains("comment on #76: boom"), "{message}");
     }
 }
