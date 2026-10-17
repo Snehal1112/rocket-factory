@@ -83,11 +83,12 @@ fn decode_chunked(mut data: &[u8]) -> Result<Vec<u8>, String> {
         if size == 0 {
             return Ok(out);
         }
-        if data.len() < size + 2 {
+        let end = size.checked_add(2).ok_or("bad chunk size")?;
+        if data.len() < end {
             return Err("short chunk".to_string());
         }
         out.extend_from_slice(&data[..size]);
-        data = &data[size + 2..];
+        data = &data[end..];
     }
 }
 
@@ -117,7 +118,10 @@ fn parse_response(raw: &[u8]) -> Result<ApiReply, String> {
     let body = if chunked {
         decode_chunked(rest)?
     } else if let Some(n) = length {
-        rest[..n.min(rest.len())].to_vec()
+        if n > rest.len() {
+            return Err("the API reply is shorter than its Content-Length".to_string());
+        }
+        rest[..n].to_vec()
     } else {
         rest.to_vec()
     };
@@ -654,6 +658,12 @@ mod tests {
         let chunked = parse_response(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n")?;
         assert_eq!(chunked.body, b"abcde");
         assert!(parse_response(b"garbage").is_err());
+        // An oversized chunk size must be an error, never a panic.
+        let huge = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\nabc\r\n0\r\n\r\n";
+        assert!(parse_response(huge).is_err());
+        assert!(parse_response(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n").is_err());
+        let short = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}";
+        assert!(parse_response(short).is_err());
         Ok(())
     }
 

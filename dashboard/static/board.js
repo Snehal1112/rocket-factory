@@ -501,8 +501,9 @@
     const list = (Array.isArray(job.actions) ? job.actions : []).filter((name) => ACTION_LABELS[name]);
     if (list.length === 0) return "";
     const id = escapeHtml(job.id);
+    const project = escapeHtml(job.project);
     const buttons = list
-      .map((name) => `<button type="button" class="act act-${name}" data-act="${name}" data-act-job="${id}">${ACTION_LABELS[name]}</button>`)
+      .map((name) => `<button type="button" class="act act-${name}" data-act="${name}" data-act-job="${id}" data-act-project="${project}">${ACTION_LABELS[name]}</button>`)
       .join("");
     return `<div class="job-actions">${buttons}</div>`;
   }

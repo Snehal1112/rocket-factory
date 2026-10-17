@@ -72,9 +72,12 @@
   }
 
   // The buttons depend on the stage, so they are set on each job before the board is drawn.
-  function withActions(state) {
+  function withActions(state, project) {
     if (mode !== "home" || !state || !Array.isArray(state.jobs)) return state;
-    for (const job of state.jobs) job.actions = FactoryProjects.jobActions(job);
+    for (const job of state.jobs) {
+      job.actions = FactoryProjects.jobActions(job);
+      job.project = project;
+    }
     return state;
   }
 
@@ -233,7 +236,7 @@
     }
     const act = target.closest("[data-act]");
     if (act) {
-      startAction(act.getAttribute("data-act") || "", act.getAttribute("data-act-job") || "", act);
+      startAction(act.getAttribute("data-act") || "", act.getAttribute("data-act-job") || "", act.getAttribute("data-act-project") || "", act);
       return;
     }
     const copy = target.closest("[data-copy]");
@@ -327,6 +330,8 @@
     if (inFlight) return;
     inFlight = true;
     let state;
+    let startedFor = null;
+    let stale = false;
     try {
       if (!(await loadProjects())) {
         render(null, "the project list is not available");
@@ -336,6 +341,7 @@
         render(null, null);
         return;
       }
+      startedFor = selected;
       const response = await fetch(stateUrl(), { cache: "no-store" });
       if (!response.ok) {
         let data = null;
@@ -347,12 +353,22 @@
         if (mode === "home") showBanner(FactoryProjects.errorText(data, response.status), true);
         throw new Error(`HTTP ${response.status}`);
       }
-      state = withActions(await response.json());
+      const fetched = await response.json();
+      if (!FactoryProjects.acceptReply(startedFor, selected)) {
+        stale = true;
+        return;
+      }
+      state = withActions(fetched, startedFor);
     } catch (error) {
       render(null, error.message);
       return;
     } finally {
       inFlight = false;
+    }
+    // The tab changed while this request was out, so its reply is dropped and the new tab is fetched.
+    if (stale) {
+      tick();
+      return;
     }
     lastState = state;
     lastOk = state.generated_at;
@@ -375,9 +391,6 @@
     return data;
   }
 
-  function jobPath(id, action) {
-    return `/api/projects/${encodeURIComponent(selected)}/jobs/${encodeURIComponent(id)}/${action}`;
-  }
 
   async function runWrite(button, work, done) {
     if (button) button.disabled = true;
@@ -398,16 +411,21 @@
   const actDialog = byId("act-dialog");
   let actKind = "";
   let actJob = "";
+  let actProject = "";
 
-  function startAction(kind, id, button) {
-    if (mode !== "home" || !selected || !FactoryProjects.isSafeId(id)) return;
+  // The button names its own project, so a click never uses whichever tab is selected now.
+  function startAction(kind, id, project, button) {
+    if (mode !== "home") return;
+    const path = FactoryProjects.jobPathFor(project, id, kind);
+    if (!path) return;
     if (kind === "approve") {
-      runWrite(button, () => postApi(jobPath(id, "approve")), () => `Approved job ${id}`);
+      runWrite(button, () => postApi(path), () => `Approved job ${id}`);
       return;
     }
     if (kind !== "rework" && kind !== "cancel") return;
     actKind = kind;
     actJob = id;
+    actProject = project;
     byId("act-title").textContent = kind === "rework" ? `Rework job ${id}` : `Cancel job ${id}`;
     byId("act-note-label").firstChild.textContent = kind === "rework" ? "Note for the builder " : "Reason (optional) ";
     byId("act-force-label").hidden = kind !== "cancel";
@@ -429,7 +447,9 @@
     }
     const kind = actKind;
     const id = actJob;
-    const ok = await runWrite(byId("act-submit"), () => postApi(jobPath(id, kind), body), () => (kind === "rework" ? `Sent job ${id} back` : `Cancelled job ${id}`));
+    const path = FactoryProjects.jobPathFor(actProject, id, kind);
+    if (!path) return;
+    const ok = await runWrite(byId("act-submit"), () => postApi(path, body), () => (kind === "rework" ? `Sent job ${id} back` : `Cancelled job ${id}`));
     if (ok) actDialog.close();
   });
 

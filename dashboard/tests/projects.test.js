@@ -102,6 +102,32 @@ test("jobActions follows the stage and the cancelled flag", () => {
   assert.deepEqual(projects.jobActions({ stage: "needs-human", cancelled: true }), []);
 });
 
+test("a reply for a stale project is dropped", () => {
+  assert.equal(projects.acceptReply("alpha", "alpha"), true);
+  assert.equal(projects.acceptReply("alpha", "beta"), false);
+  assert.equal(projects.acceptReply(null, null), true);
+  assert.equal(projects.acceptReply("alpha", null), false);
+});
+
+test("jobPathFor builds the path from the button's own project", () => {
+  assert.equal(projects.jobPathFor("alpha", "003", "approve"), "/api/projects/alpha/jobs/003/approve");
+  assert.equal(projects.jobPathFor("beta", "003", "cancel"), "/api/projects/beta/jobs/003/cancel");
+  // A job id of project alpha is never built against another project: the project argument decides.
+  assert.notEqual(projects.jobPathFor("alpha", "003", "rework"), projects.jobPathFor("beta", "003", "rework"));
+});
+
+test("jobPathFor refuses unsafe parts", () => {
+  for (const args of [["", "1", "approve"], ["..", "1", "approve"], ["a/b", "1", "approve"], ["a", "x", "approve"], ["a", "1", "delete"], [null, "1", "approve"], ["a", "../1", "approve"]]) {
+    assert.equal(projects.jobPathFor(...args), null, JSON.stringify(args));
+  }
+});
+
+test("action buttons carry their project", () => {
+  const board = require("../static/board.js");
+  const html = board.actionButtons({ id: "003", project: "alpha", actions: ["approve", "cancel"] });
+  assert.equal((html.match(/data-act-project="alpha"/g) || []).length, 2);
+});
+
 test("errorText shows the stable code and the message", () => {
   assert.equal(projects.errorText({ error: { code: "conflict", message: "busy" } }, 409), "conflict: busy");
   assert.equal(projects.errorText({ error: { code: "token_rejected", message: "m" } }, 502), "token_rejected: m");

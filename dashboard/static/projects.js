@@ -108,7 +108,22 @@
     return `HTTP ${status}`;
   }
 
+  // A reply belongs to the project its request was made for. After a tab switch it is dropped.
+  function acceptReply(startedFor, selected) {
+    return startedFor === selected;
+  }
+
+  // The API path of a job action, built from the project the button carries. Null for unsafe parts.
+  function jobPathFor(project, id, action) {
+    if (typeof project !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(project) || project === "." || project === "..") return null;
+    if (!isSafeId(id)) return null;
+    if (action !== "approve" && action !== "rework" && action !== "cancel") return null;
+    return `/api/projects/${encodeURIComponent(project)}/jobs/${id}/${action}`;
+  }
+
   const api = {
+    acceptReply,
+    jobPathFor,
     renderProjectTabs,
     renderProjectNote,
     selectProject,
