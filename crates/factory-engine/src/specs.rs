@@ -257,11 +257,20 @@ impl Engine<'_> {
             String::new()
         };
         // Round 2 and later review only the fix, so the reviewer does not reopen settled ground.
-        let rereview = if round >= 2 {
+        // It needs earlier findings to judge, so a round after a checks-only fix is a normal review.
+        let rereview = if round > 1 && earlier.exists() {
             "This is a scoped re-review. Give a verdict for each earlier finding: fixed, not fixed, or wrong. \
+             A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. \
              Inspect the fix diff only. Report anything you notice outside it under `Out-of-scope observations`, without changing the verdict.\n"
         } else {
             ""
+        };
+        // The builder's reply to the findings, when it wrote one, holds its push-back reasons.
+        let builder_reply = self.job_dir.join(format!("builder-r{round}.md"));
+        let reply_line = if rereview.is_empty() || !builder_reply.exists() {
+            String::new()
+        } else {
+            format!("The builder's reply to those findings is at {}. It may explain why a finding was not changed.\n", builder_reply.display())
         };
         let rules_line = if rules.is_empty() { String::new() } else { format!("{}\n", rules.join(" ")) };
         let mut context = String::new();
@@ -277,7 +286,7 @@ impl Engine<'_> {
         let prompt = format!(
             "Review this round's diff for the job.\n\
              Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan} (read it only to look up one step), and the worktree at {cwd}. \
-             Round {round}.\n{spec_line}{earlier_line}{rereview}{context}\
+             Round {round}.\n{spec_line}{earlier_line}{reply_line}{rereview}{context}\
              Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
              {rules_line}\
              Check: the diff does what the plan asks and nothing else; correctness and edge cases; tests that would fail without the change; no debug leftovers. \

@@ -431,7 +431,15 @@ fn the_choice_is_written_to_the_ledger() {
 }
 
 fn direct_prompt(round: u32, extra: &ReviewerExtra) -> String {
+    direct_prompt_with(round, extra, &["review-code-r1.md"])
+}
+
+/// The prompt for a round when the given files exist in the job dir.
+fn direct_prompt_with(round: u32, extra: &ReviewerExtra, files: &[&str]) -> String {
     let fx = committing_fixture();
+    for f in files {
+        std::fs::write(fx.job_dir.join(f), "1. [blocker] x\n").expect("write");
+    }
     let rr = reviewer("ok\nVERDICT: APPROVE");
     fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), round, &[], extra).prompt
 }
@@ -470,4 +478,30 @@ fn round_two_still_carries_review_focus() {
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
     assert!(prompt.contains("builder task 1: kept the old name"), "{prompt}");
     assert!(prompt.contains("Out-of-scope observations"), "{prompt}");
+}
+
+#[test]
+fn round_two_without_a_round_one_review_is_a_normal_review() {
+    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new() };
+    let prompt = direct_prompt_with(2, &extra, &[]);
+    assert!(!prompt.contains("scoped re-review"), "{prompt}");
+    assert!(!prompt.contains("fix diff only"), "{prompt}");
+    assert!(!prompt.contains("Check that each was fixed"), "{prompt}");
+    assert!(prompt.contains("Check the lease handling."), "{prompt}");
+    assert!(prompt.contains("builder task 1: kept the old name"), "{prompt}");
+}
+
+#[test]
+fn the_rereview_rule_keeps_the_tag_of_an_unfixed_finding() {
+    let prompt = direct_prompt(2, &ReviewerExtra::default());
+    assert!(prompt.contains("A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag."), "{prompt}");
+}
+
+#[test]
+fn the_rereview_prompt_names_the_builder_reply_when_it_exists() {
+    let with = direct_prompt_with(2, &ReviewerExtra::default(), &["review-code-r1.md", "builder-r2.md"]);
+    assert!(with.contains("builder-r2.md"), "{with}");
+    assert!(with.contains("builder's reply to those findings"), "{with}");
+    let without = direct_prompt(2, &ReviewerExtra::default());
+    assert!(!without.contains("builder-r2.md"), "{without}");
 }
