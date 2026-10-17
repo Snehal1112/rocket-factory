@@ -15,7 +15,9 @@ Each plan has at most 3 tasks and runs after the one before it. Plans 1 to 3 are
 | 5 | `plan-05-factoryd.md` | `factoryd`: registry, spawning drivers, limits, recovery | done |
 | 6 | `plan-06-api-and-dashboard.md` | API, token, event stream, multi-project dashboard | done |
 | 7 | `plan-07-global-command-and-daily-budget.md` | Global `/factory` command, daily budget | done |
-| 8 | to be written before it runs | Move Rocket over, dry run, remove `tools/factory` from Rocket, add RocketVault | not written |
+| 8 | `plan-08-port-rocket-factory-changes.md` | Port the 19 Rocket factory commits made after the extraction (batch committer, task excerpts, ticket hygiene, live token bar) | written |
+| 9 | to be written before it runs | Register Rocket, dry run, one real job, remove `tools/factory` from Rocket | not written |
+| 10 | to be written before it runs | Add RocketVault (go preset, bun checks, `v-4.0.0`, ignored `.claude/`) | not written |
 
 ## Why plans 2 to 8 are not written yet
 
