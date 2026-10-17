@@ -1,11 +1,14 @@
 //! The home-wide settings in `config.toml`.
 
+use std::net::SocketAddr;
+
 use serde::Deserialize;
 
 use crate::{CoreError, Home};
 
 const DEFAULT_MAX_PARALLEL: u32 = 2;
 const MAX_PARALLEL_CAP: u32 = 64;
+const DEFAULT_LISTEN: &str = "127.0.0.1:8766";
 
 /// The contents of `<home>/config.toml`. A missing file is the default.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -13,11 +16,13 @@ const MAX_PARALLEL_CAP: u32 = 64;
 pub struct HomeConfig {
     /// How many projects the supervisor runs at once. 1 to 64.
     pub max_parallel: u32,
+    /// Where the local API listens. Must be a loopback address, port 0 picks a free port.
+    pub listen: String,
 }
 
 impl Default for HomeConfig {
     fn default() -> Self {
-        HomeConfig { max_parallel: DEFAULT_MAX_PARALLEL }
+        HomeConfig { max_parallel: DEFAULT_MAX_PARALLEL, listen: DEFAULT_LISTEN.to_string() }
     }
 }
 
@@ -29,6 +34,14 @@ impl HomeConfig {
             return Err(CoreError::Config(format!(
                 "bad home config: max_parallel must be 1 to {MAX_PARALLEL_CAP}"
             )));
+        }
+        match cfg.listen.parse::<SocketAddr>() {
+            Ok(addr) if addr.ip().is_loopback() => {}
+            _ => {
+                return Err(CoreError::Config(format!(
+                    "bad home config: listen must be a loopback address like {DEFAULT_LISTEN}"
+                )))
+            }
         }
         Ok(cfg)
     }
@@ -78,6 +91,15 @@ mod tests {
         assert!(load_text(Some("max_parallel = -1\n")).is_err());
         assert!(load_text(Some("nope = 1\n")).is_err());
         assert!(load_text(Some("max_parallel = = 1")).is_err());
+    }
+
+    #[test]
+    fn listen_defaults_and_accepts_loopback_only() {
+        assert_eq!(load_text(None).expect("ok").listen, "127.0.0.1:8766");
+        assert_eq!(load_text(Some("listen = \"127.0.0.1:0\"\n")).expect("ok").listen, "127.0.0.1:0");
+        assert!(load_text(Some("listen = \"0.0.0.0:8766\"\n")).is_err());
+        assert!(load_text(Some("listen = \"192.168.1.5:80\"\n")).is_err());
+        assert!(load_text(Some("listen = \"nonsense\"\n")).is_err());
     }
 
     #[test]

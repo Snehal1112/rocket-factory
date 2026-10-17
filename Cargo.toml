@@ -24,3 +24,4 @@ clap = { version = "4", features = ["derive"] }
 git2 = "0.19"
 fs2 = "0.4"
 tempfile = "3"
+tiny_http = "0.12"

@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use factory_core::{Home, HomeConfig};
+use factory_supervisor::api::{ApiDeps, ApiServer};
 use factory_supervisor::lock::stop_file;
+use factory_supervisor::token;
 use factory_supervisor::request::{Action, Request};
 use factory_supervisor::{pid_alive, queue, records, InstanceLock, Outcome, ProcessSpawner, QueueItem, Supervisor};
 
@@ -66,8 +68,15 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
         println!("started {}, finished {}, rejected {}", report.started.len(), report.finished.len(), report.rejected.len());
         return Ok(());
     }
+    // A bind failure ends factoryd here, before any job is taken.
+    let listen: std::net::SocketAddr = cfg.listen.parse().map_err(|e| format!("listen {:?}: {e}", cfg.listen))?;
+    token::ensure(&home).map_err(|e| e.to_string())?;
+    let deps = ApiDeps { now_ms: std::sync::Arc::new(now_ms) };
+    let api = ApiServer::start(home.clone(), listen, deps).map_err(|e| e.to_string())?;
+    println!("api listening on {}", api.addr);
     let stop_home = home.clone();
     sup.run_loop(factory_supervisor::supervisor::clamp_interval(Duration::from_millis(interval_ms)), &move || Supervisor::stop_requested(&stop_home));
+    api.stop();
     Ok(())
 }
 

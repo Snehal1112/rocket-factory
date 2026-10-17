@@ -10,6 +10,7 @@ const RESULTS_DIR: &str = "results";
 const RUN_DIR: &str = "run";
 const LOGS_DIR: &str = "logs";
 const CHILDREN_DIR: &str = "children";
+const TOKEN_FILE: &str = "api.token";
 
 /// The folder that holds `presets/` and `projects/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +39,11 @@ impl Home {
     /// The home-wide settings file.
     pub fn config_file(&self) -> PathBuf {
         self.dir.join(CONFIG_FILE)
+    }
+
+    /// The secret the local API asks for in the `Authorization` header.
+    pub fn token_file(&self) -> PathBuf {
+        self.dir.join(TOKEN_FILE)
     }
 
     /// Where requests wait for the supervisor.
@@ -103,6 +109,7 @@ mod tests {
         assert_eq!(h.run_dir(), PathBuf::from("/h/run"));
         assert_eq!(h.children_dir(), PathBuf::from("/h/run/children"));
         assert_eq!(h.logs_dir("p"), PathBuf::from("/h/logs/p"));
+        assert_eq!(h.token_file(), PathBuf::from("/h/api.token"));
     }
 
     #[test]

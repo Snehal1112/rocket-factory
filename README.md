@@ -90,7 +90,7 @@ parallel. It lives in the factory home (`$FACTORY_HOME`, else `~/.factory`):
 - `results/` holds one JSON file per finished request (`Merged`, `NeedsHuman`, `Failed`, `Rejected` or `Lost`).
 - `run/` holds the child records of running jobs, one per project.
 - `logs/<project>/<request>.out` and `.err` hold the output of each child.
-- `config.toml` may set `max_parallel` (how many projects run at once).
+- `config.toml` may set `max_parallel` (how many projects run at once) and `listen` (the API address).
 
 ```
 factoryd enqueue --project myproj --job 003        # add a request (--series, --approve)
@@ -112,6 +112,33 @@ request was started before a crash but left no child record (its log files exist
 by `factoryd`. Read the `.out` and `.err` logs and the job ledger, then run `factory run <job>` again by hand or
 enqueue a new request. A project whose lease belongs to a live driver that is not a child of `factoryd` (for
 example a manual `factory run`) is reported as busy and nothing starts for it until that process ends.
+
+#### The local API
+
+`factoryd run` also serves a small JSON API for the dashboard and other local tools.
+
+- The token is a random secret in `<home>/api.token` (mode `0600`). It is created when absent and never rewritten.
+  Send it as `Authorization: Bearer <token>`. `factoryd` never prints it.
+- `listen` in `config.toml` sets the address, default `127.0.0.1:8766`. Only loopback addresses are accepted
+  (port `0` picks a free port). A bind failure stops `factoryd` before it takes any job.
+- The `Host` header must name `127.0.0.1`, `localhost` or `[::1]`, else the answer is `400 bad_request`.
+- At most 16 requests are served at once; one more gets `409 conflict` ("busy").
+
+| Endpoint | Answer |
+|---|---|
+| `GET /projects` | `[{name, repo, preset, baseBranch, status, reason, stateDir, jobsDir, activeJob}]`, `status` is `ready`, `busy` or `disabled` |
+| `GET /projects/{p}/jobs` | `{jobs, queued, lastResults}` from the board, the queue and the result records |
+| `GET /usage?days=N` | `{days, projects: [{name, total, perDay: [{day, tokens}]}]}`, weighted tokens per UTC day, `N` 1 to 90 (default 14) |
+
+Errors are `{"error": {"code", "message"}}` with these codes: `unauthorized` (401), `bad_request` (400),
+`not_found` (404), `method_not_allowed` (405), `conflict` (409) and `internal` (500). A wrong, missing or short
+token always gets the same 401 body.
+
+```
+TOKEN=$(cat ~/.factory/api.token)
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8766/projects
+curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8766/usage?days=7"
+```
 
 ### Rust preset checks
 

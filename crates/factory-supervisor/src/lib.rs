@@ -1,4 +1,5 @@
 //! The supervisor library: requests, the queue, runtime records and the scheduler.
+pub mod api;
 pub mod lock;
 pub mod procinfo;
 pub mod queue;
@@ -7,6 +8,7 @@ pub mod request;
 pub mod scheduler;
 pub mod spawn;
 pub mod supervisor;
+pub mod token;
 
 pub use queue::{QueueError, QueueItem};
 pub use records::{ChildRecord, Outcome, RecordError, ResultRecord};
