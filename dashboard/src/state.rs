@@ -82,6 +82,8 @@ pub struct TokenView {
     pub budget: u64,
     /// Weighted over budget, always between 0 and 1.
     pub fraction: f64,
+    /// True when the total comes from a running agent's events and is ahead of the board.
+    pub live: bool,
 }
 
 fn is_terminal(stage: &str) -> bool {
@@ -124,7 +126,20 @@ pub fn token_view(job: &Job) -> Option<TokenView> {
     } else {
         (tokens.weighted as f64 / budget as f64).clamp(0.0, 1.0)
     };
-    Some(TokenView { weighted: tokens.weighted, raw: tokens.raw, budget, fraction })
+    Some(TokenView { weighted: tokens.weighted, raw: tokens.raw, budget, fraction, live: false })
+}
+
+/// The card bar figures: the board total, or the highest running total from the job's agent events
+/// when that is ahead. The board is written only when an agent run ends, so a running agent is ahead of it.
+pub fn live_token_view(job: &Job, agents: &[AgentState]) -> Option<TokenView> {
+    let board = token_view(job);
+    let live = agents.iter().map(|a| a.tokens_weighted).max().unwrap_or(0);
+    if live == 0 || live <= board.as_ref().map_or(0, |v| v.weighted) {
+        return board;
+    }
+    let budget = job.budget_weighted.unwrap_or(DEFAULT_BUDGET_WEIGHTED);
+    let fraction = if budget == 0 { 0.0 } else { (live as f64 / budget as f64).clamp(0.0, 1.0) };
+    Some(TokenView { weighted: live, raw: board.map_or(0, |v| v.raw), budget, fraction, live: true })
 }
 
 fn keep_unassigned(agent: &AgentState, now: f64) -> bool {
@@ -191,6 +206,7 @@ pub fn build_state(
     for view in &mut jobs {
         view.agents
             .sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
+        view.token_view = live_token_view(&view.job, &view.agents);
     }
     unassigned.sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
     let specs = build_spec_cards(&jobs, paths);
@@ -578,6 +594,82 @@ mod tests {
         item.budget_weighted = Some(0);
         assert_eq!(token_view(&item).ok_or("none")?.fraction, 0.0);
         Ok(())
+    }
+
+    fn sample_agent() -> AgentState {
+        AgentState {
+            agent_id: "a1".to_string(),
+            agent_type: "other".to_string(),
+            status: "running".to_string(),
+            started_ts: 100.0,
+            ended_ts: None,
+            last_tool: None,
+            last_target: None,
+            last_tool_ts: None,
+            tool_count: 0,
+            last_message: None,
+            cwd: None,
+            job_id: None,
+            tokens_weighted: 0,
+        }
+    }
+
+    fn agent_with(tokens_weighted: u64) -> AgentState {
+        let mut agent = sample_agent();
+        agent.tokens_weighted = tokens_weighted;
+        agent
+    }
+
+    #[test]
+    fn a_running_agent_moves_the_bar_ahead_of_the_board() {
+        let mut item = job("001", "build", 1.0);
+        item.tokens = Some(Tokens { weighted: 100_000, raw: 800_000 });
+        let view = live_token_view(&item, &[agent_with(250_000)]).expect("view");
+        assert_eq!(view.weighted, 250_000);
+        assert_eq!(view.raw, 800_000);
+        assert!(view.live);
+        assert!((view.fraction - 250_000.0 / DEFAULT_BUDGET_WEIGHTED as f64).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_job_without_board_tokens_gets_a_live_bar_from_its_agent() {
+        let item = job("001", "build", 1.0);
+        let view = live_token_view(&item, &[agent_with(60_000)]).expect("view");
+        assert_eq!((view.weighted, view.raw, view.live), (60_000, 0, true));
+    }
+
+    #[test]
+    fn a_finished_job_keeps_the_board_figure() {
+        let mut item = job("001", "merged", 1.0);
+        item.tokens = Some(Tokens { weighted: 300_000, raw: 2_000_000 });
+        let view = live_token_view(&item, &[agent_with(300_000), agent_with(40_000)]).expect("view");
+        assert_eq!((view.weighted, view.raw, view.live), (300_000, 2_000_000, false));
+    }
+
+    #[test]
+    fn the_board_wins_when_every_agent_total_is_lower() {
+        let mut item = job("001", "build", 1.0);
+        item.tokens = Some(Tokens { weighted: 90_000, raw: 500_000 });
+        let view = live_token_view(&item, &[agent_with(20_000)]).expect("view");
+        assert_eq!((view.weighted, view.live), (90_000, false));
+    }
+
+    #[test]
+    fn no_board_tokens_and_no_agent_tokens_means_no_view() {
+        let item = job("001", "build", 1.0);
+        assert!(live_token_view(&item, &[]).is_none());
+        assert!(live_token_view(&item, &[agent_with(0)]).is_none());
+    }
+
+    #[test]
+    fn the_live_fraction_is_clamped_and_a_zero_budget_gives_zero() {
+        let mut item = job("001", "build", 1.0);
+        item.budget_weighted = Some(1_000);
+        let view = live_token_view(&item, &[agent_with(5_000)]).expect("view");
+        assert_eq!(view.fraction, 1.0);
+        item.budget_weighted = Some(0);
+        let view = live_token_view(&item, &[agent_with(5_000)]).expect("view");
+        assert_eq!(view.fraction, 0.0);
     }
 
     #[test]

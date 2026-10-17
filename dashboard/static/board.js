@@ -298,8 +298,11 @@
     const level = fraction >= 1 ? "stop" : fraction >= 0.8 ? "warn" : "ok";
     const percent = Math.round(fraction * 100);
     const budget = Number.isFinite(view.budget) && view.budget > 0 ? ` of ${formatTokens(view.budget)}` : "";
+    const title = view.live
+      ? "Weighted tokens so far, including the agent that is running, against the job budget."
+      : `Weighted tokens against the job budget. Raw: ${formatTokens(view.raw)}`;
     return (
-      `<div class="tokens tokens-${level}" title="Weighted tokens against the job budget. Raw: ${escapeHtml(formatTokens(view.raw))}">` +
+      `<div class="tokens tokens-${level}" title="${escapeHtml(title)}">` +
       `<span class="tokens-text">${formatTokens(view.weighted)}${budget} tokens (${percent}%${level === "ok" ? "" : `, ${level}`})</span>` +
       `<span class="tokens-bar" aria-hidden="true"><span class="tokens-fill" data-pct="${percent}"></span></span></div>`
     );

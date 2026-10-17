@@ -441,6 +441,16 @@ test("renderCard puts the series chip in the card head", () => {
   assert.doesNotMatch(board.renderCard(makeJob({})), /class="series"/);
 });
 
+test("tokensBar tooltip says live and drops the raw figure when the view is live", () => {
+  const html = board.tokensBar(makeJob({ token_view: { weighted: 250000, raw: 0, budget: 3000000, fraction: 0.083, live: true } }));
+  assert.ok(html.includes("250K"), html);
+  assert.ok(html.includes("including the agent that is running"), html);
+  assert.ok(!html.includes("Raw:"), html);
+  const settled = board.tokensBar(makeJob({ token_view: { weighted: 250000, raw: 1900000, budget: 3000000, fraction: 0.083, live: false } }));
+  assert.ok(settled.includes("Raw: 1.9M"), settled);
+  assert.ok(!settled.includes("running"), settled);
+});
+
 test("tokensBar shows weighted tokens, a bounded bar and a warning level", () => {
   assert.equal(board.tokensBar(makeJob({})), "");
   const half = board.tokensBar(makeJob({ token_view: { weighted: 1500000, raw: 9000000, budget: 3000000, fraction: 0.5 } }));

@@ -31,7 +31,7 @@ The header shows a daily budget strip in home mode when `daily_budget_weighted` 
 
 ## What it reads
 
-- `.superpowers/factory/board.json`: job stages, written by the `factory` driver (the crates under `crates/`, binary in `crates/factory-cli`). Optional `stage_history`, `series`, `series.id`, `cancelled`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped.
+- `.superpowers/factory/board.json`: job stages, written by the `factory` driver (the crates under `crates/`, binary in `crates/factory-cli`). Optional `stage_history`, `series`, `series.id`, `cancelled`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped. The card token bar shows the board total, or the running total from the agent events when that is higher, so it moves while an agent works.
 - `.superpowers/sdd/<job dir>/plan.md`, `spec.md`, `progress.md`: the plan title, spec goal and task list on each card. A task is done when its box is ticked or the ledger says `Task N: complete`; a merged job shows every task done.
 - `.superpowers/factory/events.jsonl`: subagent and tool events, appended by the same driver, with `job_id` and `tokens` on every event. There is no hook.
 
