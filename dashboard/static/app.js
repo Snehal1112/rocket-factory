@@ -293,6 +293,7 @@
     }
     if (selected) storeSelected(selected);
     renderProjects();
+    loadBudget();
     return true;
   }
 
@@ -302,6 +303,36 @@
     } catch (error) {
       // Storage may be blocked. The choice then lasts until the page reloads.
     }
+  }
+
+  // The budget is global: it is not tied to a project, so a tab switch neither clears nor delays it.
+  // A late reply from an older poll is dropped by its sequence number.
+  let budgetSeq = 0;
+  let budgetApplied = 0;
+
+  function showBudget(usage) {
+    const strip = FactoryProjects.budgetStrip(usage);
+    const el = byId("budget");
+    el.hidden = strip.level === "none";
+    const className = `budget budget-${strip.level}`;
+    if (el.className !== className) el.className = className;
+    setText(el, strip.text);
+  }
+
+  async function loadBudget() {
+    if (mode !== "home") return;
+    const seq = ++budgetSeq;
+    let usage = null;
+    try {
+      const response = await fetch("/api/usage", { cache: "no-store" });
+      if (response.ok) usage = await response.json();
+    } catch (error) {
+      usage = null;
+    }
+    // A failed read hides the strip rather than showing an old number as current.
+    if (seq < budgetApplied) return;
+    budgetApplied = seq;
+    showBudget(usage);
   }
 
   function enterHomeMode() {

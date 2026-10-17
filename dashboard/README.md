@@ -27,6 +27,8 @@ rework or cancel one. Errors show as a banner with the stable code (`unauthorize
 `token_missing`, `token_rejected` (the API answered 401), `api_unreachable`, `api_timeout` (a write got no answer within 70 seconds and may still have completed, so check the job list before trying again; the page never retries by itself), `api_error`, `forbidden` (Origin),
 `unsupported_media_type`.
 
+The header shows a daily budget strip in home mode when `daily_budget_weighted` is set in the factory home's `config.toml`: tokens used today against the limit and the UTC reset time. It turns amber from 80% and red at 100% with "New runs are waiting". The strip is global, so it is not tied to the selected project, and it is hidden when there is no limit or the usage call fails. Its text is built from numbers and a fixed phrase only.
+
 ## What it reads
 
 - `.superpowers/factory/board.json`: job stages, written by the `factory` driver (the crates under `crates/`, binary in `crates/factory-cli`). Optional `stage_history`, `series`, `series.id`, `cancelled`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped.
@@ -53,6 +55,7 @@ It never writes any of these files. If it is not running, the factory works the 
 | `GET /api/projects` | home mode only: `[{name, repo, preset, baseBranch, status, reason, activeJob}]` by name (404 with `--root`, which is how the page tells the modes apart) |
 | `GET /api/projects/{p}/state` | home mode: the same state view for one project |
 | `GET /api/projects/{p}/jobs/{id}/park` | home mode: park details of a job |
+| `GET /api/usage` | home mode only (404 with `--root`): factoryd `GET /usage?days=14`, token added server-side, same error codes as the other routes. The page reads `dailyBudget` (`{limit, used, resetsAt}`) from it |
 | `POST /api/projects/{p}/jobs` | home mode: create a job, forwarded to factoryd (body: `spec`, `plans`, `model?`, `slug?`, `run`, `series`) |
 | `POST /api/projects/{p}/jobs/{id}/approve`, `rework`, `cancel` | home mode: forwarded to factoryd unchanged |
 

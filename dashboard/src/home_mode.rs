@@ -354,8 +354,23 @@ fn forward_write(home: &HomeState, request: &Request, api_path: &str) -> Reply {
     }
 }
 
-/// Handles every `/api/projects` route. Other paths return `None` and fall through to the shared routes.
+/// The usage of every project, for the daily budget strip. The page only reads `dailyBudget` from it.
+fn api_usage(home: &HomeState) -> Reply {
+    match get_api(home, "/usage?days=14") {
+        Ok(reply) => forward(reply),
+        Err(reply) => reply,
+    }
+}
+
+/// Handles every `/api/projects` route and `/api/usage`. Other paths return `None` and fall through to the shared routes.
 pub fn route(home: &HomeState, request: &Request, path: &str, now: f64) -> Option<Reply> {
+    if path == "/api/usage" {
+        return Some(if request.method == "GET" {
+            api_usage(home)
+        } else {
+            error_reply(405, "method_not_allowed", "Method not allowed.")
+        });
+    }
     let rest = path.strip_prefix("/api/projects")?;
     let is_get = request.method == "GET";
     let is_post = request.method == "POST";
@@ -450,6 +465,8 @@ mod tests {
                     (401, r#"{"error":{"code":"unauthorized","message":"a valid bearer token is required"}}"#.to_string())
                 } else if method == "GET" && url == "/projects" {
                     (200, projects.to_string())
+                } else if method == "GET" && url == "/usage?days=14" {
+                    (200, r#"{"days":14,"projects":[],"dailyBudget":{"limit":100,"used":42,"resetsAt":"2026-10-18T00:00:00Z"}}"#.to_string())
                 } else {
                     (post_status, post_body.clone())
                 };
@@ -585,6 +602,36 @@ mod tests {
             assert!(!String::from_utf8_lossy(&reply.body).contains(TOKEN));
             assert!(!reply.content_type.contains(TOKEN));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn usage_is_forwarded_with_the_token_added_server_side() -> TestResult {
+        let s = setup()?;
+        let reply = get(&s.app, "/api/usage");
+        assert_eq!(reply.status, 200);
+        let json: Value = serde_json::from_slice(&reply.body)?;
+        assert_eq!(json["dailyBudget"]["used"], 42);
+        assert!(!String::from_utf8_lossy(&reply.body).contains(TOKEN));
+        let calls = s.fake.calls();
+        let call = calls.iter().find(|c| c.url == "/usage?days=14").ok_or("usage call")?;
+        assert_eq!(call.auth.as_deref(), Some(format!("Bearer {TOKEN}").as_str()));
+        assert_eq!(post(&s.app, "/api/usage", Some(HOST), Some("http://127.0.0.1:9"), Some("application/json"), b"{}").status, 405);
+        Ok(())
+    }
+
+    #[test]
+    fn usage_maps_an_api_401_and_a_dead_api() -> TestResult {
+        let s = setup_with("another-token", 201, "{}")?;
+        let reply = get(&s.app, "/api/usage");
+        assert_eq!(reply.status, 502);
+        let json: Value = serde_json::from_slice(&reply.body)?;
+        assert_eq!(json["error"]["code"], "token_rejected");
+        let home = tempfile::tempdir()?;
+        std::fs::write(home.path().join("api.token"), format!("{TOKEN}\n"))?;
+        let dead = App::for_home(home.path().to_path_buf(), "127.0.0.1:1".to_string());
+        let json: Value = serde_json::from_slice(&get(&dead, "/api/usage").body)?;
+        assert_eq!(json["error"]["code"], "api_unreachable");
         Ok(())
     }
 

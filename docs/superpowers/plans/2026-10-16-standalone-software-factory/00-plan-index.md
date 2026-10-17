@@ -14,7 +14,7 @@ Each plan has at most 3 tasks and runs after the one before it. Plans 1 to 3 are
 | 4 | `plan-04-project-lease-and-project-flag.md` | Project lease (one job per project), `--project` CLI flag | done |
 | 5 | `plan-05-factoryd.md` | `factoryd`: registry, spawning drivers, limits, recovery | done |
 | 6 | `plan-06-api-and-dashboard.md` | API, token, event stream, multi-project dashboard | done |
-| 7 | `plan-07-global-command-and-daily-budget.md` | Global `/factory` command, daily budget | written |
+| 7 | `plan-07-global-command-and-daily-budget.md` | Global `/factory` command, daily budget | done |
 | 8 | to be written before it runs | Move Rocket over, dry run, remove `tools/factory` from Rocket, add RocketVault | not written |
 
 ## Why plans 2 to 8 are not written yet

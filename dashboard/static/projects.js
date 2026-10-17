@@ -121,7 +121,40 @@
     return `/api/projects/${encodeURIComponent(project)}/jobs/${id}/${action}`;
   }
 
+  function count(value) {
+    return String(Math.floor(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  // "2026-10-18 00:00 UTC" from an RFC 3339 time, or "" when it is not a time.
+  function utcText(value) {
+    if (typeof value !== "string") return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  }
+
+  // The daily budget strip from a /api/usage reply. Global: it never depends on the selected project.
+  // The text is built from numbers and fixed words only, so it is safe to show with textContent.
+  function budgetStrip(usage) {
+    const none = { text: "", level: "none" };
+    const budget = usage && usage.dailyBudget;
+    if (!budget || typeof budget !== "object") return none;
+    const { limit, used } = budget;
+    if (typeof limit !== "number" || typeof used !== "number") return none;
+    if (!Number.isFinite(limit) || !Number.isFinite(used) || limit <= 0 || used < 0) return none;
+    const percent = Math.floor((used * 100) / limit);
+    const reset = utcText(budget.resetsAt);
+    const until = reset ? ` until ${reset}` : "";
+    if (used >= limit) {
+      return { text: `Daily budget used up: ${count(used)} of ${count(limit)} tokens. New runs are waiting${until}.`, level: "stop" };
+    }
+    const level = used * 100 >= limit * 80 ? "warn" : "ok";
+    const resets = reset ? `, resets ${reset}` : "";
+    return { text: `Daily budget: ${count(used)} of ${count(limit)} tokens used (${percent}%)${resets}.`, level };
+  }
+
   const api = {
+    budgetStrip,
     acceptReply,
     jobPathFor,
     renderProjectTabs,

@@ -113,5 +113,15 @@ if [ -n "$request_id" ]; then pass "a valid create answers with a request id"; e
 check "the request reached factoryd" bash -c "grep -rl '$request_id' '$FACTORY_HOME' >/dev/null"
 check "the create reply does not carry the token" bash -c "! printf '%s' '$reply' | grep -q '$token'"
 
+# The daily budget strip: absent without a limit, present with one and a usage fixture for today.
+check "/api/usage has no dailyBudget without a limit" bash -c "curl -fs $url/api/usage | jq -e 'has(\"dailyBudget\") | not'"
+check "/api/usage refuses a POST with 405" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST $url/api/usage)\" = 405 ]"
+jobs_dir="$(curl -fs -H "Authorization: Bearer $token" "http://127.0.0.1:$api_port/projects" | jq -r '.[] | select(.name == "alpha") | .jobsDir')"
+mkdir -p "$jobs_dir/001"
+printf '{"input":1000,"cache_read":0,"ts":%s}\n' "$(date +%s)" >"$jobs_dir/001/usage.jsonl"
+printf 'daily_budget_weighted = 5000\n' >>"$FACTORY_HOME/config.toml"
+check "/api/usage shows dailyBudget with a limit" bash -c "curl -fs $url/api/usage | jq -e '.dailyBudget.limit == 5000 and .dailyBudget.used == 1000 and (.dailyBudget.resetsAt | test(\"Z\$\"))'"
+check "/api/usage does not carry the token" bash -c "! (curl -fs $url/api/usage | grep -q '$token')"
+
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; fi
 exit $((fails > 0))

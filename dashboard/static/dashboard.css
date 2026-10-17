@@ -353,3 +353,7 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .act-dialog h2 { margin: 0 0 0.7rem; font-size: 14px; }
 .act-dialog label { margin-bottom: 0.6rem; }
 .act-buttons { display: flex; gap: 0.5rem; }
+.budget { margin: 1rem 0 0; padding: 0.4rem 0.8rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--muted-foreground); }
+.budget[hidden] { display: none; }
+.budget-warn { border-color: var(--attention); background: var(--attention-wash); color: var(--attention); }
+.budget-stop { border-color: var(--destructive); background: var(--destructive-wash); color: var(--destructive); }

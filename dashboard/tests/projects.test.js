@@ -146,3 +146,52 @@ test("buildCancelBody keeps reason and force only when set", () => {
   assert.deepEqual(projects.buildCancelBody("", false), {});
   assert.deepEqual(projects.buildCancelBody(" why ", true), { reason: "why", force: true });
 });
+
+const budget = (limit, used, resetsAt = "2026-10-18T00:00:00Z") => ({ days: 14, projects: [], dailyBudget: { limit, used, resetsAt } });
+
+test("budgetStrip is none without a dailyBudget", () => {
+  assert.equal(projects.budgetStrip({ days: 14, projects: [] }).level, "none");
+  assert.equal(projects.budgetStrip(null).level, "none");
+  assert.equal(projects.budgetStrip({ dailyBudget: null }).level, "none");
+  assert.equal(projects.budgetStrip(budget(0, 5)).level, "none");
+  assert.equal(projects.budgetStrip(budget("x", 5)).level, "none");
+  assert.equal(projects.budgetStrip(budget(100, -1)).level, "none");
+  assert.equal(projects.budgetStrip(budget(100, 1)).text, projects.budgetStrip(budget(100, 1)).text);
+  assert.equal(projects.budgetStrip({ days: 1 }).text, "");
+});
+
+test("budgetStrip levels follow the share used", () => {
+  assert.equal(projects.budgetStrip(budget(100, 79)).level, "ok");
+  assert.equal(projects.budgetStrip(budget(100, 0)).level, "ok");
+  assert.equal(projects.budgetStrip(budget(100, 80)).level, "warn");
+  assert.equal(projects.budgetStrip(budget(100, 99)).level, "warn");
+  assert.equal(projects.budgetStrip(budget(100, 100)).level, "stop");
+  assert.equal(projects.budgetStrip(budget(100, 250)).level, "stop");
+});
+
+test("budgetStrip formats counts and shows the reset time in UTC", () => {
+  const strip = projects.budgetStrip(budget(5000000, 1234567));
+  assert.match(strip.text, /1,234,567/);
+  assert.match(strip.text, /5,000,000/);
+  assert.match(strip.text, /24%/);
+  assert.match(strip.text, /2026-10-18 00:00 UTC/);
+});
+
+test("budgetStrip says new runs are waiting at the limit", () => {
+  const strip = projects.budgetStrip(budget(100, 100));
+  assert.match(strip.text, /New runs are waiting/);
+  assert.match(strip.text, /2026-10-18 00:00 UTC/);
+});
+
+test("budgetStrip text holds numbers and a fixed phrase only", () => {
+  const hostile = projects.budgetStrip(budget(100, 50, "<img src=x onerror=1>"));
+  assert.ok(!/[<>"&]/.test(hostile.text));
+  assert.ok(!hostile.text.includes("img"));
+  const odd = projects.budgetStrip({ dailyBudget: { limit: "<b>100</b>", used: "<i>1</i>", resetsAt: "<x>" } });
+  assert.equal(odd.level, "none");
+  assert.ok(!/[<>]/.test(odd.text));
+});
+
+test("budgetStrip is global: it takes only the usage reply, never a project", () => {
+  assert.equal(projects.budgetStrip.length, 1);
+});

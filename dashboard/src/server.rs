@@ -666,6 +666,7 @@ mod tests {
         let (_dir, app) = app_with_board(Some(JOB))?;
         let host = Some("127.0.0.1:1");
         assert_eq!(route(&app, "GET", "/api/projects", host, 1, 5.0).status, 404);
+        assert_eq!(route(&app, "GET", "/api/usage", host, 1, 5.0).status, 404);
         assert_eq!(route(&app, "POST", "/api/projects/x/jobs", host, 1, 5.0).status, 405);
         Ok(())
     }
@@ -675,7 +676,7 @@ mod tests {
         let (_dir, app) = app_with_board(None)?;
         let host = Some("127.0.0.1:1");
         let html = String::from_utf8(route(&app, "GET", "/", host, 1, 5.0).body)?;
-        for part in ["/projects.js", r#"id="project-tabs""#, r#"id="banner""#, r#"id="newjob""#, r#"id="nj-series""#, r#"id="act-dialog""#] {
+        for part in ["/projects.js", r#"id="project-tabs""#, r#"id="banner""#, r#"id="newjob""#, r#"id="nj-series""#, r#"id="act-dialog""#, r#"id="budget""#] {
             assert!(html.contains(part), "missing {part}");
         }
         let projects = route(&app, "GET", "/projects.js", host, 1, 5.0);
