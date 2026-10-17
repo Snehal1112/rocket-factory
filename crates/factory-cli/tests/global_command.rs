@@ -194,8 +194,12 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "run_in_background",
         "Do not poll",
         "exact shape",
+        "`tickets <digits>` (nothing after the digits)",
+        "<factory> --project <name> tickets <id>",
+        "## Follow-ups",
+        "`#N` or as the issue URL",
         "rework needs a note",
-        "argument-hint: \"<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id> | cleanup <id>\"",
+        "argument-hint: \"<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id> | cleanup <id> | tickets <id>\"",
     ] {
         assert!(text.contains(needed), "missing phrase: {needed}");
     }

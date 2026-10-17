@@ -1,6 +1,6 @@
 ---
 description: Run the software factory on the current project (brainstorm, plan, then the driver builds, checks, reviews and merges)
-argument-hint: "<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id> | cleanup <id>"
+argument-hint: "<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id> | cleanup <id> | tickets <id>"
 ---
 
 # Factory
@@ -24,6 +24,7 @@ Match by exact shape only, on the whole argument string:
 - `approve <digits>` (nothing after the digits)
 - `cancel <digits>` (nothing after the digits)
 - `cleanup <digits>` (nothing after the digits)
+- `tickets <digits>` (nothing after the digits)
 - `rework <digits> <note>` with a non-empty note
 
 Anything else is a feature text, for example `next button for pagination`, `status page for jobs`, `approve button for forms` or `cancel dialog 12 layout`. A feature may start or end with the single token `--opus`. Remove that token from the text and pass `--model opus` to `<factory> --project <name> new`. If the argument is `rework <digits>` with no note, print `rework needs a note: /factory rework <id> <note>` and stop without calling `<factory>`. If the argument is empty, print the argument hint and stop.
@@ -37,6 +38,7 @@ Each is one call and a one-line report of the output, nothing more:
 - `rework <id> <note>`: `<factory> --project <name> rework <id> '<note>'` (the driver accepts a one-line note of at most 200 characters and refuses anything else)
 - `cancel <id>`: `<factory> --project <name> cancel <id>`
 - `cleanup <id>`: `<factory> --project <name> cleanup <id>`
+- `tickets <id>`: `<factory> --project <name> tickets <id>`
 
 Always escape the note when you put it in the shell: wrap text in single quotes and write an embedded single quote as `'\''`.
 
@@ -51,6 +53,7 @@ The driver validates the spec and the plans when it creates the job, so both mus
    - Coverage gate: ask at least one question per topic, or have the user say that the topic does not apply. Do not write the spec until every topic has an answer or an `n/a: <reason>` line from the user. The spec has a `## Decisions` section that lists each topic with the question asked and the answer, or the `n/a: <reason>` line.
    - Propose 2 to 3 approaches with trade-offs and a recommendation. Present the design in sections and get the user's approval after each section.
    - Save the spec as `docs/superpowers/specs/<date>-<slug>-design.md`. It must have a `## Goal` section of at least 8 words and a `## Acceptance criteria` section with one bullet per check, and no `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences, because the driver refuses a spec without them. Headings must be exact level-2 lines such as `## Goal`. The spec also has `## Decisions` and `## Non-goals`, and Behavior that must not change, Design and Tests and measurement sections as the topic needs.
+   - The spec also has a `## Follow-ups` section that lists, one bullet per piece, the work of the ticket that this spec does not build. Leave the section out when the ticket is fully done. The factory files one ticket per bullet and closes the ticket after the last plan merges.
    - Run the skill's spec self-review (placeholders, contradictions, scope, ambiguity) and fix what it finds. Stage the spec path, check that `git diff --cached --name-only` lists only that path, and commit through the `dev-workflow-skills:1-git-commit` skill with a pathspec (`git commit --only -- <spec path>`), so files staged by anything else stay out. Then show the spec to the user and wait for an explicit approval. If the user asks for changes, edit the spec, run the self-review again, commit it the same way and ask for approval again. Do not write any plan before that approval.
 2. Invoke `superpowers:writing-plans` yourself. The factory driver is the execution method: skip the skill's execution handoff question and do not offer to run the plans yourself. Save every plan in `docs/superpowers/plans/<date>-<slug>/`. Rules for each plan:
    - the header has Goal, Architecture, Tech Stack, the repo-relative path of the spec file (`docs/superpowers/specs/<date>-<slug>-design.md`), Global Constraints and Review Focus, as `superpowers:writing-plans` describes
@@ -61,7 +64,7 @@ The driver validates the spec and the plans when it creates the job, so both mus
    - every acceptance criterion of the spec is covered by a task, and the Review Focus lines name the tests that pin them
    - the last line of the file is `Next plan: docs/superpowers/plans/<date>-<slug>/plan-NN-<slug>.md` (the repo-relative path of the next plan file), or exactly `Next plan: none` in the last plan
 3. Always validate before creating the job: every plan has at most 3 tasks (count the `### Task` headings), each plan's last line starts with `Next plan:`, the chain of paths leads from `plan-01-<slug>.md` to the final `Next plan: none`, every plan file in the folder is on that chain, and the spec file exists with a non-empty `## Goal` and `## Acceptance criteria` and no placeholder. If something is wrong, fix the plan with the user. Do not run an invalid series. Then list the plans for the user and wait for an explicit approval of the plans. After that approval stage the plan paths, check that `git diff --cached --name-only` lists only them, and commit through the `dev-workflow-skills:1-git-commit` skill with a pathspec (`git commit --only -- <plan paths>`). If the user asks for plan changes, edit the plans, commit them the same way and ask for approval again. Do not run `<factory> --project <name> new` before that approval.
-4. Run `<factory> --project <name> new <slug> '<feature>' --plans docs/superpowers/plans/<date>-<slug> --spec docs/superpowers/specs/<date>-<slug>-design.md`, adding `--model opus` when `--opus` was given. Escape the feature text as above, so quotes, `$`, backticks and newlines stay literal. Its output is `created job <id> in <folder>`. Read the job id and the folder name from it. The driver checks the spec and copies it into every job's folder.
+4. Run `<factory> --project <name> new <slug> '<feature>' --plans docs/superpowers/plans/<date>-<slug> --spec docs/superpowers/specs/<date>-<slug>-design.md`, adding `--model opus` when `--opus` was given. Escape the feature text as above, so quotes, `$`, backticks and newlines stay literal. Its output is `created job <id> in <folder>`. Read the job id and the folder name from it. The driver checks the spec and copies it into every job's folder. When the work belongs to a GitHub ticket, put it in the feature text as `#N` or as the issue URL, so the driver can write the footer and file the follow-ups.
 5. Start the run. First run `factoryd is-running`. If it exits 0, a supervisor is running: run `factoryd enqueue --project <name> --job <id> --series`, which prints a request id, then run `factoryd status` once. If the first line of that output contains `reached`, tell the user in one line that the run is queued as that request id and waits for the daily budget, giving the reset time from that line; otherwise tell the user in one line that the factory is running, with the request id. For any other exit code of `factoryd is-running` (including command not found) treat it as not running: run `<factory> --project <name> run <id> --series` as a Bash command with `run_in_background` set to true, and tell the user in one line that the factory is running. Then stop. Do not poll, do not sleep, do not read logs. The supervisor or the harness reports the end.
 6. When the run ends (the harness notifies you for a background run; with the supervisor the user asks, or the dashboard shows it), run `<factory> --project <name> status` once and report the line for this job. If it is `needs-human`, add that the user can run `/factory approve <id>` or `/factory rework <id> <note>`.
 
