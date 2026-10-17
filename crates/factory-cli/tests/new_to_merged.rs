@@ -122,3 +122,23 @@ fn kb_refresh_refuses_a_job_that_is_not_merged() {
     let e = fx.run(&["kb-refresh", "--job", "1"]).expect_err("not merged");
     assert!(e.to_string().contains("not merged"), "{e}");
 }
+
+#[test]
+fn approve_refuses_a_job_with_a_pending_batch_commit() {
+    let fx = Fixture::with_risk_path("docs/**");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    );
+    store
+        .update_job("001", |j| {
+            j.batch_snapshot = Some("abc1234".to_string());
+            Ok(())
+        })
+        .expect("mark");
+    let e = fx.run(&["approve", "1"]).expect_err("pending batch");
+    assert!(e.to_string().contains("pending batch commit"), "{e}");
+}

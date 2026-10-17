@@ -252,7 +252,8 @@ fn the_first_task_call_stays_in_build_and_names_only_task_one() {
 
 #[test]
 fn the_last_task_call_records_head_and_moves_to_review() {
-    let fx = two_task_fixture();
+    let mut fx = two_task_fixture();
+    fx.config.commit_batch = false;
     let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
@@ -407,7 +408,8 @@ fn a_task_builder_that_commits_on_its_own_parks_with_its_number() {
 
 #[test]
 fn the_committer_prompt_names_the_kind_the_task_the_plan_and_the_base_as_floor() {
-    let fx = two_task_fixture();
+    let mut fx = two_task_fixture();
+    fx.config.commit_batch = false;
     let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     let prompt = runner.last_spec_for("committer").expect("committer spec").prompt;
@@ -471,7 +473,8 @@ fn a_committer_that_rewrites_the_reviewed_head_parks_the_fix_round() {
 
 #[test]
 fn a_committer_that_rewrites_an_earlier_task_commit_leaves_a_ruling() {
-    let fx = two_task_fixture();
+    let mut fx = two_task_fixture();
+    fx.config.commit_batch = false;
     let first = scripted_auto(vec![change_effect("a.txt", 3)]);
     fx.engine(&first).build_stage().expect("task 1");
     let second = scripted(vec![change_effect("b.txt", 2), amend_effect("feat(test): tasks one and two")]);
@@ -624,4 +627,101 @@ fn the_task_builder_prompt_takes_read_first_and_rules_from_the_config() {
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(!prompt.contains("Rules:") && !prompt.contains("CLAUDE.md"), "{prompt}");
     assert!(prompt.contains(&format!("Read the plan at {}.", off.plan_file.display())), "{prompt}");
+}
+
+const THREE_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n\n### Task 3: third thing\n\nz\n";
+
+fn three_task_fixture() -> Fixture {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, THREE_TASKS).expect("plan");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").set_stage(Stage::Build, None, false, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    fx
+}
+
+#[test]
+fn a_three_task_plan_runs_one_committer_and_leaves_no_snapshots() {
+    let fx = three_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2), change_effect("c.txt", 4)]);
+    let e = fx.engine(&runner);
+    assert_eq!(e.build_stage().expect("task 1"), StageOutcome::Advanced(Stage::Build));
+    assert_eq!(e.build_stage().expect("task 2"), StageOutcome::Advanced(Stage::Build));
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(prompt.contains("wip: task 1 first thing"), "{prompt}");
+    assert_eq!(runner.specs_for("committer").len(), 0);
+    assert_eq!(e.build_stage().expect("task 3"), StageOutcome::Advanced(Stage::Review));
+    assert_eq!(runner.specs_for("committer").len(), 1);
+    let batch = runner.last_spec_for("committer").expect("committer");
+    assert!(batch.prompt.contains("Kind: batch"), "{}", batch.prompt);
+    for want in ["Task 1: first thing", "Task 2: second thing", "Task 3: third thing"] {
+        assert!(batch.prompt.contains(want), "missing {want}");
+    }
+    let job = fx.job();
+    assert_eq!(job.stage, Stage::Review);
+    assert_eq!(job.task_index, 3);
+    assert!(job.batch_snapshot.is_none());
+    let head = job.head.clone().expect("head");
+    let base = job.base.clone().expect("base");
+    let commits = fx.repo.commits_above(&base, &head).expect("commits");
+    assert!(!commits.is_empty());
+    assert!(commits.iter().all(|c| !c.subject.starts_with("wip:")), "{commits:?}");
+    assert_eq!(fx.repo.tip(&job.branch).expect("tip"), head);
+}
+
+#[test]
+fn an_empty_task_still_parks_with_the_batch_flag_on() {
+    let fx = three_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    match e.build_stage().expect("task 2") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("task 2 changed nothing"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(fx.job().task_index, 1);
+    assert_eq!(runner.specs_for("committer").len(), 0);
+}
+
+#[test]
+fn the_flag_off_keeps_one_committer_per_task() {
+    let mut fx = two_task_fixture();
+    fx.config.commit_batch = false;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    assert_eq!(runner.specs_for("committer").len(), 2);
+    assert!(fx.job().batch_snapshot.is_none());
+}
+
+#[test]
+fn a_parked_batch_resumes_on_the_next_build_call_without_new_builders() {
+    let fx = two_task_fixture();
+    let detach: Effect = Box::new(|spec| {
+        let repo = git2::Repository::open(&spec.cwd).expect("open");
+        let id = repo.head().expect("head").target().expect("target");
+        repo.set_head_detached(id).expect("detach");
+        "done".to_string()
+    });
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2), detach]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    match e.build_stage().expect("task 2") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("HEAD"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    let parked = fx.job();
+    assert!(parked.batch_snapshot.is_some());
+    assert_eq!(parked.task_index, 2);
+    // The person fixes HEAD and the next call finishes the batch.
+    let wt = parked.worktree.clone().expect("worktree");
+    let repo = git2::Repository::open(&wt).expect("open");
+    repo.set_head(&format!("refs/heads/{}", parked.branch)).expect("reattach");
+    let runner2 = scripted_auto(vec![]);
+    let out = fx.engine(&runner2).build_stage().expect("resume");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    assert_eq!(runner2.specs_for("builder").len(), 0);
+    let job = fx.job();
+    assert!(job.batch_snapshot.is_none() && job.head.is_some());
 }

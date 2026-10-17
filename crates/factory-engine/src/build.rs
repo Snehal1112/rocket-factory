@@ -4,11 +4,16 @@ use factory_agent::StopReason;
 use factory_core::{agent_files_rel_dir, is_agent_file_name, AGENT_EXCLUDE_PATTERN, ParkKind, ParkPart, Stage, TaskState};
 use factory_git::{CommitInfo, JobRef, Worktree};
 
-use crate::commit::{CommitKind, CommitOutcome, CommitRequest};
+use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
 use crate::park::builder_stop_parts;
 use crate::ports::{git_err, now, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{Engine, EngineError, StageOutcome};
+
+/// The subject of a task snapshot commit. The batch committer replaces it.
+fn snapshot_subject(n: u32, title: &str) -> String {
+    format!("wip: task {n} {title}")
+}
 
 impl Engine<'_> {
     /// Runs the builder, then records the new head. With a task list in `plan.md` it runs one task agent per
@@ -16,6 +21,10 @@ impl Engine<'_> {
     pub fn build_stage(&self) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;
         let tasks = parse_tasks(&std::fs::read_to_string(&self.plan_file).unwrap_or_default());
+        // A pending batch commit resumes before any builder runs.
+        if job.batch_snapshot.is_some() {
+            return self.resume_batch(&job, &tasks);
+        }
         // A job that already has a builder session but no task count is a legacy whole-plan job.
         let legacy = job.session_id.is_some() && job.task_index == 0;
         if !legacy && (job.task_index as usize) < tasks.len() {
@@ -262,27 +271,104 @@ impl Engine<'_> {
                 Vec::new(),
             );
         }
-        let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
         let wt = self.job_worktree(job, &cwd, &base, &branch);
-        let new_tip = match self.commit_work(&wt, CommitKind::Task, &task.title, &base, &job.issues)? {
-            CommitOutcome::Committed { tip, .. } => tip,
-            CommitOutcome::NothingStaged => return self.park_with(ParkKind::NothingChanged, format!("task {} changed nothing", task.n), Vec::new()),
-            CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
+        let new_tip = if self.config.commit_batch {
+            let staged = self.repo.stage_all(&wt).map_err(git_err)?;
+            if staged.is_empty() {
+                return self.park_with(ParkKind::NothingChanged, format!("task {} changed nothing", task.n), Vec::new());
+            }
+            self.repo.commit_staged(&wt, &snapshot_subject(task.n, &task.title)).map_err(git_err)?
+        } else {
+            let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
+            let new_tip = match self.commit_work(&wt, CommitKind::Task, &task.title, &base, &job.issues)? {
+                CommitOutcome::Committed { tip, .. } => tip,
+                CommitOutcome::NothingStaged => {
+                    return self.park_with(ParkKind::NothingChanged, format!("task {} changed nothing", task.n), Vec::new())
+                }
+                CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
+            };
+            self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
+            new_tip
         };
-        self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
         let short = new_tip.get(..7).unwrap_or(&new_tip).to_string();
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
         let session = run.session_id.clone().or(job.session_id.clone());
         let next = job.task_index + 1;
+        let last = next as usize >= tasks.len();
+        let snapshot = (self.config.commit_batch && last).then(|| new_tip.clone());
         self.update(|j| {
             j.builder_id = session;
             j.task_index = next;
+            j.batch_snapshot = snapshot;
             Ok(())
         })?;
-        if (next as usize) < tasks.len() {
+        if !last {
             return Ok(StageOutcome::Advanced(Stage::Build));
         }
+        if self.config.commit_batch {
+            let job = self.job()?;
+            return self.resume_batch(&job, tasks);
+        }
         self.finish_build(job, &base, new_tip, job.head.clone())
+    }
+
+    /// Runs the one committer of a job after its last task. It is safe to call again after a park:
+    /// the branch is either still at the snapshot tip or already reset to the base.
+    fn resume_batch(&self, job: &JobView, tasks: &[PlanTask]) -> Result<StageOutcome, EngineError> {
+        let snapshot = job.batch_snapshot.clone().ok_or_else(|| EngineError::Msg("no pending batch commit".into()))?;
+        let (cwd, base) = self.existing_worktree(job)?;
+        let branch = job.branch.clone();
+        let wt = self.job_worktree(job, &cwd, &base, &branch);
+        let tip = self.repo.tip(&branch).map_err(git_err)?;
+        if tip == snapshot {
+            self.repo.reset_soft(&wt, &base).map_err(git_err)?;
+        } else if tip != base {
+            return self.park_with(ParkKind::CommitFailed, "the branch moved during the batch commit".to_string(), Vec::new());
+        }
+        // The committer does not read a rework note, so it must not reach a later fix round.
+        let _ = std::fs::remove_file(self.job_dir.join("rework-note.md"));
+        let snaps = self.snapshot_refs(&base, &snapshot, tasks)?;
+        let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
+        let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
+        let (title, goal) = (plan_title(&plan), spec_goal(&spec));
+        let req = CommitRequest {
+            kind: CommitKind::Batch,
+            plan_title: &title,
+            task_title: &title,
+            goal: &goal,
+            floor: &base,
+            issues: &job.issues,
+            snapshots: &snaps,
+        };
+        let head = match self.commit_step(&wt, &req)? {
+            CommitOutcome::Committed { tip, .. } => tip,
+            CommitOutcome::NothingStaged => {
+                return self.park_with(ParkKind::NothingChanged, "the batch commit found nothing staged".to_string(), Vec::new())
+            }
+            CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
+        };
+        let short = head.get(..7).unwrap_or(&head).to_string();
+        self.ruling(&format!("batch commit replaced {} snapshots, the branch is at {short}", snaps.len()))?;
+        self.update(|j| {
+            j.batch_snapshot = None;
+            Ok(())
+        })?;
+        self.finish_build(job, &base, head, job.head.clone())
+    }
+
+    /// The snapshot commits above the base, oldest first, matched to the plan tasks by position.
+    fn snapshot_refs(&self, base: &str, snapshot: &str, tasks: &[PlanTask]) -> Result<Vec<SnapshotRef>, EngineError> {
+        let commits = self.repo.commits_above(base, snapshot).map_err(git_err)?;
+        Ok(commits
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| SnapshotRef {
+                n: tasks.get(i).map_or(i as u32 + 1, |t| t.n),
+                sha: c.sha,
+                title: tasks.get(i).map_or_else(|| c.subject.clone(), |t| t.title.clone()),
+                files: c.files,
+            })
+            .collect())
     }
 
     /// Checks the diff cap, records the head and moves the job to review.

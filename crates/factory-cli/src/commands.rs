@@ -305,6 +305,9 @@ fn approve(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
             job.stage
         )));
     }
+    if job.batch_snapshot.is_some() {
+        return Err(CliError::Refused(format!("job {id} has a pending batch commit, use rework to finish it")));
+    }
     // The project lease is held through the merge and released on every exit path.
     let _project = d.hold_project(id)?;
     // The driver takes the job lease and its heartbeat renews it until the guard below releases it.
