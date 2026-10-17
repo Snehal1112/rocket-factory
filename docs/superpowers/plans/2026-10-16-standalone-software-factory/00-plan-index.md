@@ -17,7 +17,7 @@ Each plan has at most 3 tasks and runs after the one before it. Plans 1 to 3 are
 | 7 | `plan-07-global-command-and-daily-budget.md` | Global `/factory` command, daily budget | done |
 | 8 | `plan-08-port-rocket-factory-changes.md` | Port the 19 Rocket factory commits made after the extraction (batch committer, task excerpts, ticket hygiene, live token bar) | done |
 | 9 | `plan-09-register-rocket.md` | Register Rocket, dry run, one real job (#108), move `tools/factory` out of Rocket into `~/data/rocket/Archive/rocket-tools-factory/` (an archive move, not a delete) | done |
-| 10 | `plan-10-register-rocketvault.md` | Add RocketVault (go preset, bun checks, `v-4.0.0`, ignored `.claude/`) | written |
+| 10 | `plan-10-register-rocketvault.md` | Add RocketVault (go preset, bun checks, `v-4.0.0`, ignored `.claude/`) | tasks 1 and 2 done, the real job (task 3) waits for the user |
 
 The original step 8 of the spec is now plans 8 (this port), 9 (move Rocket: register, dry run, move `tools/factory` to the archive) and 10 (RocketVault).
 
