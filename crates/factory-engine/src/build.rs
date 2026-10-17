@@ -10,6 +10,9 @@ use crate::ports::{git_err, now, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{Engine, EngineError, StageOutcome};
 
+/// The most characters of a builder reply kept in `builder-r{round}.md`.
+const REPLY_CAP: usize = 6000;
+
 /// The subject of a task snapshot commit. The batch committer replaces it.
 fn snapshot_subject(n: u32, title: &str) -> String {
     format!("wip: task {n} {title}")
@@ -65,6 +68,8 @@ impl Engine<'_> {
             j.builder_id = session;
             Ok(())
         })?;
+        // The reply to the findings may hold push-back reasons, so keep it for the reviewer and the human.
+        let reply = if new_work { None } else { self.save_builder_reply(job.round, &run.result_text) };
         if run.stop_reason != StopReason::Done {
             return self.park_with(ParkKind::BuilderStopped, format!("builder stopped: {:?}", run.stop_reason), builder_stop_parts(&run));
         }
@@ -94,12 +99,24 @@ impl Engine<'_> {
                     return self.nothing_changed_after_checks(&job, &base, tip_before, previous_head);
                 }
                 let why = if new_work { "builder made no changes" } else { "builder made no changes on resume" };
-                return self.park_with(ParkKind::NothingChanged, why.to_string(), Vec::new());
+                let parts = reply.map(|text| ParkPart::new("Builder reply", "builder", &text)).into_iter().collect();
+                return self.park_with(ParkKind::NothingChanged, why.to_string(), parts);
             }
             CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
         };
         self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
+    }
+
+    /// Writes the builder's reply to a fix round as `builder-r{round}.md` in the job folder.
+    /// Returns the saved text, or `None` when the reply is empty or the file cannot be written.
+    fn save_builder_reply(&self, round: u32, reply: &str) -> Option<String> {
+        let text: String = reply.trim().chars().take(REPLY_CAP).collect();
+        if text.is_empty() {
+            return None;
+        }
+        std::fs::write(self.job_dir.join(format!("builder-r{round}.md")), &text).ok()?;
+        Some(text)
     }
 
     /// A fix round that started from failed checks changed nothing. The checks run again once: when they pass,

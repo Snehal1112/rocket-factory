@@ -155,6 +155,63 @@ fn a_no_change_fix_round_after_a_review_still_parks_as_nothing_changed() {
     assert_eq!(fx.job().park_kind.as_deref(), Some("nothing-changed"));
 }
 
+fn reply_effect(text: &'static str) -> Effect {
+    Box::new(move |_| text.to_string())
+}
+
+#[test]
+fn a_resume_that_pushes_back_on_everything_parks_with_the_reply_as_a_part() {
+    let fx = committing_fixture();
+    let reason = "Finding 1 is wrong: the lease is released in Drop, see lease.rs:40.";
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), reply_effect(reason)]);
+    fix_round_from(&fx, &runner, Some("review"));
+    match fx.engine(&runner).build_stage().expect("resume") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::NothingChanged);
+    assert_eq!(rec.parts.len(), 1, "{:?}", rec.parts);
+    assert!(rec.parts[0].text.contains("lease is released in Drop"), "{}", rec.parts[0].text);
+    let saved = std::fs::read_to_string(fx.job_dir.join("builder-r2.md")).expect("builder-r2.md");
+    assert!(saved.contains("lease is released in Drop"), "{saved}");
+}
+
+#[test]
+fn a_resume_that_changes_code_still_saves_its_reply() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), Box::new(|spec| {
+        std::fs::write(spec.cwd.join("b.txt"), "x\n").expect("write");
+        "Fixed 1. Finding 2 is wrong because of the cap.".to_string()
+    })]);
+    fix_round_from(&fx, &runner, Some("review"));
+    let out = fx.engine(&runner).build_stage().expect("resume");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let saved = std::fs::read_to_string(fx.job_dir.join("builder-r2.md")).expect("builder-r2.md");
+    assert!(saved.contains("Finding 2 is wrong because of the cap."), "{saved}");
+}
+
+#[test]
+fn a_resume_reply_of_needs_context_or_blocked_parks_without_committing() {
+    for (reply, word) in [("Status: NEEDS_CONTEXT which of the two findings applies?", "which of the two findings"), ("BLOCKED: the schema file is gone", "schema file is gone")] {
+        let fx = committing_fixture();
+        let runner = scripted_auto(vec![change_effect("a.txt", 3), Box::new(move |spec| {
+            std::fs::write(spec.cwd.join("b.txt"), "x\n").expect("write");
+            reply.to_string()
+        })]);
+        fix_round_from(&fx, &runner, Some("review"));
+        let tip = fx.repo.tip(&fx.job().branch).expect("tip");
+        match fx.engine(&runner).build_stage().expect("resume") {
+            StageOutcome::NeedsHuman(r) => assert!(r.contains(word), "{r}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(fx.job().park_kind.as_deref(), Some("builder-blocked"));
+        assert_eq!(fx.repo.tip(&fx.job().branch).expect("tip"), tip, "nothing was committed");
+        let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+        assert!(rec.reason.contains(word), "{}", rec.reason);
+    }
+}
+
 #[test]
 fn diff_over_the_cap_parks_the_job() {
     let mut fx = committing_fixture();
@@ -1227,6 +1284,20 @@ fn a_failing_task_check_is_a_ledger_line_not_a_park() {
     assert!(ledger.contains("task 1 checks: fail false"), "{ledger}");
     let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
     assert!(md.contains("FAIL false"), "{md}");
+}
+
+#[test]
+fn a_failing_check_after_task_two_is_reported_against_task_two() {
+    let mut fx = two_task_fixture();
+    fx.config.checks = vec![rule("a.txt", "true"), rule("b.txt", "false")];
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let ledger = ledger_of(&fx);
+    assert!(ledger.contains("task 2 checks: fail false"), "{ledger}");
+    assert!(ledger.contains("task 1 checks: pass"), "{ledger}");
+    assert!(!ledger.contains("task 1 checks: fail"), "{ledger}");
 }
 
 #[test]
