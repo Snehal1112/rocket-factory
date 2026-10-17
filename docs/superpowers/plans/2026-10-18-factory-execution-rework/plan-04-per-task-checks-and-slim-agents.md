@@ -1,10 +1,10 @@
-# Per-task checks and token controls Implementation Plan
+# Per-task checks and slimmer agent starts Implementation Plan
 
 > **For agentic workers:** This plan is executed by the factory driver using `superpowers:subagent-driven-development`: one fresh `factory-builder` implementer per task, no per-task review, and the driver does the ledger, commits and the final review. Do not commit. Steps use checkbox syntax for tracking.
 
 **Goal:** Record check results against each task, slim the builder and reviewer agent starts, and take every turn cap from one place.
 
-**Architecture:** A new `run_checks_between` runs the mapped checks over one task's diff and writes `checks-task{n}.md`. The result is a ledger line only, so fix rounds and budgets are unchanged. Builder and reviewer specs get `strict_mcp` and a tool list like the committer. Turn caps become public constants that a test compares with every agent file's `maxTurns`.
+**Architecture:** `run_checks_between` runs the mapped checks over one task's diff and records the result in the ledger only. Builder and reviewer specs get `strict_mcp` and a tool list. Turn caps become public constants compared with every agent file.
 
 **Tech Stack:** Rust, cargo with `-j4`, `factory-checks`, `factory-agent` (`AgentSpec`, `fake-claude`).
 
@@ -54,10 +54,10 @@
 - Produces: `pub const BUILDER_MAX_TURNS: u32 = 120`, `pub const REVIEWER_MAX_TURNS: u32 = 40`, `pub const BUILDER_TOOLS: &str = "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent"` in `specs.rs`, re-exported from the engine crate.
 - Produces: builder specs (`builder_first_spec`, `builder_task_spec`, `builder_resume_spec`) with `strict_mcp = true`, `tools = Some(BUILDER_TOOLS)`; reviewer spec with `strict_mcp = true` and `max_turns = Some(REVIEWER_MAX_TURNS)`.
 
-- [ ] **Step 0: Keep the old texts first.** Before editing any preset agent file, copy each current `crates/factory-core/presets/{rust,go}/agents/factory-builder.md` and `factory-code-reviewer.md` unchanged to `crates/factory-core/presets/legacy/<preset>-<file name>` (four files, still saying `maxTurns: 150` for the builder). Plan 05 Task 3 embeds them as the known-old texts for `factory presets refresh`. Nothing embeds them in this plan.
+- [ ] **Step 0: Keep the old texts first.** Before editing any preset agent file, copy each current `crates/factory-core/presets/{rust,go}/agents/factory-builder.md` and `factory-code-reviewer.md` unchanged to `crates/factory-core/presets/legacy/<preset>-<file name>` (four files, still saying `maxTurns: 150` for the builder). Command plan 03 embeds them as the known-old texts for `factory presets refresh`. Nothing embeds them in this plan.
 - [ ] **Step 1: Write the failing tests.** `build_checks.rs`: `builder_specs_are_strict_and_name_their_tools` (all three builder specs: `strict_mcp`, `tools == BUILDER_TOOLS`, `max_turns == Some(120)`). `review_decide.rs`: `the_reviewer_spec_is_strict_and_capped`. `agent_lint.rs`: `agent_max_turns_match_the_driver_constants` (read `maxTurns` from `.claude/agents/factory-builder.md`, both preset builders, `factory-code-reviewer.md` in-repo and presets; assert builder files equal `BUILDER_MAX_TURNS`, reviewer files equal `REVIEWER_MAX_TURNS`, message names the file). Run them and confirm failure (builder files say 150).
 - [ ] **Step 2: Implement** the constants and the spec changes; set `maxTurns: 120` in the three builder agent files. Update the `Some(120)` assertion at `build_checks.rs` if it moved.
 - [ ] **Step 3: Verify the flags reach the command line.** Add `factory-agent/tests/stream.rs` coverage `builder_args_carry_strict_mcp_and_tools` that builds an `AgentSpec` with the same settings and asserts `--strict-mcp-config` and `--tools Bash,...` appear in `args()`.
 - [ ] **Step 4: Verify.** Run `cargo test -j4 -p factory-engine`, `cargo test -j4 -p factory-agent`, `cargo test -j4 -p factory-cli --test agent_lint`. Expected: pass.
 
-Next plan: docs/superpowers/plans/2026-10-18-factory-interview-cards-and-execution/plan-03-draft-cards-driver.md
+Next plan: docs/superpowers/plans/2026-10-18-factory-execution-rework/plan-05-reviewer-model-and-job-budget.md
