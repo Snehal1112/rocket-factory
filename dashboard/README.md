@@ -1,6 +1,6 @@
 # factory-server
 
-Local dashboard for the software factory in this repo. It is dev tooling and is not shipped.
+Local dashboard for the software factory. It is dev tooling and is not shipped.
 
 ## Run
 
@@ -9,6 +9,23 @@ cargo run -j4 --manifest-path dashboard/Cargo.toml -- --root <project checkout> 
 ```
 
 Open http://127.0.0.1:8765/. `--root` is the main checkout (the folder that holds `.superpowers/`). Default port 8765.
+
+### Home mode
+
+```bash
+cargo run -j4 --manifest-path dashboard/Cargo.toml -- --home ~/.factory --api 127.0.0.1:8766 --port 8765
+```
+
+`--home` shows every project of a factory home and needs `factoryd run` for the API. `--home` and `--root` cannot be
+used together, and `--api` (default `127.0.0.1:8766`) must be a loopback `host:port`. The server reads
+`<home>/api.token` for each call and sends it as `Authorization: Bearer ...`. The token never appears in a page, a
+reply body, a header or a log line. The page title is "Software factory" and there is a tab per project. A project
+the API marks `disabled` shows its reason and an empty board. The board, events, costs and job folders come from the
+API's `stateDir` and `jobsDir`; a missing file shows empty, never an error. The page can create a job and approve,
+rework or cancel one. Errors show as a banner with the stable code (`unauthorized`, `bad_request`, `not_found`,
+`method_not_allowed`, `project_disabled`, `conflict`, `failed`), plus these from the dashboard itself:
+`token_missing`, `token_rejected` (the API answered 401), `api_unreachable`, `api_error`, `forbidden` (Origin),
+`unsupported_media_type`.
 
 ## What it reads
 
@@ -30,18 +47,27 @@ It never writes any of these files. If it is not running, the factory works the 
 |---|---|
 | `/` and `/dashboard.html` | the page |
 | `/dashboard.css`, `/board.js`, `/patch.js`, `/app.js` | page assets |
-| `/api/state` | JSON: `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `specs[]` (`series_id`, `title`, `goal`, `stage`, `plans[]`), `unassigned_agents[]` |
+| `/projects.js` | the project, form and action helpers |
+| `/api/state` | JSON (only with `--root`): `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `specs[]` (`series_id`, `title`, `goal`, `stage`, `plans[]`), `unassigned_agents[]` |
 | `/healthz` | `ok` |
+| `GET /api/projects` | home mode only: `[{name, repo, preset, baseBranch, status, reason, activeJob}]` by name (404 with `--root`, which is how the page tells the modes apart) |
+| `GET /api/projects/{p}/state` | home mode: the same state view for one project |
+| `GET /api/projects/{p}/jobs/{id}/park` | home mode: park details of a job |
+| `POST /api/projects/{p}/jobs` | home mode: create a job, forwarded to factoryd (body: `spec`, `plans`, `model?`, `slug?`, `run`, `series`) |
+| `POST /api/projects/{p}/jobs/{id}/approve`, `rework`, `cancel` | home mode: forwarded to factoryd unchanged |
 
-Only `GET` is accepted, only `127.0.0.1` is bound, and a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The CSP has `default-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'none'`.
+Without `--home` only `GET` is accepted. In home mode a write also needs an `Origin` header equal to `http://<Host>` and `Content-Type: application/json`; a refused write (403 or 415) never reaches factoryd, and a body over 64 KiB gets 413. Only `127.0.0.1` is bound, and a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The CSP has `default-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'none'`.
 
 ## Tests
 
 ```bash
 cargo test -j4 --manifest-path dashboard/Cargo.toml
-node --test dashboard/tests/board.test.js dashboard/tests/patch.test.js
+node --test dashboard/tests/*.test.js
 bash dashboard/tests/smoke.sh
+bash dashboard/tests/smoke-home.sh
 ```
+
+`smoke-home.sh` starts a real `factoryd` with two temporary projects (and a stub for `factory`), then `factory-server --home`, and checks the project list, the refused writes and a valid create.
 
 The smoke test also covers the park endpoint (404 without a file, the evidence with one, no evidence text in /api/state).
 The smoke test also checks that costs.json reaches /api/state as a group summary without any per-job list, that a job estimate passes through, and that a broken costs.json gives costs null.

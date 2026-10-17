@@ -494,6 +494,19 @@
     );
   }
 
+  const ACTION_LABELS = { approve: "Approve", rework: "Rework", cancel: "Cancel" };
+
+  // Buttons for home mode. The page sets job.actions; without it a card has no buttons.
+  function actionButtons(job) {
+    const list = (Array.isArray(job.actions) ? job.actions : []).filter((name) => ACTION_LABELS[name]);
+    if (list.length === 0) return "";
+    const id = escapeHtml(job.id);
+    const buttons = list
+      .map((name) => `<button type="button" class="act act-${name}" data-act="${name}" data-act-job="${id}">${ACTION_LABELS[name]}</button>`)
+      .join("");
+    return `<div class="job-actions">${buttons}</div>`;
+  }
+
   function renderCard(job, now, specs) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
@@ -539,6 +552,7 @@
       (parked ? "" : agentsSection(job, job.agents || [], now)) +
       (parked ? "" : facts) +
       reason +
+      actionButtons(job) +
       `</article>`
     );
   }
@@ -695,6 +709,7 @@
     reviewChip,
     agentLine,
     renderCard,
+    actionButtons,
     renderSpecCard,
     renderSummary,
     renderBoard,

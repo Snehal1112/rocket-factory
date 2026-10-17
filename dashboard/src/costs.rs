@@ -1,9 +1,12 @@
 //! Reads the driver's `costs.json` for the dashboard. The server never writes it.
 
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+
+use crate::paths::Paths;
 
 /// Median and range over the jobs with exact output counts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -38,9 +41,8 @@ pub struct CostsView {
 }
 
 /// `None` when the file is missing or unreadable.
-pub fn load_costs(root: &Path) -> Option<CostsView> {
-    let path = root.join(".superpowers").join("factory").join("costs.json");
-    let text = std::fs::read_to_string(path).ok()?;
+pub fn load_costs(paths: &Paths) -> Option<CostsView> {
+    let text = std::fs::read_to_string(&paths.costs).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -63,7 +65,7 @@ mod tests {
                 "groups":{"small":{"n":4,"n_approx":4,"median":280000,"low":220000,"high":370000,"roles":{"builder":62},"corrected":null,"extra":1}},
                 "roles":{"builder":62,"reviewer":38}}"#,
         );
-        let v = load_costs(root.path()).expect("costs");
+        let v = load_costs(&Paths::for_root(root.path())).expect("costs");
         assert_eq!(v.groups["small"].median, 280_000);
         assert_eq!(v.roles["reviewer"], 38);
         let json = serde_json::to_string(&v).expect("json");
@@ -73,11 +75,11 @@ mod tests {
     #[test]
     fn a_missing_or_broken_file_gives_none() {
         let root = tempfile::tempdir().expect("tempdir");
-        assert!(load_costs(root.path()).is_none());
+        assert!(load_costs(&Paths::for_root(root.path())).is_none());
         write(root.path(), "not json");
-        assert!(load_costs(root.path()).is_none());
+        assert!(load_costs(&Paths::for_root(root.path())).is_none());
         write(root.path(), r#"{"groups":"nope"}"#);
-        assert!(load_costs(root.path()).is_none());
+        assert!(load_costs(&Paths::for_root(root.path())).is_none());
     }
 
     #[test]
@@ -87,7 +89,7 @@ mod tests {
             root.path(),
             r#"{"groups":{"small":{"n":3,"n_approx":1,"median":3,"low":1,"high":5,"roles":{},"corrected":{"n":2,"median":4,"low":3,"high":5}}},"roles":{}}"#,
         );
-        let v = load_costs(root.path()).expect("costs");
+        let v = load_costs(&Paths::for_root(root.path())).expect("costs");
         assert_eq!(v.groups["small"].corrected.as_ref().map(|c| c.median), Some(4));
     }
 }

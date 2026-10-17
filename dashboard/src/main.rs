@@ -1,13 +1,15 @@
 mod costs;
 mod events;
+mod home_mode;
 mod model;
 mod park;
+mod paths;
 mod plan;
 mod server;
 mod specs;
 mod state;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -15,7 +17,7 @@ fn main() {
         Ok(config) => config,
         Err(message) => {
             eprintln!("factory-server: {message}");
-            eprintln!("usage: factory-server [--root PATH] [--port N]");
+            eprintln!("usage: factory-server [--root PATH | --home DIR [--api HOST:PORT]] [--port N]");
             std::process::exit(2);
         }
     };
@@ -29,18 +31,28 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let app = Arc::new(server::App {
-        root: config.root.clone(),
-        registry: Mutex::new(events::Registry::new()),
+    let app = Arc::new(match &config.home {
+        Some(home) => server::App::for_home(home.clone(), config.api.clone()),
+        None => server::App::for_root(&config.root),
     });
-    if let Some(warning) = server::missing_factory_dir_warning(&config.root) {
-        eprintln!("{warning}");
+    match &app.mode {
+        server::Mode::Root(project) => {
+            if let Some(warning) = server::missing_factory_dir_warning(&config.root) {
+                eprintln!("{warning}");
+            }
+            server::spawn_tailer(Arc::downgrade(project));
+            println!(
+                "factory-server: http://127.0.0.1:{}/ (root {})",
+                config.port,
+                config.root.display()
+            );
+        }
+        server::Mode::Home(home) => println!(
+            "factory-server: http://127.0.0.1:{}/ (home {}, api {})",
+            config.port,
+            home.dir.display(),
+            home.api
+        ),
     }
-    server::spawn_tailer(Arc::clone(&app));
-    println!(
-        "factory-server: http://127.0.0.1:{}/ (root {})",
-        config.port,
-        config.root.display()
-    );
     server::serve(http, app, config.port);
 }

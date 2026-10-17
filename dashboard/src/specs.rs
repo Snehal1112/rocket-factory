@@ -1,10 +1,9 @@
 //! Spec cards: one card per series, built from the plan jobs that share a series id.
 
-use std::path::Path;
-
 use serde::Serialize;
 
 use crate::model::Job;
+use crate::paths::Paths;
 use crate::plan::load_spec;
 use crate::state::JobView;
 
@@ -62,7 +61,7 @@ fn index_of(view: &JobView) -> u32 {
 /// Builds one card per series id. Only a series of two or more plans gets a card, and jobs without a
 /// series id (made before plans got series ids) are left out. The title and goal come from the spec
 /// copy in plan 1's job folder.
-pub fn build_spec_cards(jobs: &[JobView], root: &Path) -> Vec<SpecCard> {
+pub fn build_spec_cards(jobs: &[JobView], paths: &Paths) -> Vec<SpecCard> {
     let mut groups: Vec<(String, Vec<&JobView>)> = Vec::new();
     for view in jobs {
         let Some(series) = view.job.series.as_ref() else { continue };
@@ -82,7 +81,7 @@ pub fn build_spec_cards(jobs: &[JobView], root: &Path) -> Vec<SpecCard> {
             let spec = members
                 .iter()
                 .find(|view| index_of(view) == 1)
-                .and_then(|view| load_spec(root, &view.job.dir));
+                .and_then(|view| load_spec(paths, &view.job.dir));
             let plans: Vec<SpecPlanRow> = members
                 .iter()
                 .map(|view| SpecPlanRow {
@@ -204,7 +203,7 @@ mod tests {
             view("004", "build", 1, 2, Some("S10"), None),
             view("005", "spec", 2, 2, Some("S10"), None),
         ];
-        let cards = build_spec_cards(&jobs, std::path::Path::new("/nonexistent"));
+        let cards = build_spec_cards(&jobs, &Paths::nowhere());
         let ids: Vec<_> = cards.iter().map(|c| c.series_id.as_str()).collect();
         assert_eq!(ids, vec!["S2", "S10"], "groups keep first-appearance order");
         let rows: Vec<_> = cards[0].plans.iter().map(|r| (r.index, r.state.as_str(), r.title.as_deref())).collect();
@@ -219,7 +218,7 @@ mod tests {
             view("001", "merged", 1, 3, None, None),
             view("002", "build", 1, 1, Some("S1"), None),
         ];
-        assert!(build_spec_cards(&jobs, std::path::Path::new("/nonexistent")).is_empty());
+        assert!(build_spec_cards(&jobs, &Paths::nowhere()).is_empty());
     }
 
     #[test]
@@ -229,7 +228,7 @@ mod tests {
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("spec.md"), "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n")?;
         let jobs = vec![view("001", "build", 1, 2, Some("S1"), None), view("002", "spec", 2, 2, Some("S1"), None)];
-        let cards = build_spec_cards(&jobs, root.path());
+        let cards = build_spec_cards(&jobs, &Paths::for_root(root.path()));
         assert_eq!(cards[0].title.as_deref(), Some("Demo spec"));
         assert_eq!(cards[0].goal.as_deref(), Some("Show the plans."));
         Ok(())
@@ -238,7 +237,7 @@ mod tests {
     #[test]
     fn a_series_without_its_plan_one_job_still_gets_a_card_without_a_title() {
         let jobs = vec![view("002", "build", 2, 3, Some("S1"), None), view("003", "spec", 3, 3, Some("S1"), None)];
-        let cards = build_spec_cards(&jobs, std::path::Path::new("/nonexistent"));
+        let cards = build_spec_cards(&jobs, &Paths::nowhere());
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].title, None);
         assert_eq!(cards[0].plans.len(), 2);

@@ -1,32 +1,112 @@
+use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::events::{pump, Registry, Tailer, LOG_WINDOW_BYTES};
+use crate::home_mode;
 use crate::park::{load_park, ParkReply};
+use crate::paths::Paths;
 use crate::state::{build_state, load_board};
 
 const DASHBOARD_HTML: &str = include_str!("../static/dashboard.html");
 const DASHBOARD_CSS: &str = include_str!("../static/dashboard.css");
 const BOARD_JS: &str = include_str!("../static/board.js");
 const PATCH_JS: &str = include_str!("../static/patch.js");
+const PROJECTS_JS: &str = include_str!("../static/projects.js");
 const APP_JS: &str = include_str!("../static/app.js");
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// The most bytes of a request body the server reads. The factory API has the same limit.
+pub const MAX_BODY: usize = 64 * 1024;
+/// The factory API address used when `--api` is absent.
+pub const DEFAULT_API: &str = "127.0.0.1:8766";
 
 pub struct Config {
     pub root: PathBuf,
     pub port: u16,
+    /// Set by `--home`: the factory home to read the API token from.
+    pub home: Option<PathBuf>,
+    pub api: String,
+}
+
+/// One project's folders and the agent registry its event log feeds.
+pub struct Project {
+    pub paths: Paths,
+    pub registry: Mutex<Registry>,
+}
+
+impl Project {
+    pub fn new(paths: Paths) -> Project {
+        Project { paths, registry: Mutex::new(Registry::new()) }
+    }
+}
+
+/// Home mode state: the factory home, the API address and one project value per name.
+pub struct HomeState {
+    pub dir: PathBuf,
+    pub api: String,
+    projects: Mutex<HashMap<String, Arc<Project>>>,
+}
+
+impl HomeState {
+    /// The project for `name`, made on first use. A project whose folders changed gets a new value.
+    pub fn project(&self, name: &str, paths: Paths) -> Option<Arc<Project>> {
+        let mut map = self.projects.lock().ok()?;
+        if let Some(existing) = map.get(name) {
+            if existing.paths == paths {
+                return Some(Arc::clone(existing));
+            }
+        }
+        let project = Arc::new(Project::new(paths));
+        spawn_tailer(Arc::downgrade(&project));
+        map.insert(name.to_string(), Arc::clone(&project));
+        Some(project)
+    }
+}
+
+pub enum Mode {
+    Root(Arc<Project>),
+    Home(HomeState),
 }
 
 pub struct App {
-    pub root: PathBuf,
-    pub registry: Mutex<Registry>,
+    pub mode: Mode,
+}
+
+impl App {
+    pub fn for_root(root: &Path) -> App {
+        App { mode: Mode::Root(Arc::new(Project::new(Paths::for_root(root)))) }
+    }
+
+    pub fn for_home(dir: PathBuf, api: String) -> App {
+        App { mode: Mode::Home(HomeState { dir, api, projects: Mutex::new(HashMap::new()) }) }
+    }
+
+    /// The single project of `--root` mode.
+    #[cfg(test)]
+    pub fn root_project(&self) -> Option<&Arc<Project>> {
+        match &self.mode {
+            Mode::Root(project) => Some(project),
+            Mode::Home(_) => None,
+        }
+    }
 }
 
 pub struct Reply {
     pub status: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+}
+
+/// What `route_request` needs to know about one request.
+pub struct Request<'a> {
+    pub method: &'a str,
+    pub url: &'a str,
+    pub host: Option<&'a str>,
+    pub origin: Option<&'a str>,
+    pub content_type: Option<&'a str>,
+    pub body: &'a [u8],
 }
 
 /// Return a warning line when the factory data folder is missing under the root.
@@ -42,13 +122,21 @@ pub fn missing_factory_dir_warning(root: &Path) -> Option<String> {
 }
 
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
-    let mut root = PathBuf::from(".");
+    let mut root: Option<PathBuf> = None;
+    let mut home: Option<PathBuf> = None;
+    let mut api: Option<String> = None;
     let mut port: u16 = 8765;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--root" => {
-                root = PathBuf::from(iter.next().ok_or("--root needs a path")?);
+                root = Some(PathBuf::from(iter.next().ok_or("--root needs a path")?));
+            }
+            "--home" => {
+                home = Some(PathBuf::from(iter.next().ok_or("--home needs a path")?));
+            }
+            "--api" => {
+                api = Some(iter.next().ok_or("--api needs host:port")?.clone());
             }
             "--port" => {
                 let raw = iter.next().ok_or("--port needs a number")?;
@@ -59,7 +147,17 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
-    Ok(Config { root, port })
+    if home.is_some() && root.is_some() {
+        return Err("--home and --root cannot be used together".to_string());
+    }
+    if api.is_some() && home.is_none() {
+        return Err("--api only works with --home".to_string());
+    }
+    let api = api.unwrap_or_else(|| DEFAULT_API.to_string());
+    if !home_mode::valid_api_addr(&api) {
+        return Err(format!("--api {api:?} must be a loopback host:port"));
+    }
+    Ok(Config { root: root.unwrap_or_else(|| PathBuf::from(".")), port, home, api })
 }
 
 pub fn now_secs() -> f64 {
@@ -77,7 +175,7 @@ pub fn host_allowed(host: Option<&str>, port: u16) -> bool {
     }
 }
 
-fn text(status: u16, body: &str) -> Reply {
+pub fn text(status: u16, body: &str) -> Reply {
     Reply {
         status,
         content_type: "text/plain; charset=utf-8",
@@ -93,19 +191,40 @@ fn asset(content_type: &'static str, body: &str) -> Reply {
     }
 }
 
+pub fn json_reply(status: u16, value: &impl serde::Serialize) -> Reply {
+    match serde_json::to_vec(value) {
+        Ok(body) => Reply { status, content_type: "application/json", body },
+        Err(_) => text(500, "could not encode the reply"),
+    }
+}
+
+/// A request without a body or an Origin, which is all most tests need.
+#[cfg(test)]
 pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, now: f64) -> Reply {
-    if !host_allowed(host, port) {
+    let request = Request { method, url, host, origin: None, content_type: None, body: &[] };
+    route_request(app, &request, port, now)
+}
+
+pub fn route_request(app: &App, request: &Request, port: u16, now: f64) -> Reply {
+    if !host_allowed(request.host, port) {
         return text(403, "forbidden host");
     }
-    if method != "GET" {
+    let path = request.url.split('?').next().unwrap_or("/");
+    if let Mode::Home(home) = &app.mode {
+        if let Some(reply) = home_mode::route(home, request, path, now) {
+            return reply;
+        }
+    }
+    if request.method != "GET" {
         return text(405, "method not allowed");
     }
-    let path = url.split('?').next().unwrap_or("/");
-    if let Some(id) = path
-        .strip_prefix("/api/jobs/")
-        .and_then(|rest| rest.strip_suffix("/park"))
-    {
-        return api_park(app, id);
+    if let Mode::Root(project) = &app.mode {
+        if let Some(id) = path
+            .strip_prefix("/api/jobs/")
+            .and_then(|rest| rest.strip_suffix("/park"))
+        {
+            return api_park(&project.paths, id);
+        }
     }
     match path {
         "/" | "/dashboard.html" => Reply {
@@ -116,21 +235,21 @@ pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, 
         "/dashboard.css" => asset("text/css; charset=utf-8", DASHBOARD_CSS),
         "/board.js" => asset("text/javascript; charset=utf-8", BOARD_JS),
         "/patch.js" => asset("text/javascript; charset=utf-8", PATCH_JS),
+        "/projects.js" => asset("text/javascript; charset=utf-8", PROJECTS_JS),
         "/app.js" => asset("text/javascript; charset=utf-8", APP_JS),
         "/healthz" => text(200, "ok"),
-        "/api/state" => api_state(app, now),
+        "/api/state" => match &app.mode {
+            Mode::Root(project) => state_reply(project, now, None),
+            Mode::Home(_) => text(404, "not found"),
+        },
         _ => text(404, "not found"),
     }
 }
 
-fn api_park(app: &App, id: &str) -> Reply {
-    let board_path = app
-        .root
-        .join(".superpowers")
-        .join("factory")
-        .join("board.json");
-    let (board, _) = load_board(&board_path);
-    match load_park(&app.root, &board, id) {
+/// The park details of one job under `paths`.
+pub fn api_park(paths: &Paths, id: &str) -> Reply {
+    let (board, _) = load_board(&paths.board);
+    match load_park(paths, &board, id) {
         ParkReply::Found(view) => match serde_json::to_vec(&view) {
             Ok(body) => Reply {
                 status: 200,
@@ -144,61 +263,70 @@ fn api_park(app: &App, id: &str) -> Reply {
     }
 }
 
-fn api_state(app: &App, now: f64) -> Reply {
-    let board_path = app
-        .root
-        .join(".superpowers")
-        .join("factory")
-        .join("board.json");
-    let (board, board_error) = load_board(&board_path);
-    let view = match app.registry.lock() {
-        Ok(registry) => build_state(&board, &registry, now, board_error, &app.root),
+/// The state view of one project. `board_note` replaces a missing board error.
+pub fn state_reply(project: &Project, now: f64, board_note: Option<String>) -> Reply {
+    let (board, board_error) = load_board(&project.paths.board);
+    let view = match project.registry.lock() {
+        Ok(registry) => build_state(&board, &registry, now, board_error.or(board_note), &project.paths),
         Err(_) => return text(500, "state lock poisoned"),
     };
-    match serde_json::to_vec(&view) {
-        Ok(body) => Reply {
-            status: 200,
-            content_type: "application/json",
-            body,
-        },
-        Err(_) => text(500, "could not encode state"),
-    }
+    json_reply(200, &view)
 }
 
 /// Content security policy for every reply.
 pub const CSP: &str = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
-/// Tails the event log in a background thread and feeds the registry.
-pub fn spawn_tailer(app: Arc<App>) {
-    let path = app
-        .root
-        .join(".superpowers")
-        .join("factory")
-        .join("events.jsonl");
+/// Tails the event log in a background thread and feeds the registry. It ends when the project is dropped.
+pub fn spawn_tailer(project: Weak<Project>) {
+    let Some(first) = project.upgrade() else { return };
+    let path = first.paths.events.clone();
+    drop(first);
     std::thread::spawn(move || {
         let mut tailer = Tailer::with_window(path, LOG_WINDOW_BYTES);
         loop {
-            pump(&mut tailer, &app.registry, now_secs());
+            let Some(project) = project.upgrade() else { return };
+            pump(&mut tailer, &project.registry, now_secs());
+            drop(project);
             std::thread::sleep(POLL_INTERVAL);
         }
     });
 }
 
+fn header_value(request: &tiny_http::Request, name: &str) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.as_str().as_str().eq_ignore_ascii_case(name))
+        .map(|header| header.value.as_str().to_string())
+}
+
 pub fn serve(server: tiny_http::Server, app: Arc<App>, port: u16) {
-    for request in server.incoming_requests() {
-        let host = request
-            .headers()
-            .iter()
-            .find(|header| header.field.equiv("Host"))
-            .map(|header| header.value.as_str().to_string());
-        let reply = route(
-            &app,
-            request.method().as_str(),
-            request.url(),
-            host.as_deref(),
-            port,
-            now_secs(),
-        );
+    for mut request in server.incoming_requests() {
+        let host = header_value(&request, "Host");
+        let origin = header_value(&request, "Origin");
+        let content_type = header_value(&request, "Content-Type");
+        let method = request.method().as_str().to_string();
+        let url = request.url().to_string();
+        let mut body = Vec::new();
+        let mut too_big = false;
+        if method == "POST" {
+            let limit = (MAX_BODY as u64) + 1;
+            let _ = request.as_reader().take(limit).read_to_end(&mut body);
+            too_big = body.len() > MAX_BODY;
+        }
+        let reply = if too_big {
+            text(413, "request body too large")
+        } else {
+            let parsed = Request {
+                method: &method,
+                url: &url,
+                host: host.as_deref(),
+                origin: origin.as_deref(),
+                content_type: content_type.as_deref(),
+                body: &body,
+            };
+            route_request(&app, &parsed, port, now_secs())
+        };
         let mut response =
             tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
         if let Ok(header) =
@@ -255,10 +383,7 @@ mod tests {
         if let Some(text) = board {
             std::fs::write(factory.join("board.json"), text)?;
         }
-        let app = Arc::new(App {
-            root: dir.path().to_path_buf(),
-            registry: Mutex::new(Registry::new()),
-        });
+        let app = Arc::new(App::for_root(dir.path()));
         Ok((dir, app))
     }
 
@@ -329,7 +454,8 @@ mod tests {
     #[test]
     fn api_state_joins_the_board_and_the_registry() -> TestResult {
         let (_dir, app) = app_with_board(Some(JOB))?;
-        if let Ok(mut registry) = app.registry.lock() {
+        let project = app.root_project().ok_or("no root project")?;
+        if let Ok(mut registry) = project.registry.lock() {
             registry.ingest_line(
                 r#"{"ts":2.0,"hook_event_name":"SubagentStart","agent_id":"s1","agent_type":"factory-spec-writer","cwd":"/r","job_id":"001"}"#,
             );
@@ -509,6 +635,42 @@ mod tests {
         assert!(app_js.contains("renderCostPanel") && app_js.contains(".role-seg"), "controller");
         let css = String::from_utf8(route(&app, "GET", "/dashboard.css", host, 1, 5.0).body)?;
         assert!(css.contains(".cost-table") && css.contains(".role-bar") && css.contains(".estimate"), "styles");
+        Ok(())
+    }
+
+    #[test]
+    fn home_and_root_cannot_be_combined() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+        assert!(parse_args(&args(&["--home", "/h", "--root", "/r"])).is_err());
+        assert!(parse_args(&args(&["--root", "/r", "--home", "/h"])).is_err());
+        let config = parse_args(&args(&["--home", "/h", "--api", "127.0.0.1:9000"])).expect("home parses");
+        assert_eq!(config.home, Some(PathBuf::from("/h")));
+        assert_eq!(config.api, "127.0.0.1:9000");
+        assert_eq!(parse_args(&args(&["--home", "/h"])).expect("default api").api, DEFAULT_API);
+        assert!(parse_args(&args(&["--home", "/h", "--api", "example.com:80"])).is_err());
+        assert!(parse_args(&args(&["--api", "127.0.0.1:9000"])).is_err());
+    }
+
+    #[test]
+    fn root_mode_has_no_project_routes_and_refuses_writes() -> TestResult {
+        let (_dir, app) = app_with_board(Some(JOB))?;
+        let host = Some("127.0.0.1:1");
+        assert_eq!(route(&app, "GET", "/api/projects", host, 1, 5.0).status, 404);
+        assert_eq!(route(&app, "POST", "/api/projects/x/jobs", host, 1, 5.0).status, 405);
+        Ok(())
+    }
+
+    #[test]
+    fn the_page_carries_the_home_mode_pieces() -> TestResult {
+        let (_dir, app) = app_with_board(None)?;
+        let host = Some("127.0.0.1:1");
+        let html = String::from_utf8(route(&app, "GET", "/", host, 1, 5.0).body)?;
+        for part in ["/projects.js", r#"id="project-tabs""#, r#"id="banner""#, r#"id="newjob""#, r#"id="nj-series""#, r#"id="act-dialog""#] {
+            assert!(html.contains(part), "missing {part}");
+        }
+        let projects = route(&app, "GET", "/projects.js", host, 1, 5.0);
+        assert_eq!(projects.status, 200);
+        assert_eq!(projects.content_type, "text/javascript; charset=utf-8");
         Ok(())
     }
 }

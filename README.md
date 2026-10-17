@@ -166,6 +166,18 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8766/projects
 curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8766/usage?days=7"
 ```
 
+#### The dashboard across projects
+
+`factory-server --home <factory home> [--api 127.0.0.1:8766] --port 8765` shows every registered project in one
+page, with a tab per project. It reads the token from `<home>/api.token` on the server and calls the API for the
+project list and every write, so the browser never sees the token. `--api` must be a loopback address and
+defaults to `127.0.0.1:8766`. The board, the event log, the costs file and the job folders of a project come from
+the `stateDir` and `jobsDir` the API reports. `--home` and `--root` cannot be combined, and `--root` keeps its
+single-project behavior. The page can create a job (spec, plans folder, optional model and slug, "Run now" and
+"Run as series") and approve, rework or cancel a job. A write needs an allowed `Host`, an `Origin` equal to
+`http://<Host>` and `Content-Type: application/json`, else the dashboard refuses it before factoryd is called.
+Errors show as a banner with the API's error code (`token_rejected` when factoryd refuses the dashboard's token).
+
 ### Rust preset checks
 
 The rust preset has two check rules. `crates/*/**` runs `cargo check -j4 -p {crate}` and `cargo test -j4 -p {crate}`

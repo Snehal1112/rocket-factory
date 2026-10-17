@@ -1,26 +1,22 @@
 //! Reads the driver's `park.json` for the dashboard. The server never writes it.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::Board;
+use crate::paths::Paths;
 
 /// The file the driver writes into a job folder when it parks the job.
 pub const PARK_FILE: &str = "park.json";
 
-/// `<root>/.superpowers/sdd/<dir>/park.json`, or `None` when `dir` could point outside the sdd folder.
-pub fn park_path(root: &Path, dir: &str) -> Option<PathBuf> {
+/// `<sdd>/<dir>/park.json`, or `None` when `dir` could point outside the sdd folder.
+pub fn park_path(paths: &Paths, dir: &str) -> Option<PathBuf> {
     let bad = dir.is_empty() || dir.contains(['/', '\\', '\0']) || dir.contains("..");
     if bad {
         return None;
     }
-    Some(
-        root.join(".superpowers")
-            .join("sdd")
-            .join(dir)
-            .join(PARK_FILE),
-    )
+    Some(paths.sdd.join(dir).join(PARK_FILE))
 }
 
 /// Most evidence text, in bytes, one reply carries.
@@ -83,19 +79,18 @@ fn cap_parts(view: &mut ParkView) {
 }
 
 /// Loads the park record of one job. The path comes from the board, never from the request.
-pub fn load_park(root: &Path, board: &Board, id: &str) -> ParkReply {
+pub fn load_park(paths: &Paths, board: &Board, id: &str) -> ParkReply {
     if !valid_id(id) {
         return ParkReply::NotFound;
     }
     let Some(job) = board.jobs.iter().find(|j| j.id == id) else {
         return ParkReply::NotFound;
     };
-    let Some(path) = park_path(root, &job.dir) else {
+    let Some(path) = park_path(paths, &job.dir) else {
         return ParkReply::NotFound;
     };
     // A symlinked job folder must not lead outside the sdd folder.
-    let sdd = root.join(".superpowers").join("sdd");
-    let (Ok(real), Ok(real_sdd)) = (path.canonicalize(), sdd.canonicalize()) else {
+    let (Ok(real), Ok(real_sdd)) = (path.canonicalize(), paths.sdd.canonicalize()) else {
         return ParkReply::NotFound;
     };
     if !real.starts_with(&real_sdd) {
@@ -116,10 +111,11 @@ pub fn load_park(root: &Path, board: &Board, id: &str) -> ParkReply {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn park_path_joins_the_job_folder_under_the_sdd_root() {
-        let p = park_path(Path::new("/r"), "2026-10-13-001-x");
+        let p = park_path(&Paths::for_root(Path::new("/r")), "2026-10-13-001-x");
         assert_eq!(
             p,
             Some(PathBuf::from(
@@ -131,11 +127,12 @@ mod tests {
     #[test]
     fn park_path_refuses_anything_that_could_leave_the_folder() {
         for bad in ["", "..", "../x", "a/b", "a\\b", "a/../b", "x\0y", "/abs"] {
-            assert_eq!(park_path(Path::new("/r"), bad), None, "{bad:?}");
+            assert_eq!(park_path(&Paths::for_root(Path::new("/r")), bad), None, "{bad:?}");
         }
     }
 
     use crate::model::Board;
+use crate::paths::Paths;
 
     fn board_with(dir: &str) -> Board {
         let text = format!(
@@ -159,7 +156,7 @@ mod tests {
             r#"{"kind":"checks-failed","reason":"why","at":5,"round":2,"next":["factory rework 001 <note>"],
                 "secret":"x","parts":[{"title":"T","source":"s","text":"body","truncated":false,"extra":1}]}"#,
         );
-        match load_park(root.path(), &board_with("d"), "001") {
+        match load_park(&Paths::for_root(root.path()), &board_with("d"), "001") {
             ParkReply::Found(v) => {
                 assert_eq!(v.kind, "checks-failed");
                 assert_eq!(v.parts[0].text, "body");
@@ -178,17 +175,17 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let board = board_with("d");
         assert!(matches!(
-            load_park(root.path(), &board, "001"),
+            load_park(&Paths::for_root(root.path()), &board, "001"),
             ParkReply::NotFound
         ));
         write_park(root.path(), "d", "{}");
         assert!(matches!(
-            load_park(root.path(), &board, "002"),
+            load_park(&Paths::for_root(root.path()), &board, "002"),
             ParkReply::NotFound
         ));
         for bad in ["", "1", "../1", "00a", "0000000"] {
             assert!(
-                matches!(load_park(root.path(), &board, bad), ParkReply::NotFound),
+                matches!(load_park(&Paths::for_root(root.path()), &board, bad), ParkReply::NotFound),
                 "{bad:?}"
             );
         }
@@ -201,7 +198,7 @@ mod tests {
         for dir in ["..", "../d", "d/..", "a/b"] {
             assert!(
                 matches!(
-                    load_park(root.path(), &board_with(dir), "001"),
+                    load_park(&Paths::for_root(root.path()), &board_with(dir), "001"),
                     ParkReply::NotFound
                 ),
                 "{dir:?}"
@@ -223,7 +220,7 @@ mod tests {
         std::fs::create_dir_all(&sdd).expect("sdd");
         std::os::unix::fs::symlink(outside.path(), sdd.join("d")).expect("symlink");
         assert!(matches!(
-            load_park(root.path(), &board_with("d"), "001"),
+            load_park(&Paths::for_root(root.path()), &board_with("d"), "001"),
             ParkReply::NotFound
         ));
     }
@@ -233,12 +230,12 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         write_park(root.path(), "d", "not json");
         assert!(matches!(
-            load_park(root.path(), &board_with("d"), "001"),
+            load_park(&Paths::for_root(root.path()), &board_with("d"), "001"),
             ParkReply::Broken
         ));
         write_park(root.path(), "d", r#"{"parts":"not a list"}"#);
         assert!(matches!(
-            load_park(root.path(), &board_with("d"), "001"),
+            load_park(&Paths::for_root(root.path()), &board_with("d"), "001"),
             ParkReply::Broken
         ));
     }
@@ -253,7 +250,7 @@ mod tests {
                       {"title": "Second", "source": "s", "text": "later", "truncated": false}]
         });
         write_park(root.path(), "d", &json.to_string());
-        match load_park(root.path(), &board_with("d"), "001") {
+        match load_park(&Paths::for_root(root.path()), &board_with("d"), "001") {
             ParkReply::Found(v) => {
                 let total: usize = v.parts.iter().map(|p| p.text.len()).sum();
                 assert!(total <= MAX_REPLY_TEXT, "{total}");

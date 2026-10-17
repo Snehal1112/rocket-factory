@@ -9,12 +9,30 @@
 <body>
   <div class="page">
     <header class="top">
-      <h1>Software factory <span class="project">for Rocket</span></h1>
+      <h1>Software factory <span id="project-suffix" class="project">for Rocket</span></h1>
       <p id="status" class="status status-warn">
         <span class="dot" aria-hidden="true"></span><span id="status-text">Connecting</span>
       </p>
       <p id="announce" class="sr-only" role="status" aria-live="polite"></p>
     </header>
+    <div id="banner" class="banner" role="alert" hidden>
+      <span id="banner-text"></span>
+      <button type="button" class="act" data-banner-close>Dismiss</button>
+    </div>
+    <nav id="project-tabs" class="project-tabs" aria-label="Projects"></nav>
+    <div id="project-note"></div>
+    <details id="newjob" class="panel newjob" hidden>
+      <summary>New job</summary>
+      <div class="newjob-fields">
+        <label>Spec path <input id="nj-spec" type="text" placeholder="/abs/path/spec.md" autocomplete="off" spellcheck="false"></label>
+        <label>Plans folder <input id="nj-plans" type="text" placeholder="/abs/path/plans-folder" autocomplete="off" spellcheck="false"></label>
+        <label>Model (optional) <input id="nj-model" type="text" placeholder="sonnet" autocomplete="off" spellcheck="false"></label>
+        <label>Slug (optional) <input id="nj-slug" type="text" placeholder="derived from the plans folder" autocomplete="off" spellcheck="false"></label>
+        <label class="check"><input id="nj-run" type="checkbox" checked> Run now</label>
+        <label class="check"><input id="nj-series" type="checkbox" checked> Run as series</label>
+        <button type="button" id="nj-submit" class="act act-primary">Create job</button>
+      </div>
+    </details>
     <div id="summary" class="summary-slot"></div>
     <div class="board-scroll">
       <main id="board" class="board"></main>
@@ -36,12 +54,22 @@
       </dl>
     </section>
     <p id="toast" class="toast" role="status" hidden></p>
+    <dialog id="act-dialog" class="act-dialog" aria-labelledby="act-title">
+      <h2 id="act-title"></h2>
+      <label id="act-note-label">Note <input id="act-note" type="text" autocomplete="off" spellcheck="false"></label>
+      <label id="act-force-label" class="check"><input id="act-force" type="checkbox"> Force (cancel even with a live job lease)</label>
+      <div class="act-buttons">
+        <button type="button" id="act-submit" class="act act-primary">Confirm</button>
+        <button type="button" id="act-close" class="act">Close</button>
+      </div>
+    </dialog>
     <dialog id="park-dialog" class="park-dialog" aria-labelledby="park-title">
       <div id="park-content"></div>
     </dialog>
   </div>
   <script src="/patch.js"></script>
   <script src="/board.js"></script>
+  <script src="/projects.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

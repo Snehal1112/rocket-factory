@@ -7,6 +7,11 @@
   let inFlight = false;
   let lastLevel = null;
   let toastTimer = null;
+  // "unknown" until /api/projects answers: 200 means home mode, 404 means a single root.
+  let mode = "unknown";
+  let projects = [];
+  let selected = null;
+  const STORE_KEY = "factory-project";
 
   function byId(id) {
     return document.getElementById(id);
@@ -32,6 +37,45 @@
       const width = `${fill.getAttribute("data-pct") || 0}%`;
       if (fill.style.width !== width) fill.style.width = width;
     }
+  }
+
+  function stateUrl() {
+    return mode === "home" ? `/api/projects/${encodeURIComponent(selected)}/state` : "/api/state";
+  }
+
+  function parkUrl(id) {
+    const base = mode === "home" ? `/api/projects/${encodeURIComponent(selected)}` : "/api";
+    return `${base}/jobs/${encodeURIComponent(id)}/park`;
+  }
+
+  // A banner raised by polling goes away by itself once the poll works again.
+  let pollBanner = false;
+
+  function showBanner(message, fromPoll) {
+    pollBanner = Boolean(fromPoll);
+    byId("banner-text").textContent = message;
+    byId("banner").hidden = false;
+  }
+
+  function hideBanner() {
+    pollBanner = false;
+    byId("banner").hidden = true;
+  }
+
+  function currentProject() {
+    return projects.find((project) => project.name === selected) || null;
+  }
+
+  function renderProjects() {
+    setHtml("project-tabs", FactoryProjects.renderProjectTabs(projects, selected));
+    setHtml("project-note", FactoryProjects.renderProjectNote(currentProject()));
+  }
+
+  // The buttons depend on the stage, so they are set on each job before the board is drawn.
+  function withActions(state) {
+    if (mode !== "home" || !state || !Array.isArray(state.jobs)) return state;
+    for (const job of state.jobs) job.actions = FactoryProjects.jobActions(job);
+    return state;
   }
 
   function render(state, error) {
@@ -131,7 +175,7 @@
   async function loadPark(id) {
     const job = findJob(id) || { id, reason: null };
     try {
-      const response = await fetch(`/api/jobs/${encodeURIComponent(id)}/park`, { cache: "no-store" });
+      const response = await fetch(parkUrl(id), { cache: "no-store" });
       if (parkJobId !== id) return;
       if (response.status === 404) {
         setParkContent(FactoryBoard.parkMessage(job, "No details were recorded for this job.", false));
@@ -178,6 +222,20 @@
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
+    if (target.closest("[data-banner-close]")) {
+      hideBanner();
+      return;
+    }
+    const tab = target.closest("[data-project]");
+    if (tab) {
+      selectTab(tab.getAttribute("data-project") || "");
+      return;
+    }
+    const act = target.closest("[data-act]");
+    if (act) {
+      startAction(act.getAttribute("data-act") || "", act.getAttribute("data-act-job") || "", act);
+      return;
+    }
     const copy = target.closest("[data-copy]");
     if (copy) {
       copyText(copy.getAttribute("data-copy") || "");
@@ -200,14 +258,96 @@
     if (target === dialog) dialog.close();
   });
 
+  // Settles the mode on the first answer. Returns false while the answer is still unknown.
+  async function loadProjects() {
+    if (mode === "root") return true;
+    let response;
+    try {
+      response = await fetch("/api/projects", { cache: "no-store" });
+    } catch (error) {
+      return false;
+    }
+    if (response.status === 404 && mode === "unknown") {
+      mode = "root";
+      return true;
+    }
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      data = null;
+    }
+    if (!response.ok) {
+      showBanner(FactoryProjects.errorText(data, response.status), true);
+      return false;
+    }
+    if (mode !== "home") enterHomeMode();
+    projects = Array.isArray(data) ? data : [];
+    const next = FactoryProjects.selectProject(projects, selected);
+    if (next !== selected) {
+      selected = next;
+      lastState = null;
+    }
+    if (selected) storeSelected(selected);
+    renderProjects();
+    return true;
+  }
+
+  function storeSelected(name) {
+    try {
+      sessionStorage.setItem(STORE_KEY, name);
+    } catch (error) {
+      // Storage may be blocked. The choice then lasts until the page reloads.
+    }
+  }
+
+  function enterHomeMode() {
+    mode = "home";
+    try {
+      selected = sessionStorage.getItem(STORE_KEY);
+    } catch (error) {
+      selected = null;
+    }
+    document.title = "Software factory";
+    byId("project-suffix").hidden = true;
+    byId("newjob").hidden = false;
+  }
+
+  function selectTab(name) {
+    if (!name || name === selected) return;
+    selected = name;
+    storeSelected(name);
+    lastState = null;
+    hideBanner();
+    renderProjects();
+    tick();
+  }
+
   async function tick() {
     if (inFlight) return;
     inFlight = true;
     let state;
     try {
-      const response = await fetch("/api/state", { cache: "no-store" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      state = await response.json();
+      if (!(await loadProjects())) {
+        render(null, "the project list is not available");
+        return;
+      }
+      if (mode === "home" && !selected) {
+        render(null, null);
+        return;
+      }
+      const response = await fetch(stateUrl(), { cache: "no-store" });
+      if (!response.ok) {
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (error) {
+          data = null;
+        }
+        if (mode === "home") showBanner(FactoryProjects.errorText(data, response.status), true);
+        throw new Error(`HTTP ${response.status}`);
+      }
+      state = withActions(await response.json());
     } catch (error) {
       render(null, error.message);
       return;
@@ -216,8 +356,104 @@
     }
     lastState = state;
     lastOk = state.generated_at;
+    if (pollBanner) hideBanner();
     render(state, null);
   }
+
+  // Writes go through the dashboard server, which adds the token. The page never holds one.
+  async function postApi(path, body) {
+    const options = { method: "POST", headers: { "Content-Type": "application/json" } };
+    if (body !== undefined) options.body = JSON.stringify(body);
+    const response = await fetch(path, options);
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      data = null;
+    }
+    if (!response.ok) throw new Error(FactoryProjects.errorText(data, response.status));
+    return data;
+  }
+
+  function jobPath(id, action) {
+    return `/api/projects/${encodeURIComponent(selected)}/jobs/${encodeURIComponent(id)}/${action}`;
+  }
+
+  async function runWrite(button, work, done) {
+    if (button) button.disabled = true;
+    try {
+      const data = await work();
+      hideBanner();
+      showToast(done(data));
+      tick();
+      return true;
+    } catch (error) {
+      showBanner(error.message);
+      return false;
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  const actDialog = byId("act-dialog");
+  let actKind = "";
+  let actJob = "";
+
+  function startAction(kind, id, button) {
+    if (mode !== "home" || !selected || !FactoryProjects.isSafeId(id)) return;
+    if (kind === "approve") {
+      runWrite(button, () => postApi(jobPath(id, "approve")), () => `Approved job ${id}`);
+      return;
+    }
+    if (kind !== "rework" && kind !== "cancel") return;
+    actKind = kind;
+    actJob = id;
+    byId("act-title").textContent = kind === "rework" ? `Rework job ${id}` : `Cancel job ${id}`;
+    byId("act-note-label").firstChild.textContent = kind === "rework" ? "Note for the builder " : "Reason (optional) ";
+    byId("act-force-label").hidden = kind !== "cancel";
+    byId("act-note").value = "";
+    byId("act-force").checked = false;
+    actDialog.showModal();
+    byId("act-note").focus();
+  }
+
+  byId("act-close").addEventListener("click", () => actDialog.close());
+  byId("act-submit").addEventListener("click", async () => {
+    const note = byId("act-note").value;
+    let body;
+    if (actKind === "rework") body = FactoryProjects.buildReworkBody(note);
+    else body = FactoryProjects.buildCancelBody(note, byId("act-force").checked);
+    if (body.error) {
+      showBanner(body.error);
+      return;
+    }
+    const kind = actKind;
+    const id = actJob;
+    const ok = await runWrite(byId("act-submit"), () => postApi(jobPath(id, kind), body), () => (kind === "rework" ? `Sent job ${id} back` : `Cancelled job ${id}`));
+    if (ok) actDialog.close();
+  });
+
+  byId("nj-submit").addEventListener("click", async () => {
+    const body = FactoryProjects.buildCreateBody({
+      spec: byId("nj-spec").value,
+      plans: byId("nj-plans").value,
+      model: byId("nj-model").value,
+      slug: byId("nj-slug").value,
+      run: byId("nj-run").checked,
+      series: byId("nj-series").checked,
+    });
+    if (body.error) {
+      showBanner(body.error);
+      return;
+    }
+    const path = `/api/projects/${encodeURIComponent(selected)}/jobs`;
+    const ok = await runWrite(byId("nj-submit"), () => postApi(path, body), (data) => `Created job ${data && data.job ? data.job : ""}`.trim());
+    if (ok) {
+      byId("nj-spec").value = "";
+      byId("nj-plans").value = "";
+      byId("nj-slug").value = "";
+    }
+  });
 
   // Remember which agent lists and task lists the user opened or closed, because the board is redrawn every second.
   byId("board").addEventListener(

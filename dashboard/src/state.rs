@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::events::Registry;
 use crate::model::{AgentState, Board, Job, StageEntry};
+use crate::paths::Paths;
 use crate::plan::{load_plan, PlanView};
 use crate::specs::{build_spec_cards, SpecCard};
 
@@ -142,8 +143,8 @@ fn keep_unassigned(agent: &AgentState, now: f64) -> bool {
 }
 
 /// True when the board names a park kind and the evidence file is in the job folder.
-fn has_park(root: &Path, job: &Job) -> bool {
-    job.park_kind.is_some() && crate::park::park_path(root, &job.dir).is_some_and(|p| p.is_file())
+fn has_park(paths: &Paths, job: &Job) -> bool {
+    job.park_kind.is_some() && crate::park::park_path(paths, &job.dir).is_some_and(|p| p.is_file())
 }
 
 pub fn build_state(
@@ -151,7 +152,7 @@ pub fn build_state(
     registry: &Registry,
     now: f64,
     board_error: Option<String>,
-    root: &Path,
+    paths: &Paths,
 ) -> StateView {
     let mut jobs: Vec<JobView> = board
         .jobs
@@ -161,14 +162,14 @@ pub fn build_state(
             agents: Vec::new(),
             seconds_in_stage: (now - job.stage_since).max(0.0),
             plan: load_plan(
-                root,
+                paths,
                 &job.dir,
                 &job.stage,
                 job.reviews.values().any(|v| matches!(v.as_str(), "pass" | "changes" | "running")),
             ),
             stage_durations: stage_durations(job, now),
             token_view: token_view(job),
-            has_park: has_park(root, job),
+            has_park: has_park(paths, job),
         })
         .collect();
     let mut unassigned = Vec::new();
@@ -192,7 +193,7 @@ pub fn build_state(
             .sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
     }
     unassigned.sort_by(|a, b| a.started_ts.total_cmp(&b.started_ts));
-    let specs = build_spec_cards(&jobs, root);
+    let specs = build_spec_cards(&jobs, paths);
     StateView {
         generated_at: now,
         board_error,
@@ -200,7 +201,7 @@ pub fn build_state(
         specs,
         unassigned_agents: unassigned,
         skipped_lines: registry.skipped_lines,
-        costs: crate::costs::load_costs(root),
+        costs: crate::costs::load_costs(paths),
     }
 }
 
@@ -259,15 +260,15 @@ mod tests {
         parked.park_kind = Some("checks-failed".to_string());
         let board = Board { jobs: vec![parked.clone()] };
         // The kind is on the board but the file is missing.
-        let view = build_state(&board, &Registry::new(), 10.0, None, root.path());
+        let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         assert!(!view.jobs[0].has_park);
         std::fs::write(dir.join("park.json"), "{}")?;
-        let view = build_state(&board, &Registry::new(), 10.0, None, root.path());
+        let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         assert!(view.jobs[0].has_park);
         // The file exists but the board has no kind, as for an older job.
         let mut old = parked;
         old.park_kind = None;
-        let view = build_state(&Board { jobs: vec![old] }, &Registry::new(), 10.0, None, root.path());
+        let view = build_state(&Board { jobs: vec![old] }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         assert!(!view.jobs[0].has_park);
         Ok(())
     }
@@ -280,7 +281,7 @@ mod tests {
         std::fs::write(dir.join("park.json"), r#"{"parts":[{"text":"SECRET-EVIDENCE"}]}"#)?;
         let mut parked = job("001", "needs-human", 0.0);
         parked.park_kind = Some("other".to_string());
-        let view = build_state(&Board { jobs: vec![parked] }, &Registry::new(), 10.0, None, root.path());
+        let view = build_state(&Board { jobs: vec![parked] }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         let json = serde_json::to_string(&view)?;
         assert!(json.contains("\"has_park\":true"), "{json}");
         assert!(json.contains("\"park_kind\":\"other\""), "{json}");
@@ -290,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_state_has_no_recent_activity_feed() -> TestResult {
-        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, Path::new("/nonexistent"));
+        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::nowhere());
         let json = serde_json::to_value(&view)?;
         assert!(json.get("recent").is_none(), "the recent feed was removed");
         assert!(json.get("skipped_lines").is_some(), "the skipped-lines count stays");
@@ -318,7 +319,7 @@ mod tests {
             series_job("002", "spec", 2, Some("S1")),
             series_job("003", "merged", 1, None),
         ]}))?;
-        let view = build_state(&board, &Registry::new(), 10.0, None, root.path());
+        let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         assert_eq!(view.specs.len(), 1);
         assert_eq!(view.specs[0].series_id, "S1");
         assert_eq!(view.specs[0].title.as_deref(), Some("Demo spec"));
@@ -370,9 +371,9 @@ mod tests {
         board.jobs.push(job("001", "build", 10.0));
         let mut registry = Registry::new();
         start_for(&mut registry, 20.0, "b1", "factory-builder", Some("001"));
-        let fresh = build_state(&board, &registry, 100.0, None, Path::new("/nonexistent"));
+        let fresh = build_state(&board, &registry, 100.0, None, &Paths::nowhere());
         assert_eq!(fresh.jobs[0].agents[0].status, "running");
-        let old = build_state(&board, &registry, 20.0 + 601.0, None, Path::new("/nonexistent"));
+        let old = build_state(&board, &registry, 20.0 + 601.0, None, &Paths::nowhere());
         assert_eq!(old.jobs[0].agents[0].status, "stale");
     }
 
@@ -385,7 +386,7 @@ mod tests {
         registry.ingest_line(
             r#"{"ts":1000.0,"hook_event_name":"PostToolUse","agent_id":"b1","tool_name":"Edit"}"#,
         );
-        let view = build_state(&board, &registry, 1300.0, None, Path::new("/nonexistent"));
+        let view = build_state(&board, &registry, 1300.0, None, &Paths::nowhere());
         assert_eq!(view.jobs[0].agents[0].status, "running");
     }
 
@@ -394,7 +395,7 @@ mod tests {
         let mut registry = Registry::new();
         start_for(&mut registry, 100.0, "u1", "other", None);
         registry.ingest_line(r#"{"ts":150.0,"hook_event_name":"SubagentStop","agent_id":"u1"}"#);
-        let view = build_state(&Board::default(), &registry, 200.0, None, Path::new("/nonexistent"));
+        let view = build_state(&Board::default(), &registry, 200.0, None, &Paths::nowhere());
         assert_eq!(view.unassigned_agents.len(), 1);
     }
 
@@ -420,7 +421,7 @@ mod tests {
     fn a_running_unassigned_agent_with_recent_activity_is_kept() {
         let mut registry = Registry::new();
         start_for(&mut registry, 100.0, "u1", "other", None);
-        let view = build_state(&Board::default(), &registry, 200.0, None, Path::new("/nonexistent"));
+        let view = build_state(&Board::default(), &registry, 200.0, None, &Paths::nowhere());
         assert_eq!(view.unassigned_agents.len(), 1);
     }
 
@@ -428,9 +429,9 @@ mod tests {
     fn a_stale_unassigned_agent_older_than_two_hours_is_dropped() {
         let mut registry = Registry::new();
         start_for(&mut registry, 100.0, "u1", "other", None);
-        let view = build_state(&Board::default(), &registry, 100.0 + 7201.0, None, Path::new("/nonexistent"));
+        let view = build_state(&Board::default(), &registry, 100.0 + 7201.0, None, &Paths::nowhere());
         assert!(view.unassigned_agents.is_empty());
-        let view = build_state(&Board::default(), &registry, 100.0 + 3000.0, None, Path::new("/nonexistent"));
+        let view = build_state(&Board::default(), &registry, 100.0 + 3000.0, None, &Paths::nowhere());
         assert_eq!(view.unassigned_agents.len(), 1);
         assert_eq!(view.unassigned_agents[0].status, "stale");
     }
@@ -439,7 +440,7 @@ mod tests {
     fn seconds_in_stage_and_the_board_error_are_reported() {
         let mut board = Board::default();
         board.jobs.push(job("001", "build", 100.0));
-        let view = build_state(&board, &Registry::new(), 160.0, Some("oops".to_string()), Path::new("/nonexistent"));
+        let view = build_state(&board, &Registry::new(), 160.0, Some("oops".to_string()), &Paths::nowhere());
         assert_eq!(view.jobs[0].seconds_in_stage, 60.0);
         assert_eq!(view.board_error.as_deref(), Some("oops"));
         assert_eq!(view.generated_at, 160.0);
@@ -449,7 +450,7 @@ mod tests {
     fn the_state_serializes_with_flattened_job_fields() -> TestResult {
         let mut board = Board::default();
         board.jobs.push(job("001", "build", 100.0));
-        let view = build_state(&board, &Registry::new(), 160.0, None, Path::new("/nonexistent"));
+        let view = build_state(&board, &Registry::new(), 160.0, None, &Paths::nowhere());
         let json = serde_json::to_value(&view)?;
         assert_eq!(json["jobs"][0]["id"], "001");
         assert_eq!(json["jobs"][0]["stage"], "build");
@@ -588,7 +589,7 @@ mod tests {
         start_for(&mut registry, 20.0, "r1", "factory-code-reviewer", Some("002"));
         start_for(&mut registry, 21.0, "r2", "factory-code-reviewer", None);
         start_for(&mut registry, 22.0, "r3", "factory-builder", Some("999"));
-        let view = build_state(&board, &registry, 30.0, None, Path::new("/nonexistent"));
+        let view = build_state(&board, &registry, 30.0, None, &Paths::nowhere());
         assert!(view.jobs[0].agents.is_empty());
         assert_eq!(view.jobs[1].agents.len(), 1);
         assert_eq!(view.unassigned_agents.len(), 2);
@@ -601,7 +602,7 @@ mod tests {
         registry.ingest_line("more garbage");
         let mut board = Board::default();
         board.jobs.push(job("001", "build", 1.0));
-        let json = serde_json::to_value(build_state(&board, &registry, 5.0, None, Path::new("/nonexistent")))?;
+        let json = serde_json::to_value(build_state(&board, &registry, 5.0, None, &Paths::nowhere()))?;
         assert_eq!(json["skipped_lines"], 2);
         assert!(json["jobs"][0]["stage_durations"].is_array());
         assert!(json["jobs"][0]["token_view"].is_null());
@@ -617,12 +618,12 @@ mod tests {
             dir.join("costs.json"),
             r#"{"generated_at":1.0,"groups":{"small":{"n":1,"n_approx":0,"median":9,"low":9,"high":9,"roles":{},"corrected":null}},"roles":{"builder":100},"jobs":[{"id":"SECRET-JOB"}]}"#,
         )?;
-        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, root.path());
+        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         let json = serde_json::to_string(&view)?;
         assert!(json.contains("\"costs\":{"), "{json}");
         assert!(json.contains("\"median\":9"), "{json}");
         assert!(!json.contains("SECRET-JOB"), "{json}");
-        let none = build_state(&Board::default(), &Registry::new(), 10.0, None, Path::new("/nonexistent"));
+        let none = build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::nowhere());
         assert!(serde_json::to_value(&none)?["costs"].is_null());
         Ok(())
     }
@@ -633,7 +634,7 @@ mod tests {
             r#"{"jobs":[{"id":"001","dir":"d","slug":"s","created":"c","feature":"f","branch":"b","stage":"build","round":0,"stage_since":1.0,"reviews":{},
                 "estimate":{"group":"small","median":250000,"low":220000,"high":310000,"n":4,"n_approx":2}}]}"#,
         )?;
-        let view = build_state(&good, &Registry::new(), 10.0, None, Path::new("/nonexistent"));
+        let view = build_state(&good, &Registry::new(), 10.0, None, &Paths::nowhere());
         let json = serde_json::to_value(&view)?;
         assert_eq!(json["jobs"][0]["estimate"]["median"], 250_000);
         let bad: Board = serde_json::from_str(
