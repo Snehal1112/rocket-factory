@@ -8,6 +8,33 @@ A standalone software factory. A Rust driver builds, checks, reviews and merges 
 
 Status: extracted and tested. It still behaves like Rocket's in-repo factory. The standalone work is described in the plan index.
 
+## Features ported from Rocket
+
+Rocket's factory gained these after the extraction. They are part of this driver now:
+
+- Batch committer: one committer run per job writes all the commits (`commit_batch`, default on), with recovery after a stop.
+- Task excerpts: each task builder sees only its own task from the plan and spec (`builder_excerpt`, default on). A stale rework note stays out of fix rounds.
+- Ticket hygiene: the `factory tickets` command and the `tickets_on_merge` key, see below.
+- Live token bar: the dashboard card bar follows the running agent, so it moves while an agent works.
+
+## Ticket hygiene
+
+After the last plan of a job merges, the driver can file the leftover work as new GitHub tickets, comment on the
+parent tickets and close them. The calls go through the `Tracker` port in `factory-engine`. The real tracker runs
+the `gh` CLI in the main checkout (the repo from `Layout`); tests use a fake.
+
+- `factory tickets <id> [--dry-run]` runs the step for a merged job. `--dry-run` makes only read calls and
+  prints each action. It exits non-zero when a `gh` call failed.
+- `tickets_on_merge` (default `false`, a normal setting in `config.toml` or in `[settings]` of `project.toml`)
+  runs the same step at the end of the merge.
+- The parent tickets come from the feature text given to `factory new`: `#N` and
+  `https://github.com/<owner>/<repo>/issues/N` both count. A URL for another repository makes the step skip.
+- The remaining work is the `## Follow-ups` section of the job's `spec.md`, one ticket per bullet. A spec with
+  follow-ups gives the merge footer `Relates to: #N` instead of `Fixes: #N`.
+- `tickets.json` in the job folder records every call, so a rerun never files a ticket twice.
+- A failure (no tracker, no `gh`, a failed call) never changes the merge. The job stays `merged`, and the failure
+  is written to the ledger, the job output and `events.jsonl`.
+
 ## Layout and base branch
 
 The driver gets every path as a value. `Layout` holds them. `Layout::in_repo` gives the layout Rocket uses today.

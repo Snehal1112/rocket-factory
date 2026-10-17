@@ -27,7 +27,7 @@ factory-git     git2 layer: worktrees, diffs, no-ff merge (never shell out to gi
 factory-agent   runs `claude -p` headless, parses the stream, writes usage and events
 factory-checks  maps changed paths to check commands and runs them
 factory-engine  the run loop: build, checks, review, decide, merge, sync, series (uses all four)
-factory-cli     clap commands over the engine (`factory new|run|status|approve|rework|cancel|cleanup|tokens|project`)
+factory-cli     clap commands over the engine (`factory new|run|status|approve|rework|cancel|cleanup|tokens|tickets|project`)
 factory-supervisor  `factoryd`: queue of run requests, one `factory` child per project, adopts children after a restart
 ```
 
@@ -36,6 +36,12 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 - Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`dashboard/`, separate workspace), so add fields as optional. The dashboard has a `--home` mode that holds the API token server-side (`dashboard/README.md`); keep the token out of every reply.
 - The repo-level config is `.claude/factory/config.toml`. A missing or broken config must make every diff risky, so never default it to permissive.
 - `factory-cli/tests/agent_lint.rs` lints `.claude/agents/factory-*.md`. Run it after editing an agent file.
+
+## Ticket hygiene
+
+- `factory tickets <id> [--dry-run]` and the setting `tickets_on_merge` (default false, a valid `Config` key) are documented in `README.md` (Ticket hygiene). Logic lives in `factory-engine/src/tickets.rs`, the `Tracker` port and the `gh` implementation in `tracker.rs`; `factory-core/src/commitmsg.rs` parses issue refs.
+- The step runs after a merge in `merge.rs` and must never change the merge result: report failures to the ledger, stderr and events. Rocket's real `config.toml` is a test fixture in `factory-core/tests/fixtures/`; refresh it when Rocket's changes.
+- Only `git` may not be shelled out to. `gh` is allowed, behind the port.
 
 ## Home, projects and leases
 
