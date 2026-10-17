@@ -67,6 +67,9 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
         for line in factory_supervisor::supervisor::new_lines(&mut std::collections::HashSet::new(), &report) {
             eprintln!("{line}");
         }
+        for line in &report.notices {
+            eprintln!("{line}");
+        }
         println!("started {}, finished {}, rejected {}", report.started.len(), report.finished.len(), report.rejected.len());
         return Ok(());
     }
@@ -98,6 +101,11 @@ fn describe(outcome: &Outcome) -> String {
 
 fn status(home: &Home) -> String {
     let mut out = String::new();
+    let limit = HomeConfig::load(home).ok().and_then(|c| c.daily_budget_weighted);
+    if let Some(b) = factory_supervisor::daily::status(home, limit, now_ms()) {
+        out.push_str(&factory_supervisor::daily::status_line(&b));
+        out.push('\n');
+    }
     out.push_str("Queue:\n");
     let items = queue::list(home);
     if items.is_empty() {
@@ -188,6 +196,16 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_shows_the_daily_budget_only_with_a_limit() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        assert!(!status(&home).contains("daily budget"));
+        std::fs::write(home.config_file(), "daily_budget_weighted = 1000\n").expect("config");
+        let text = status(&home);
+        assert!(text.starts_with("daily budget: 0 of 1000 weighted tokens today (0%), resets at "), "{text}");
+    }
 
     #[test]
     fn is_running_follows_the_instance_lock() {

@@ -18,11 +18,13 @@ pub struct HomeConfig {
     pub max_parallel: u32,
     /// Where the local API listens. Must be a loopback address, port 0 picks a free port.
     pub listen: String,
+    /// The most weighted tokens all projects may use in one UTC day before new runs wait. Absent means no limit.
+    pub daily_budget_weighted: Option<u64>,
 }
 
 impl Default for HomeConfig {
     fn default() -> Self {
-        HomeConfig { max_parallel: DEFAULT_MAX_PARALLEL, listen: DEFAULT_LISTEN.to_string() }
+        HomeConfig { max_parallel: DEFAULT_MAX_PARALLEL, listen: DEFAULT_LISTEN.to_string(), daily_budget_weighted: None }
     }
 }
 
@@ -34,6 +36,9 @@ impl HomeConfig {
             return Err(CoreError::Config(format!(
                 "bad home config: max_parallel must be 1 to {MAX_PARALLEL_CAP}"
             )));
+        }
+        if cfg.daily_budget_weighted == Some(0) {
+            return Err(CoreError::Config("bad home config: daily_budget_weighted must be greater than 0".to_string()));
         }
         match cfg.listen.parse::<SocketAddr>() {
             Ok(addr) if addr.ip().is_loopback() => {}
@@ -100,6 +105,20 @@ mod tests {
         assert!(load_text(Some("listen = \"0.0.0.0:8766\"\n")).is_err());
         assert!(load_text(Some("listen = \"192.168.1.5:80\"\n")).is_err());
         assert!(load_text(Some("listen = \"nonsense\"\n")).is_err());
+    }
+
+    #[test]
+    fn daily_budget_parses_and_defaults_to_none() {
+        assert_eq!(load_text(None).expect("ok").daily_budget_weighted, None);
+        assert_eq!(load_text(Some("")).expect("ok").daily_budget_weighted, None);
+        assert_eq!(load_text(Some("daily_budget_weighted = 5000000\n")).expect("ok").daily_budget_weighted, Some(5_000_000));
+    }
+
+    #[test]
+    fn a_bad_daily_budget_is_an_error() {
+        for bad in ["0", "-1", "\"x\"", "1.5", "true"] {
+            assert!(load_text(Some(&format!("daily_budget_weighted = {bad}\n"))).is_err(), "{bad}");
+        }
     }
 
     #[test]

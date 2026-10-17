@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::request::Request;
+use crate::request::{Action, Request};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectState {
@@ -17,6 +17,8 @@ pub struct SchedulerInput {
     pub queue: Vec<Request>,
     pub running_projects: Vec<String>,
     pub project_states: BTreeMap<String, ProjectState>,
+    /// True when the daily budget is used up. A `Run` request then waits in the queue, an `Approve` still starts.
+    pub daily_exhausted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +29,8 @@ pub enum Decision {
 
 /// One ordered pass over the queue (by `ts_ms`, then id).
 /// A request waits, with no decision, when its project is busy, its lease is held or there is
-/// no free slot. A rejection never uses a slot and never blocks a later request.
+/// no free slot. With the daily budget used up a `Run` waits too, without using a slot or blocking a later
+/// request. A rejection never uses a slot and never blocks a later request.
 pub fn decide(input: &SchedulerInput) -> Vec<Decision> {
     let mut queue: Vec<&Request> = input.queue.iter().collect();
     queue.sort_by(|a, b| a.ts_ms.cmp(&b.ts_ms).then_with(|| a.id.cmp(&b.id)));
@@ -42,7 +45,8 @@ pub fn decide(input: &SchedulerInput) -> Vec<Decision> {
             }
             Some(ProjectState::LeaseHeld { .. }) => {}
             Some(ProjectState::Ready) => {
-                if free > 0 && !busy.contains(req.project.as_str()) {
+                let held = input.daily_exhausted && req.action == Action::Run;
+                if !held && free > 0 && !busy.contains(req.project.as_str()) {
                     free -= 1;
                     busy.insert(req.project.as_str());
                     out.push(Decision::Start(req.clone()));
@@ -68,6 +72,7 @@ mod tests {
             queue,
             running_projects: running.iter().map(|s| s.to_string()).collect(),
             project_states: states.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+            daily_exhausted: false,
         }
     }
 
@@ -162,5 +167,51 @@ mod tests {
         assert_eq!(rejected(&d).len(), 1);
         // The reject for c sits between a and b in queue order and does not use a slot.
         assert!(matches!(&d[1], Decision::Reject { .. }));
+    }
+
+    fn approve(p: &str, ts: u64) -> Request {
+        Request::new(p, Action::Approve, "1", false, ts).expect("request")
+    }
+
+    fn exhausted(mut i: SchedulerInput) -> SchedulerInput {
+        i.daily_exhausted = true;
+        i
+    }
+
+    #[test]
+    fn an_exhausted_budget_holds_a_run() {
+        let d = decide(&exhausted(input(2, vec![req("a", 1)], &[], &ready(&["a"]))));
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn an_exhausted_budget_still_starts_an_approve() {
+        let d = decide(&exhausted(input(2, vec![approve("a", 1)], &[], &ready(&["a"]))));
+        assert_eq!(started(&d), ["a"]);
+    }
+
+    #[test]
+    fn held_runs_do_not_block_an_approve_behind_them_and_use_no_slot() {
+        let q = vec![req("a", 1), req("b", 2), approve("c", 3)];
+        let d = decide(&exhausted(input(1, q, &[], &ready(&["a", "b", "c"]))));
+        assert_eq!(started(&d), ["c"]);
+        assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn a_held_run_does_not_hold_back_a_later_approve_of_the_same_project() {
+        let q = vec![req("a", 1), approve("a", 2)];
+        let d = decide(&exhausted(input(2, q, &[], &ready(&["a"]))));
+        match &d[..] {
+            [Decision::Start(r)] => assert_eq!(r.action, Action::Approve),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_exhausted_budget_still_rejects_a_disabled_project() {
+        let states = [("a", ProjectState::Disabled { reason: "broken".into() })];
+        let d = decide(&exhausted(input(2, vec![req("a", 1)], &[], &states)));
+        assert_eq!(rejected(&d), [("a".to_string(), "broken".to_string())]);
     }
 }

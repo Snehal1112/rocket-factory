@@ -48,6 +48,8 @@ pub struct TickReport {
     /// Projects whose lease is held by a live driver process that is not a child of this supervisor.
     /// Nothing is started for them until that process ends.
     pub orphans: Vec<String>,
+    /// One-time lines worth printing once, such as the daily budget being reached or reset.
+    pub notices: Vec<String>,
 }
 
 /// What start-up recovery found.
@@ -70,6 +72,10 @@ pub struct Supervisor {
     spawner: Box<dyn Spawner>,
     clock: Box<dyn Fn() -> u64>,
     max_parallel: u32,
+    /// The daily budget from the last valid `config.toml`. `None` means no limit.
+    daily_limit: Option<u64>,
+    /// Whether the daily budget was used up at the last tick. A change of this logs one line.
+    daily_exhausted: bool,
     /// Requests whose child runs but could not be recorded. They are never started again by this process.
     started_ids: HashSet<String>,
     /// True once start-up recovery ran.
@@ -207,7 +213,7 @@ impl Supervisor {
     /// Makes a supervisor without the instance lock. It requires that no other supervisor runs on this
     /// home, see the type docs. Use `new_locked` in production.
     pub fn new(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Supervisor {
-        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, started_ids: HashSet::new(), recovered: false, _lock: None }
+        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, daily_limit: None, daily_exhausted: false, started_ids: HashSet::new(), recovered: false, _lock: None }
     }
 
     /// Takes the instance lock of the home and keeps it as long as the supervisor lives. Fails with the
@@ -221,6 +227,35 @@ impl Supervisor {
 
     pub fn set_max_parallel(&mut self, n: u32) {
         self.max_parallel = n;
+    }
+
+    /// Re-reads the daily limit from `config.toml`. An invalid file keeps the last valid value and
+    /// adds one error line to the report (the loop prints a repeated line once).
+    fn reload_daily_limit(&mut self, report: &mut TickReport) {
+        match HomeConfig::load(&self.home) {
+            Ok(cfg) => self.daily_limit = cfg.daily_budget_weighted,
+            Err(e) => report.errors.push(format!("config.toml is invalid, keeping the last daily budget: {e}")),
+        }
+    }
+
+    /// True when new runs must wait. Logs one notice when the state changes.
+    fn daily_exhausted_now(&mut self, report: &mut TickReport) -> bool {
+        let now = (self.clock)();
+        let status = crate::daily::status(&self.home, self.daily_limit, now);
+        let exhausted = status.is_some_and(|b| b.exhausted());
+        if exhausted != self.daily_exhausted {
+            self.daily_exhausted = exhausted;
+            report.notices.push(match status {
+                Some(b) if exhausted => format!(
+                    "factoryd: daily budget reached ({} of {} weighted tokens), new runs wait until {}",
+                    b.used,
+                    b.limit,
+                    crate::daily::rfc3339_utc(b.resets_at_ms)
+                ),
+                _ => "factoryd: daily budget no longer reached, waiting runs may start".to_string(),
+            });
+        }
+        exhausted
     }
 
     fn result_path(&self, id: &str) -> std::path::PathBuf {
@@ -499,7 +534,9 @@ impl Supervisor {
                 report.orphans.push(p);
             }
         }
-        let input = SchedulerInput { max_parallel: self.max_parallel, queue, running_projects, project_states };
+        self.reload_daily_limit(&mut report);
+        let daily_exhausted = self.daily_exhausted_now(&mut report);
+        let input = SchedulerInput { max_parallel: self.max_parallel, queue, running_projects, project_states, daily_exhausted };
         // Step 3: act.
         for decision in decide(&input) {
             // One failing decision never stops the others.
@@ -528,6 +565,9 @@ impl Supervisor {
             match self.tick() {
                 Ok(report) => {
                     for line in new_lines(&mut printed, &report) {
+                        eprintln!("{line}");
+                    }
+                    for line in &report.notices {
                         eprintln!("{line}");
                     }
                 }

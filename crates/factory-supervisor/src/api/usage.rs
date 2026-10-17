@@ -11,10 +11,10 @@ use crate::api::ApiDeps;
 
 const DEFAULT_DAYS: u32 = 14;
 const MAX_DAYS: u32 = 90;
-const SECS_PER_DAY: u64 = 86_400;
+pub(crate) const SECS_PER_DAY: u64 = 86_400;
 
 /// The civil date `YYYY-MM-DD` of a day count since 1970-01-01 (proleptic Gregorian).
-fn civil(days: u64) -> String {
+pub(crate) fn civil(days: u64) -> String {
     let z = days as i64 + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -54,7 +54,7 @@ fn parse_days(query: &str) -> Result<u32, String> {
 }
 
 /// The sum of every job folder's usage for one project, per day.
-fn project_usage(home: &Home, name: &str, file: &project::ProjectFile) -> BTreeMap<String, u64> {
+pub(crate) fn project_usage(home: &Home, name: &str, file: &project::ProjectFile) -> BTreeMap<String, u64> {
     let mut total = BTreeMap::new();
     let Ok(layout) = project::layout(home, name, file) else { return total };
     let Ok(dir) = std::fs::read_dir(&layout.jobs_dir) else { return total };
@@ -88,7 +88,13 @@ pub fn report(home: &Home, deps: &ApiDeps, query: &str) -> ApiResponse {
         let total = window.iter().fold(0u64, |acc, d| acc.saturating_add(sums.get(d).copied().unwrap_or(0)));
         projects.push(json!({"name": e.name, "total": total, "perDay": per}));
     }
-    ApiResponse::ok(json!({"days": days, "projects": projects}))
+    let mut body = json!({"days": days, "projects": projects});
+    // An invalid config.toml hides the budget instead of failing the report.
+    let limit = factory_core::HomeConfig::load(home).ok().and_then(|c| c.daily_budget_weighted);
+    if let Some(b) = crate::daily::status(home, limit, (deps.now_ms)()) {
+        body["dailyBudget"] = json!({"limit": b.limit, "used": b.used, "resetsAt": crate::daily::rfc3339_utc(b.resets_at_ms)});
+    }
+    ApiResponse::ok(body)
 }
 
 #[cfg(test)]

@@ -111,7 +111,8 @@ parallel. It lives in the factory home (`$FACTORY_HOME`, else `~/.factory`):
 - `results/` holds one JSON file per finished request (`Merged`, `NeedsHuman`, `Failed`, `Rejected` or `Lost`).
 - `run/` holds the child records of running jobs, one per project.
 - `logs/<project>/<request>.out` and `.err` hold the output of each child.
-- `config.toml` may set `max_parallel` (how many projects run at once) and `listen` (the API address).
+- `config.toml` may set `max_parallel` (how many projects run at once), `listen` (the API address) and
+  `daily_budget_weighted` (see below).
 
 ```
 factoryd enqueue --project myproj --job 003        # add a request (--series, --approve)
@@ -134,6 +135,22 @@ by `factoryd`. Read the `.out` and `.err` logs and the job ledger, then run `fac
 enqueue a new request. A project whose lease belongs to a live driver that is not a child of `factoryd` (for
 example a manual `factory run`) is reported as busy and nothing starts for it until that process ends.
 
+#### The daily budget
+
+`daily_budget_weighted = 5000000` in `config.toml` limits all projects together for one UTC day. The unit is
+weighted tokens (cache reads count one tenth), summed over the `usage.jsonl` of every job of every registered
+project; the day is the UTC day, the same as `GET /usage`. Without the key there is no limit; `0`, a negative
+number or a non-integer makes `config.toml` invalid, and `factoryd` then refuses to start. The per-job budget is
+unchanged.
+
+Once today's use reaches the limit, new runs wait: a `Run` request stays in the queue (nothing is rejected, lost
+or reordered) and starts on the first tick after the budget is raised in `config.toml` or the UTC day changes.
+Approvals are never held, running jobs are never stopped, and a waiting run never blocks a request behind it.
+`factoryd` reads `config.toml` on every tick; if the file becomes invalid while it runs, it keeps the last valid
+value and prints one line. `factoryd` also prints one line when the limit is reached and when runs may start again.
+`factoryd status` shows `daily budget: <used> of <limit> weighted tokens today (<pct>%), resets at <time>`, with
+`warning` from 80% and `reached: new runs are waiting` from 100%.
+
 #### The local API
 
 `factoryd run` also serves a small JSON API for the dashboard and other local tools.
@@ -149,7 +166,7 @@ example a manual `factory run`) is reported as busy and nothing starts for it un
 |---|---|
 | `GET /projects` | `[{name, repo, preset, baseBranch, status, reason, stateDir, jobsDir, activeJob}]`, `status` is `ready`, `busy` or `disabled` |
 | `GET /projects/{p}/jobs` | `{jobs, queued, lastResults}` from the board, the queue and the result records |
-| `GET /usage?days=N` | `{days, projects: [{name, total, perDay: [{day, tokens}]}]}`, weighted tokens per UTC day, `N` 1 to 90 (default 14) |
+| `GET /usage?days=N` | `{days, projects: [{name, total, perDay: [{day, tokens}]}], dailyBudget?}`, weighted tokens per UTC day, `N` 1 to 90 (default 14). `dailyBudget` is `{limit, used, resetsAt}` (`resetsAt` is an RFC 3339 UTC time) and is present only when `daily_budget_weighted` is set |
 
 Write endpoints. A body is JSON of at most 64 KiB, unknown fields are refused, and everything is checked before a
 process starts or a request is queued. Commands that only `factory` implements run as `factory --project <p> <cmd>`

@@ -248,6 +248,22 @@ mod tests {
     }
 
     #[test]
+    fn usage_reports_the_daily_budget_only_when_a_limit_is_set() {
+        let (_t, home) = fixture();
+        let today = NOW_MS / 1000;
+        write_usage(&home, "001-first", &format!("{{\"input\":120,\"ts\":{today}}}\n"));
+        let call = |home: &factory_core::Home| route(home, &deps(), "GET", "/usage", "days=1", &headers(Some(TOKEN), "localhost:1"), b"");
+        let r = call(&home);
+        assert_eq!(r.status, 200);
+        assert!(r.body.get("dailyBudget").is_none());
+        std::fs::write(home.config_file(), "daily_budget_weighted = 1000\n").expect("config");
+        let r = call(&home);
+        assert_eq!(r.body["dailyBudget"], serde_json::json!({"limit": 1000, "used": 120, "resetsAt": "2023-11-15T00:00:00Z"}));
+        assert!(r.body["projects"].is_array());
+        assert_eq!(r.body["days"], 1);
+    }
+
+    #[test]
     fn bad_days_are_refused() {
         let (_t, home) = fixture();
         for q in ["days=0", "days=91", "days=x"] {
