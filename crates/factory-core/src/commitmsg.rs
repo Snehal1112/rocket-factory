@@ -220,44 +220,46 @@ fn unfenced_lines(reply: &str) -> impl Iterator<Item = &str> {
     })
 }
 
+/// The value after a `Status:` key, or `None` when the line is not a status line.
+/// Asterisks and backticks around the key and the value are ignored, so `**Status**: X`,
+/// `**Status: X**` and ``Status: `X` `` all count. A leading `- ` is allowed.
+fn status_value(line: &str) -> Option<&str> {
+    const MARKS: [char; 2] = ['*', '`'];
+    let t = line.trim();
+    let t = t.strip_prefix("- ").unwrap_or(t).trim_start();
+    let t = t.trim_start_matches(MARKS).strip_prefix("Status")?;
+    let t = t.trim_start_matches(MARKS).strip_prefix(':')?;
+    Some(t.trim_start_matches(|c: char| MARKS.contains(&c) || c.is_whitespace()))
+}
+
 /// The status the builder reported, or `None` when it reported none or an unknown one.
-/// A first line `BLOCKED:` wins. Else the first `Status:` or `**Status:**` line outside code
-/// fences counts, optionally after `- `, and the rest of the reply after the value is its text.
+/// A first line `BLOCKED:` wins. Else the first `Status:` line outside code fences with a known
+/// value counts (see `status_value` for the accepted forms); a line with an unknown value is skipped.
+/// The text is the rest of that line and the following unfenced lines up to the first `Ruling:` line.
 pub fn parse_builder_status(reply: &str) -> Option<BuilderStatus> {
     if let Some(reason) = blocked_reason(reply) {
         return Some(BuilderStatus::Blocked(reason));
     }
-    let lines: Vec<&str> = reply.lines().collect();
-    let mut in_fence = false;
+    let lines: Vec<&str> = unfenced_lines(reply).collect();
     for (at, line) in lines.iter().enumerate() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        let t = line.trim();
-        let t = t.strip_prefix("- ").unwrap_or(t).trim_start();
-        let Some(value) = t.strip_prefix("**Status:**").or_else(|| t.strip_prefix("Status:")) else {
+        let Some(value) = status_value(line) else {
             continue;
         };
-        let value = value.trim_start();
         let word_end = value.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(value.len());
         let (word, tail) = value.split_at(word_end);
-        let mut text = tail.trim_start_matches(|c: char| c == '*' || c == ':' || c == '-' || c.is_whitespace()).to_string();
-        for rest in &lines[at + 1..] {
+        let make: fn(String) -> BuilderStatus = match word.to_ascii_uppercase().as_str() {
+            "DONE" => |_| BuilderStatus::Done,
+            "DONE_WITH_CONCERNS" => BuilderStatus::DoneWithConcerns,
+            "BLOCKED" => BuilderStatus::Blocked,
+            "NEEDS_CONTEXT" => BuilderStatus::NeedsContext,
+            _ => continue,
+        };
+        let mut text = tail.trim_start_matches(|c: char| c == '*' || c == '`' || c == ':' || c == '-' || c.is_whitespace()).to_string();
+        for rest in lines[at + 1..].iter().take_while(|l| !l.trim().starts_with("Ruling:")) {
             text.push('\n');
             text.push_str(rest);
         }
-        let text = text.trim().to_string();
-        return match word.to_ascii_uppercase().as_str() {
-            "DONE" => Some(BuilderStatus::Done),
-            "DONE_WITH_CONCERNS" => Some(BuilderStatus::DoneWithConcerns(text)),
-            "BLOCKED" => Some(BuilderStatus::Blocked(text)),
-            "NEEDS_CONTEXT" => Some(BuilderStatus::NeedsContext(text)),
-            _ => None,
-        };
+        return Some(make(text.trim().to_string()));
     }
     None
 }
@@ -414,6 +416,52 @@ mod tests {
         assert_eq!(parse_builder_status("all good"), None);
         assert_eq!(builder_status("Status: MAYBE"), BuilderStatus::Done);
         assert_eq!(parse_builder_status("Status: MAYBE"), None);
+    }
+
+    #[test]
+    fn builder_status_accepts_marked_up_forms() {
+        for reply in [
+            "Status: **BLOCKED**",
+            "Status: `BLOCKED`",
+            "**Status**: BLOCKED",
+            "**Status: BLOCKED**",
+            "- **Status:** BLOCKED",
+            "`Status: BLOCKED`",
+        ] {
+            assert_eq!(parse_builder_status(reply), Some(BuilderStatus::Blocked(String::new())), "{reply}");
+        }
+        assert_eq!(
+            parse_builder_status("ok\n**Status**: `NEEDS_CONTEXT` which table?"),
+            Some(BuilderStatus::NeedsContext("which table?".to_string()))
+        );
+        assert_eq!(parse_builder_status("**Status: DONE_WITH_CONCERNS**\nslow"), Some(BuilderStatus::DoneWithConcerns("slow".to_string())));
+    }
+
+    #[test]
+    fn builder_status_skips_an_unknown_value_and_keeps_searching() {
+        let reply = "Status: tests green\nwork done\nStatus: BLOCKED: no db";
+        assert_eq!(parse_builder_status(reply), Some(BuilderStatus::Blocked("no db".to_string())));
+        assert_eq!(parse_builder_status("Status: tests green\nStatus: maybe"), None);
+    }
+
+    #[test]
+    fn concern_text_stops_at_the_first_ruling_line_and_skips_fences() {
+        let reply = "Status: DONE_WITH_CONCERNS\nThe cap is tight.\n```\nquoted\n```\nIt may be slow.\n\
+                     Ruling: kept the name \u{2014} the plan says so \u{2014} a rename later\nRuling: second \u{2014} why \u{2014} cost";
+        assert_eq!(
+            parse_builder_status(reply),
+            Some(BuilderStatus::DoneWithConcerns("The cap is tight.\nIt may be slow.".to_string()))
+        );
+        assert_eq!(builder_rulings(reply).len(), 2);
+    }
+
+    #[test]
+    fn a_blocked_reason_stops_at_the_first_ruling_line() {
+        let reply = "Status: BLOCKED\nThe schema file is gone.\nRuling: stopped \u{2014} nothing to build on \u{2014} a retry";
+        assert_eq!(parse_builder_status(reply), Some(BuilderStatus::Blocked("The schema file is gone.".to_string())));
+        assert_eq!(builder_rulings(reply), vec!["stopped \u{2014} nothing to build on \u{2014} a retry".to_string()]);
+        let reply = "Status: NEEDS_CONTEXT which table?\nRuling: a \u{2014} b \u{2014} c";
+        assert_eq!(parse_builder_status(reply), Some(BuilderStatus::NeedsContext("which table?".to_string())));
     }
 
     #[test]
