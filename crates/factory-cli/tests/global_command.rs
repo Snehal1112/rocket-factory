@@ -231,10 +231,39 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "`approve <digits> --without-review`",
         "<factory> --project <name> approve <id> --without-review",
         "refuses a `needs-human` job whose code review has not run",
-        "argument-hint: \"<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id> | cleanup <id> | tickets <id>\"",
+        "argument-hint: \"<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id|slug> | cleanup <id> | tickets <id>\"",
+        // The overrides of the brainstorming skill.
+        "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
+        "two or three alternatives",
+        "because open questions were too hard to answer",
+        "\"a single sentence with no list of example answers\"",
+        "\"Offer a short menu only when they're stuck\"",
+        "Red Flags row \"Options steer\"",
+        "Always size it as a project with a written design",
+        "If they still decline, run `<factory> --project <name> cancel <slug>` to remove the draft card and stop without building anything.",
+        "Survey the code and the ticket first",
+        // Drafts are found, resumed and cancelled through the command.
+        "`cancel <slug>`",
+        "<factory> --project <name> cancel <slug>",
+        "When the `file` line says `exists`, read the file and continue from it, never overwrite it.",
+        // A split feature closes its ticket once.
+        "Only the last series carries `#N` or the issue URL in its feature text",
+        "`<slug>-2`",
+        "docs/superpowers/plans/<date>-<slug>-2/",
+        // What `new` refuses and warns about.
+        "Report every `warning:` line",
+        "refuses a plan with `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences",
+        // The plan header's executor line, exactly.
+        "`> **Executor:** the factory driver runs this plan using superpowers:subagent-driven-development, with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.`",
     ] {
         assert!(text.contains(needed), "missing phrase: {needed}");
     }
+    assert!(!text.contains("Everything else in the skill stands"), "the skill's quick paths must stay overridden");
+    // The status check comes before `spec start`, and the post-approval commit before writing-plans.
+    let pos = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing phrase: {needle}"));
+    assert!(pos("Run `<factory> --project <name> status`") < pos("<factory> --project <name> spec start <slug>"));
+    assert!(pos("After it, stage the spec path") < pos("<factory> --project <name> spec stage <slug> writing-plans"));
+    assert!(pos("the commit after the spec approval comes first") < pos("Invoke `superpowers:writing-plans`"));
     // The 6.4.1 rules that 7.0.0 removed, and the inline executor.
     for removed in [
         "executing-plans",

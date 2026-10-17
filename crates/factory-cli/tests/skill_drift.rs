@@ -46,6 +46,11 @@ fn installed_skills_still_have_what_the_commands_rely_on() {
         println!("note: the commands were written against superpowers {SKILLS_TESTED_AGAINST}, found {version}");
     }
     assert!(skills.join("brainstorming/builder-check-prompt.md").is_file(), "builder-check-prompt.md is gone");
+    // The command overrides these brainstorming sentences by quoting them, so they must still be there.
+    let brainstorming = read(&skills.join("brainstorming/SKILL.md")).split_whitespace().collect::<Vec<_>>().join(" ");
+    for quoted in ["a single sentence with no list of example answers", "Offer a short menu only when they're stuck", "Options steer."] {
+        assert!(brainstorming.contains(quoted), "brainstorming no longer says: {quoted}");
+    }
     let plans = read(&skills.join("writing-plans/SKILL.md"));
     assert!(plans.contains("Interfaces:"), "writing-plans no longer names Interfaces:");
     assert!(plans.contains("Review Focus"), "writing-plans no longer names Review Focus");

@@ -393,8 +393,27 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "Keep a visible task list",
             "skip the skill's execution handoff",
             "only when that branch merges",
+            // The overrides of the brainstorming skill, the drafts and a split feature's ticket.
+            "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
+            "because open questions were too hard to answer",
+            "Red Flags row \"Options steer\"",
+            "Always size it as a project with a written design",
+            "If they still decline, run `<factory> cancel <slug>` to remove the draft card and stop without building anything.",
+            "Survey the code and the ticket first",
+            "`<factory> cancel <slug>`",
+            "When the `file` line says `exists`, read the file and continue from it, never overwrite it.",
+            "Only the last series carries `#N` or the issue URL in its feature text",
+            "Report every `warning:` line",
+            "refuses a plan with `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences",
         ],
     )?;
+    let pos = |needle: &str| text.find(needle).ok_or_else(|| format!("command is missing: {needle}"));
+    if pos("Run `<factory> status`")? > pos("<factory> spec start <slug>")? {
+        return Err("the draft check must come before `spec start`".to_string());
+    }
+    if pos("After it, stage the spec path")? > pos("<factory> spec stage <slug> writing-plans")? {
+        return Err("the spec commit must come before `spec stage <slug> writing-plans`".to_string());
+    }
     forbid_all(
         &text,
         "command",
@@ -420,6 +439,7 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "purpose and who benefits",
             "n/a: <reason>",
             "read-only exploration subagents",
+            "Everything else in the skill stands",
         ],
     )
 }
