@@ -74,14 +74,39 @@ fn respond(request: tiny_http::Request, response: ApiResponse) {
     let _ = request.respond(out);
 }
 
+/// Gives the handler slot back when the handler ends, also after a panic.
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Only these methods carry a body that is read.
+fn carries_body(method: &str) -> bool {
+    matches!(method, "POST" | "PUT" | "PATCH")
+}
+
+/// Serves one request. The body is read only after the Host and token checks pass, so an
+/// unauthenticated client that declares a body and stalls never holds a thread on a read.
+/// tiny_http offers no socket timeout, so an authenticated client that stalls inside its body
+/// holds one of the handler slots until it disconnects. The read itself is capped at `MAX_BODY`.
 fn handle(home: &Home, deps: &ApiDeps, mut request: tiny_http::Request) {
     let method = request.method().as_str().to_string();
     let url = request.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let headers: Vec<(String, String)> =
         request.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
+    if let Err(refused) = http::authorize(home, &headers) {
+        respond(request, refused);
+        return;
+    }
     let mut body = Vec::new();
-    let _ = request.as_reader().take(MAX_BODY as u64).read_to_end(&mut body);
+    if carries_body(&method) && request.as_reader().take(MAX_BODY as u64).read_to_end(&mut body).is_err() {
+        respond(request, http::error_response(400, "bad_request", "the request body could not be read"));
+        return;
+    }
     let response = http::route(home, deps, &method, path, query, &headers, &body);
     respond(request, response);
 }
@@ -109,8 +134,8 @@ impl ApiServer {
                 }
                 let (home, deps, active) = (home.clone(), deps.clone(), active.clone());
                 std::thread::spawn(move || {
+                    let _slot = Slot(active);
                     handle(&home, &deps, request);
-                    active.fetch_sub(1, Ordering::SeqCst);
                 });
             }
         });

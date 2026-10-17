@@ -131,7 +131,7 @@ example a manual `factory run`) is reported as busy and nothing starts for it un
 | `GET /usage?days=N` | `{days, projects: [{name, total, perDay: [{day, tokens}]}]}`, weighted tokens per UTC day, `N` 1 to 90 (default 14) |
 
 Errors are `{"error": {"code", "message"}}` with these codes: `unauthorized` (401), `bad_request` (400),
-`not_found` (404), `method_not_allowed` (405), `conflict` (409) and `internal` (500). A wrong, missing or short
+`not_found` (404), `method_not_allowed` (405), `conflict` (409) and `failed` (500). A wrong, missing or short
 token always gets the same 401 body.
 
 ```

@@ -75,7 +75,7 @@ pub fn report(home: &Home, deps: &ApiDeps, query: &str) -> ApiResponse {
     };
     let entries = match project::list(home) {
         Ok(e) => e,
-        Err(e) => return error_response(500, "internal", &e.to_string()),
+        Err(e) => return error_response(500, "failed", &e.to_string()),
     };
     let today = (deps.now_ms)() / 1000 / SECS_PER_DAY;
     let window: Vec<String> = (0..u64::from(days)).rev().map(|back| civil(today.saturating_sub(back))).collect();

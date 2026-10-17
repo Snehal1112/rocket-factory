@@ -53,6 +53,20 @@ fn unauthorized() -> ApiResponse {
     error_response(401, "unauthorized", "a valid bearer token is required")
 }
 
+/// Checks the host, then the token. This runs before any body is read.
+pub fn authorize(home: &Home, headers: &[(String, String)]) -> Result<(), ApiResponse> {
+    if !header(headers, "host").is_some_and(host_ok) {
+        return Err(error_response(400, "bad_request", "the Host header must be a loopback address"));
+    }
+    // The detail stays out of the body, because the caller is not authenticated yet.
+    let expected = token::read(home).map_err(|_| error_response(500, "failed", "the server cannot check the token"))?;
+    if token::matches(&expected, bearer(headers)) {
+        Ok(())
+    } else {
+        Err(unauthorized())
+    }
+}
+
 /// Checks the host, then the token, then dispatches.
 pub fn route(
     home: &Home,
@@ -63,15 +77,8 @@ pub fn route(
     headers: &[(String, String)],
     _body: &[u8],
 ) -> ApiResponse {
-    if !header(headers, "host").is_some_and(host_ok) {
-        return error_response(400, "bad_request", "the Host header must be a loopback address");
-    }
-    let expected = match token::read(home) {
-        Ok(t) => t,
-        Err(e) => return error_response(500, "internal", &e.to_string()),
-    };
-    if !token::matches(&expected, bearer(headers)) {
-        return unauthorized();
+    if let Err(r) = authorize(home, headers) {
+        return r;
     }
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let known = matches!(segments.as_slice(), ["projects"] | ["projects", _, "jobs"] | ["usage"]);

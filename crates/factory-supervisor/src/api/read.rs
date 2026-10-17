@@ -81,7 +81,7 @@ fn describe(home: &Home, name: &str, file: &ProjectFile, now_secs: f64) -> Value
 pub fn projects(home: &Home, deps: &ApiDeps) -> ApiResponse {
     let entries = match project::list(home) {
         Ok(e) => e,
-        Err(e) => return error_response(500, "internal", &e.to_string()),
+        Err(e) => return error_response(500, "failed", &e.to_string()),
     };
     let now_secs = (deps.now_ms)() as f64 / 1000.0;
     let list: Vec<Value> = entries
@@ -104,15 +104,15 @@ pub fn jobs(home: &Home, name: &str) -> ApiResponse {
     }
     let file = match project::get(home, name) {
         Ok(f) => f,
-        Err(e) => return error_response(500, "internal", &e.to_string()),
+        Err(e) => return error_response(500, "failed", &e.to_string()),
     };
     let layout = match project::layout(home, name, &file) {
         Ok(l) => l,
-        Err(e) => return error_response(500, "internal", &e.to_string()),
+        Err(e) => return error_response(500, "failed", &e.to_string()),
     };
     let board = match Board::load(&layout.board_file()) {
         Ok(b) => b,
-        Err(e) => return error_response(500, "internal", &board_message(&e)),
+        Err(e) => return error_response(500, "failed", &board_message(&e)),
     };
     let jobs: Vec<Value> = board
         .jobs
@@ -220,7 +220,7 @@ mod tests {
         write_board(&home, "{ not json");
         let r = get(&home, "/projects/good/jobs");
         assert_eq!(r.status, 500);
-        assert_eq!(r.body["error"]["code"], "internal");
+        assert_eq!(r.body["error"]["code"], "failed");
         assert_eq!(get(&home, "/projects").status, 200);
     }
 
