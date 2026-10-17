@@ -410,6 +410,14 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
         branch: job.branch.clone(),
         base: job.base.clone().unwrap_or_default(),
     };
+    // A second cleanup, or one after a rework and cancel, finds nothing left to remove.
+    if !wt.path.exists() && !repo.branch_exists(&wt.branch) {
+        d.store().update_job(id, |j| {
+            j.cleaned = true;
+            Ok(())
+        })?;
+        return Ok(format!("nothing to remove for job {id}, the worktree and branch are already gone"));
+    }
     // A head that is gone or equals the base has no commits to protect, so an error counts as merged.
     let unmerged = match (job.base.as_deref(), job.head.as_deref()) {
         (Some(b), Some(h)) => repo.is_merged(b, h).map(|m| m.is_none()).unwrap_or(false),

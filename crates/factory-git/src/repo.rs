@@ -118,6 +118,11 @@ impl Repo {
         Ok(names)
     }
 
+    /// True when a local branch with this name exists.
+    pub fn branch_exists(&self, name: &str) -> bool {
+        self.inner.find_branch(name, BranchType::Local).is_ok()
+    }
+
     /// Full sha of a local branch tip.
     pub fn tip(&self, branch: &str) -> Result<String> {
         Ok(self.branch_commit(branch)?.id().to_string())

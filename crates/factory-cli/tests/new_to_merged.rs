@@ -142,3 +142,56 @@ fn approve_refuses_a_job_with_a_pending_batch_commit() {
     let e = fx.run(&["approve", "1"]).expect_err("pending batch");
     assert!(e.to_string().contains("pending batch commit"), "{e}");
 }
+
+fn branch_exists(fx: &Fixture, name: &str) -> bool {
+    git2::Repository::open(&fx.root).expect("open").find_branch(name, git2::BranchType::Local).is_ok()
+}
+
+#[test]
+fn cleanup_twice_succeeds_and_says_nothing_was_left() {
+    let fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "say hello", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    fx.run(&["cleanup", "1"]).expect("first cleanup");
+    let second = fx.run(&["cleanup", "1"]).expect("second cleanup");
+    assert_eq!(second, "nothing to remove for job 001, the worktree and branch are already gone");
+}
+
+#[test]
+fn cleanup_deletes_the_branch_when_the_worktree_folder_was_removed_by_hand() {
+    let fx = Fixture::with_risk_path("docs/**");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    fx.run(&["cancel", "1"]).expect("cancel");
+    std::fs::remove_dir_all(fx.worktree_path(1)).expect("rm worktree");
+    assert!(branch_exists(&fx, "factory/001-hello"));
+    fx.run(&["cleanup", "1", "--discard-commits"]).expect("cleanup");
+    assert!(!branch_exists(&fx, "factory/001-hello"));
+}
+
+#[test]
+fn cleanup_of_a_merged_job_works_when_the_worktree_folder_was_removed_by_hand() {
+    let fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "say hello", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    std::fs::remove_dir_all(fx.worktree_path(1)).expect("rm worktree");
+    assert!(branch_exists(&fx, "factory/001-hello"));
+    fx.run(&["cleanup", "1"]).expect("cleanup");
+    assert!(!branch_exists(&fx, "factory/001-hello"));
+}
+
+#[test]
+fn cleanup_still_refuses_unmerged_commits_when_the_worktree_folder_is_gone() {
+    let fx = Fixture::with_risk_path("docs/**");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&["new", "hello", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    fx.run(&["cancel", "1"]).expect("cancel");
+    std::fs::remove_dir_all(fx.worktree_path(1)).expect("rm worktree");
+    let e = fx.run(&["cleanup", "1"]).expect_err("unmerged");
+    assert!(e.to_string().contains("--discard-commits"), "{e}");
+    assert!(branch_exists(&fx, "factory/001-hello"));
+}
