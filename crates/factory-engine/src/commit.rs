@@ -118,7 +118,8 @@ pub fn committer_prompt(
     if !req.snapshots.is_empty() {
         tasks.push_str(
             "\n## Tasks in this change\n\nThe staged change holds these tasks, oldest first. \
-             Make focused commits, normally one per task, in this order.\n\n",
+             Make focused commits, normally one per task, in this order. \
+             Make at most 4 commits; group tasks when there are more than 4.\n\n",
         );
         for snap in req.snapshots {
             tasks.push_str(&format!("Task {}: {}\n", snap.n, snap.title));
@@ -525,6 +526,7 @@ mod tests {
         let prompt = committer_prompt("CONTEXT", &req, &report("+x\n"), &[], false);
         assert!(prompt.contains("Kind: batch"), "{prompt}");
         assert!(prompt.contains("## Tasks in this change"), "{prompt}");
+        assert!(prompt.contains("Make at most 4 commits; group tasks when there are more than 4."), "{prompt}");
         assert!(prompt.contains("Task 1: first thing\n  a.txt\n"), "{prompt}");
         assert!(prompt.contains("Task 2: second thing\n  b.txt\n  c.txt\n"), "{prompt}");
         let tasks = prompt.find("## Tasks in this change").expect("tasks");

@@ -875,3 +875,176 @@ fn a_stop_between_commit_groups_resumes_without_losing_or_repeating_a_commit() {
     let subjects: std::collections::HashSet<_> = commits.iter().map(|c| c.subject.clone()).collect();
     assert_eq!(subjects.len(), commits.len(), "duplicate commit: {commits:?}");
 }
+
+const EXCERPT_PLAN: &str = "# Demo Plan\n\n**Goal:** make it.\n\n## Global Constraints\n\n- Use -j4.\n\n---\n\n\
+### Task 1: first thing\n\nBODY-ONE-MARKER\n\n### Task 2: second thing\n\nBODY-TWO-MARKER\n\nNext plan: none\n";
+const EXCERPT_SPEC: &str = "# Spec\n\nGoal: ship the thing quickly.\n\n## Background\n\nBACKGROUND-MARKER\n\n\
+## Acceptance criteria\n\n- ACCEPT-MARKER\n\n## Testing\n\nTESTING-MARKER\n";
+
+fn excerpt_fixture() -> Fixture {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, EXCERPT_PLAN).expect("plan");
+    std::fs::write(fx.job_dir.join("spec.md"), EXCERPT_SPEC).expect("spec");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").set_stage(Stage::Build, None, false, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    fx
+}
+
+fn events_of(fx: &Fixture) -> String {
+    std::fs::read_to_string(fx.job_dir.join("events.jsonl")).unwrap_or_default()
+}
+
+#[test]
+fn a_task_builder_gets_its_own_task_the_header_and_the_spec_excerpt() {
+    let fx = excerpt_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    for want in ["Use -j4.", "BODY-ONE-MARKER", "Goal: ship the thing quickly.", "ACCEPT-MARKER", "Do only Task 1"] {
+        assert!(prompt.contains(want), "missing {want}: {prompt}");
+    }
+    for gone in ["BODY-TWO-MARKER", "BACKGROUND-MARKER", "TESTING-MARKER"] {
+        assert!(!prompt.contains(gone), "unexpected {gone}: {prompt}");
+    }
+    assert!(prompt.contains(&fx.plan_file.display().to_string()), "{prompt}");
+    assert!(prompt.contains("spec.md"), "{prompt}");
+    assert!(prompt.contains("use this excerpt instead and do not read the plan file in full"), "{prompt}");
+    assert!(!events_of(&fx).contains("excerpt"), "no fallback event when the excerpt was cut");
+}
+
+/// The first builder prompt of a fixture whose plan is `plan`, with the excerpt switch as given.
+fn first_builder_prompt(plan: &str, excerpt_on: bool) -> (String, String) {
+    let mut fx = excerpt_fixture();
+    fx.config.builder_excerpt = excerpt_on;
+    std::fs::write(&fx.plan_file, plan).expect("plan");
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    // The fixtures differ only in the temp dir, so the paths are normalized.
+    (prompt.replace(&fx.tmp.path().display().to_string(), "TMP"), events_of(&fx))
+}
+
+#[test]
+fn the_flag_off_gives_the_old_prompt_without_the_excerpt() {
+    // A plan with no extractable section takes the old prompt path even with the switch on.
+    let (old, _) = first_builder_prompt("# P\n\n- [ ] Task 1: first thing\n\nBODY-ONE-MARKER\n- [ ] Task 2: second thing\n", true);
+    let (off, events) = first_builder_prompt(EXCERPT_PLAN, false);
+    assert_eq!(off, old);
+    for gone in ["Task excerpt", "--- plan header ---", "--- end of excerpt ---", "ACCEPT-MARKER"] {
+        assert!(!off.contains(gone), "unexpected {gone}: {off}");
+    }
+    assert!(off.contains("Do only Task 1: first thing"));
+    assert!(!events.contains("excerpt"), "switch off is a choice, not a fallback: {events}");
+}
+
+#[test]
+fn a_plan_with_checkbox_tasks_falls_back_to_the_old_prompt_and_says_so_in_the_events() {
+    let (prompt, events) = first_builder_prompt("# P\n\n- [ ] Task 1: first\n\nBODY-ONE-MARKER\n- [ ] Task 2: second\n", true);
+    assert!(!prompt.contains("BODY-ONE-MARKER") && !prompt.contains("Task excerpt"), "{prompt}");
+    assert!(prompt.contains("Do only Task 1"));
+    assert!(events.contains("FactoryNotice") && events.contains("no task excerpt for task 1"), "{events}");
+}
+
+#[test]
+fn a_task_past_the_last_heading_falls_back_and_is_never_an_empty_prompt() {
+    // Task 1 exists only as a checkbox, so no `### Task 1:` section can be cut.
+    let (prompt, events) = first_builder_prompt("# P\n\n- [ ] Task 1: first\n\n### Task 2: second\n\nBODY-TWO-MARKER\n", true);
+    assert!(!prompt.contains("Task excerpt") && !prompt.contains("BODY-TWO-MARKER"), "{prompt}");
+    assert!(prompt.contains("Do only Task"), "{prompt}");
+    assert!(events.contains("no task excerpt for task"), "{events}");
+}
+
+#[test]
+fn a_fenced_task_heading_does_not_cut_the_builder_excerpt_short() {
+    let plan = "# P\n\n- Use -j4.\n\n### Task 1: first thing\n\nBODY-ONE-MARKER\n\n```text\n### Task 2: quoted\nNext plan: quoted\nQUOTED-MARKER\n```\n\nAFTER-FENCE-MARKER\n\n### Task 2: second thing\n\nBODY-TWO-MARKER\n";
+    let (prompt, _) = first_builder_prompt(plan, true);
+    for want in ["BODY-ONE-MARKER", "QUOTED-MARKER", "AFTER-FENCE-MARKER"] {
+        assert!(prompt.contains(want), "missing {want}: {prompt}");
+    }
+    assert!(!prompt.contains("BODY-TWO-MARKER"), "{prompt}");
+}
+
+#[test]
+fn a_crlf_plan_gives_the_same_excerpt() {
+    let (prompt, events) = first_builder_prompt(&EXCERPT_PLAN.replace('\n', "\r\n"), true);
+    assert!(prompt.contains("BODY-ONE-MARKER") && prompt.contains("Use -j4.") && !prompt.contains("BODY-TWO-MARKER"), "{prompt}");
+    assert!(!events.contains("excerpt"), "{events}");
+}
+
+#[test]
+fn a_single_task_plan_gets_its_excerpt() {
+    let plan = "# P\n\n- Use -j4.\n\n### Task 1: only thing\n\nBODY-ONLY-MARKER\n\nNext plan: later\n";
+    let (prompt, _) = first_builder_prompt(plan, true);
+    assert!(prompt.contains("BODY-ONLY-MARKER") && prompt.contains("Use -j4.") && !prompt.contains("later"), "{prompt}");
+}
+
+#[test]
+fn the_excerpt_prompt_is_smaller_than_the_plan_and_spec_it_replaces() {
+    let big_task = format!("### Task 2: second thing\n\n{}\n", "filler line\n".repeat(400));
+    let plan = format!("# Demo Plan\n\n- Use -j4.\n\n### Task 1: first thing\n\nbody\n\n{big_task}");
+    let (prompt, _) = first_builder_prompt(&plan, true);
+    // The old prompt only named the files and the builder read them in full, about plan + spec bytes.
+    let replaced = plan.len() + EXCERPT_SPEC.len();
+    assert!(prompt.len() < replaced / 2, "prompt {} bytes, plan and spec {replaced} bytes", prompt.len());
+    assert!(!prompt.contains("filler line"));
+}
+
+#[test]
+fn a_builder_that_detaches_head_parks_before_the_snapshot() {
+    let fx = two_task_fixture();
+    let detach_and_change: Effect = Box::new(|spec| {
+        std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write");
+        let repo = git2::Repository::open(&spec.cwd).expect("open");
+        let id = repo.head().expect("head").target().expect("target");
+        repo.set_head_detached(id).expect("detach");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![detach_and_change]);
+    match fx.engine(&runner).build_stage().expect("task 1") {
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("moved HEAD off the job branch in task 1"), "{r}");
+            assert!(r.contains("factory rework 001"), "{r}");
+            assert!(r.contains("git rev-parse HEAD") && r.contains("HEAD is at "), "{r}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    let job = fx.job();
+    assert_eq!(job.task_index, 0);
+    assert_eq!(fx.repo.tip(&job.branch).expect("tip"), job.base.clone().expect("base"));
+}
+
+#[test]
+fn a_rework_note_left_by_a_batch_goes_to_the_ledger_and_a_fix_round_uses_the_findings() {
+    let fx = two_task_fixture();
+    park_a_batch(&fx);
+    std::fs::write(fx.job_dir.join("rework-note.md"), "please look at the batch").expect("note");
+    let runner = scripted_auto(vec![]);
+    assert_eq!(fx.engine(&runner).build_stage().expect("resume"), StageOutcome::Advanced(Stage::Review));
+    assert!(!fx.job_dir.join("rework-note.md").exists());
+    let ledger = ledger_of(&fx);
+    assert!(ledger.contains("rework note not sent to a builder") && ledger.contains("please look at the batch"), "{ledger}");
+    // A fix round now resumes with the findings file.
+    std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 2;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    let fix = scripted_auto(vec![change_effect("c.txt", 2)]);
+    assert_eq!(fx.engine(&fix).build_stage().expect("fix round"), StageOutcome::Advanced(Stage::Review));
+    let prompt = fix.last_spec_for("builder").expect("builder").prompt;
+    assert!(prompt.contains("changes-r2.md"), "{prompt}");
+    assert!(!prompt.contains("please look at the batch"), "{prompt}");
+}
+
+#[test]
+fn a_long_stale_note_is_cut_to_300_characters_in_the_ledger() {
+    let fx = two_task_fixture();
+    park_a_batch(&fx);
+    std::fs::write(fx.job_dir.join("rework-note.md"), format!("{}\nTAIL-MARKER", "n".repeat(400))).expect("note");
+    let runner = scripted_auto(vec![]);
+    fx.engine(&runner).build_stage().expect("resume");
+    let ledger = ledger_of(&fx);
+    assert!(ledger.contains(&"n".repeat(300)) && !ledger.contains(&"n".repeat(301)) && !ledger.contains("TAIL-MARKER"), "{ledger}");
+}

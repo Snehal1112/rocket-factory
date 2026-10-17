@@ -82,4 +82,5 @@ fn head_is_on_the_job_branch_until_it_is_detached() {
     let oid = inside.head().expect("head").peel_to_commit().expect("commit").id();
     inside.set_head_detached(oid).expect("detach");
     assert!(!repo.head_is_on_branch(&wt).expect("detached"));
+    assert_eq!(repo.head_sha(&wt).expect("sha"), oid.to_string());
 }

@@ -522,6 +522,27 @@ fn a_batch_run_is_capped_at_twice_the_commit_budget_and_names_the_tasks() {
 }
 
 #[test]
+fn the_retry_of_a_batch_run_keeps_the_doubled_cap() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    let snaps = two_snapshots(&wt);
+    let runner = scripted(vec![
+        nothing(),
+        effect(|dir| {
+            commit_paths(dir, &["a.txt"], "feat(x): add a");
+            commit_paths(dir, &["b.txt"], "feat(x): add b");
+            "done".to_string()
+        }),
+    ]);
+    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let retry = runner.last_spec().expect("retry spec");
+    assert_eq!(retry.resume.as_deref(), Some("sess-1"));
+    assert_eq!(retry.budget_weighted, Some(120_000));
+}
+
+#[test]
 fn a_failed_batch_falls_back_to_one_chore_commit_per_snapshot() {
     let fx = Fixture::new();
     context(&fx);

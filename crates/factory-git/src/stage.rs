@@ -68,4 +68,11 @@ impl Repo {
         };
         Ok(on_branch)
     }
+
+    /// The full sha HEAD of the job worktree points at, whether or not it is on a branch.
+    pub fn head_sha(&self, wt: &Worktree) -> Result<String> {
+        let inside = Repository::open(&wt.path)?;
+        let id = inside.head()?.peel_to_commit()?.id();
+        Ok(id.to_string())
+    }
 }
