@@ -188,6 +188,8 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "dev-workflow-skills:1-git-commit",
         "factoryd is-running",
         "factoryd enqueue",
+        "factoryd status",
+        "daily budget",
         "--series",
         "run_in_background",
         "Do not poll",

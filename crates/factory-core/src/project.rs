@@ -163,30 +163,36 @@ pub fn get(home: &Home, name: &str) -> Result<ProjectFile, CoreError> {
     read_file(&dir.join(PROJECT_FILE)).map_err(CoreError::Config)
 }
 
-/// The main checkout a linked git worktree belongs to, read from the checkout's `.git` file and the
-/// `commondir` file of its git dir. `None` when `path` is not inside a linked worktree.
-fn worktree_main(path: &Path) -> Option<PathBuf> {
-    for dir in path.ancestors() {
-        let dot_git = dir.join(".git");
-        if dot_git.is_dir() {
-            return None;
-        }
-        if !dot_git.is_file() {
-            continue;
-        }
-        let text = std::fs::read_to_string(&dot_git).ok()?;
-        let target = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
-        let git_dir = dir.join(target);
-        let common = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
-        let common = std::fs::canonicalize(git_dir.join(common.trim())).ok()?;
-        return common.parent().map(Path::to_path_buf);
-    }
-    None
+/// The top of the git checkout that holds `path`: the nearest ancestor with a `.git` folder or file.
+fn git_top(path: &Path) -> Option<PathBuf> {
+    path.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf)
 }
 
-/// The registered project whose repo is `path` or contains it. The longest repo wins when two nest, a
-/// linked git worktree of a registered repo resolves to that repo's project, and an unreadable project
-/// or one whose repo folder is gone is skipped, and two projects on one repo are an error. `path` must exist.
+/// The main checkout a linked git worktree at `top` belongs to, read from its `.git` file and the
+/// `commondir` and `gitdir` files of its git dir. `None` when `top` is not a linked worktree or the git
+/// dir does not point back at this checkout.
+fn worktree_main(top: &Path) -> Option<PathBuf> {
+    let dot_git = top.join(".git");
+    if !dot_git.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let target = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+    let git_dir = top.join(target);
+    let back = std::fs::read_to_string(git_dir.join("gitdir")).ok()?;
+    if std::fs::canonicalize(back.trim()).ok()? != std::fs::canonicalize(&dot_git).ok()? {
+        return None;
+    }
+    let common = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let common = std::fs::canonicalize(git_dir.join(common.trim())).ok()?;
+    common.parent().map(Path::to_path_buf)
+}
+
+/// The registered project whose repo is the git checkout that holds `path`. A linked git worktree that
+/// is not registered itself resolves to the project of its main checkout. A git repo nested inside a
+/// registered one (a submodule or a vendored clone) that is not registered gives `None`, as does a path
+/// outside every repo. An unreadable project or one whose repo folder is gone is skipped, and two
+/// projects on one repo are an error. `path` must exist.
 pub fn find_by_path(home: &Home, path: &Path) -> Result<Option<String>, CoreError> {
     let canon = std::fs::canonicalize(path).map_err(|e| CoreError::io(path, e))?;
     let mut repos: Vec<(String, PathBuf)> = Vec::new();
@@ -197,17 +203,15 @@ pub fn find_by_path(home: &Home, path: &Path) -> Result<Option<String>, CoreErro
             }
         }
     }
-    // A registered repo that contains the path is the most specific match. The main checkout of a
-    // linked worktree is used only when no registered repo contains the path.
-    let mut hits: Vec<&(String, PathBuf)> = repos.iter().filter(|(_, r)| canon.starts_with(r)).collect();
+    let Some(top) = git_top(&canon) else { return Ok(None) };
+    let mut hits: Vec<&str> = repos.iter().filter(|(_, r)| *r == top).map(|(n, _)| n.as_str()).collect();
     if hits.is_empty() {
-        if let Some(main) = worktree_main(&canon) {
-            hits = repos.iter().filter(|(_, r)| *r == main).collect();
+        if let Some(main) = worktree_main(&top) {
+            hits = repos.iter().filter(|(_, r)| *r == main).map(|(n, _)| n.as_str()).collect();
         }
     }
-    let Some(longest) = hits.iter().map(|(_, r)| r.components().count()).max() else { return Ok(None) };
-    let best: Vec<&str> = hits.iter().filter(|(_, r)| r.components().count() == longest).map(|(n, _)| n.as_str()).collect();
-    match best.as_slice() {
+    match hits.as_slice() {
+        [] => Ok(None),
         [one] => Ok(Some((*one).to_string())),
         many => Err(CoreError::Config(format!(
             "ambiguous match: projects {} all register the repo containing {}",
@@ -271,14 +275,14 @@ mod tests {
     fn env() -> Env {
         let t = TempDir::new().expect("tempdir");
         let repo = t.path().join("repo");
-        std::fs::create_dir_all(&repo).expect("mkdir");
+        std::fs::create_dir_all(repo.join(".git")).expect("mkdir");
         let home = Home::at(t.path().join("home"));
         Env { _t: t, home, repo }
     }
 
     fn other_repo(e: &Env, n: &str) -> PathBuf {
         let p = e._t.path().join(n);
-        std::fs::create_dir_all(&p).expect("mkdir");
+        std::fs::create_dir_all(p.join(".git")).expect("mkdir");
         p
     }
 
@@ -373,10 +377,6 @@ mod tests {
         assert!(get(&e.home, "p").is_err());
     }
 
-    fn dot_git(root: &Path) {
-        std::fs::create_dir_all(root.join(".git")).expect("mkdir");
-    }
-
     #[test]
     fn find_by_path_matches_root_subfolder_and_symlink() {
         let e = env();
@@ -396,7 +396,7 @@ mod tests {
     fn find_by_path_prefers_the_longest_nested_repo() {
         let e = env();
         let inner = e.repo.join("vendor/inner");
-        std::fs::create_dir_all(&inner).expect("mkdir");
+        std::fs::create_dir_all(inner.join(".git")).expect("mkdir");
         add(&e.home, "outer", &e.repo, "rust", None, &ok).expect("add");
         add(&e.home, "inner", &inner, "rust", None, &ok).expect("add");
         assert_eq!(find_by_path(&e.home, &inner).expect("inner").as_deref(), Some("inner"));
@@ -406,15 +406,9 @@ mod tests {
     #[test]
     fn find_by_path_resolves_a_linked_worktree() {
         let e = env();
-        dot_git(&e.repo);
         add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
-        // The layout git writes for a linked worktree that lives outside the repo.
-        let admin = e.repo.join(".git/worktrees/wt");
-        std::fs::create_dir_all(&admin).expect("mkdir");
-        std::fs::write(admin.join("commondir"), "../..\n").expect("commondir");
         let wt = e._t.path().join("elsewhere-wt");
-        std::fs::create_dir_all(wt.join("src")).expect("mkdir");
-        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).expect("gitfile");
+        fake_worktree(&e.repo, "wt", &wt);
         assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("one"));
     }
 
@@ -437,12 +431,12 @@ mod tests {
         std::fs::write(admin.join("commondir"), "../..\n").expect("commondir");
         std::fs::create_dir_all(at.join("src")).expect("mkdir");
         std::fs::write(at.join(".git"), format!("gitdir: {}\n", admin.display())).expect("gitfile");
+        std::fs::write(admin.join("gitdir"), format!("{}\n", at.join(".git").display())).expect("backlink");
     }
 
     #[test]
     fn find_by_path_prefers_a_registered_worktree_over_its_main_repo() {
         let e = env();
-        dot_git(&e.repo);
         add(&e.home, "main-repo", &e.repo, "rust", None, &ok).expect("add");
         let wt = e._t.path().join("wt-registered");
         fake_worktree(&e.repo, "wt1", &wt);
@@ -454,7 +448,6 @@ mod tests {
     #[test]
     fn find_by_path_maps_an_unregistered_worktree_to_the_main_repo() {
         let e = env();
-        dot_git(&e.repo);
         add(&e.home, "main-repo", &e.repo, "rust", None, &ok).expect("add");
         let wt = e._t.path().join("wt-unregistered");
         fake_worktree(&e.repo, "wt2", &wt);
@@ -481,6 +474,30 @@ mod tests {
         std::fs::copy(e.home.project_dir("aaa").join("project.toml"), dir.join("project.toml")).expect("copy");
         let err = find_by_path(&e.home, &e.repo).expect_err("ambiguous").to_string();
         assert!(err.contains("aaa") && err.contains("bbb") && err.contains("ambiguous"), "{err}");
+    }
+
+    #[test]
+    fn find_by_path_ignores_an_unregistered_repo_nested_in_a_registered_one() {
+        let e = env();
+        add(&e.home, "outer", &e.repo, "rust", None, &ok).expect("add");
+        let inner = e.repo.join("ignored/clone");
+        std::fs::create_dir_all(inner.join(".git")).expect("mkdir");
+        std::fs::create_dir_all(inner.join("src")).expect("mkdir");
+        assert_eq!(find_by_path(&e.home, &inner.join("src")).expect("inner"), None);
+        let plain = e.repo.join("docs/plain");
+        std::fs::create_dir_all(&plain).expect("mkdir");
+        assert_eq!(find_by_path(&e.home, &plain).expect("plain").as_deref(), Some("outer"));
+        assert_eq!(find_by_path(&e.home, &e.repo).expect("repo").as_deref(), Some("outer"));
+    }
+
+    #[test]
+    fn find_by_path_rejects_a_worktree_whose_git_dir_does_not_point_back() {
+        let e = env();
+        add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
+        let wt = e._t.path().join("stale-wt");
+        fake_worktree(&e.repo, "stale", &wt);
+        std::fs::write(e.repo.join(".git/worktrees/stale/gitdir"), "/somewhere/else/.git\n").expect("rewrite");
+        assert_eq!(find_by_path(&e.home, &wt).expect("stale"), None);
     }
 
     #[test]
