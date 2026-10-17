@@ -8,7 +8,8 @@ The Rust driver does everything mechanical: state, checks, diffs, merge, sync, s
 
 ```
 /factory <feature>  (interactive, with the user)
-  superpowers:brainstorming (full interview) -> docs/superpowers/specs/<date>-<slug>-design.md, committed, approved
+  factory spec start <slug> '<feature>' -> draft card in the Spec column (factory spec stage moves it)
+  superpowers:brainstorming (full interview, builder check) -> docs/superpowers/specs/<date>-<slug>-design.md, approved, committed
   superpowers:writing-plans -> docs/superpowers/plans/<date>-<slug>/plan-01-<slug>.md ... (at most 3 tasks each, Next plan: line), committed, approved
   factory new <slug> '<feature>' --plans <plans folder> --spec <spec file>, then factory run <id> --series  (background Bash, session idle)
 
@@ -151,7 +152,7 @@ Build once: `cargo build -j4 --manifest-path tools/factory/Cargo.toml -p factory
 
 | Command | Does |
 |---|---|
-| `/factory <feature> [--opus]` | Brainstorm and plan with the user, then `factory new` and `factory run <id> --series` in the background. |
+| `/factory <feature> [--opus]` | Start a draft card, brainstorm and plan with the user, then `factory new` and `factory run <id> --series` in the background. |
 | `/factory status` | `factory status`. |
 | `/factory approve <id>` | Release a `needs-human` job to the merge step. Refused when the code review has not run, unless `--without-review` is given. |
 | `/factory rework <id> <note>` | Send a `needs-human` job back to the builder with a one-line note. |
@@ -160,7 +161,7 @@ Build once: `cargo build -j4 --manifest-path tools/factory/Cargo.toml -p factory
 
 The command matches subcommands by exact shape, so feature text such as `next button for pagination` stays a feature. The session does not poll while the driver runs. The harness notifies it on exit.
 
-`factory new` validates the spec and the plan chain, so both are written, approved and committed under `docs/superpowers/` first. The driver cannot ask questions during a run, so the spec and the plans must be complete. `/factory` runs the full `superpowers:brainstorming` interview (one question at a time until the user confirms the written-back understanding, with a required coverage list) and may use read-only exploration subagents for the code survey. The `/factory` interview writes a `## Decisions` section with one answer or `n/a: <reason>` per interview topic. The driver does not check that section or the interview itself, it checks only the Goal, the Acceptance criteria and placeholders. The spec and the plans are committed on the session's current branch, with a pathspec commit. Job branches start from `main`, so the docs reach `main` only when that branch merges. The driver resolves `Next plan:` paths against the checkout the plan lives in and stores absolute paths, so a session in a linked worktree works. The jobs themselves run from the copies in the job folders. Harness rules the driver keeps: every cargo call has `-j4`, no `--workspace`, no `CARGO_TARGET_DIR`, one implementer per worktree. The builder never commits. The driver removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the environment of every `claude` it starts, so jobs use the subscription login and never bill an API account by accident. Only an explicit `FACTORY_ALLOW_API_KEY=1` in the shell that runs the driver turns that off.
+`factory new` validates the spec and the plan chain, so both are written, approved and committed under `docs/superpowers/` first. The driver cannot ask questions during a run, so the spec and the plans must be complete. `/factory` runs `superpowers:brainstorming` 7.0.0 as it is, with one change: every question carries a recommended answer and a few alternatives. The session writes the spec at the path `factory spec start` printed as the interview goes, one `## Decisions` list item per answered question with the options and the choice, ending `Decided by: user` (or `Decided by: call` for the session's own choice). The skill's builder check reads the spec before the user sees it, and the spec is committed only after the user approves it. The driver refuses a spec without the Goal and the Acceptance criteria or with a placeholder, and only warns when no decision says `Decided by: user`. Plans come from `superpowers:writing-plans` in its 7.0.0 style, and each header says the driver runs it using `superpowers:subagent-driven-development`, one fresh builder per task. The spec and the plans are committed on the session's current branch, with a pathspec commit. Job branches start from `main`, so the docs reach `main` only when that branch merges. The driver resolves `Next plan:` paths against the checkout the plan lives in and stores absolute paths, so a session in a linked worktree works. The jobs themselves run from the copies in the job folders. Harness rules the driver keeps: every cargo call has `-j4`, no `--workspace`, no `CARGO_TARGET_DIR`, one implementer per worktree. The builder never commits. The driver removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the environment of every `claude` it starts, so jobs use the subscription login and never bill an API account by accident. Only an explicit `FACTORY_ALLOW_API_KEY=1` in the shell that runs the driver turns that off.
 
 ## Dashboard
 

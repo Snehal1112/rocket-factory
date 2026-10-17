@@ -202,9 +202,30 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "to every plan, as if listed with the rules below",
         "does not skip the interview",
         "Use the ticket and the code survey to ask sharper questions",
-        "is a question actually asked in this session with the options considered and why the others were rejected",
-        "## Rejected alternatives",
-        "If the user declines to answer a topic, record `n/a: <reason>` in their words",
+        // The 7.0.0 interview, the draft card and the spec the driver needs.
+        "<factory> --project <name> spec start <slug> '<feature>'",
+        "<factory> --project <name> spec stage <slug> writing-spec",
+        "<factory> --project <name> spec stage <slug> writing-plans",
+        "<factory> --project <name> spec resume <slug>",
+        "`file <repo-relative path>",
+        "never only digits",
+        "the same slug",
+        "recommended answer",
+        "## Decisions",
+        "`Decided by: user`",
+        "`Decided by: call`",
+        "builder check",
+        "opt-out",
+        "## Goal",
+        "## Acceptance criteria",
+        // The 7.0.0 plans, run by the driver.
+        "superpowers:subagent-driven-development",
+        "one fresh factory-builder implementer per task",
+        "File Structure",
+        "`**Interfaces:**`",
+        "plan self-review",
+        "at most 6 plans",
+        "Next plan:",
         "`#N` or as the issue URL",
         "rework needs a note",
         "`approve <digits> --without-review`",
@@ -213,6 +234,24 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "argument-hint: \"<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id> | cleanup <id> | tickets <id>\"",
     ] {
         assert!(text.contains(needed), "missing phrase: {needed}");
+    }
+    // The 6.4.1 rules that 7.0.0 removed, and the inline executor.
+    for removed in [
+        "executing-plans",
+        "architectural path",
+        "never classify",
+        "spec self-review",
+        "Coverage gate",
+        "Propose 2 to 3",
+        "approval after each section",
+        "2 to 5 minute",
+        "one at a time",
+        "purpose and who benefits",
+        "n/a: <reason>",
+        "## Rejected alternatives",
+        "Do not use subagents for the interview",
+    ] {
+        assert!(!text.contains(removed), "removed phrase still present: {removed}");
     }
     let lower = text.to_lowercase();
     for banned in ["tools/factory", "cargo build", "opencollection", "factory-ctl", "python3", "set-stage", "sendmessage", "rocket"] {
