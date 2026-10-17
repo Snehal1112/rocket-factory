@@ -81,6 +81,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
+    /// Manage the seeded presets in the factory home.
+    Presets {
+        #[command(subcommand)]
+        cmd: PresetsCmd,
+    },
     /// Install the global /factory slash command for the current user.
     Install {
         /// The folder to write factory.md into. Defaults to the Claude commands folder under $HOME.
@@ -113,6 +118,16 @@ pub enum SpecCmd {
     Stage { slug: String, stage: String },
     /// Print the stage and spec file of a draft.
     Resume { slug: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PresetsCmd {
+    /// Bring the seeded presets up to the built-in text. Hand-edited files are listed and kept.
+    Refresh {
+        /// Overwrite files that were edited by hand.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

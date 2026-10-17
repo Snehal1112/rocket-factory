@@ -246,6 +246,9 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Project { .. } => Err(CliError::Refused(
             "project commands do not need a repository, run them through project::run".into(),
         )),
+        Command::Presets { .. } => Err(CliError::Refused(
+            "presets commands do not need a repository, run them through presets::run".into(),
+        )),
         Command::Install { .. } => Err(CliError::Refused(
             "install needs no repository, run it through install::run".into(),
         )),

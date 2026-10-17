@@ -4,11 +4,12 @@ mod cli;
 mod commands;
 mod costs;
 pub mod install;
+pub mod presets;
 pub mod project;
 mod status;
 pub mod tokens;
 
-pub use cli::{Cli, Command, ProjectCmd, SpecCmd};
+pub use cli::{Cli, Command, PresetsCmd, ProjectCmd, SpecCmd};
 pub use costs::{estimate_lines, format_estimate, render_costs};
 pub use commands::{dispatch, env_lock_wait, env_owner, validate_rework_note, CliCtx, CliError};
 pub use status::{render_park_details, render_parked, render_status};

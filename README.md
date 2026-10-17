@@ -17,7 +17,7 @@ Rocket's factory gained these after the extraction. They are part of this driver
 - Ticket hygiene: the `factory tickets` command and the `tickets_on_merge` key, see below.
 - Live token bar: the dashboard card bar follows the running agent, so it moves while an agent works.
 
-Presets already seeded under `~/.factory/presets/` are not updated: `preset::seed` writes only the files that are missing and never overwrites an existing one. A preset seeded before this port lacks the batch committer kind and the task excerpt rule. `seed` runs only in `factory project add`. To pick up the new text, delete the preset folder (or just the files you have not edited) and run `factory project add` for any project, which seeds the missing files again.
+Presets already seeded under `~/.factory/presets/` are not updated by `factory project add`: `preset::seed` writes only the files that are missing and never overwrites one. To bring them up to date, run `factory presets refresh`, see below.
 
 ## Ticket hygiene
 
@@ -104,6 +104,31 @@ folder and refuses while a job is not merged or cancelled, unless `--force` is g
 `project.toml` is removed only with `--force`. `remove` also prunes the git worktree registrations of the
 project's `worktrees/` folder (a stale one whose folder is gone too, a valid one together with its working
 folder). It never deletes branches: the `factory/*` job branches stay in the repo and are listed in the output.
+
+### Refreshing seeded presets
+
+`factory presets refresh [--force]` brings `<home>/presets/` up to the text built into the binary. It needs no
+repository. Run it after you upgrade the factory, because a home seeded by an older version keeps the old
+builder and reviewer agents, and the driver now expects the new builder reply format.
+
+For each built-in preset file the command does one of four things and prints a line for it, then a count:
+
+- `written`: the file was absent, so it is created.
+- `unchanged`: the file already has the built-in text.
+- `updated`: the file holds a known older shipped text of the builder or reviewer agent, so it is replaced.
+- `refused`: the file differs from every known text, so it looks hand edited. It is listed and left as it is.
+
+Refused files do not make the command fail. To overwrite them, run `factory presets refresh --force`. This
+discards your edits, so copy them first.
+
+The command only writes under `<home>/presets/`. It never touches a project override under
+`<home>/projects/<name>/` or a repo override under `.factory/`.
+
+A home that was seeded from preset text written partway through this rework matches neither the old nor the
+current text. Its agent files are refused, and you need `--force` to refresh them.
+
+`refresh` does not update the global command. After an upgrade also run `factory install --force` to pick up
+the new `/factory` command.
 
 ### The global /factory command
 

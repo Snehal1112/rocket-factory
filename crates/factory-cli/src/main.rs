@@ -16,6 +16,19 @@ fn main() {
         }
         return;
     }
+    if let Command::Presets { cmd } = cli.command {
+        let result = factory_core::Home::from_env()
+            .map_err(factory_cli::CliError::from)
+            .and_then(|home| factory_cli::presets::run(&home, cmd));
+        match result {
+            Ok(text) => println!("{text}"),
+            Err(e) => {
+                eprintln!("factory: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Command::Install { dir, force } = &cli.command {
         match factory_cli::install::run(dir.as_deref(), *force) {
             Ok(text) => println!("{text}"),
