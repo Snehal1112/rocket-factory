@@ -25,7 +25,7 @@ pub mod verdict;
 /// The global `/factory` slash command that `factory install` writes.
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
 
-pub use board::{Board, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry};
+pub use board::{Board, Draft, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry, DRAFT_STAGES};
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{
     append_footers, blocked_reason, builder_rulings, builder_status, parse_builder_status, BuilderStatus, extract_message, fallback_subject, has_footer, issue_footer, parse_issue_refs, parse_issues, IssueRef,

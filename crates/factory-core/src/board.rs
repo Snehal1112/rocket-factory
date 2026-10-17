@@ -117,6 +117,9 @@ pub struct Job {
     /// What started the latest fix round, `checks` or `review`. New in the approve review series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix_source: Option<String>,
+    /// A warning about the job's spec, for the dashboard. New in the draft cards series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_warning: Option<String>,
 }
 
 /// One stage change, with the unix time in seconds it happened.
@@ -191,6 +194,7 @@ impl Job {
             batch_snapshot: None,
             estimate: None,
             fix_source: None,
+            spec_warning: None,
         }
     }
 
@@ -250,10 +254,28 @@ impl Job {
     }
 }
 
+/// The stages a draft card moves through before it becomes a job.
+pub const DRAFT_STAGES: [&str; 3] = ["interviewing", "writing-spec", "writing-plans"];
+
+/// A feature that is still being specified. It has no job yet. New in the draft cards series.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Draft {
+    pub slug: String,
+    pub feature: String,
+    /// One of `DRAFT_STAGES`.
+    pub stage: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_file: Option<String>,
+    pub created: String,
+    pub updated_at: f64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Board {
     #[serde(default)]
     pub jobs: Vec<Job>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafts: Vec<Draft>,
 }
 
 impl Board {
@@ -315,7 +337,7 @@ mod tests {
 
     #[test]
     fn remove_job_takes_one_job_and_reports_a_missing_one() {
-        let mut b = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0), Job::new("002", "d", "s", "c", "f", 1.0)] };
+        let mut b = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0), Job::new("002", "d", "s", "c", "f", 1.0)], ..Default::default() };
         assert_eq!(b.remove_job("1").expect("removed").id, "001");
         assert_eq!(b.jobs.len(), 1);
         assert!(matches!(b.remove_job("1"), Err(CoreError::NoJob(_))));
@@ -323,12 +345,12 @@ mod tests {
 
     #[test]
     fn series_with_siblings_needs_a_series_of_two_and_another_member() {
-        let b = Board { jobs: vec![in_series("001", "S1", 2), in_series("002", "S1", 2), in_series("003", "S2", 2)] };
+        let b = Board { jobs: vec![in_series("001", "S1", 2), in_series("002", "S1", 2), in_series("003", "S2", 2)], ..Default::default() };
         assert_eq!(b.series_with_siblings("001"), Some("S1".to_string()));
         assert_eq!(b.series_with_siblings("003"), None);
-        let single = Board { jobs: vec![in_series("001", "S1", 1), in_series("002", "S1", 1)] };
+        let single = Board { jobs: vec![in_series("001", "S1", 1), in_series("002", "S1", 1)], ..Default::default() };
         assert_eq!(single.series_with_siblings("001"), None);
-        let plain = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0)] };
+        let plain = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0)], ..Default::default() };
         assert_eq!(plain.series_with_siblings("001"), None);
     }
 

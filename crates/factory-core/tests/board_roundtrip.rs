@@ -53,3 +53,45 @@ fn corrupt_file_is_an_error_not_an_empty_board() {
     std::fs::write(&path, r#"{"jobs":[{"id":"001","stage":"flying"}]}"#).expect("write");
     assert!(Board::load(&path).is_err());
 }
+
+#[test]
+fn an_old_board_without_drafts_loads() {
+    let board: Board = serde_json::from_str(r#"{"jobs":[]}"#).expect("parse");
+    assert!(board.drafts.is_empty());
+}
+
+#[test]
+fn a_board_with_no_drafts_serializes_without_the_key() {
+    let text = serde_json::to_string(&Board::default()).expect("json");
+    assert!(!text.contains("drafts"));
+}
+
+#[test]
+fn drafts_round_trip_with_every_field() {
+    let board = Board {
+        drafts: vec![factory_core::Draft {
+            slug: "cards".to_string(),
+            feature: "Draft cards".to_string(),
+            stage: "writing-spec".to_string(),
+            spec_file: Some("docs/superpowers/specs/2026-10-18-cards-design.md".to_string()),
+            created: "2026-10-18".to_string(),
+            updated_at: 12.5,
+        }],
+        ..Default::default()
+    };
+    let back: Board = serde_json::from_str(&serde_json::to_string(&board).expect("json")).expect("parse");
+    assert_eq!(back, board);
+    let mut bare = board.clone();
+    bare.drafts[0].spec_file = None;
+    assert!(!serde_json::to_string(&bare).expect("json").contains("spec_file"));
+    assert_eq!(factory_core::DRAFT_STAGES, ["interviewing", "writing-spec", "writing-plans"]);
+}
+
+#[test]
+fn spec_warning_is_optional_on_a_job() {
+    let mut j = factory_core::Job::new("001", "d", "s", "2026-10-18", "f", 1.0);
+    assert!(!serde_json::to_string(&j).expect("json").contains("spec_warning"));
+    j.spec_warning = Some("no spec".to_string());
+    let back: factory_core::Job = serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
+    assert_eq!(back.spec_warning.as_deref(), Some("no spec"));
+}

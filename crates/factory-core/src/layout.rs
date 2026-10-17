@@ -80,11 +80,25 @@ impl Layout {
     pub fn job_dir(&self, dir: &str) -> PathBuf {
         self.jobs_dir.join(dir)
     }
+
+    /// The spec file of a draft card, inside the repository.
+    pub fn draft_spec_file(&self, date: &str, slug: &str) -> PathBuf {
+        self.repo.join("docs/superpowers/specs").join(format!("{date}-{slug}-design.md"))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn draft_spec_file_is_under_the_repo_specs_folder() {
+        let l = Layout::in_repo(Path::new("/r"));
+        assert_eq!(
+            l.draft_spec_file("2026-10-18", "cards"),
+            PathBuf::from("/r/docs/superpowers/specs/2026-10-18-cards-design.md")
+        );
+    }
 
     #[test]
     fn in_repo_reproduces_the_rocket_paths() {
