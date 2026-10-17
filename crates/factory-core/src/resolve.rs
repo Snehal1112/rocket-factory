@@ -408,8 +408,20 @@ mod tests {
     }
 
     #[test]
+    fn plan_rules_come_from_project_settings_and_the_preset_has_none() {
+        let e = env();
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.config.plan_rules.is_empty());
+        set_settings(&e, "plan_rules = [\"one\", \"two\"]\n");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(!r.config.degraded);
+        assert_eq!(r.config.plan_rules, ["one", "two"]);
+    }
+
+    #[test]
     fn any_other_override_key_fails_closed() {
-        for key in ["diff_cap_lines = 10", "base_branch = \"x\"", "budget_weighted = 5", "risk_pathz = [\"a\"]"] {
+        for key in ["plan_rules = [\"x\"]", "diff_cap_lines = 10", "base_branch = \"x\"", "budget_weighted = 5", "risk_pathz = [\"a\"]"] {
             let e = env_with(Some("v-4.0.0"), "rust");
             let r = resolve(&e.home, "p", &Tip::with_override(&format!("{key}\n"))).expect("resolve");
             assert_fail_closed(&r);

@@ -154,6 +154,10 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     ];
     let names: Vec<&str> = resolved.agents.iter().map(|a| a.name.as_str()).collect();
     out.push(format!("agent files: {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
+    if !resolved.config.plan_rules.is_empty() {
+        out.push("plan rules:".to_string());
+        out.extend(resolved.config.plan_rules.iter().map(|r| format!("- {r}")));
+    }
     if resolved.config.degraded {
         out.push("status: degraded (the settings failed closed)".to_string());
     }

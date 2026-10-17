@@ -274,6 +274,10 @@ settings without review.
 The four prompt keys are `read_first` (files the builder reads first), `builder_rules`, `check_hints` and
 `reviewer_rules`.
 
+`plan_rules` (optional, default empty) are rules for the plans the `/factory` command writes. The driver puts them in no
+prompt. `factory project show <name>` prints them in a `plan rules:` block and the command applies each line to every
+plan. A repo override cannot set them.
+
 ### Agent files
 
 Agent files are merged by name from the preset `agents/` folder, the project `agents/` folder and the repo's

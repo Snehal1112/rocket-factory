@@ -78,6 +78,8 @@ pub struct Config {
     pub check_hints: Vec<String>,
     /// Rules added to the reviewer prompt, one sentence each.
     pub reviewer_rules: Vec<String>,
+    /// Rules for the plans the `/factory` command writes. The driver never puts them in a prompt.
+    pub plan_rules: Vec<String>,
     pub checks: Vec<CheckRule>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
@@ -111,6 +113,7 @@ impl Default for Config {
             builder_rules: Vec::new(),
             check_hints: Vec::new(),
             reviewer_rules: Vec::new(),
+            plan_rules: Vec::new(),
             checks: Vec::new(),
             degraded: false,
         }
@@ -149,6 +152,7 @@ impl Config {
             ("builder_rules", &cfg.builder_rules),
             ("check_hints", &cfg.check_hints),
             ("reviewer_rules", &cfg.reviewer_rules),
+            ("plan_rules", &cfg.plan_rules),
         ] {
             if lines.iter().any(|l| l.trim().is_empty() || l.contains('\n') || l.contains('\r')) {
                 return Err(CoreError::Config(format!("{key}: every line must be one non-empty line")));
@@ -245,6 +249,17 @@ mod tests {
         assert_eq!(cfg.builder_rules.len(), 2);
         assert_eq!(cfg.check_hints, vec!["make test".to_string()]);
         assert_eq!(cfg.reviewer_rules, vec!["c".to_string()]);
+    }
+
+    #[test]
+    fn plan_rules_default_to_empty_and_parse() {
+        assert!(Config::default().plan_rules.is_empty());
+        assert!(Config::parse("").expect("empty").plan_rules.is_empty());
+        let cfg = Config::parse("plan_rules = [\"a\", \"b\"]\n").expect("parses");
+        assert_eq!(cfg.plan_rules, vec!["a".to_string(), "b".to_string()]);
+        assert!(!cfg.degraded);
+        assert!(Config::parse("plan_rules = [\"a\\nb\"]\n").is_err());
+        assert!(Config::parse("plan_rules = [\"\"]\n").is_err());
     }
 
     #[test]

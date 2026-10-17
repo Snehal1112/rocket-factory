@@ -138,6 +138,35 @@ fn show_prints_the_resolved_project() {
     assert!(!out.contains("degraded"), "{out}");
 }
 
+fn set_plan_rules(e: &Env, line: &str) {
+    // The `[settings]` table is the last table of the file, so a line appended here is a setting.
+    let path = e.home.project_dir("demo").join("project.toml");
+    let mut text = std::fs::read_to_string(&path).expect("read");
+    text.push_str(line);
+    std::fs::write(&path, text).expect("write");
+}
+
+#[test]
+fn show_prints_the_plan_rules_block_after_the_agent_files_line() {
+    let e = env();
+    add_demo(&e);
+    set_plan_rules(&e, "plan_rules = [\"first rule\", \"second rule\"]\n");
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("\nplan rules:\n- first rule\n- second rule\n"), "{out}");
+    let agents = out.find("agent files:").expect("agent files");
+    assert!(agents < out.find("plan rules:").expect("plan rules"), "{out}");
+    assert!(!out.contains("degraded"), "{out}");
+    assert!(out.contains("problems: none"), "{out}");
+}
+
+#[test]
+fn show_prints_nothing_extra_without_plan_rules() {
+    let e = env();
+    add_demo(&e);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(!out.contains("plan rules"), "{out}");
+}
+
 #[test]
 fn show_reports_a_missing_base_branch_as_degraded() {
     let e = env();

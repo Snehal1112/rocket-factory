@@ -44,6 +44,10 @@ builder_rules = [
   "Run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR.",
   "Frontend uses yarn: run `yarn tsc --noEmit`, `yarn check` and `yarn test` before finishing frontend changes.",
 ]
+plan_rules = [
+  "cargo commands are per crate: `cargo check -j4 -p <crate>` and `cargo test -j4 -p <crate> <filter>`, never a bare `cargo check -j4` or `cargo test -j4`, because in a fresh worktree a workspace-wide check builds the whole app and V8 and stalls the builder",
+  "every task that touches yml, collection or environment data, auth, variable resolution or the crates named in CLAUDE.md starts with the line to read `docs/superpowers/specs/opencollection-spec-reference.md`",
+]
 check_hints = [
   "cargo check -j4",
   "cargo test -j4 -p <crate> <test_name>",

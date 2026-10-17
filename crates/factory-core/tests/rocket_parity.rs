@@ -112,3 +112,14 @@ fn rules_are_rockets_own_and_name_no_workspace_command() {
         assert!(joined.contains(needle), "missing {needle}");
     }
 }
+
+#[test]
+fn plan_rules_carry_the_two_rocket_rules_and_the_old_config_has_none() {
+    let (_t, r) = resolved();
+    let rules = &r.config.plan_rules;
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    assert!(rules[0].contains("cargo check -j4 -p <crate>") && rules[0].contains("never a bare `cargo check -j4`"), "{rules:?}");
+    assert!(rules[0].contains("stalls the builder"), "{rules:?}");
+    assert!(rules[1].contains("docs/superpowers/specs/opencollection-spec-reference.md"), "{rules:?}");
+    assert!(!OLD_CONFIG.contains("plan_rules"));
+}

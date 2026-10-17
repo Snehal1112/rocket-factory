@@ -27,6 +27,8 @@ cd "$FACTORY"
    `crates/factory-core/tests/rocket_parity.rs` guards its content. If you change the repo path, edit the
    `repo` line.
 
+   The fixture also sets `plan_rules` (two rules for the plans the `/factory` command writes, shown by `factory project show rocket`).
+
    ```bash
    cp crates/factory-core/tests/fixtures/rocket-project.toml ~/.factory/projects/rocket/project.toml
    ```
