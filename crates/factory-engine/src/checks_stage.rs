@@ -17,6 +17,19 @@ impl Engine<'_> {
         Ok(report)
     }
 
+    /// Runs the mapped checks over the diff from `from` to `to` and writes `out` in the job dir. It returns
+    /// `None`, and writes nothing, when no check is mapped to the changed paths.
+    pub(crate) fn run_checks_between(&self, from: &str, to: &str, out: &str) -> Result<Option<ChecksReport>, EngineError> {
+        let paths = self.repo.changed_paths(from, to).map_err(git_err)?;
+        let plan = plan_checks(&paths, &self.config);
+        if plan.commands.is_empty() {
+            return Ok(None);
+        }
+        let report = run_checks(&self.worktree()?, &plan);
+        write_checks_md(&self.job_dir.join(out), &report).map_err(|e| EngineError::Check(e.to_string()))?;
+        Ok(Some(report))
+    }
+
     /// Starts a fix round with `findings`, or parks the job when the rounds are used up.
     pub(crate) fn fix_or_park(&self, findings: &str, reason: &str, kind: ParkKind, source: &str) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;

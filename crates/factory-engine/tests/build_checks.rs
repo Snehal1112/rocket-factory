@@ -1187,3 +1187,54 @@ fn concerns_are_recorded_for_done_with_concerns() {
         "{ledger}"
     );
 }
+
+fn rule(path: &str, command: &str) -> factory_core::CheckRule {
+    factory_core::CheckRule { paths: vec![path.into()], commands: vec![command.into()] }
+}
+
+#[test]
+fn each_task_writes_a_checks_file_for_its_own_range() {
+    for batch in [true, false] {
+        let mut fx = two_task_fixture();
+        fx.config.commit_batch = batch;
+        fx.config.checks = vec![rule("a.txt", "echo task-a"), rule("b.txt", "echo task-b")];
+        let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+        let e = fx.engine(&runner);
+        e.build_stage().expect("task 1");
+        e.build_stage().expect("task 2");
+        let one = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
+        let two = std::fs::read_to_string(fx.job_dir.join("checks-task2.md")).expect("checks-task2.md");
+        assert!(one.contains("PASS echo task-a") && !one.contains("task-b"), "{one}");
+        assert!(two.contains("PASS echo task-b") && !two.contains("task-a"), "{two}");
+        assert!(ledger_of(&fx).contains("task 1 checks: pass"), "{}", ledger_of(&fx));
+        assert!(!fx.job_dir.join("checks.md").exists(), "the whole-branch file is not written here");
+    }
+}
+
+#[test]
+fn a_failing_task_check_is_a_ledger_line_not_a_park() {
+    let mut fx = two_task_fixture();
+    fx.config.checks = vec![rule("a.txt", "false")];
+    let before_round = fx.job().round;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let out = fx.engine(&runner).build_stage().expect("task 1");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    let job = fx.job();
+    assert_eq!(job.task_index, 1);
+    assert_eq!(job.stage, Stage::Build);
+    assert_eq!(job.round, before_round);
+    let ledger = ledger_of(&fx);
+    assert!(ledger.contains("task 1 checks: fail false"), "{ledger}");
+    let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
+    assert!(md.contains("FAIL false"), "{md}");
+}
+
+#[test]
+fn a_task_with_no_mapped_checks_writes_nothing() {
+    let mut fx = two_task_fixture();
+    fx.config.checks = vec![rule("src/**", "false")];
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    assert!(!fx.job_dir.join("checks-task1.md").exists());
+    assert!(!ledger_of(&fx).contains("task 1 checks"), "{}", ledger_of(&fx));
+}

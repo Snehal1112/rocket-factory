@@ -309,6 +309,19 @@ impl Engine<'_> {
         Ok(())
     }
 
+    /// Runs the checks over one task's diff and notes the result in the ledger. It is informational only:
+    /// a failure or an error never parks the job and never starts a fix round.
+    fn note_task_checks(&self, n: u32, from: &str, to: &str) -> Result<(), EngineError> {
+        match self.run_checks_between(from, to, &format!("checks-task{n}.md")) {
+            Ok(None) => Ok(()),
+            Ok(Some(report)) => match report.failures().first() {
+                None => self.ruling(&format!("task {n} checks: pass")),
+                Some(f) => self.ruling(&format!("task {n} checks: fail {}", f.command)),
+            },
+            Err(e) => self.ruling(&format!("task {n} checks: not run, {e}")),
+        }
+    }
+
     /// Runs the agent of the next plan task. After the last task it hands over to review.
     fn build_task(&self, job: &JobView, tasks: &[PlanTask]) -> Result<StageOutcome, EngineError> {
         let Some(task) = tasks.get(job.task_index as usize) else {
@@ -387,6 +400,7 @@ impl Engine<'_> {
             new_tip
         };
         let short = new_tip.get(..7).unwrap_or(&new_tip).to_string();
+        self.note_task_checks(task.n, &tip, &new_tip)?;
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
         self.note_builder_words(task.n, &run.result_text)?;
         let session = run.session_id.clone().or(job.session_id.clone());
