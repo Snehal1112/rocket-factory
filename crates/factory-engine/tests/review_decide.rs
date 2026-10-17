@@ -429,3 +429,45 @@ fn the_choice_is_written_to_the_ledger() {
     let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
     assert!(ledger.contains("review model: opus (2 changed lines, over 1)"), "{ledger}");
 }
+
+fn direct_prompt(round: u32, extra: &ReviewerExtra) -> String {
+    let fx = committing_fixture();
+    let rr = reviewer("ok\nVERDICT: APPROVE");
+    fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), round, &[], extra).prompt
+}
+
+#[test]
+fn the_reviewer_prompt_has_the_vision_document_rule_and_declined_to_judge_and_grades() {
+    let prompt = direct_prompt(1, &ReviewerExtra::default());
+    assert!(prompt.contains("vision document"), "{prompt}");
+    assert!(prompt.contains("reasonable person"), "{prompt}");
+    assert!(prompt.contains("Declined to judge"), "{prompt}");
+    for grade in ["Critical", "Important", "Minor"] {
+        assert!(prompt.contains(grade), "{grade}: {prompt}");
+    }
+    assert!(prompt.contains("[blocker]") && prompt.contains("[minor]"), "{prompt}");
+    assert!(prompt.contains("Any blocker means CHANGES"), "{prompt}");
+    assert!(prompt.contains("you do not dispatch subagents"), "{prompt}");
+    assert!(prompt.contains("`VERDICT: APPROVE` or `VERDICT: CHANGES`"), "{prompt}");
+}
+
+#[test]
+fn round_two_carries_the_scoped_rereview_rule_and_round_one_does_not() {
+    let one = direct_prompt(1, &ReviewerExtra::default());
+    assert!(!one.contains("Out-of-scope observations"), "{one}");
+    assert!(!one.contains("fix diff only"), "{one}");
+    let two = direct_prompt(2, &ReviewerExtra::default());
+    assert!(two.contains("Out-of-scope observations"), "{two}");
+    assert!(two.contains("fix diff only"), "{two}");
+    assert!(two.contains("verdict for each earlier finding"), "{two}");
+    assert!(two.contains("without changing the verdict"), "{two}");
+}
+
+#[test]
+fn round_two_still_carries_review_focus() {
+    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new() };
+    let prompt = direct_prompt(2, &extra);
+    assert!(prompt.contains("Check the lease handling."), "{prompt}");
+    assert!(prompt.contains("builder task 1: kept the old name"), "{prompt}");
+    assert!(prompt.contains("Out-of-scope observations"), "{prompt}");
+}

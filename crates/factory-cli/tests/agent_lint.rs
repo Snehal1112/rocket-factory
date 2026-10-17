@@ -455,3 +455,36 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn reviewer_files_carry_the_vision_rule_and_declined_to_judge() -> TestResult {
+    for path in [
+        ".claude/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+    ] {
+        let text = read(path)?;
+        require_all(
+            &text,
+            path,
+            &[
+                "vision document",
+                "reasonable person",
+                "Declined to judge",
+                "Critical",
+                "Important",
+                "Minor",
+                "you do not dispatch subagents",
+                "Out-of-scope observations",
+                "[blocker]",
+                "[minor]",
+                "Any `[blocker]` means CHANGES.",
+            ],
+        )?;
+        if !has_line(&text, "VERDICT: APPROVE") || !has_line(&text, "VERDICT: CHANGES") {
+            return Err(format!("{path}: both VERDICT lines must stay on their own line"));
+        }
+        require_all(&text, path, &["Your last line, alone, must be exactly one of:"])?;
+    }
+    Ok(())
+}

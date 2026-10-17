@@ -1270,3 +1270,29 @@ fn builder_specs_are_strict_and_name_their_tools() {
     fx.engine(&runner).build_stage().expect("task 1");
     assert_builder_spec_is_strict(&runner.last_spec_for("builder").expect("spec"));
 }
+
+#[test]
+fn the_fix_resume_prompt_names_receiving_code_review_and_the_needs_context_rule() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 2;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    e.build_stage().expect("resume");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    for needle in [
+        "superpowers:receiving-code-review",
+        "Read all the findings first",
+        "verify each against the code",
+        "one item at a time",
+        "push back with a reason",
+        "Status: NEEDS_CONTEXT",
+    ] {
+        assert!(prompt.contains(needle), "{needle}: {prompt}");
+    }
+}

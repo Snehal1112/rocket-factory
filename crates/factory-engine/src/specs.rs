@@ -202,6 +202,9 @@ impl Engine<'_> {
             "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
              Do not run `git add` or `git commit`: leave the fixes in the worktree and the driver commits them. \
              Do not amend or rewrite earlier commits. \
+             Follow `superpowers:receiving-code-review` for the findings. Read all the findings first, then verify each against the code. \
+             Work one item at a time. If a finding is wrong, push back with a reason in your reply and do not change the code for it. \
+             If an item is unclear, reply with `Status: NEEDS_CONTEXT` and the question instead of guessing. \
              Run the relevant checks{hints} before you finish. \
              Never push, never merge.",
             findings = findings.display(),
@@ -253,6 +256,13 @@ impl Engine<'_> {
         } else {
             String::new()
         };
+        // Round 2 and later review only the fix, so the reviewer does not reopen settled ground.
+        let rereview = if round >= 2 {
+            "This is a scoped re-review. Give a verdict for each earlier finding: fixed, not fixed, or wrong. \
+             Inspect the fix diff only. Report anything you notice outside it under `Out-of-scope observations`, without changing the verdict.\n"
+        } else {
+            ""
+        };
         let rules_line = if rules.is_empty() { String::new() } else { format!("{}\n", rules.join(" ")) };
         let mut context = String::new();
         if let Some(focus) = &extra.focus {
@@ -267,11 +277,15 @@ impl Engine<'_> {
         let prompt = format!(
             "Review this round's diff for the job.\n\
              Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan} (read it only to look up one step), and the worktree at {cwd}. \
-             Round {round}.\n{spec_line}{earlier_line}{context}\
+             Round {round}.\n{spec_line}{earlier_line}{rereview}{context}\
              Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
              {rules_line}\
-             Check: the diff does what the plan asks and nothing else; correctness and edge cases; tests that would fail without the change; no debug leftovers.\n\
+             Check: the diff does what the plan asks and nothing else; correctness and edge cases; tests that would fail without the change; no debug leftovers. \
+             The spec and plan are a vision document: where they are silent, what a reasonable person would expect counts. \
+             You are read-only and you do not dispatch subagents.\n\
              {kb}Reply in at most 60 lines. List findings as a numbered list with file:line, severity [blocker] or [minor], and a concrete fix. \
+             Grade each finding: Critical and Important findings carry [blocker], Minor findings carry [minor]. \
+             Before the verdict list anything you could not judge under `Declined to judge`, with the reason. \
              Any blocker means CHANGES. Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
             diff = diff.display(),
             names = names.display(),

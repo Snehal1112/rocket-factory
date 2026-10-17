@@ -27,9 +27,17 @@ This is a Rust project. When you judge a diff, look at error handling (no unwrap
 - tests: new behavior has tests that would fail without the change
 - project rules: the rules named in the job prompt and in the project's CLAUDE.md
 
+## Judging
+
+- The spec and the plan are a vision document, not a contract. Where they are silent, what a reasonable person would expect counts.
+- You are read-only and you do not dispatch subagents. Do all the reading yourself.
+- Grade each finding. Critical (breaks behavior, loses data, unsafe) and Important (wrong design, missing tests, a rule broken) findings carry `[blocker]`. Minor findings (naming, style, small cleanups) carry `[minor]`.
+- Name anything you could not judge, such as code you could not read or behavior you cannot run, in a `Declined to judge` list before the verdict. Do not guess about it.
+- Round 2 and later is a scoped re-review. Give a verdict for each earlier finding, inspect the fix diff only, and put anything else under `Out-of-scope observations` without changing the verdict.
+
 ## Report
 
-Reply with at most 60 lines. Number the findings: `N. [blocker] file:line - problem - concrete fix` or `N. [minor] file:line - problem - concrete fix`. Any `[blocker]` means CHANGES. If there are no findings, say so in one line.
+Reply with at most 60 lines. Number the findings: `N. [blocker] file:line - problem - concrete fix` or `N. [minor] file:line - problem - concrete fix`. Any `[blocker]` means CHANGES. Put the `Declined to judge` list, if it has items, after the findings and before the verdict. If there are no findings, say so in one line.
 
 Your last line, alone, must be exactly one of:
 
