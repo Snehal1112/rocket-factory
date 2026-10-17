@@ -34,13 +34,15 @@ impl Engine<'_> {
         self.config.kb_dir().into_iter().collect()
     }
 
-    /// The "Read ..." phrase for the first builder prompt. It names the `read_first` entries and the plan.
-    fn read_line(&self) -> String {
+    /// The "Read ..." phrase for the builder prompt. It names the `read_first` entries and the plan.
+    /// With a task excerpt the plan is only located, because the excerpt replaces reading it.
+    fn read_line(&self, with_excerpt: bool) -> String {
         let plan = self.plan_file.display();
-        if self.config.read_first.is_empty() {
-            format!("Read the plan at {plan}.")
-        } else {
-            format!("Read {}, and the plan at {plan}.", self.config.read_first.join(", "))
+        match (with_excerpt, self.config.read_first.is_empty()) {
+            (false, true) => format!("Read the plan at {plan}."),
+            (false, false) => format!("Read {}, and the plan at {plan}.", self.config.read_first.join(", ")),
+            (true, true) => format!("The plan is at {plan}."),
+            (true, false) => format!("Read {}. The plan is at {plan}.", self.config.read_first.join(", ")),
         }
     }
 
@@ -80,7 +82,7 @@ impl Engine<'_> {
              Never push, never merge, never touch the board or the ledger.\n\
              {kb}If you are blocked, say why in your final reply and stop.",
             branch = job.branch,
-            read = self.read_line(),
+            read = self.read_line(false),
             rules = self.rules_line(),
             kb = self.kb_line(),
         );
@@ -166,7 +168,7 @@ impl Engine<'_> {
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
              {kb}If you are blocked, say why in your final reply and stop. Reply with one line for Task {n}.",
             branch = job.branch,
-            read = self.read_line(),
+            read = self.read_line(!excerpt.is_empty()),
             rules = self.rules_line(),
             kb = self.kb_line(),
             n = task.n,

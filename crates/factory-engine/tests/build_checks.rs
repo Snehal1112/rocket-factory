@@ -618,7 +618,8 @@ fn the_task_builder_prompt_takes_read_first_and_rules_from_the_config() {
     let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
-    assert!(prompt.contains(&format!("Read CLAUDE.md, and the plan at {}.", fx.plan_file.display())), "{prompt}");
+    assert!(prompt.contains(&format!("Read CLAUDE.md. The plan is at {}.", fx.plan_file.display())), "{prompt}");
+    assert!(!prompt.contains("and the plan at"), "{prompt}");
     assert!(prompt.contains("Rules: Keep it small."), "{prompt}");
 
     let off = two_task_fixture();
@@ -626,7 +627,30 @@ fn the_task_builder_prompt_takes_read_first_and_rules_from_the_config() {
     off.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(!prompt.contains("Rules:") && !prompt.contains("CLAUDE.md"), "{prompt}");
-    assert!(prompt.contains(&format!("Read the plan at {}.", off.plan_file.display())), "{prompt}");
+    assert!(prompt.contains(&format!("The plan is at {}.", off.plan_file.display())), "{prompt}");
+    assert!(!prompt.contains("Read the plan at"), "{prompt}");
+}
+
+#[test]
+fn without_an_excerpt_the_task_builder_prompt_keeps_the_read_the_plan_wording() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_excerpt = false;
+    fx.config.read_first = vec!["CLAUDE.md".into()];
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert!(prompt.contains(&format!("Read CLAUDE.md, and the plan at {}.", fx.plan_file.display())), "{prompt}");
+    assert!(!prompt.contains("Task excerpt"), "{prompt}");
+
+    // A plan without the task heading falls back to the full-file prompt too.
+    let mut fx = two_task_fixture();
+    std::fs::write(&fx.plan_file, "# P\n\nno task headings here\n").expect("plan");
+    fx.config.builder_excerpt = true;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let _ = fx.engine(&runner).build_stage();
+    if let Some(spec) = runner.last_spec_for("builder") {
+        assert!(!spec.prompt.contains("Task excerpt"), "{}", spec.prompt);
+    }
 }
 
 const THREE_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n\n### Task 3: third thing\n\nz\n";
