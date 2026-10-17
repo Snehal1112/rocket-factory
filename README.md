@@ -46,9 +46,18 @@ A draft card tracks a spec that is still being written, before any job exists. I
 - `factory spec resume <slug>` prints the `draft`, `stage` and `file <spec path> (exists|missing)` lines.
 - `factory cancel <slug>` removes the card and keeps the spec file. A numeric argument still means a job.
 - `factory status` lists the cards in a `drafts:` block.
-- `factory new` adopts the draft with the same slug and removes it. When the spec has a `## Decisions` section and no decision was answered by the user, it prints `warning: no decision in this spec was answered by the user` lines after `created job ...`. The job still runs. A single plan file with no spec text gets no warning.
+- `factory new` adopts the draft with the same slug and removes it. When no list item of the spec's `## Decisions` section says `Decided by: user`, or the spec has no `## Decisions` section at all, it prints `warning: no decision in this spec was answered by the user` after `created job ...`. The job still runs. A single plan file with no spec text gets no warning.
 - The dashboard shows each draft in the Spec column. A card not updated for 24 hours gets a stale marker (dashboard `--draft-stale-hours`, factoryd `draft_stale_hours`).
 - An older `factory` binary that rewrites the board drops `drafts`.
+
+## Plan lint
+
+`factory new` lints every plan on the chain before it creates a job. A plan with `TBD`, `TODO`, `FIXME` or `???`
+outside backticks and code fences is refused, the error names the plan file and line, and no job is made. Other
+findings only warn: a header without Goal, Architecture, Tech Stack, Spec, Global Constraints or Review Focus, a
+header that does not name `superpowers:subagent-driven-development` as the executor, a task without `**Files:**`
+or `**Interfaces:**`, and a commit step. The warnings print as `warning: ...` lines after `created job ...`,
+after the spec's own warning, and the job still runs.
 
 ## Stronger reviewer model
 
@@ -124,8 +133,10 @@ discards your edits, so copy them first.
 The command only writes under `<home>/presets/`. It never touches a project override under
 `<home>/projects/<name>/` or a repo override under `.factory/`.
 
-A home that was seeded from preset text written partway through this rework matches neither the old nor the
-current text. Its agent files are refused, and you need `--force` to refresh them.
+Any home whose agent files differ from both the shipped text and the previous release text is refused until
+`--force`. That includes homes seeded by a build between releases, such as one from before the task excerpt
+change. The `refused` lines name each such file: compare it with the shipped text, which `factory presets refresh`
+writes when `FACTORY_HOME` names an empty folder, keep your own edits, then run `--force`.
 
 `refresh` does not update the global command. After an upgrade also run `factory install --force` to pick up
 the new `/factory` command.
