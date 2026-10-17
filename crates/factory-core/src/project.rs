@@ -186,7 +186,7 @@ fn worktree_main(path: &Path) -> Option<PathBuf> {
 
 /// The registered project whose repo is `path` or contains it. The longest repo wins when two nest, a
 /// linked git worktree of a registered repo resolves to that repo's project, and an unreadable project
-/// or one whose repo folder is gone is skipped. `path` must exist.
+/// or one whose repo folder is gone is skipped, and two projects on one repo are an error. `path` must exist.
 pub fn find_by_path(home: &Home, path: &Path) -> Result<Option<String>, CoreError> {
     let canon = std::fs::canonicalize(path).map_err(|e| CoreError::io(path, e))?;
     let mut repos: Vec<(String, PathBuf)> = Vec::new();
@@ -197,16 +197,24 @@ pub fn find_by_path(home: &Home, path: &Path) -> Result<Option<String>, CoreErro
             }
         }
     }
-    if let Some(main) = worktree_main(&canon) {
-        if let Some((name, _)) = repos.iter().find(|(_, r)| *r == main) {
-            return Ok(Some(name.clone()));
+    // A registered repo that contains the path is the most specific match. The main checkout of a
+    // linked worktree is used only when no registered repo contains the path.
+    let mut hits: Vec<&(String, PathBuf)> = repos.iter().filter(|(_, r)| canon.starts_with(r)).collect();
+    if hits.is_empty() {
+        if let Some(main) = worktree_main(&canon) {
+            hits = repos.iter().filter(|(_, r)| *r == main).collect();
         }
     }
-    let best = repos
-        .into_iter()
-        .filter(|(_, r)| canon.starts_with(r))
-        .max_by_key(|(_, r)| r.components().count());
-    Ok(best.map(|(name, _)| name))
+    let Some(longest) = hits.iter().map(|(_, r)| r.components().count()).max() else { return Ok(None) };
+    let best: Vec<&str> = hits.iter().filter(|(_, r)| r.components().count() == longest).map(|(n, _)| n.as_str()).collect();
+    match best.as_slice() {
+        [one] => Ok(Some((*one).to_string())),
+        many => Err(CoreError::Config(format!(
+            "ambiguous match: projects {} all register the repo containing {}",
+            many.join(" and "),
+            canon.display()
+        ))),
+    }
 }
 
 /// Deletes `projects/<name>/` and nothing else.
@@ -421,6 +429,58 @@ mod tests {
         std::fs::remove_dir_all(&gone).expect("rm");
         assert_eq!(find_by_path(&e.home, &e.repo).expect("live").as_deref(), Some("live"));
         assert!(find_by_path(&e.home, &e.repo.join("missing")).is_err());
+    }
+
+    fn fake_worktree(e: &Env, repo: &Path, name: &str, at: &Path) {
+        let admin = repo.join(".git/worktrees").join(name);
+        std::fs::create_dir_all(&admin).expect("mkdir");
+        std::fs::write(admin.join("commondir"), "../..\n").expect("commondir");
+        std::fs::create_dir_all(at.join("src")).expect("mkdir");
+        std::fs::write(at.join(".git"), format!("gitdir: {}\n", admin.display())).expect("gitfile");
+        let _ = e;
+    }
+
+    #[test]
+    fn find_by_path_prefers_a_registered_worktree_over_its_main_repo() {
+        let e = env();
+        dot_git(&e.repo);
+        add(&e.home, "main-repo", &e.repo, "rust", None, &ok).expect("add");
+        let wt = e._t.path().join("wt-registered");
+        fake_worktree(&e, &e.repo, "wt1", &wt);
+        add(&e.home, "wt-project", &wt, "rust", None, &ok).expect("add");
+        assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("wt-project"));
+        assert_eq!(find_by_path(&e.home, &e.repo).expect("main").as_deref(), Some("main-repo"));
+    }
+
+    #[test]
+    fn find_by_path_maps_an_unregistered_worktree_to_the_main_repo() {
+        let e = env();
+        dot_git(&e.repo);
+        add(&e.home, "main-repo", &e.repo, "rust", None, &ok).expect("add");
+        let wt = e._t.path().join("wt-unregistered");
+        fake_worktree(&e, &e.repo, "wt2", &wt);
+        assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("main-repo"));
+    }
+
+    #[test]
+    fn find_by_path_does_not_match_a_sibling_with_the_same_name_prefix() {
+        let e = env();
+        add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
+        let sibling = e._t.path().join("repo-two");
+        std::fs::create_dir_all(&sibling).expect("mkdir");
+        assert_eq!(find_by_path(&e.home, &sibling).expect("sibling"), None);
+    }
+
+    #[test]
+    fn find_by_path_reports_two_projects_on_one_repo_as_ambiguous() {
+        let e = env();
+        add(&e.home, "aaa", &e.repo, "rust", None, &ok).expect("add");
+        // add() refuses a second name for one repo, so write the second entry by hand.
+        let dir = e.home.project_dir("bbb");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::copy(e.home.project_dir("aaa").join("project.toml"), dir.join("project.toml")).expect("copy");
+        let err = find_by_path(&e.home, &e.repo).expect_err("ambiguous").to_string();
+        assert!(err.contains("aaa") && err.contains("bbb") && err.contains("ambiguous"), "{err}");
     }
 
     #[test]
