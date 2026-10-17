@@ -56,6 +56,6 @@ cd "$FACTORY"
 - No `golangci-lint` check: CI has it switched off and it mixes in linters (`gosec`) that fail on old code.
 - Frontend checks run only when `web/**` or `journeybook/**` changed, and install first, because a fresh
   worktree has no `node_modules`.
-- `budget_weighted` is left at the default (3000000), the same as the rocket project.
+- `budget_weighted` is left at the default (1,000,000). The rocket project sets 3000000 explicitly.
 - Risk globs `internal/db/migration_runner.go` and `tls/**` were dropped: nothing in RocketVault matches them.
 - Which ticket is the first real job.
