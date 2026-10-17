@@ -29,6 +29,8 @@ struct CreateBody {
     model: Option<String>,
     feature: Option<String>,
     run: Option<bool>,
+    series: Option<bool>,
+    slug: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +94,28 @@ fn one_line(text: &str, what: &str) -> Result<(), ApiResponse> {
     Ok(())
 }
 
+/// `[a-z0-9][a-z0-9-]{0,63}`.
+fn valid_slug(slug: &str) -> bool {
+    let mut chars = slug.chars();
+    slug.len() <= 64
+        && chars.next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// The plans folder name without a leading `YYYY-MM-DD-`, as a slug. Nothing usable gives `None`.
+fn derive_slug(plans: &Path) -> Option<String> {
+    let name = plans.file_name()?.to_string_lossy().into_owned();
+    let b = name.as_bytes();
+    let dated = b.len() > 11
+        && b[10] == b'-'
+        && b[..10].iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() });
+    let rest = if dated { &name[11..] } else { name.as_str() };
+    if !rest.chars().any(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(slugify(rest)).filter(|s| valid_slug(s))
+}
+
 fn valid_model(model: &str) -> bool {
     !model.is_empty()
         && model.len() <= 64
@@ -151,8 +175,8 @@ fn queue_error(e: QueueError) -> ApiResponse {
     }
 }
 
-fn enqueue(home: &Home, deps: &ApiDeps, name: &str, action: Action, job: &str) -> Result<String, ApiResponse> {
-    let req = Request::new(name, action, job, false, (deps.now_ms)()).map_err(|e| bad(&e.to_string()))?;
+fn enqueue(home: &Home, deps: &ApiDeps, name: &str, action: Action, job: &str, series: bool) -> Result<String, ApiResponse> {
+    let req = Request::new(name, action, job, series, (deps.now_ms)()).map_err(|e| bad(&e.to_string()))?;
     queue::enqueue(home, &req).map_err(queue_error)?;
     Ok(req.id)
 }
@@ -182,8 +206,11 @@ fn create_inner(home: &Home, deps: &ApiDeps, name: &str, body: &[u8]) -> Result<
             return Err(bad("the model may use letters, digits, . _ - and at most 64 characters"));
         }
     }
-    let folder = spec.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let slug = slugify(&folder);
+    let slug = match &b.slug {
+        Some(s) if valid_slug(s) => s.clone(),
+        Some(_) => return Err(bad("the slug must match [a-z0-9][a-z0-9-]{0,63}")),
+        None => derive_slug(&plans).ok_or_else(|| bad("no slug can be derived from the plans folder name, send a slug"))?,
+    };
     let feature = b.feature.clone().unwrap_or_else(|| slug.clone());
     one_line(&feature, "feature")?;
     // Options go first and values are joined to their flag, so no value can pass for an option.
@@ -200,7 +227,7 @@ fn create_inner(home: &Home, deps: &ApiDeps, name: &str, body: &[u8]) -> Result<
     let job = created_id(&out.stdout)
         .ok_or_else(|| error_response(500, "failed", &format!("the job was created but its id is unknown: {}", tail(&out.stdout))))?;
     let request_id = if b.run.unwrap_or(true) {
-        Some(enqueue(home, deps, name, Action::Run, &job).map_err(|e| {
+        Some(enqueue(home, deps, name, Action::Run, &job, b.series.unwrap_or(true)).map_err(|e| {
             let why = e.body["error"]["message"].as_str().unwrap_or("").to_string();
             error_response(e.status, e.body["error"]["code"].as_str().unwrap_or("failed"), &format!("job {job} was created but not queued: {why}"))
         })?)
@@ -237,7 +264,7 @@ fn approve_inner(home: &Home, deps: &ApiDeps, name: &str, id: &str) -> Result<Ap
             &format!("job {id} is in stage {}, approve needs needs-human or approve", job.stage),
         ));
     }
-    let request_id = enqueue(home, deps, name, Action::Approve, &id)?;
+    let request_id = enqueue(home, deps, name, Action::Approve, &id, false)?;
     Ok(ApiResponse { status: 202, body: json!({"requestId": request_id}) })
 }
 
@@ -341,8 +368,8 @@ mod tests {
                 format!("--plans={}", canon(&f.plans)),
                 format!("--spec={}", canon(&f.spec)),
                 "--".to_string(),
-                "work".to_string(),
-                "work".to_string()
+                "plans".to_string(),
+                "plans".to_string()
             ]
         );
         let items = crate::queue::list(&f.home);
@@ -350,6 +377,7 @@ mod tests {
         match &items[0] {
             crate::QueueItem::Ok(req) => {
                 assert_eq!((req.action, req.job.as_str(), req.project.as_str()), (Action::Run, "007", "good"));
+                assert!(req.series, "series defaults to true");
                 assert_eq!(r.body["requestId"], req.id.as_str());
             }
             other => panic!("{other:?}"),
@@ -416,6 +444,50 @@ mod tests {
         assert_eq!(code(&post(&f, "/projects/Bad..Name/jobs", b"{}")).1, "bad_request");
         assert!(f.cli.calls().is_empty());
         assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn series_is_optional_boolean_and_slug_is_derived_or_given() {
+        let f = fx();
+        f.cli.reply_stdout("created job 001 in x\n");
+        let mut body = create_body(&f);
+        body["series"] = json!(false);
+        assert_eq!(post(&f, "/projects/good/jobs", body.to_string().as_bytes()).status, 201);
+        match &crate::queue::list(&f.home)[0] {
+            crate::QueueItem::Ok(req) => assert!(!req.series),
+            other => panic!("{other:?}"),
+        }
+        let n = f.cli.calls().len();
+        for bad in [json!("yes"), json!(1)] {
+            let mut b = create_body(&f);
+            b["series"] = bad;
+            let r = post(&f, "/projects/good/jobs", b.to_string().as_bytes());
+            assert_eq!(code(&r), (400, "bad_request".to_string()));
+        }
+        assert_eq!(f.cli.calls().len(), n);
+
+        // Derivation from a dated plans folder, and the override.
+        let dated = f._t.path().join("2026-10-16-Standalone Software_Factory");
+        std::fs::create_dir_all(&dated).expect("dated");
+        let b = json!({"spec": f.spec, "plans": dated, "run": false});
+        assert_eq!(post(&f, "/projects/good/jobs", b.to_string().as_bytes()).status, 201);
+        let args = &f.cli.calls()[n].1;
+        assert_eq!(args[args.len() - 2], "standalone-software-factory");
+        let b = json!({"spec": f.spec, "plans": dated, "run": false, "slug": "my-slug1"});
+        assert_eq!(post(&f, "/projects/good/jobs", b.to_string().as_bytes()).status, 201);
+        assert_eq!(f.cli.calls()[n + 1].1[f.cli.calls()[n + 1].1.len() - 2], "my-slug1");
+
+        // Invalid slugs and an underivable name run nothing.
+        let calls = f.cli.calls().len();
+        for s in ["", "-a", "A", "a b", "a/b", &"a".repeat(65)] {
+            let b = json!({"spec": f.spec, "plans": f.plans, "slug": s});
+            assert_eq!(code(&post(&f, "/projects/good/jobs", b.to_string().as_bytes())).1, "bad_request", "{s:?}");
+        }
+        let odd = f._t.path().join("2026-10-16-___");
+        std::fs::create_dir_all(&odd).expect("odd");
+        let b = json!({"spec": f.spec, "plans": odd});
+        assert_eq!(code(&post(&f, "/projects/good/jobs", b.to_string().as_bytes())).1, "bad_request");
+        assert_eq!(f.cli.calls().len(), calls);
     }
 
     fn board_with(f: &Fx, stage: &str, cancelled: bool) {

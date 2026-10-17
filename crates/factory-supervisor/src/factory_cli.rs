@@ -98,7 +98,11 @@ impl FactoryCli for ProcessFactoryCli {
                     return Err(CliSpawnError::Timeout(TIMEOUT.as_secs()));
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-                Err(e) => return Err(start(e.to_string())),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(start(e.to_string()));
+                }
             }
         };
         Ok(CliOutput {
