@@ -265,7 +265,12 @@ fn new_job(
     let d = ctx.driver()?;
     let job = create_job_with_spec(&d, slug, feature, plans.as_deref(), spec.as_deref(), model.as_deref())?;
     let board = d.store().load()?;
-    Ok(format!("created job {} in {}{}", job.id, job.dir, estimate_lines(&board, &job)))
+    let mut out = format!("created job {} in {}{}", job.id, job.dir, estimate_lines(&board, &job));
+    if plans.is_none() {
+        let dir = d.job_dir(&job);
+        out.push_str(&format!("\nno plan yet: put plan.md at {}/plan.md before running it", dir.display()));
+    }
+    Ok(out)
 }
 
 fn costs(ctx: &CliCtx) -> Result<String, CliError> {

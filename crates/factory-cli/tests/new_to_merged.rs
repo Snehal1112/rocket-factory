@@ -322,3 +322,46 @@ fn cleanup_keeps_the_card_of_a_cancelled_job_with_a_live_lease() {
     assert!(out.contains("card kept on the board: job 001 has a live lease"), "{out}");
     assert_eq!(board_ids(&fx), vec!["001".to_string()]);
 }
+
+/// The folder named in the `no plan yet: put plan.md at <dir>/plan.md ...` line.
+fn plan_dir(out: &str) -> std::path::PathBuf {
+    let line = out.lines().find(|l| l.starts_with("no plan yet: put plan.md at ")).expect("no plan yet line");
+    let rest = line.trim_start_matches("no plan yet: put plan.md at ");
+    let file = rest.strip_suffix(" before running it").expect("suffix");
+    std::path::Path::new(file).parent().expect("parent").to_path_buf()
+}
+
+#[test]
+fn a_job_without_plans_parks_without_calling_the_builder() {
+    let fx = Fixture::new();
+    fx.run(&["new", "hello", "say hello"]).expect("new");
+    let end = fx.run(&["run", "1"]).expect("run");
+    assert_eq!(end, "needs-human: no plan.md in the job folder");
+    assert_eq!(fx.builder_calls(), 0, "the builder must not run without a plan");
+}
+
+#[test]
+fn a_job_without_plans_builds_once_plan_md_is_placed_by_hand() {
+    let fx = Fixture::new();
+    let out = fx.run(&["new", "hello", "say hello"]).expect("new");
+    assert!(fx.run(&["run", "1"]).expect("run").starts_with("needs-human"));
+    assert_eq!(fx.builder_calls(), 0);
+    std::fs::write(plan_dir(&out).join("plan.md"), "# Plan\n\n### Task 1: t\n").expect("plan");
+    fx.run(&["rework", "1", "plan.md is placed now"]).expect("rework");
+    assert_eq!(fx.run(&["run", "1"]).expect("run again"), "merged");
+    assert!(fx.builder_calls() >= 1);
+}
+
+#[test]
+fn new_without_plans_says_a_plan_is_needed_and_new_with_plans_does_not() {
+    let fx = Fixture::new();
+    let out = fx.run(&["new", "hello", "say hello"]).expect("new");
+    let dir = plan_dir(&out);
+    assert!(dir.is_absolute(), "{out}");
+    let want = format!("no plan yet: put plan.md at {}/plan.md before running it", dir.display());
+    assert!(out.lines().any(|l| l == want), "{out}\n want {want}");
+    assert!(out.starts_with("created job 001 in "), "{out}");
+    let plans = fx.write_plan("plan-01-two.md", 1, "none");
+    let out = fx.run(&["new", "two", "x", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    assert!(!out.contains("no plan yet"), "{out}");
+}

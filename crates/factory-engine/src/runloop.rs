@@ -310,6 +310,11 @@ fn run_job_inner(driver: &Driver, id: &str, guard: &crate::ProjectGuard<'_>) -> 
                 }
             }
             Stage::Build => {
+                // A job made without plans has no plan.md until a human places it. Park before any agent call.
+                if !driver.job_dir(&job).join("plan.md").exists() {
+                    park(driver, id, "no plan.md in the job folder")?;
+                    continue;
+                }
                 driver.build(id)?;
             }
             Stage::Review => {

@@ -42,17 +42,24 @@ pub fn commit_index(dir: &Path, message: &str) -> String {
 /// The builder commits a new file, the reviewer approves. It never runs the real `claude`.
 pub struct RoleRunner {
     counter: AtomicUsize,
+    /// Counts builder calls, shared with the fixture.
+    builder_calls: Arc<AtomicUsize>,
 }
 
 impl RoleRunner {
     pub fn new() -> RoleRunner {
-        RoleRunner { counter: AtomicUsize::new(0) }
+        RoleRunner::counting(Arc::new(AtomicUsize::new(0)))
+    }
+
+    pub fn counting(builder_calls: Arc<AtomicUsize>) -> RoleRunner {
+        RoleRunner { counter: AtomicUsize::new(0), builder_calls }
     }
 }
 
 impl AgentRunner for RoleRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         let text = if spec.role == "builder" {
+            self.builder_calls.fetch_add(1, Ordering::SeqCst);
             let n = self.counter.fetch_add(1, Ordering::SeqCst);
             let path = spec.cwd.join(format!("docs/{}-{n}.txt", spec.job_id));
             std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
@@ -72,6 +79,7 @@ pub struct Fixture {
     pub tmp: tempfile::TempDir,
     pub root: PathBuf,
     pub ctx: CliCtx,
+    pub builder_calls: Arc<AtomicUsize>,
 }
 
 impl Fixture {
@@ -92,9 +100,10 @@ impl Fixture {
         std::fs::write(root.join(".claude/factory/config.toml"), format!("risk_paths = [\"{risk}\"]\n"))
             .expect("config");
         std::fs::write(root.join(".claude/factory/commit-context.md"), "TEST CONTEXT\n").expect("context");
-        let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::new());
+        let builder_calls = Arc::new(AtomicUsize::new(0));
+        let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::counting(builder_calls.clone()));
         let ctx = CliCtx::new(root.clone(), runner, "tester");
-        Fixture { tmp, root, ctx }
+        Fixture { tmp, root, ctx, builder_calls }
     }
 
     pub fn write_plan(&self, name: &str, tasks: u32, next: &str) -> PathBuf {
@@ -108,6 +117,10 @@ impl Fixture {
         let path = dir.join(name);
         std::fs::write(&path, s).expect("write plan");
         path
+    }
+
+    pub fn builder_calls(&self) -> usize {
+        self.builder_calls.load(Ordering::SeqCst)
     }
 
     pub fn run(&self, args: &[&str]) -> Result<String, CliError> {
