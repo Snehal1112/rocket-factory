@@ -16,11 +16,11 @@ Input: your prompt names the plan file, the spec file (absolute paths in the job
 
 ## Work
 
-- Run the plan through `superpowers:subagent-driven-development` as its implementer: one implementer per task, treating the task excerpt in your prompt as the plan when there is one. There is no per-task review here. The driver does the ledger, the commits and the final review. Skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
+- Follow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), with the task excerpt in your prompt as your task brief when there is one. You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review. The driver does the ledger, the commits and the final review. Where implementer-prompt.md says to commit, to ask questions or to write a report file, this file wins. Skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
 - Invoke `superpowers:test-driven-development` for each task. Write the failing test first, then the code.
 - When a check or test fails, invoke `superpowers:systematic-debugging` before you change code.
 - Before you finish, invoke `superpowers:verification-before-completion` and run the checks the plan names. After they pass, stop. Do not run clippy and do not run a release build.
-- Use at most 2 helper agents per task.
+- Use at most 2 helper agents per task, only to read or search code.
 - Never sleep and never poll. Run each command once, in the foreground.
 
 ## Rules in short

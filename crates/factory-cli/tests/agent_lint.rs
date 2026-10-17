@@ -544,6 +544,27 @@ fn reviewer_files_name_the_review_focus_and_the_builder_rulings() -> TestResult 
     Ok(())
 }
 
+/// The builder follows the implementer rules of subagent-driven-development and never acts as its controller.
+const NOT_CONTROLLER: &str =
+    "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";
+
+#[test]
+fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> TestResult {
+    for path in [".claude/agents/factory-builder.md", PRESET_BUILDERS[0], PRESET_BUILDERS[1]] {
+        require_all(
+            &read(path)?,
+            path,
+            &[
+                "Follow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md)",
+                NOT_CONTROLLER,
+                "only to read or search code",
+            ],
+        )?;
+        forbid_all(&read(path)?, path, &["as its implementer: one implementer per task"])?;
+    }
+    Ok(())
+}
+
 #[test]
 fn builder_files_carry_the_rules_digest() -> TestResult {
     for path in [".claude/agents/factory-builder.md", PRESET_BUILDERS[0], PRESET_BUILDERS[1]] {

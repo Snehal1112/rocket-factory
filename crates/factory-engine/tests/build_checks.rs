@@ -1382,6 +1382,7 @@ fn every_builder_prompt_names_subagent_driven_development() {
     for spec in &specs {
         assert!(spec.prompt.contains("superpowers:subagent-driven-development"), "{}", spec.prompt);
         assert!(!spec.prompt.contains("executing-plans"), "{}", spec.prompt);
+        assert!(spec.prompt.contains(NOT_CONTROLLER), "{}", spec.prompt);
     }
     for spec in &specs[..2] {
         assert!(spec.prompt.contains("Status: DONE"), "{}", spec.prompt);
@@ -1397,5 +1398,10 @@ fn every_builder_prompt_names_subagent_driven_development() {
     whole.engine(&whole_runner).build_stage().expect("whole plan");
     let prompt = whole_runner.last_spec_for("builder").expect("builder spec").prompt;
     assert!(prompt.contains("superpowers:subagent-driven-development"), "{prompt}");
+    assert!(prompt.contains(NOT_CONTROLLER), "{prompt}");
     assert!(prompt.contains("Status: DONE"), "{prompt}");
 }
+
+/// Every builder prompt keeps the builder an implementer, so it never runs a per-task review.
+const NOT_CONTROLLER: &str =
+    "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";

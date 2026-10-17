@@ -18,6 +18,10 @@ pub const REVIEWER_MAX_TURNS: u32 = 40;
 /// The tools a builder run may use. They are every tool the builder agent files tell it to use.
 pub const BUILDER_TOOLS: &str = "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent";
 
+/// Keeps a builder that loads subagent-driven-development from acting as its controller and reviewing per task.
+const NOT_CONTROLLER: &str =
+    "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";
+
 impl Engine<'_> {
     /// The prompt line that points an agent at the knowledge base. Empty when the KB is off.
     fn kb_line(&self) -> String {
@@ -81,7 +85,8 @@ impl Engine<'_> {
         let prompt = format!(
             "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
              {read} Never edit the plan.\n{spec_line}\
-             Run the plan with `superpowers:subagent-driven-development` as its implementer, task by task: write the failing test first, then the code, then run the checks.\n\
+             Follow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), task by task. {NOT_CONTROLLER} \
+             Write the failing test first, then the code, then run the checks.\n\
              {rules}\
              Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
@@ -168,7 +173,8 @@ impl Engine<'_> {
              {read} Never edit the plan.\n{spec_line}{excerpt}\
              Base commit: {base}. Current tip: {tip}.\n{done}\n\
              Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
-             Run the task with `superpowers:subagent-driven-development` as its implementer, with no per-task review here. Write the failing test first, then the code, then run the checks the task names.\n\
+             Follow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md) for this task. {NOT_CONTROLLER} \
+             Write the failing test first, then the code, then run the checks the task names.\n\
              {rules}\
              Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
@@ -202,7 +208,8 @@ impl Engine<'_> {
             "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
              Do not run `git add` or `git commit`: leave the fixes in the worktree and the driver commits them. \
              Do not amend or rewrite earlier commits. \
-             Follow `superpowers:receiving-code-review` for the findings, and `superpowers:subagent-driven-development` as the way the plan runs. Read all the findings first, then verify each against the code. \
+             Follow `superpowers:receiving-code-review` for the findings, and the implementer rules of `superpowers:subagent-driven-development`. {NOT_CONTROLLER} \
+             Read all the findings first, then verify each against the code. \
              Work one item at a time. If a finding is wrong, push back with a reason in your reply and do not change the code for it. \
              If an item is unclear, reply with `Status: NEEDS_CONTEXT` and the question instead of guessing. \
              Run the relevant checks{hints} before you finish. \
