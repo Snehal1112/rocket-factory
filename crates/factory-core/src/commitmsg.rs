@@ -199,6 +199,83 @@ pub fn blocked_reason(reply: &str) -> Option<String> {
     first.strip_prefix("BLOCKED:").map(|reason| reason.trim().to_string())
 }
 
+/// What a builder reply says about how the task went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuilderStatus {
+    Done,
+    DoneWithConcerns(String),
+    Blocked(String),
+    NeedsContext(String),
+}
+
+/// The lines of the reply outside code fences.
+fn unfenced_lines(reply: &str) -> impl Iterator<Item = &str> {
+    let mut in_fence = false;
+    reply.lines().filter(move |line| {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            return false;
+        }
+        !in_fence
+    })
+}
+
+/// The status the builder reported, or `None` when it reported none or an unknown one.
+/// A first line `BLOCKED:` wins. Else the first `Status:` or `**Status:**` line outside code
+/// fences counts, optionally after `- `, and the rest of the reply after the value is its text.
+pub fn parse_builder_status(reply: &str) -> Option<BuilderStatus> {
+    if let Some(reason) = blocked_reason(reply) {
+        return Some(BuilderStatus::Blocked(reason));
+    }
+    let lines: Vec<&str> = reply.lines().collect();
+    let mut in_fence = false;
+    for (at, line) in lines.iter().enumerate() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let t = line.trim();
+        let t = t.strip_prefix("- ").unwrap_or(t).trim_start();
+        let Some(value) = t.strip_prefix("**Status:**").or_else(|| t.strip_prefix("Status:")) else {
+            continue;
+        };
+        let value = value.trim_start();
+        let word_end = value.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(value.len());
+        let (word, tail) = value.split_at(word_end);
+        let mut text = tail.trim_start_matches(|c: char| c == '*' || c == ':' || c == '-' || c.is_whitespace()).to_string();
+        for rest in &lines[at + 1..] {
+            text.push('\n');
+            text.push_str(rest);
+        }
+        let text = text.trim().to_string();
+        return match word.to_ascii_uppercase().as_str() {
+            "DONE" => Some(BuilderStatus::Done),
+            "DONE_WITH_CONCERNS" => Some(BuilderStatus::DoneWithConcerns(text)),
+            "BLOCKED" => Some(BuilderStatus::Blocked(text)),
+            "NEEDS_CONTEXT" => Some(BuilderStatus::NeedsContext(text)),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Like `parse_builder_status`, with `Done` when the reply has no usable status line.
+pub fn builder_status(reply: &str) -> BuilderStatus {
+    parse_builder_status(reply).unwrap_or(BuilderStatus::Done)
+}
+
+/// The bodies of the `Ruling:` lines outside code fences, trimmed, empty bodies dropped.
+pub fn builder_rulings(reply: &str) -> Vec<String> {
+    unfenced_lines(reply)
+        .filter_map(|line| line.trim().strip_prefix("Ruling:"))
+        .map(|body| body.trim().to_string())
+        .filter(|body| !body.is_empty())
+        .collect()
+}
+
 pub const MESSAGE_BEGIN: &str = "---BEGIN MESSAGE---";
 pub const MESSAGE_END: &str = "---END MESSAGE---";
 
@@ -304,6 +381,45 @@ mod tests {
         assert_eq!(blocked_reason("  BLOCKED:   spaced  "), Some("spaced".to_string()));
         assert_eq!(blocked_reason("abc1234 feat: x\nBLOCKED: later line"), None);
         assert_eq!(blocked_reason(""), None);
+    }
+
+    #[test]
+    fn builder_status_reads_a_first_line_blocked() {
+        assert_eq!(builder_status("BLOCKED: no schema\nmore"), BuilderStatus::Blocked("no schema".to_string()));
+    }
+
+    #[test]
+    fn builder_status_reads_a_status_line_in_a_longer_reply() {
+        let reply = "I did the work.\n\n- **Status:** NEEDS_CONTEXT the API is unclear\nWhich endpoint?";
+        assert_eq!(
+            builder_status(reply),
+            BuilderStatus::NeedsContext("the API is unclear\nWhich endpoint?".to_string())
+        );
+        assert_eq!(builder_status("ok\nStatus: DONE_WITH_CONCERNS\nslow"), BuilderStatus::DoneWithConcerns("slow".to_string()));
+        assert_eq!(builder_status("ok\nStatus: BLOCKED: no db"), BuilderStatus::Blocked("no db".to_string()));
+        assert_eq!(builder_status("Status: DONE"), BuilderStatus::Done);
+    }
+
+    #[test]
+    fn builder_status_ignores_blocked_inside_a_fence() {
+        let reply = "Done.\n```\nBLOCKED: quoted\nStatus: BLOCKED\n```\nThe text above is a sample.\nBLOCKED: mid text";
+        assert_eq!(builder_status(reply), BuilderStatus::Done);
+        assert_eq!(parse_builder_status(reply), None);
+    }
+
+    #[test]
+    fn builder_status_defaults_to_done_without_a_status_line() {
+        assert_eq!(builder_status(""), BuilderStatus::Done);
+        assert_eq!(builder_status("all good"), BuilderStatus::Done);
+        assert_eq!(parse_builder_status("all good"), None);
+        assert_eq!(builder_status("Status: MAYBE"), BuilderStatus::Done);
+        assert_eq!(parse_builder_status("Status: MAYBE"), None);
+    }
+
+    #[test]
+    fn builder_rulings_strips_prefix_and_drops_empty_bodies() {
+        let reply = "x\nRuling: kept the old name\n  Ruling:   \nRuling:\n```\nRuling: fenced\n```\nRuling: second one  ";
+        assert_eq!(builder_rulings(reply), vec!["kept the old name".to_string(), "second one".to_string()]);
     }
 
     #[test]

@@ -414,6 +414,55 @@ fn a_stopped_first_task_parks_and_a_rework_resumes_at_that_task_with_the_note() 
     assert!(!fx.job_dir.join("rework-note.md").exists());
 }
 
+fn blocked_effect(file: &'static str, reply: &'static str) -> Effect {
+    Box::new(move |spec| {
+        std::fs::write(spec.cwd.join(file), "half done\n").expect("write change");
+        reply.to_string()
+    })
+}
+
+#[test]
+fn a_blocked_reply_parks_without_committing() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![blocked_effect("a.txt", "BLOCKED: no schema")]);
+    match fx.engine(&runner).build_stage().expect("task 1") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("no schema"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::BuilderBlocked);
+    assert!(rec.reason.contains("no schema"), "{}", rec.reason);
+    assert_eq!(rec.next, vec!["factory rework 001 <note>".to_string()]);
+    let job = fx.job();
+    assert_eq!(job.task_index, 0);
+    let wt = job.worktree.clone().expect("worktree");
+    assert_eq!(fx.repo.tip(&job.branch).expect("tip"), job.base.clone().expect("base"));
+    assert!(std::path::Path::new(&wt).join("a.txt").exists());
+}
+
+#[test]
+fn a_needs_context_reply_parks_like_blocked() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![blocked_effect("a.txt", "Did some of it.\nStatus: NEEDS_CONTEXT which table?")]);
+    match fx.engine(&runner).build_stage().expect("task 1") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("which table?"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::BuilderBlocked);
+    assert!(rec.parts[0].text.contains("NEEDS_CONTEXT"), "{}", rec.parts[0].text);
+}
+
+#[test]
+fn a_reply_without_a_status_line_is_committed_as_before() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let out = fx.engine(&runner).build_stage().expect("task 1");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    assert_eq!(fx.job().task_index, 1);
+    assert!(ledger_of(&fx).contains("builder task 1: no status line, treated as done"), "{}", ledger_of(&fx));
+}
+
 fn start_fix_round(fx: &Fixture) {
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");

@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::StopReason;
-use factory_core::{agent_files_rel_dir, is_agent_file_name, AGENT_EXCLUDE_PATTERN, ParkKind, ParkPart, Stage, TaskState};
+use factory_core::{agent_files_rel_dir, parse_builder_status, BuilderStatus, is_agent_file_name, AGENT_EXCLUDE_PATTERN, ParkKind, ParkPart, Stage, TaskState};
 use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
-use crate::park::{builder_stop_parts, part_from_file};
+use crate::park::{builder_blocked_parts, builder_stop_parts, part_from_file};
 use crate::ports::{git_err, now, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{Engine, EngineError, StageOutcome};
@@ -67,6 +67,9 @@ impl Engine<'_> {
         })?;
         if run.stop_reason != StopReason::Done {
             return self.park_with(ParkKind::BuilderStopped, format!("builder stopped: {:?}", run.stop_reason), builder_stop_parts(&run));
+        }
+        if let Some(out) = self.park_if_blocked(&run, None)? {
+            return Ok(out);
         }
         if self.repo.tip(&branch).map_err(git_err)? != tip_before {
             return self.park_with(
@@ -267,6 +270,30 @@ impl Engine<'_> {
         self.ruling(&format!("{label} commit rewrote earlier commits {}, the branch is now at {short}", gone.join(", ")))
     }
 
+    /// Parks the job when the builder reply says BLOCKED or NEEDS_CONTEXT, before anything is committed.
+    /// A reply without a usable status line counts as done, and a task run notes that in the ledger.
+    fn park_if_blocked(&self, run: &factory_agent::AgentRun, task: Option<u32>) -> Result<Option<StageOutcome>, EngineError> {
+        let status = match parse_builder_status(&run.result_text) {
+            Some(status) => status,
+            None => {
+                if let Some(n) = task {
+                    self.ruling(&format!("builder task {n}: no status line, treated as done"))?;
+                }
+                return Ok(None);
+            }
+        };
+        let (what, why) = match &status {
+            BuilderStatus::Blocked(why) => ("blocked", why),
+            BuilderStatus::NeedsContext(why) => ("needs context", why),
+            BuilderStatus::Done | BuilderStatus::DoneWithConcerns(_) => return Ok(None),
+        };
+        let first = why.split_whitespace().collect::<Vec<_>>().join(" ");
+        let first: String = first.chars().take(300).collect();
+        let place = task.map_or(String::new(), |n| format!(" in task {n}"));
+        let reason = format!("builder {what}{place}: {first}");
+        self.park_with(ParkKind::BuilderBlocked, reason, builder_blocked_parts(&status, run)).map(Some)
+    }
+
     /// Runs the agent of the next plan task. After the last task it hands over to review.
     fn build_task(&self, job: &JobView, tasks: &[PlanTask]) -> Result<StageOutcome, EngineError> {
         let Some(task) = tasks.get(job.task_index as usize) else {
@@ -299,6 +326,9 @@ impl Engine<'_> {
         }
         if run.stop_reason != StopReason::Done {
             return self.park_with(ParkKind::BuilderStopped, format!("builder stopped in task {}: {:?}", task.n, run.stop_reason), builder_stop_parts(&run));
+        }
+        if let Some(out) = self.park_if_blocked(&run, Some(task.n))? {
+            return Ok(out);
         }
         if self.repo.tip(&branch).map_err(git_err)? != tip {
             return self.park_with(

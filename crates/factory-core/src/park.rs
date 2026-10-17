@@ -23,6 +23,7 @@ pub enum ParkKind {
     DiffTooLarge,
     BudgetStopped,
     BuilderStopped,
+    BuilderBlocked,
     BuilderCommitted,
     NothingChanged,
     CommitFailed,
@@ -38,6 +39,7 @@ impl ParkKind {
             ParkKind::DiffTooLarge => "diff-too-large",
             ParkKind::BudgetStopped => "budget-stopped",
             ParkKind::BuilderStopped => "builder-stopped",
+            ParkKind::BuilderBlocked => "builder-blocked",
             ParkKind::BuilderCommitted => "builder-committed",
             ParkKind::NothingChanged => "nothing-changed",
             ParkKind::CommitFailed => "commit-failed",
@@ -66,7 +68,11 @@ impl ParkKind {
         let rework = format!("factory rework {id} <note>");
         let cancel = format!("factory cancel {id}");
         match self {
-            ParkKind::ChecksFailed | ParkKind::BuilderStopped | ParkKind::BuilderCommitted | ParkKind::CommitFailed => {
+            ParkKind::ChecksFailed
+            | ParkKind::BuilderStopped
+            | ParkKind::BuilderBlocked
+            | ParkKind::BuilderCommitted
+            | ParkKind::CommitFailed => {
                 vec![rework]
             }
             ParkKind::ChangesRemain | ParkKind::RiskyDiff | ParkKind::DiffTooLarge => vec![approve, rework],
@@ -144,6 +150,7 @@ mod tests {
         assert_eq!(ParkKind::DiffTooLarge.as_str(), "diff-too-large");
         assert_eq!(ParkKind::BudgetStopped.as_str(), "budget-stopped");
         assert_eq!(ParkKind::BuilderStopped.as_str(), "builder-stopped");
+        assert_eq!(ParkKind::BuilderBlocked.as_str(), "builder-blocked");
         assert_eq!(ParkKind::BuilderCommitted.as_str(), "builder-committed");
         assert_eq!(ParkKind::NothingChanged.as_str(), "nothing-changed");
         assert_eq!(ParkKind::CommitFailed.as_str(), "commit-failed");
@@ -179,7 +186,7 @@ mod tests {
             assert_eq!(kind.next_for("012", true), want, "{kind:?}");
         }
         // Parks without an approve option, and parks with a review, stay as they were.
-        for kind in [ParkKind::ChecksFailed, ParkKind::NothingChanged, ParkKind::BuilderStopped] {
+        for kind in [ParkKind::ChecksFailed, ParkKind::NothingChanged, ParkKind::BuilderStopped, ParkKind::BuilderBlocked] {
             assert_eq!(kind.next_for("012", true), kind.next("012"), "{kind:?}");
         }
         for kind in [ParkKind::Other, ParkKind::RiskyDiff, ParkKind::BudgetStopped] {

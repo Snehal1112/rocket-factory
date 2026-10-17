@@ -330,12 +330,13 @@
     "diff-too-large": "Diff too large",
     "budget-stopped": "Budget stopped",
     "builder-stopped": "Builder stopped",
+    "builder-blocked": "Builder blocked",
     "builder-committed": "Builder committed",
     "nothing-changed": "Nothing changed",
     "commit-failed": "Commit failed",
     other: "Needs a human",
   };
-  const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "commit-failed"];
+  const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "commit-failed"];
   // A line that starts with an error word, ends a failed test, or reports a panic is a line that matters.
   const PARK_HIT = /^\s*(error|FAIL|\[blocker\])|\sFAILED\s*$|panicked at/;
 

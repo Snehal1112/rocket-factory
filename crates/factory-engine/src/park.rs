@@ -100,6 +100,20 @@ pub(crate) fn builder_stop_parts(run: &factory_agent::AgentRun) -> Vec<ParkPart>
     vec![ParkPart::new("Builder stopped", "builder", &text)]
 }
 
+/// Evidence for a builder that reported BLOCKED or NEEDS_CONTEXT: the status, its text and the full reply.
+pub(crate) fn builder_blocked_parts(status: &factory_core::BuilderStatus, run: &factory_agent::AgentRun) -> Vec<ParkPart> {
+    let (label, why) = match status {
+        factory_core::BuilderStatus::NeedsContext(why) => ("NEEDS_CONTEXT", why),
+        factory_core::BuilderStatus::Blocked(why) => ("BLOCKED", why),
+        _ => return Vec::new(),
+    };
+    let mut text = format!("Status: {label}\nReason: {why}");
+    if !run.result_text.trim().is_empty() {
+        text.push_str(&format!("\n\nLast message from the builder:\n{}", run.result_text));
+    }
+    vec![ParkPart::new("Builder blocked", "builder", &text)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
