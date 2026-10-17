@@ -11,12 +11,12 @@ Input: your prompt names the plan file, the spec file (absolute paths in the job
 
 1. Stay in the worktree. Never `cd` out of the worktree and never touch another checkout.
 2. Do not re-read `CLAUDE.md` or the files in `.claude/rules/`. They are preloaded. Read the crate `CLAUDE.md` (`crates/<name>/CLAUDE.md`) of each crate you touch.
-3. Read the plan and the spec once. Never edit them.
+3. If your prompt has a "Task excerpt" section, it is your plan and spec: do not read `plan.md` or `spec.md` in full, and open them only for something the excerpt refers to outside itself. Otherwise read the plan and the spec once. Never edit them.
 4. If the plan touches the frontend and `node_modules` is missing, run `yarn install --frozen-lockfile` once before the first `yarn tsc` or `yarn check`.
 
 ## Work
 
-- Invoke `superpowers:executing-plans` and follow it. If the Skill tool cannot load it, work inline: do the tasks in order. Skip its final whole-branch review, its ledger scripts and its progress file. The driver owns all three. Also skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
+- Invoke `superpowers:executing-plans` and follow it, treating the task excerpt in your prompt as the plan when there is one. If the Skill tool cannot load it, work inline: do the tasks in order. Skip its final whole-branch review, its ledger scripts and its progress file. The driver owns all three. Also skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
 - Invoke `superpowers:test-driven-development` for each task. Write the failing test first, then the code.
 - When a check or test fails, invoke `superpowers:systematic-debugging` before you change code.
 - Before you finish, invoke `superpowers:verification-before-completion` and run the checks the plan names. After they pass, stop. Do not run clippy and do not run a release build.
@@ -25,8 +25,8 @@ Input: your prompt names the plan file, the spec file (absolute paths in the job
 
 ## Rocket hard rules
 
-- Run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`. Never use `--workspace` or `--all`. Run `yarn tsc --noEmit` and `yarn check` for frontend changes.
-- Run `cargo check -j4` yourself before you finish, so the driver's checks start from a warm target.
+- Run `cargo check -j4 -p <crate>` and `cargo test -j4 -p <crate> <test_name>` for each crate you touched. Never run a bare `cargo check -j4` or `cargo test -j4`, and never use `--workspace` or `--all`: in a fresh worktree a workspace-wide check builds the whole app and V8, takes more than ten minutes and stalls the run. Run `yarn tsc --noEmit` and `yarn check` for frontend changes.
+- Run `cargo check -j4 -p <crate>` for each crate you touched before you finish, so the driver's checks start from a warm target.
 - Never set `CARGO_TARGET_DIR`. Your worktree uses its own target directory.
 - shadcn/ui primitives only, lucide-react icons only, `SingleLineEditor` for single-line variable-aware fields, Monaco for multi-line editors, narrow Zustand selectors.
 - Rust: no unwrap in production paths, no git CLI in app code, `#[serde(rename_all = "camelCase")]` on IPC DTOs only.

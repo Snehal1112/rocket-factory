@@ -14,6 +14,8 @@ pub enum EventKind {
     Tool,
     Stop,
     BudgetWarn,
+    /// A driver note, such as a fallback the driver took. Not an agent action.
+    Notice,
 }
 
 impl EventKind {
@@ -24,6 +26,7 @@ impl EventKind {
             EventKind::Tool => "PostToolUse",
             EventKind::Stop => "SubagentStop",
             EventKind::BudgetWarn => "BudgetWarn",
+            EventKind::Notice => "FactoryNotice",
         }
     }
 }

@@ -11,11 +11,11 @@ Input: your prompt names the plan file, the spec file (absolute paths in the job
 
 1. Stay in the worktree. Never `cd` out of the worktree and never touch another checkout.
 2. Read the project's CLAUDE.md and the files your prompt tells you to read first. Follow the rules in the job prompt.
-3. Read the plan and the spec once. Never edit them.
+3. If your prompt has a "Task excerpt" section, it is your plan and spec: do not read `plan.md` or `spec.md` in full, and open them only for something the excerpt refers to outside itself. Otherwise read the plan and the spec once. Never edit them.
 
 ## Work
 
-- Invoke `superpowers:executing-plans` and follow it. If the Skill tool cannot load it, work inline: do the tasks in order. Skip its final whole-branch review, its ledger scripts and its progress file. The driver owns all three. Also skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
+- Invoke `superpowers:executing-plans` and follow it, treating the task excerpt in your prompt as the plan when there is one. If the Skill tool cannot load it, work inline: do the tasks in order. Skip its final whole-branch review, its ledger scripts and its progress file. The driver owns all three. Also skip every commit step of the plan, and every plan step that runs `git add` or `git commit`: the driver commits for you.
 - Invoke `superpowers:test-driven-development` for each task. Write the failing test first, then the code.
 - When a check or test fails, invoke `superpowers:systematic-debugging` before you change code.
 - Before you finish, invoke `superpowers:verification-before-completion` and run the checks the plan names. After they pass, stop. Do not run a release build.
