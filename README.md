@@ -37,7 +37,13 @@ factory project add /path/to/repo --preset rust [--base main] [--name demo]
 factory project list
 factory project show demo
 factory project remove demo [--force]
+factory project which [<path>]
 ```
+
+`which` prints the name of the registered project whose repo is `<path>` (default: the current directory) or
+contains it, and exits 0. When two registered repos nest, the inner one wins. A linked git worktree of a
+registered repo resolves to that repo's project. It prints `no registered project contains <path>` to stderr
+and exits 1 when nothing matches.
 
 `add` needs the top folder of a git repository and stores the base branch it used (`--base`, or the branch the
 repo is on). The name defaults to the lowercased repo folder name. `list` shows a project whose repo is gone as
@@ -47,6 +53,21 @@ folder and refuses while a job is not merged or cancelled, unless `--force` is g
 `project.toml` is removed only with `--force`. `remove` also prunes the git worktree registrations of the
 project's `worktrees/` folder (a stale one whose folder is gone too, a valid one together with its working
 folder). It never deletes branches: the `factory/*` job branches stay in the repo and are listed in the output.
+
+### The global /factory command
+
+`factory install [--dir <path>] [--force]` writes the `/factory` slash command (embedded in the binary) as
+`factory.md` into `<--dir>`, else into the Claude commands folder under `$HOME`; without `--dir` an unset or
+empty `$HOME` is an error. The folder is created when absent and the write is atomic. A file with the same
+content is left alone (`already installed`); a file that differs is an error naming it, unless `--force`.
+
+In a repository, `/factory` runs `factory project which` to find the project, then passes `--project <name>`
+on every `factory` call (`$FACTORY_BIN`, else `factory` on PATH). It runs the brainstorm interview and writes
+the spec and the plans (at most 3 tasks each) with explicit approvals, creates the job with `factory new`, and
+starts the run: `factoryd enqueue --project <name> --job <id> --series` when `factoryd is-running` exits 0,
+else `factory --project <name> run <id> --series` in the background. It does not poll. The checks come from the
+project's registry entry. `factoryd is-running` exits 0 while a `factoryd` holds the instance lock of this
+home and exits 1 otherwise, with no output.
 
 ### Running against a project
 

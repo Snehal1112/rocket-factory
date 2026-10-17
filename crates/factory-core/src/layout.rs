@@ -10,6 +10,11 @@ pub fn agent_files_rel_dir() -> PathBuf {
     Path::new(".claude").join("agents")
 }
 
+/// The folder where Claude Code looks for user-wide slash commands: `<user home>/.claude/commands`.
+pub fn claude_commands_dir(user_home: &Path) -> PathBuf {
+    user_home.join(".claude").join("commands")
+}
+
 /// True for `factory-<a-z, 0-9, ->.md`, the only names the exclude line covers and the engine writes.
 pub fn is_agent_file_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("factory-") else { return false };
@@ -94,6 +99,13 @@ mod tests {
         assert_eq!(l.worktrees_dir, PathBuf::from("/r/.claude/worktrees"));
         assert_eq!(l.config_file, PathBuf::from("/r/.claude/factory/config.toml"));
         assert_eq!(l.commit_context_file, PathBuf::from("/r/.claude/factory/commit-context.md"));
+    }
+
+    #[test]
+    fn the_commands_folder_is_under_the_user_home() {
+        let d = claude_commands_dir(Path::new("/h"));
+        assert!(d.starts_with("/h"));
+        assert!(d.ends_with(Path::new(".claude").join("commands")));
     }
 
     #[test]

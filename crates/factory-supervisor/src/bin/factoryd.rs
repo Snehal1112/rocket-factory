@@ -35,6 +35,8 @@ enum Cmd {
     Status,
     /// Ask a running instance to stop. Running children keep running.
     Stop,
+    /// Exit 0 when a factoryd runs for this home, else exit 1. Prints nothing.
+    IsRunning,
     /// Add a request to the queue.
     Enqueue {
         #[arg(long)]
@@ -136,8 +138,19 @@ fn status(home: &Home) -> String {
     out
 }
 
+/// True while some factoryd holds the instance lock of this home.
+fn is_running(home: &Home) -> bool {
+    InstanceLock::running(home).is_some()
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Cmd::IsRunning = cli.cmd {
+        return match Home::from_env() {
+            Ok(home) if is_running(&home) => ExitCode::SUCCESS,
+            _ => ExitCode::from(1),
+        };
+    }
     let result = Home::from_env().map_err(|e| e.to_string()).and_then(|home| match cli.cmd {
         Cmd::Run { interval_ms, once } => run(home, interval_ms, once),
         Cmd::Status => {
@@ -154,6 +167,7 @@ fn main() -> ExitCode {
             }
             Ok(())
         }
+        Cmd::IsRunning => Ok(()),
         Cmd::Enqueue { project, job, series, approve } => {
             let action = if approve { Action::Approve } else { Action::Run };
             let req = Request::new(&project, action, &job, series, now_ms()).map_err(|e| e.to_string())?;
@@ -168,5 +182,21 @@ fn main() -> ExitCode {
             eprintln!("factoryd: {e}");
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_running_follows_the_instance_lock() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        assert!(!is_running(&home));
+        let lock = InstanceLock::acquire(&home).expect("lock");
+        assert!(is_running(&home));
+        drop(lock);
+        assert!(!is_running(&home));
     }
 }

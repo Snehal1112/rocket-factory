@@ -16,6 +16,7 @@ pub fn run(home: &Home, cmd: ProjectCmd) -> Result<String, CliError> {
     match cmd {
         ProjectCmd::Add { path, preset, base, name } => add(home, &path, &preset, base.as_deref(), name.as_deref()),
         ProjectCmd::List => list(home),
+        ProjectCmd::Which { path } => which(home, path.as_deref()),
         ProjectCmd::Show { name } => show(home, &name),
         ProjectCmd::Remove { name, force } => remove(home, &name, force),
     }
@@ -106,6 +107,17 @@ fn list(home: &Home) -> Result<String, CliError> {
         lines.push(line);
     }
     Ok(lines.join("\n"))
+}
+
+fn which(home: &Home, path: Option<&Path>) -> Result<String, CliError> {
+    let path = match path {
+        Some(p) => p.to_path_buf(),
+        None => std::env::current_dir()?,
+    };
+    match project::find_by_path(home, &path)? {
+        Some(name) => Ok(name),
+        None => Err(CliError::Refused(format!("no registered project contains {}", path.display()))),
+    }
 }
 
 fn show(home: &Home, name: &str) -> Result<String, CliError> {

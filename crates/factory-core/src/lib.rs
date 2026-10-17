@@ -22,6 +22,9 @@ pub mod stage;
 mod test_support;
 pub mod verdict;
 
+/// The global `/factory` slash command that `factory install` writes.
+pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
+
 pub use board::{Board, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry};
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{
@@ -35,7 +38,7 @@ pub use fsutil::write_atomic;
 pub use home::Home;
 pub use homeconfig::HomeConfig;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
-pub use layout::{agent_files_rel_dir, is_agent_file_name, Layout, AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE};
+pub use layout::{agent_files_rel_dir, claude_commands_dir, is_agent_file_name, Layout, AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE};
 pub use ledger::{Ledger, TaskState};
 pub use park::{ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};

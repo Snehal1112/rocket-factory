@@ -3,6 +3,7 @@
 mod cli;
 mod commands;
 mod costs;
+pub mod install;
 pub mod project;
 mod status;
 pub mod tokens;

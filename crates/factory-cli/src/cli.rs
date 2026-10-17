@@ -73,6 +73,15 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
+    /// Install the global /factory slash command for the current user.
+    Install {
+        /// The folder to write factory.md into. Defaults to the Claude commands folder under $HOME.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Replace an existing factory.md that differs.
+        #[arg(long)]
+        force: bool,
+    },
     /// Refresh the knowledge base now, ignoring the stop marker.
     KbRefresh {
         /// The job whose ledger gets the rulings.
@@ -97,6 +106,11 @@ pub enum ProjectCmd {
     },
     /// List the projects.
     List,
+    /// Print the name of the registered project that contains a folder.
+    Which {
+        /// Defaults to the current directory.
+        path: Option<PathBuf>,
+    },
     /// Show the resolved settings of a project.
     Show { name: String },
     /// Delete a project folder. The repository and the presets stay.
