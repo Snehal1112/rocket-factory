@@ -431,13 +431,12 @@ mod tests {
         assert!(find_by_path(&e.home, &e.repo.join("missing")).is_err());
     }
 
-    fn fake_worktree(e: &Env, repo: &Path, name: &str, at: &Path) {
+    fn fake_worktree(repo: &Path, name: &str, at: &Path) {
         let admin = repo.join(".git/worktrees").join(name);
         std::fs::create_dir_all(&admin).expect("mkdir");
         std::fs::write(admin.join("commondir"), "../..\n").expect("commondir");
         std::fs::create_dir_all(at.join("src")).expect("mkdir");
         std::fs::write(at.join(".git"), format!("gitdir: {}\n", admin.display())).expect("gitfile");
-        let _ = e;
     }
 
     #[test]
@@ -446,7 +445,7 @@ mod tests {
         dot_git(&e.repo);
         add(&e.home, "main-repo", &e.repo, "rust", None, &ok).expect("add");
         let wt = e._t.path().join("wt-registered");
-        fake_worktree(&e, &e.repo, "wt1", &wt);
+        fake_worktree(&e.repo, "wt1", &wt);
         add(&e.home, "wt-project", &wt, "rust", None, &ok).expect("add");
         assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("wt-project"));
         assert_eq!(find_by_path(&e.home, &e.repo).expect("main").as_deref(), Some("main-repo"));
@@ -458,7 +457,7 @@ mod tests {
         dot_git(&e.repo);
         add(&e.home, "main-repo", &e.repo, "rust", None, &ok).expect("add");
         let wt = e._t.path().join("wt-unregistered");
-        fake_worktree(&e, &e.repo, "wt2", &wt);
+        fake_worktree(&e.repo, "wt2", &wt);
         assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("main-repo"));
     }
 
@@ -466,7 +465,8 @@ mod tests {
     fn find_by_path_does_not_match_a_sibling_with_the_same_name_prefix() {
         let e = env();
         add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
-        let sibling = e._t.path().join("repo-two");
+        let folder = e.repo.file_name().and_then(|f| f.to_str()).expect("folder name");
+        let sibling = e._t.path().join(format!("{folder}-two"));
         std::fs::create_dir_all(&sibling).expect("mkdir");
         assert_eq!(find_by_path(&e.home, &sibling).expect("sibling"), None);
     }

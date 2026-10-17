@@ -101,6 +101,22 @@ fn which_refuses_an_unregistered_folder_with_the_message() {
 }
 
 #[test]
+fn which_fails_with_an_ambiguity_error_for_two_projects_on_one_repo() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = Home::at(tmp.path().join("home"));
+    let repo = make_repo(tmp.path(), "demo-repo");
+    project_run(&home, &["add", s(&repo), "--preset", "rust", "--name", "first"]).expect("add");
+    // `project add` refuses a second name for one repo, so copy the project file by hand.
+    let second = home.project_dir("second");
+    std::fs::create_dir_all(&second).expect("mkdir");
+    std::fs::copy(home.project_dir("first").join("project.toml"), second.join("project.toml")).expect("copy");
+    // main.rs only maps an Err to exit code 1, so the Err from project::run is what is asserted.
+    let err = project_run(&home, &["which", s(&repo)]).expect_err("ambiguous").to_string();
+    assert!(err.contains("ambiguous"), "{err}");
+    assert!(err.contains("first") && err.contains("second"), "{err}");
+}
+
+#[test]
 fn install_writes_the_embedded_command_and_is_idempotent() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path().join("cmds");
