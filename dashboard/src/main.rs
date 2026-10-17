@@ -17,7 +17,7 @@ fn main() {
         Ok(config) => config,
         Err(message) => {
             eprintln!("factory-server: {message}");
-            eprintln!("usage: factory-server [--root PATH | --home DIR [--api HOST:PORT]] [--port N]");
+            eprintln!("usage: factory-server [--root PATH | --home DIR [--api HOST:PORT]] [--port N] [--draft-stale-hours N]");
             std::process::exit(2);
         }
     };
@@ -31,10 +31,13 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let app = Arc::new(match &config.home {
-        Some(home) => server::App::for_home(home.clone(), config.api.clone()),
-        None => server::App::for_root(&config.root),
-    });
+    let app = Arc::new(
+        match &config.home {
+            Some(home) => server::App::for_home(home.clone(), config.api.clone()),
+            None => server::App::for_root(&config.root),
+        }
+        .with_draft_stale(config.draft_stale_secs),
+    );
     match &app.mode {
         server::Mode::Root(project) => {
             if let Some(warning) = server::missing_factory_dir_warning(&config.root) {

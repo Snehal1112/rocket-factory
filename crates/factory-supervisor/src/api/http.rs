@@ -95,7 +95,7 @@ pub fn route(
     }
     match (method, segments.as_slice()) {
         (_, ["projects"]) => read::projects(home, deps),
-        ("GET", ["projects", name, "jobs"]) => read::jobs(home, name),
+        ("GET", ["projects", name, "jobs"]) => read::jobs(home, deps, name),
         (_, ["projects", name, "jobs"]) => write::create(home, deps, name, body),
         (_, ["projects", name, "jobs", id, "approve"]) => write::approve(home, deps, name, id, body),
         (_, ["projects", name, "jobs", id, "rework"]) => write::rework(home, deps, name, id, body),

@@ -3,11 +3,13 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::events::Registry;
-use crate::model::{AgentState, Board, Job, StageEntry};
+use crate::model::{AgentState, Board, Draft, Job, StageEntry};
 use crate::paths::Paths;
 use crate::plan::{load_plan, PlanView};
 use crate::specs::{build_spec_cards, SpecCard};
 
+/// A draft is stale when it has not changed for longer than this, unless `--draft-stale-hours` says otherwise.
+pub const DEFAULT_DRAFT_STALE_SECS: f64 = 86_400.0;
 const STALE_SECS: f64 = 600.0;
 const DEFAULT_BUDGET_WEIGHTED: u64 = 3_000_000;
 const KEEP_DONE_SECS: f64 = 600.0;
@@ -25,12 +27,39 @@ pub struct JobView {
     pub has_park: bool,
 }
 
+/// One draft card: the board entry plus its age and a stale flag.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct DraftCard {
+    #[serde(flatten)]
+    pub draft: Draft,
+    pub seconds_since_update: f64,
+    pub stale: bool,
+}
+
+/// Cards for the drafts. A draft is stale one second past the threshold, not at it. A clock that
+/// runs behind the board gives age 0.
+pub fn build_draft_cards(drafts: &[Draft], now: f64, stale_after_secs: f64) -> Vec<DraftCard> {
+    drafts
+        .iter()
+        .map(|draft| {
+            let seconds_since_update = (now - draft.updated_at).max(0.0);
+            DraftCard {
+                draft: draft.clone(),
+                seconds_since_update,
+                stale: seconds_since_update > stale_after_secs,
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Serialize)]
 pub struct StateView {
     pub generated_at: f64,
     pub board_error: Option<String>,
     pub jobs: Vec<JobView>,
     pub specs: Vec<SpecCard>,
+    /// Built with the default threshold here. `state_reply` rebuilds it with the configured one.
+    pub drafts: Vec<DraftCard>,
     pub unassigned_agents: Vec<AgentState>,
     pub skipped_lines: u64,
     pub costs: Option<crate::costs::CostsView>,
@@ -215,6 +244,7 @@ pub fn build_state(
         board_error,
         jobs,
         specs,
+        drafts: build_draft_cards(&board.drafts, now, DEFAULT_DRAFT_STALE_SECS),
         unassigned_agents: unassigned,
         skipped_lines: registry.skipped_lines,
         costs: crate::costs::load_costs(paths),
@@ -257,6 +287,7 @@ mod tests {
             park_kind: None,
             park_at: None,
             estimate: None,
+            spec_warning: None,
         }
     }
 
@@ -274,7 +305,7 @@ mod tests {
         std::fs::create_dir_all(&dir)?;
         let mut parked = job("001", "needs-human", 0.0);
         parked.park_kind = Some("checks-failed".to_string());
-        let board = Board { jobs: vec![parked.clone()] };
+        let board = Board { jobs: vec![parked.clone()], ..Board::default() };
         // The kind is on the board but the file is missing.
         let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         assert!(!view.jobs[0].has_park);
@@ -284,7 +315,7 @@ mod tests {
         // The file exists but the board has no kind, as for an older job.
         let mut old = parked;
         old.park_kind = None;
-        let view = build_state(&Board { jobs: vec![old] }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(&Board { jobs: vec![old], ..Board::default() }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         assert!(!view.jobs[0].has_park);
         Ok(())
     }
@@ -297,7 +328,7 @@ mod tests {
         std::fs::write(dir.join("park.json"), r#"{"parts":[{"text":"SECRET-EVIDENCE"}]}"#)?;
         let mut parked = job("001", "needs-human", 0.0);
         parked.park_kind = Some("other".to_string());
-        let view = build_state(&Board { jobs: vec![parked] }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(&Board { jobs: vec![parked], ..Board::default() }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
         let json = serde_json::to_string(&view)?;
         assert!(json.contains("\"has_park\":true"), "{json}");
         assert!(json.contains("\"park_kind\":\"other\""), "{json}");
@@ -733,6 +764,82 @@ mod tests {
             r#"{"jobs":[{"id":"001","dir":"d","slug":"s","created":"c","feature":"f","branch":"b","stage":"build","round":0,"stage_since":1.0,"reviews":{},"estimate":"lots"}]}"#,
         )?;
         assert!(bad.jobs[0].estimate.is_none());
+        Ok(())
+    }
+
+    fn draft_json(slug: &str, updated_at: f64) -> serde_json::Value {
+        serde_json::json!({
+            "slug": slug, "feature": "f", "stage": "interview", "spec_file": null,
+            "created": "2026-10-18", "updated_at": updated_at,
+        })
+    }
+
+    #[test]
+    fn an_old_board_without_drafts_still_loads() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("board.json");
+        std::fs::write(
+            &path,
+            r#"{"jobs":[{"id":"001","dir":"d","slug":"s","created":"2026-10-13","feature":"f","branch":"b","stage":"build","round":1,"stage_since":5.0,"reviews":{}}]}"#,
+        )?;
+        let (board, error) = load_board(&path);
+        assert!(error.is_none());
+        assert!(board.drafts.is_empty());
+        assert_eq!(board.jobs[0].spec_warning, None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_malformed_draft_is_dropped_not_fatal() -> TestResult {
+        let board: Board = serde_json::from_value(serde_json::json!({
+            "jobs": [],
+            "drafts": [draft_json("good", 1.0), {"slug": 5}, "junk", draft_json("also-good", 2.0)],
+        }))?;
+        let slugs: Vec<_> = board.drafts.iter().map(|d| d.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["good", "also-good"]);
+        let not_a_list: Board = serde_json::from_value(serde_json::json!({ "drafts": "nope" }))?;
+        assert!(not_a_list.drafts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_draft_is_stale_one_second_past_the_threshold_and_not_at_it() -> TestResult {
+        let board: Board = serde_json::from_value(serde_json::json!({ "drafts": [draft_json("d", 100.0)] }))?;
+        let at = build_draft_cards(&board.drafts, 100.0 + 86_400.0, DEFAULT_DRAFT_STALE_SECS);
+        assert!(!at[0].stale);
+        assert_eq!(at[0].seconds_since_update, 86_400.0);
+        let past = build_draft_cards(&board.drafts, 100.0 + 86_401.0, DEFAULT_DRAFT_STALE_SECS);
+        assert!(past[0].stale);
+        let behind = build_draft_cards(&board.drafts, 50.0, DEFAULT_DRAFT_STALE_SECS);
+        assert_eq!(behind[0].seconds_since_update, 0.0);
+        assert!(!behind[0].stale);
+        Ok(())
+    }
+
+    #[test]
+    fn the_state_json_has_a_drafts_array() -> TestResult {
+        let empty = serde_json::to_value(build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::nowhere()))?;
+        assert_eq!(empty["drafts"].as_array().map(Vec::len), Some(0));
+        let board: Board = serde_json::from_value(serde_json::json!({ "drafts": [draft_json("d", 4.0)] }))?;
+        let json = serde_json::to_value(build_state(&board, &Registry::new(), 10.0, None, &Paths::nowhere()))?;
+        assert_eq!(json["drafts"][0]["slug"], "d");
+        assert_eq!(json["drafts"][0]["stage"], "interview");
+        assert_eq!(json["drafts"][0]["seconds_since_update"], 6.0);
+        assert_eq!(json["drafts"][0]["stale"], false);
+        Ok(())
+    }
+
+    #[test]
+    fn a_job_spec_warning_is_passed_through() -> TestResult {
+        let mut value = series_job("001", "build", 1, None);
+        value["spec_warning"] = serde_json::json!("no decision");
+        let mut bad = series_job("002", "build", 1, None);
+        bad["spec_warning"] = serde_json::json!(7);
+        let board: Board = serde_json::from_value(serde_json::json!({ "jobs": [value, bad] }))?;
+        let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::nowhere());
+        let json = serde_json::to_value(&view)?;
+        assert_eq!(json["jobs"][0]["spec_warning"], "no decision");
+        assert!(json["jobs"][1].get("spec_warning").is_none(), "a bad value is dropped");
         Ok(())
     }
 }

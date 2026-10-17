@@ -145,6 +145,9 @@ pub struct Job {
     /// The cost estimate made when the job was created. A bad value is dropped.
     #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
     pub estimate: Option<Estimate>,
+    /// A warning the driver wrote when the job was made from a draft. A bad value is dropped.
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub spec_warning: Option<String>,
 }
 
 /// The cost estimate the driver stored on a job when it created it.
@@ -158,10 +161,38 @@ pub struct Estimate {
     pub n_approx: u32,
 }
 
+/// One interview draft in `board.json`. The driver writes it, and it has no job yet.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Draft {
+    pub slug: String,
+    pub feature: String,
+    pub stage: String,
+    #[serde(default, deserialize_with = "lenient")]
+    pub spec_file: Option<String>,
+    pub created: String,
+    pub updated_at: f64,
+}
+
+/// Bad draft entries are dropped one by one, and a non-array value gives an empty list.
+fn lenient_drafts<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Draft>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Board {
     #[serde(default)]
     pub jobs: Vec<Job>,
+    #[serde(default, deserialize_with = "lenient_drafts")]
+    pub drafts: Vec<Draft>,
 }
 
 /// What the registry knows about one subagent.

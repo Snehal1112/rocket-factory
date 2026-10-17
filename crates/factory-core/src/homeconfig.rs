@@ -8,6 +8,7 @@ use crate::{CoreError, Home};
 
 const DEFAULT_MAX_PARALLEL: u32 = 2;
 const MAX_PARALLEL_CAP: u32 = 64;
+const DEFAULT_DRAFT_STALE_HOURS: u64 = 24;
 const DEFAULT_LISTEN: &str = "127.0.0.1:8766";
 
 /// The contents of `<home>/config.toml`. A missing file is the default.
@@ -20,11 +21,13 @@ pub struct HomeConfig {
     pub listen: String,
     /// The most weighted tokens all projects may use in one UTC day before new runs wait. Absent means no limit.
     pub daily_budget_weighted: Option<u64>,
+    /// Hours without a change before an interview draft shows as stale. Greater than 0.
+    pub draft_stale_hours: u64,
 }
 
 impl Default for HomeConfig {
     fn default() -> Self {
-        HomeConfig { max_parallel: DEFAULT_MAX_PARALLEL, listen: DEFAULT_LISTEN.to_string(), daily_budget_weighted: None }
+        HomeConfig { max_parallel: DEFAULT_MAX_PARALLEL, listen: DEFAULT_LISTEN.to_string(), daily_budget_weighted: None, draft_stale_hours: DEFAULT_DRAFT_STALE_HOURS }
     }
 }
 
@@ -39,6 +42,9 @@ impl HomeConfig {
         }
         if cfg.daily_budget_weighted == Some(0) {
             return Err(CoreError::Config("bad home config: daily_budget_weighted must be greater than 0".to_string()));
+        }
+        if cfg.draft_stale_hours == 0 {
+            return Err(CoreError::Config("bad home config: draft_stale_hours must be greater than 0".to_string()));
         }
         match cfg.listen.parse::<SocketAddr>() {
             Ok(addr) if addr.ip().is_loopback() => {}
@@ -118,6 +124,16 @@ mod tests {
     fn a_bad_daily_budget_is_an_error() {
         for bad in ["0", "-1", "\"x\"", "1.5", "true"] {
             assert!(load_text(Some(&format!("daily_budget_weighted = {bad}\n"))).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn draft_stale_hours_defaults_to_24_and_rejects_zero() {
+        assert_eq!(load_text(None).expect("ok").draft_stale_hours, 24);
+        assert_eq!(load_text(Some("")).expect("ok").draft_stale_hours, 24);
+        assert_eq!(load_text(Some("draft_stale_hours = 6\n")).expect("ok").draft_stale_hours, 6);
+        for bad in ["0", "-1", "\"x\"", "1.5"] {
+            assert!(load_text(Some(&format!("draft_stale_hours = {bad}\n"))).is_err(), "{bad}");
         }
     }
 

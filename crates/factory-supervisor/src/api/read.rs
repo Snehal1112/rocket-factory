@@ -11,6 +11,7 @@ use crate::api::ApiDeps;
 use crate::{queue, records, QueueItem};
 
 const LAST_RESULTS: usize = 10;
+const DEFAULT_DRAFT_STALE_HOURS: u64 = 24;
 
 fn base_of(file: &ProjectFile) -> String {
     file.base_branch().unwrap_or_else(|| Config::default().base_branch)
@@ -95,7 +96,7 @@ pub fn projects(home: &Home, deps: &ApiDeps) -> ApiResponse {
 }
 
 /// `GET /projects/{name}/jobs`.
-pub fn jobs(home: &Home, name: &str) -> ApiResponse {
+pub fn jobs(home: &Home, deps: &ApiDeps, name: &str) -> ApiResponse {
     if let Err(e) = project::validate_name(name) {
         return error_response(400, "bad_request", &e.to_string());
     }
@@ -126,6 +127,17 @@ pub fn jobs(home: &Home, name: &str) -> ApiResponse {
             })
         })
         .collect();
+    // An invalid config.toml gives the default threshold instead of failing the read.
+    let stale_hours = factory_core::HomeConfig::load(home).map_or(DEFAULT_DRAFT_STALE_HOURS, |c| c.draft_stale_hours);
+    let now_secs = (deps.now_ms)() as f64 / 1000.0;
+    let drafts: Vec<Value> = board
+        .drafts
+        .iter()
+        .map(|d| {
+            let stale = now_secs - d.updated_at > stale_hours as f64 * 3600.0;
+            json!({"slug": d.slug, "stage": d.stage, "updatedAt": d.updated_at, "stale": stale})
+        })
+        .collect();
     let queued: Vec<Value> = queue::list(home)
         .into_iter()
         .filter_map(|item| match item {
@@ -142,7 +154,7 @@ pub fn jobs(home: &Home, name: &str) -> ApiResponse {
         .take(LAST_RESULTS)
         .map(|r| json!({"requestId": r.request_id, "job": r.job, "outcome": r.outcome, "finishedMs": r.finished_ms}))
         .collect();
-    ApiResponse::ok(json!({"jobs": jobs, "queued": queued, "lastResults": last}))
+    ApiResponse::ok(json!({"jobs": jobs, "drafts": drafts, "queued": queued, "lastResults": last}))
 }
 
 fn board_message(e: &CoreError) -> String {
@@ -212,6 +224,42 @@ mod tests {
         assert_eq!(r.body["queued"][0]["job"], "002");
         assert_eq!(r.body["lastResults"][0]["job"], "001");
         assert_eq!(r.body["lastResults"][0]["outcome"]["kind"], "merged");
+    }
+
+    #[test]
+    fn jobs_lists_drafts_and_keeps_existing_keys() {
+        let (_t, home) = fixture();
+        let now = (NOW_MS / 1000) as f64;
+        let draft = |slug: &str, age: f64| {
+            format!(r#"{{"slug":"{slug}","feature":"F","stage":"interview","created":"2026-10-18","updated_at":{}}}"#, now - age)
+        };
+        let board = format!(
+            r#"{{"jobs":[{}],"drafts":[{},{},{}]}}"#,
+            job_json("001", "001-first"),
+            draft("fresh", 10.0),
+            draft("at", 86_400.0),
+            draft("past", 86_401.0)
+        );
+        write_board(&home, &board);
+        let r = get(&home, "/projects/good/jobs");
+        assert_eq!(r.status, 200, "{}", r.body);
+        for key in ["jobs", "queued", "lastResults", "drafts"] {
+            assert!(r.body[key].is_array(), "{key}");
+        }
+        assert_eq!(r.body["jobs"][0]["id"], "001");
+        let stale: Vec<_> = r.body["drafts"].as_array().expect("drafts").iter().map(|d| d["stale"].clone()).collect();
+        assert_eq!(stale, vec![false, false, true]);
+        assert_eq!(r.body["drafts"][0]["slug"], "fresh");
+        assert_eq!(r.body["drafts"][0]["stage"], "interview");
+        assert_eq!(r.body["drafts"][0]["updatedAt"], now - 10.0);
+        // The home config sets the threshold.
+        std::fs::write(home.config_file(), "draft_stale_hours = 1\n").expect("config");
+        let r = get(&home, "/projects/good/jobs");
+        let stale: Vec<_> = r.body["drafts"].as_array().expect("drafts").iter().map(|d| d["stale"].clone()).collect();
+        assert_eq!(stale, vec![false, true, true]);
+        // A board without drafts gives an empty list.
+        write_board(&home, r#"{"jobs":[]}"#);
+        assert_eq!(get(&home, "/projects/good/jobs").body["drafts"], serde_json::json!([]));
     }
 
     #[test]

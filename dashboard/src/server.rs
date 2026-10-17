@@ -8,7 +8,7 @@ use crate::events::{pump, Registry, Tailer, LOG_WINDOW_BYTES};
 use crate::home_mode;
 use crate::park::{load_park, ParkReply};
 use crate::paths::Paths;
-use crate::state::{build_state, load_board};
+use crate::state::{build_draft_cards, build_state, load_board, DEFAULT_DRAFT_STALE_SECS};
 
 const DASHBOARD_HTML: &str = include_str!("../static/dashboard.html");
 const DASHBOARD_CSS: &str = include_str!("../static/dashboard.css");
@@ -28,17 +28,26 @@ pub struct Config {
     /// Set by `--home`: the factory home to read the API token from.
     pub home: Option<PathBuf>,
     pub api: String,
+    /// Seconds without a change before a draft shows as stale.
+    pub draft_stale_secs: f64,
 }
 
 /// One project's folders and the agent registry its event log feeds.
 pub struct Project {
     pub paths: Paths,
     pub registry: Mutex<Registry>,
+    /// Seconds without a change before a draft shows as stale.
+    pub draft_stale_secs: f64,
 }
 
 impl Project {
     pub fn new(paths: Paths) -> Project {
-        Project { paths, registry: Mutex::new(Registry::new()) }
+        Project { paths, registry: Mutex::new(Registry::new()), draft_stale_secs: DEFAULT_DRAFT_STALE_SECS }
+    }
+
+    pub fn with_draft_stale(mut self, secs: f64) -> Project {
+        self.draft_stale_secs = secs;
+        self
     }
 }
 
@@ -47,6 +56,8 @@ pub struct HomeState {
     pub dir: PathBuf,
     pub api: String,
     pub timeouts: home_mode::Timeouts,
+    /// Applied to the project value made for each request path.
+    pub draft_stale_secs: f64,
     projects: Mutex<HashMap<String, Arc<Project>>>,
 }
 
@@ -59,7 +70,7 @@ impl HomeState {
                 return Some(Arc::clone(existing));
             }
         }
-        let project = Arc::new(Project::new(paths));
+        let project = Arc::new(Project::new(paths).with_draft_stale(self.draft_stale_secs));
         // Without a tailer the board would go stale, so the project is not kept. A later request retries.
         spawn_tailer(Arc::downgrade(&project)).ok()?;
         map.insert(name.to_string(), Arc::clone(&project));
@@ -82,7 +93,7 @@ impl App {
     }
 
     pub fn for_home(dir: PathBuf, api: String) -> App {
-        App { mode: Mode::Home(HomeState { dir, api, timeouts: home_mode::Timeouts::default(), projects: Mutex::new(HashMap::new()) }) }
+        App { mode: Mode::Home(HomeState { dir, api, timeouts: home_mode::Timeouts::default(), draft_stale_secs: DEFAULT_DRAFT_STALE_SECS, projects: Mutex::new(HashMap::new()) }) }
     }
 
     /// Shorter timeouts for tests.
@@ -90,6 +101,19 @@ impl App {
     pub fn with_timeouts(mut self, timeouts: home_mode::Timeouts) -> App {
         if let Mode::Home(home) = &mut self.mode {
             home.timeouts = timeouts;
+        }
+        self
+    }
+
+    /// Sets how long a draft may sit unchanged before it shows as stale, in both modes.
+    pub fn with_draft_stale(mut self, secs: f64) -> App {
+        match &mut self.mode {
+            Mode::Root(project) => {
+                if let Some(inner) = Arc::get_mut(project) {
+                    inner.draft_stale_secs = secs;
+                }
+            }
+            Mode::Home(home) => home.draft_stale_secs = secs,
         }
         self
     }
@@ -137,6 +161,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut home: Option<PathBuf> = None;
     let mut api: Option<String> = None;
     let mut port: u16 = 8765;
+    let mut draft_stale_secs = DEFAULT_DRAFT_STALE_SECS;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -155,6 +180,15 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     .parse::<u16>()
                     .map_err(|_| format!("bad port {raw:?}"))?;
             }
+            "--draft-stale-hours" => {
+                let raw = iter.next().ok_or("--draft-stale-hours needs a number")?;
+                let hours = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|hours| *hours > 0 && *hours <= u64::MAX / 3600)
+                    .ok_or_else(|| format!("bad --draft-stale-hours {raw:?}, use a whole number above 0"))?;
+                draft_stale_secs = (hours * 3600) as f64;
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -168,7 +202,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     if !home_mode::valid_api_addr(&api) {
         return Err(format!("--api {api:?} must be a loopback host:port"));
     }
-    Ok(Config { root: root.unwrap_or_else(|| PathBuf::from(".")), port, home, api })
+    Ok(Config { root: root.unwrap_or_else(|| PathBuf::from(".")), port, home, api, draft_stale_secs })
 }
 
 pub fn now_secs() -> f64 {
@@ -277,10 +311,11 @@ pub fn api_park(paths: &Paths, id: &str) -> Reply {
 /// The state view of one project. `board_note` replaces a missing board error.
 pub fn state_reply(project: &Project, now: f64, board_note: Option<String>) -> Reply {
     let (board, board_error) = load_board(&project.paths.board);
-    let view = match project.registry.lock() {
+    let mut view = match project.registry.lock() {
         Ok(registry) => build_state(&board, &registry, now, board_error.or(board_note), &project.paths),
         Err(_) => return text(500, "state lock poisoned"),
     };
+    view.drafts = build_draft_cards(&board.drafts, now, project.draft_stale_secs);
     json_reply(200, &view)
 }
 
@@ -685,6 +720,33 @@ mod tests {
         let projects = route(&app, "GET", "/projects.js", host, 1, 5.0);
         assert_eq!(projects.status, 200);
         assert_eq!(projects.content_type, "text/javascript; charset=utf-8");
+        Ok(())
+    }
+
+    #[test]
+    fn parse_args_reads_draft_stale_hours_and_rejects_zero() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+        let none: Vec<String> = Vec::new();
+        assert_eq!(parse_args(&none).map(|c| c.draft_stale_secs), Ok(86_400.0));
+        assert_eq!(parse_args(&args(&["--draft-stale-hours", "2"])).map(|c| c.draft_stale_secs), Ok(7_200.0));
+        for bad in ["0", "-1", "1.5", "abc", "18446744073709551615"] {
+            assert!(parse_args(&args(&["--draft-stale-hours", bad])).is_err(), "{bad}");
+        }
+        assert!(parse_args(&args(&["--draft-stale-hours"])).is_err());
+    }
+
+    #[test]
+    fn api_state_carries_drafts() -> TestResult {
+        let board = r#"{"jobs":[],"drafts":[{"slug":"d","feature":"f","stage":"interview","created":"2026-10-18","updated_at":0.0}]}"#;
+        let (_dir, app) = app_with_board(Some(board))?;
+        let json: serde_json::Value = serde_json::from_slice(&route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0).body)?;
+        assert_eq!(json["drafts"][0]["slug"], "d");
+        assert_eq!(json["drafts"][0]["stale"], false);
+        // The configured threshold reaches the reply.
+        let (_dir, app) = app_with_board(Some(board))?;
+        let app = Arc::try_unwrap(app).map_err(|_| "app is shared")?.with_draft_stale(3.0);
+        let json: serde_json::Value = serde_json::from_slice(&route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0).body)?;
+        assert_eq!(json["drafts"][0]["stale"], true);
         Ok(())
     }
 }

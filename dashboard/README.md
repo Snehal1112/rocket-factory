@@ -27,6 +27,8 @@ rework or cancel one. Errors show as a banner with the stable code (`unauthorize
 `token_missing`, `token_rejected` (the API answered 401), `api_unreachable`, `api_timeout` (a write got no answer within 70 seconds and may still have completed, so check the job list before trying again; the page never retries by itself), `api_error`, `forbidden` (Origin),
 `unsupported_media_type`.
 
+`--draft-stale-hours N` (a whole number above 0, default 24) sets how long an interview draft may sit unchanged before the state marks it `stale`. It works in both modes. In home mode it is the dashboard's own setting and is separate from `draft_stale_hours` in the home `config.toml`, which only drives the `stale` flag of `GET /projects/{p}/jobs`. Do not add `draft_stale_hours` to a `config.toml` that an older `factoryd` reads, because it rejects unknown keys.
+
 The header shows a daily budget strip in home mode when `daily_budget_weighted` is set in the factory home's `config.toml`: tokens used today against the limit and the UTC reset time. It turns amber from 80% and red at 100% with "New runs are waiting". The strip is global, so it is not tied to the selected project, and it is hidden when there is no limit or the usage call fails. Its text is built from numbers and a fixed phrase only.
 
 ## What it reads

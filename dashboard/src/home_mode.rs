@@ -872,4 +872,21 @@ mod tests {
         assert!(message.contains("--home") && message.contains("--api"), "{message}");
         Ok(())
     }
+
+    #[test]
+    fn project_state_carries_drafts() -> TestResult {
+        let s = setup()?;
+        let board = r#"{"jobs":[],"drafts":[{"slug":"d","feature":"f","stage":"interview","created":"2026-10-18","updated_at":0.0}]}"#;
+        std::fs::write(s._repo.path().join("state/board.json"), board)?;
+        let json: Value = serde_json::from_slice(&get(&s.app, "/api/projects/alpha/state").body)?;
+        assert_eq!(json["drafts"][0]["slug"], "d");
+        assert_eq!(json["drafts"][0]["stale"], false);
+        // The threshold reaches the project value made for each request in home mode.
+        let s = setup()?;
+        std::fs::write(s._repo.path().join("state/board.json"), board)?;
+        let app = s.app.with_draft_stale(3.0);
+        let json: Value = serde_json::from_slice(&get(&app, "/api/projects/alpha/state").body)?;
+        assert_eq!(json["drafts"][0]["stale"], true);
+        Ok(())
+    }
 }
