@@ -323,7 +323,16 @@ impl Engine<'_> {
         if tip == snapshot {
             self.repo.reset_soft(&wt, &base).map_err(git_err)?;
         } else if tip != base {
-            return self.park_with(ParkKind::CommitFailed, "the branch moved during the batch commit".to_string(), Vec::new());
+            if self.batch_already_committed(&base, &tip, &snapshot)? {
+                // The committer finished and the driver stopped before it cleared the flag.
+                return self.finish_batch(job, &base, tip, 0, &snapshot);
+            }
+            let short = base.get(..7).unwrap_or(&base);
+            let reason = format!(
+                "the branch moved during the batch commit; run `git reset --soft {short}` in the job worktree, then `factory rework {}`",
+                self.job_id
+            );
+            return self.park_with(ParkKind::CommitFailed, reason, Vec::new());
         }
         // The committer does not read a rework note, so it must not reach a later fix round.
         let _ = std::fs::remove_file(self.job_dir.join("rework-note.md"));
@@ -347,13 +356,32 @@ impl Engine<'_> {
             }
             CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
         };
+        self.finish_batch(job, &base, head, snaps.len(), &snapshot)
+    }
+
+    /// True when the tip holds the snapshot work as real commits: above the base, no `wip:` subject, same tree.
+    fn batch_already_committed(&self, base: &str, tip: &str, snapshot: &str) -> Result<bool, EngineError> {
+        if !self.repo.is_ancestor(base, tip).map_err(git_err)? {
+            return Ok(false);
+        }
+        let commits = self.repo.commits_above(base, tip).map_err(git_err)?;
+        if commits.iter().any(|c| c.subject.starts_with("wip:")) {
+            return Ok(false);
+        }
+        self.repo.same_tree(tip, snapshot).map_err(git_err)
+    }
+
+    /// Records the end of a batch commit: a ruling, a cleared flag, then the usual build finish.
+    fn finish_batch(&self, job: &JobView, base: &str, head: String, count: usize, snapshot: &str) -> Result<StageOutcome, EngineError> {
         let short = head.get(..7).unwrap_or(&head).to_string();
-        self.ruling(&format!("batch commit replaced {} snapshots, the branch is at {short}", snaps.len()))?;
+        let was = snapshot.get(..7).unwrap_or(snapshot);
+        let what = if count == 0 { format!("batch commit already done, replaced the snapshots up to {was}") } else { format!("batch commit replaced {count} snapshots") };
+        self.ruling(&format!("{what}, the branch is at {short}"))?;
         self.update(|j| {
             j.batch_snapshot = None;
             Ok(())
         })?;
-        self.finish_build(job, &base, head, job.head.clone())
+        self.finish_build(job, base, head, job.head.clone())
     }
 
     /// The snapshot commits above the base, oldest first, matched to the plan tasks by position.

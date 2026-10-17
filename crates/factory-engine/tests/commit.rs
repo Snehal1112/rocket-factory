@@ -561,3 +561,20 @@ fn a_batch_fallback_skips_a_snapshot_that_changed_nothing() {
     assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: first thing"]);
 }
+
+#[test]
+fn a_failed_batch_leaves_exactly_the_work_of_the_snapshots() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    let snaps = two_snapshots(&wt);
+    let last = snaps.last().expect("snapshot").sha.clone();
+    // A stray file the failing committer run left behind must not survive the fallback.
+    std::fs::write(wt.path.join("stray.txt"), "x\n").expect("stray");
+    let runner = scripted(vec![nothing(), nothing()]);
+    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
+    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    let tip = fx.repo.tip(&wt.branch).expect("tip");
+    assert!(fx.repo.same_tree(&tip, &last).expect("same tree"));
+    assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));
+}

@@ -1,7 +1,7 @@
 mod common;
 
 use common::{
-    amend_head, commit_file, committing_fixture, scripted, scripted_auto, Effect, Fixture, ScriptedRunner,
+    amend_head, commit_file, commit_index, committing_fixture, scripted, scripted_auto, Effect, Fixture, ScriptedRunner,
 };
 use factory_core::Stage;
 use factory_engine::StageOutcome;
@@ -724,4 +724,154 @@ fn a_parked_batch_resumes_on_the_next_build_call_without_new_builders() {
     assert_eq!(runner2.specs_for("builder").len(), 0);
     let job = fx.job();
     assert!(job.batch_snapshot.is_none() && job.head.is_some());
+}
+
+/// Parks the second task's batch by detaching HEAD in the committer run. Returns the worktree path.
+fn park_a_batch(fx: &Fixture) -> std::path::PathBuf {
+    let detach: Effect = Box::new(|spec| {
+        let repo = git2::Repository::open(&spec.cwd).expect("open");
+        let id = repo.head().expect("head").target().expect("target");
+        repo.set_head_detached(id).expect("detach");
+        "done".to_string()
+    });
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2), detach]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    match e.build_stage().expect("task 2") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("HEAD"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    let parked = fx.job();
+    let wt = std::path::PathBuf::from(parked.worktree.clone().expect("worktree"));
+    let repo = git2::Repository::open(&wt).expect("open");
+    repo.set_head(&format!("refs/heads/{}", parked.branch)).expect("reattach");
+    wt
+}
+
+#[test]
+fn a_one_task_plan_makes_one_snapshot_and_one_committer_run() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, "# P\n\n### Task 1: only thing\n\nx\n").expect("plan");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").set_stage(Stage::Build, None, false, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    assert_eq!(fx.engine(&runner).build_stage().expect("build"), StageOutcome::Advanced(Stage::Review));
+    assert_eq!(runner.specs_for("builder").len(), 1);
+    let batch = runner.last_spec_for("committer").expect("committer");
+    assert!(batch.prompt.contains("Kind: batch") && batch.prompt.contains("Task 1: only thing"), "{}", batch.prompt);
+    assert_eq!(runner.specs_for("committer").len(), 1);
+    let job = fx.job();
+    assert_eq!(job.stage, Stage::Review);
+    assert!(job.batch_snapshot.is_none());
+    let commits = fx.repo.commits_above(&job.base.clone().expect("base"), &job.head.clone().expect("head")).expect("commits");
+    assert!(commits.iter().all(|c| !c.subject.starts_with("wip:")), "{commits:?}");
+}
+
+#[test]
+fn a_batch_committer_that_fails_twice_falls_back_to_one_chore_commit_per_snapshot() {
+    let fx = two_task_fixture();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2), silent_effect(), silent_effect()]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    assert_eq!(e.build_stage().expect("task 2"), StageOutcome::Advanced(Stage::Review));
+    assert_eq!(runner.specs_for("committer").len(), 2);
+    let job = fx.job();
+    assert_eq!(job.stage, Stage::Review);
+    assert!(job.batch_snapshot.is_none());
+    let commits = fx.repo.commits_above(&job.base.clone().expect("base"), &job.head.clone().expect("head")).expect("commits");
+    assert_eq!(commits.len(), 2, "{commits:?}");
+    assert!(commits.iter().all(|c| c.subject.starts_with("chore:")), "{commits:?}");
+}
+
+#[test]
+fn a_park_right_after_the_soft_reset_resumes_from_the_base() {
+    let fx = two_task_fixture();
+    let wt = park_a_batch(&fx);
+    let job = fx.job();
+    assert_eq!(fx.repo.tip(&job.branch).expect("tip"), job.base.clone().expect("base"));
+    let repo = git2::Repository::open(&wt).expect("open");
+    let staged = repo.statuses(None).expect("statuses").iter().filter(|s| s.status().is_index_new()).count();
+    assert_eq!(staged, 2);
+    let runner = scripted_auto(vec![]);
+    assert_eq!(fx.engine(&runner).build_stage().expect("resume"), StageOutcome::Advanced(Stage::Review));
+    assert_eq!(runner.specs_for("builder").len(), 0);
+    assert_eq!(runner.specs_for("committer").len(), 1);
+    assert!(fx.job().batch_snapshot.is_none());
+}
+
+#[test]
+fn a_finished_batch_with_a_stale_flag_is_recognised_without_a_committer_run() {
+    let fx = two_task_fixture();
+    let wt = park_a_batch(&fx);
+    // The committer finished its commit, but the driver stopped before it cleared the flag.
+    commit_index(&wt, "feat(test): both tasks");
+    let runner = scripted_auto(vec![]);
+    assert_eq!(fx.engine(&runner).build_stage().expect("resume"), StageOutcome::Advanced(Stage::Review));
+    assert_eq!(runner.specs_for("committer").len(), 0);
+    assert_eq!(runner.specs_for("builder").len(), 0);
+    let job = fx.job();
+    assert!(job.batch_snapshot.is_none() && job.head.is_some());
+    assert!(ledger_of(&fx).contains("batch commit already done"), "{}", ledger_of(&fx));
+}
+
+#[test]
+fn a_branch_that_moved_to_other_work_parks_with_the_recovery_command() {
+    let fx = two_task_fixture();
+    let wt = park_a_batch(&fx);
+    // A commit with a different tree than the snapshots.
+    commit_file(&wt, "extra.txt", "x\n");
+    let runner = scripted_auto(vec![]);
+    match fx.engine(&runner).build_stage().expect("resume") {
+        StageOutcome::NeedsHuman(r) => {
+            let base = fx.job().base.expect("base");
+            assert!(r.contains(&format!("git reset --soft {}", &base[..7])), "{r}");
+            assert!(r.contains("factory rework 001"), "{r}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(runner.specs_for("committer").len(), 0);
+    assert!(fx.job().batch_snapshot.is_some());
+}
+
+#[test]
+fn a_stop_between_commit_groups_resumes_without_losing_or_repeating_a_commit() {
+    let fx = two_task_fixture();
+    let wt = park_a_batch(&fx);
+    let job = fx.job();
+    let snapshot = job.batch_snapshot.clone().expect("snapshot");
+    // The committer made its first group and the driver stopped before the second one.
+    {
+        let repo = git2::Repository::open(&wt).expect("open");
+        let mut index = repo.index().expect("index");
+        index.remove_path(std::path::Path::new("b.txt")).expect("unstage b");
+        let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+        let sig = git2::Signature::now("t", "t@example.com").expect("sig");
+        let parent = repo.head().expect("head").peel_to_commit().expect("commit");
+        repo.commit(Some("HEAD"), &sig, &sig, "feat(test): add a", &tree, &[&parent]).expect("commit");
+    }
+    // The half-finished batch is not mistaken for a finished one and nothing runs on top of it.
+    let runner = scripted_auto(vec![]);
+    match fx.engine(&runner).build_stage().expect("resume") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("git reset --soft"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(runner.specs_for("committer").len(), 0);
+    assert_eq!(runner.specs_for("builder").len(), 0);
+    // The recovery command from the park reason, then a rework: one committer, all the work, no duplicate.
+    let base = job.base.clone().expect("base");
+    let name = wt.file_name().expect("name").to_string_lossy().to_string();
+    let wtree = factory_git::Worktree { name, path: wt.clone(), branch: job.branch.clone(), base: base.clone() };
+    fx.repo.reset_soft(&wtree, &base).expect("reset");
+    let runner = scripted_auto(vec![]);
+    assert_eq!(fx.engine(&runner).build_stage().expect("resume"), StageOutcome::Advanced(Stage::Review));
+    assert_eq!(runner.specs_for("committer").len(), 1);
+    let done = fx.job();
+    assert!(done.batch_snapshot.is_none());
+    let head = done.head.clone().expect("head");
+    assert!(fx.repo.same_tree(&head, &snapshot).expect("same tree"));
+    let commits = fx.repo.commits_above(&base, &head).expect("commits");
+    assert!(commits.iter().all(|c| !c.subject.starts_with("wip:")), "{commits:?}");
+    let subjects: std::collections::HashSet<_> = commits.iter().map(|c| c.subject.clone()).collect();
+    assert_eq!(subjects.len(), commits.len(), "duplicate commit: {commits:?}");
 }

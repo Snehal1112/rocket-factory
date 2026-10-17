@@ -67,3 +67,16 @@ fn restore_tree_removes_staged_files_that_the_target_tree_lacks() {
     assert!(!wt.path.join("b.txt").exists());
     assert_eq!(repo.stage_all(&wt).expect("stage"), vec!["a.txt".to_string()]);
 }
+
+#[test]
+fn same_tree_ignores_history() {
+    let fx = Fixture::new();
+    let (repo, wt) = job_worktree(&fx);
+    let first = commit_files(&inside(&wt), &[("a.txt", "a\n")], "wip: task 1 a").to_string();
+    repo.reset_soft(&wt, &wt.base).expect("reset");
+    repo.stage_all(&wt).expect("stage");
+    let squashed = repo.commit_staged(&wt, "feat: a").expect("commit");
+    assert_ne!(first, squashed);
+    assert!(repo.same_tree(&first, &squashed).expect("same"));
+    assert!(!repo.same_tree(&wt.base, &squashed).expect("differs"));
+}
