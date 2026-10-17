@@ -40,7 +40,10 @@ fn main() {
             if let Some(warning) = server::missing_factory_dir_warning(&config.root) {
                 eprintln!("{warning}");
             }
-            server::spawn_tailer(Arc::downgrade(project));
+            if let Err(error) = server::spawn_tailer(Arc::downgrade(project)) {
+                eprintln!("factory-server: cannot start the event tailer: {error}");
+                std::process::exit(1);
+            }
             println!(
                 "factory-server: http://127.0.0.1:{}/ (root {})",
                 config.port,

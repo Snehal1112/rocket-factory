@@ -229,7 +229,7 @@ data: {"...the original event fields...": "...", "project": "rocket"}
 ```
 
 Errors are `{"error": {"code", "message"}}` with these codes: `unauthorized` (401), `bad_request` (400),
-`not_found` (404), `method_not_allowed` (405), `project_disabled` (409), `conflict` (409) and `failed` (500). A wrong, missing or short
+`not_found` (404), `method_not_allowed` (405), `project_disabled` (409), `conflict` (409), `failed` (500) and `unavailable` (503, the daemon cannot start a thread right now; try again). A wrong, missing or short
 token always gets the same 401 body.
 
 ```

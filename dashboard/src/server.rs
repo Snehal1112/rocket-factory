@@ -60,7 +60,8 @@ impl HomeState {
             }
         }
         let project = Arc::new(Project::new(paths));
-        spawn_tailer(Arc::downgrade(&project));
+        // Without a tailer the board would go stale, so the project is not kept. A later request retries.
+        spawn_tailer(Arc::downgrade(&project)).ok()?;
         map.insert(name.to_string(), Arc::clone(&project));
         Some(project)
     }
@@ -287,11 +288,12 @@ pub fn state_reply(project: &Project, now: f64, board_note: Option<String>) -> R
 pub const CSP: &str = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 /// Tails the event log in a background thread and feeds the registry. It ends when the project is dropped.
-pub fn spawn_tailer(project: Weak<Project>) {
-    let Some(first) = project.upgrade() else { return };
+/// Fails when the OS refuses a new thread, so the caller can answer instead of panicking.
+pub fn spawn_tailer(project: Weak<Project>) -> std::io::Result<()> {
+    let Some(first) = project.upgrade() else { return Ok(()) };
     let path = first.paths.events.clone();
     drop(first);
-    std::thread::spawn(move || {
+    std::thread::Builder::new().name("factory-server-tailer".to_string()).spawn(move || {
         let mut tailer = Tailer::with_window(path, LOG_WINDOW_BYTES);
         loop {
             let Some(project) = project.upgrade() else { return };
@@ -299,7 +301,8 @@ pub fn spawn_tailer(project: Weak<Project>) {
             drop(project);
             std::thread::sleep(POLL_INTERVAL);
         }
-    });
+    })?;
+    Ok(())
 }
 
 fn header_value(request: &tiny_http::Request, name: &str) -> Option<String> {

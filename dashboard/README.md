@@ -23,7 +23,7 @@ reply body, a header or a log line. The page title is "Software factory" and the
 the API marks `disabled` shows its reason and an empty board. The board, events, costs and job folders come from the
 API's `stateDir` and `jobsDir`; a missing file shows empty, never an error. The page can create a job and approve,
 rework or cancel one. Errors show as a banner with the stable code (`unauthorized`, `bad_request`, `not_found`,
-`method_not_allowed`, `project_disabled`, `conflict`, `failed`), plus these from the dashboard itself:
+`method_not_allowed`, `project_disabled`, `conflict`, `failed`, `unavailable`), plus these from the dashboard itself:
 `token_missing`, `token_rejected` (the API answered 401), `api_unreachable`, `api_timeout` (a write got no answer within 70 seconds and may still have completed, so check the job list before trying again; the page never retries by itself), `api_error`, `forbidden` (Origin),
 `unsupported_media_type`.
 
