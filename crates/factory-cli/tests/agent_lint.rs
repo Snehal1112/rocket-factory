@@ -434,3 +434,24 @@ fn docs_describe_the_new_design() -> TestResult {
     require_all(&root_doc, "CLAUDE.md", &[".claude/software-factory.md"])?;
     forbid_all(&root_doc, "CLAUDE.md", &["factory-ctl"])
 }
+
+#[test]
+fn agent_max_turns_match_the_driver_constants() -> TestResult {
+    let files = [
+        (".claude/agents/factory-builder.md", factory_engine::BUILDER_MAX_TURNS),
+        ("crates/factory-core/presets/rust/agents/factory-builder.md", factory_engine::BUILDER_MAX_TURNS),
+        ("crates/factory-core/presets/go/agents/factory-builder.md", factory_engine::BUILDER_MAX_TURNS),
+        (".claude/agents/factory-code-reviewer.md", factory_engine::REVIEWER_MAX_TURNS),
+        ("crates/factory-core/presets/rust/agents/factory-code-reviewer.md", factory_engine::REVIEWER_MAX_TURNS),
+        ("crates/factory-core/presets/go/agents/factory-code-reviewer.md", factory_engine::REVIEWER_MAX_TURNS),
+    ];
+    for (path, want) in files {
+        let fm = frontmatter(&read(path)?)?;
+        let raw = fm_get(&fm, "maxTurns").ok_or(format!("{path}: maxTurns missing"))?;
+        let got: u32 = raw.parse().map_err(|_| format!("{path}: maxTurns not a number"))?;
+        if got != want {
+            return Err(format!("{path}: maxTurns is {got}, the driver constant is {want}"));
+        }
+    }
+    Ok(())
+}

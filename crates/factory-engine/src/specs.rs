@@ -11,7 +11,12 @@ use crate::Engine;
 const BUILDER_AGENT: &str = "factory-builder";
 /// The reviewer agent file the driver passes with `--agent`. It sets the read-only tools and the checks.
 const REVIEWER_AGENT: &str = "factory-code-reviewer";
-const BUILDER_MAX_TURNS: u32 = 120;
+/// The turn cap of a builder run. The builder agent files carry the same number, and a test pins it.
+pub const BUILDER_MAX_TURNS: u32 = 120;
+/// The turn cap of a reviewer run. The reviewer agent files carry the same number, and a test pins it.
+pub const REVIEWER_MAX_TURNS: u32 = 40;
+/// The tools a builder run may use. They are every tool the builder agent files tell it to use.
+pub const BUILDER_TOOLS: &str = "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent";
 
 impl Engine<'_> {
     /// The prompt line that points an agent at the knowledge base. Empty when the KB is off.
@@ -89,6 +94,8 @@ impl Engine<'_> {
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.strict_mcp = true;
+        spec.tools = Some(BUILDER_TOOLS.to_string());
         spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.builder_model)
     }
@@ -177,6 +184,8 @@ impl Engine<'_> {
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.strict_mcp = true;
+        spec.tools = Some(BUILDER_TOOLS.to_string());
         spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.builder_model)
     }
@@ -204,6 +213,8 @@ impl Engine<'_> {
         spec.resume = Some(session.to_string());
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.strict_mcp = true;
+        spec.tools = Some(BUILDER_TOOLS.to_string());
         spec.add_dirs = self.kb_dirs();
         self.with_limits(spec, &self.config.builder_model)
     }
@@ -258,6 +269,8 @@ impl Engine<'_> {
         );
         let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
         spec.agent = Some(REVIEWER_AGENT.to_string());
+        spec.max_turns = Some(REVIEWER_MAX_TURNS);
+        spec.strict_mcp = true;
         spec.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
         // The tool list itself is limited too, so the reviewer cannot even see a write tool.
         spec.tools = Some("Read,Grep,Glob".to_string());

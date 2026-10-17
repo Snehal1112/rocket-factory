@@ -1238,3 +1238,35 @@ fn a_task_with_no_mapped_checks_writes_nothing() {
     assert!(!fx.job_dir.join("checks-task1.md").exists());
     assert!(!ledger_of(&fx).contains("task 1 checks"), "{}", ledger_of(&fx));
 }
+
+fn assert_builder_spec_is_strict(spec: &factory_agent::AgentSpec) {
+    assert!(spec.strict_mcp);
+    assert_eq!(spec.tools.as_deref(), Some(factory_engine::BUILDER_TOOLS));
+    assert_eq!(spec.tools.as_deref(), Some("Bash,Read,Edit,Write,Grep,Glob,Skill,Agent"));
+    assert_eq!(spec.max_turns, Some(120));
+}
+
+#[test]
+fn builder_specs_are_strict_and_name_their_tools() {
+    // The first spec and the resume spec come from a plan without task headings.
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    std::fs::write(fx.job_dir.join("rework-note.md"), "rename the helper").expect("note");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 0;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    e.build_stage().expect("resume");
+    let specs = runner.specs_for("builder");
+    assert_eq!(specs.len(), 2);
+    assert!(specs[1].resume.is_some());
+    specs.iter().for_each(assert_builder_spec_is_strict);
+    // The task spec comes from a plan with task headings.
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    assert_builder_spec_is_strict(&runner.last_spec_for("builder").expect("spec"));
+}

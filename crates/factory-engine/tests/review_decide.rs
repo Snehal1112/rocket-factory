@@ -358,3 +358,15 @@ fn a_plan_without_review_focus_has_no_empty_section() {
     assert!(!prompt.contains("Review focus"), "{prompt}");
     assert!(prompt.contains("### Task 1: first thing"), "{prompt}");
 }
+
+#[test]
+fn the_reviewer_spec_is_strict_and_capped() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let rr = reviewer("ok\nVERDICT: APPROVE");
+    fx.engine(&rr).review_stage().expect("review");
+    let spec = rr.last_spec().expect("a spec was recorded");
+    assert!(spec.strict_mcp);
+    assert_eq!(spec.max_turns, Some(factory_engine::REVIEWER_MAX_TURNS));
+    assert_eq!(spec.max_turns, Some(40));
+}
