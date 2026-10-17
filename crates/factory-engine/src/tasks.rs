@@ -98,6 +98,58 @@ pub fn plan_header(plan: &str) -> String {
     lines[..end].iter().map(|(l, _)| *l).collect::<Vec<_>>().join("\n").trim().to_string()
 }
 
+/// True for the `## Review Focus` heading line.
+fn is_focus_heading(line: &str) -> bool {
+    line.trim_end() == "## Review Focus"
+}
+
+/// True for a `# ` or `## ` heading line, which ends a header section.
+fn ends_section(line: &str) -> bool {
+    line.starts_with("# ") || line.starts_with("## ")
+}
+
+/// The body of the plan header's `## Review Focus` section, up to the next `# ` or `## ` heading outside
+/// a fenced block. `None` when the header has no such section or its body is empty.
+pub fn review_focus(plan: &str) -> Option<String> {
+    let header = plan_header(plan);
+    let lines = lines_with_fence(&header);
+    let start = lines.iter().position(|(l, fenced)| !fenced && is_focus_heading(l))?;
+    let body: Vec<&str> = lines[start + 1..]
+        .iter()
+        .take_while(|(l, fenced)| *fenced || !ends_section(l))
+        .map(|(l, _)| *l)
+        .collect();
+    let body = body.join("\n").trim().to_string();
+    (!body.is_empty()).then_some(body)
+}
+
+/// The plan header without its `## Review Focus` section, then each `### Task N:` heading line.
+/// The reviewer gets the focus separately and looks a step up in the plan file when it needs one.
+pub fn plan_outline(plan: &str) -> String {
+    let mut header: Vec<&str> = Vec::new();
+    let mut headings: Vec<&str> = Vec::new();
+    let mut in_focus = false;
+    for (line, fenced) in lines_with_fence(plan) {
+        if !fenced && is_task_heading(line) {
+            headings.push(line);
+        } else if headings.is_empty() {
+            if !fenced && is_focus_heading(line) {
+                in_focus = true;
+            } else if !fenced && ends_section(line) {
+                in_focus = false;
+            }
+            if !in_focus {
+                header.push(line);
+            }
+        }
+    }
+    let header = header.join("\n").trim().to_string();
+    if headings.is_empty() {
+        return header;
+    }
+    format!("{header}\n\n{}", headings.join("\n")).trim().to_string()
+}
+
 /// The heading and body of `### Task N:`, up to the next task heading, a `Next plan:` line or the end.
 /// `None` when the plan has no such heading. Inner headings such as `### Step` stay in the section.
 /// Headings and `Next plan:` lines inside fenced code blocks are ignored.
@@ -382,5 +434,34 @@ mod tests {
     fn a_spec_without_acceptance_criteria_gives_the_goal_and_an_empty_spec_gives_nothing() {
         assert_eq!(spec_excerpt("Goal: only this goal here.\n"), "Goal: only this goal here.");
         assert_eq!(spec_excerpt(""), "");
+    }
+
+    #[test]
+    fn review_focus_returns_the_section_body_and_none_when_missing() {
+        let plan = "# P\n\nIntro.\n\n## Review Focus\n\nCheck the lease.\nAnd the ledger.\n\n## Other\n\nx\n\n### Task 1: a\n\nbody\n";
+        assert_eq!(review_focus(plan), Some("Check the lease.\nAnd the ledger.".to_string()));
+        assert_eq!(review_focus("# P\n\nIntro.\n\n### Task 1: a\n"), None);
+        assert_eq!(review_focus("# P\n\n## Review Focus\n\n## Other\n\n### Task 1: a\n"), None);
+        // A section after the first task heading is not part of the header.
+        assert_eq!(review_focus("# P\n\n### Task 1: a\n\n## Review Focus\n\nlate\n"), None);
+    }
+
+    #[test]
+    fn review_focus_ignores_a_fenced_heading() {
+        let plan = "# P\n\n```md\n## Review Focus\n\nfake\n```\n\n### Task 1: a\n";
+        assert_eq!(review_focus(plan), None);
+        let plan = "# P\n\n## Review Focus\n\n```\n## not a heading\n```\nlast\n\n### Task 1: a\n";
+        let focus = review_focus(plan).expect("focus");
+        assert!(focus.contains("## not a heading") && focus.contains("last"), "{focus}");
+    }
+
+    #[test]
+    fn plan_outline_drops_the_focus_and_keeps_task_headings_only() {
+        let plan = "# P\n\nIntro.\n\n## Review Focus\n\nCheck the lease.\n\n## Other\n\nkept\n\n### Task 1: a\n\nbody one\n\n### Task 2: b\n\nbody two\n";
+        let out = plan_outline(plan);
+        assert!(out.contains("Intro.") && out.contains("## Other") && out.contains("kept"), "{out}");
+        assert!(!out.contains("Review Focus") && !out.contains("Check the lease."), "{out}");
+        assert!(out.contains("### Task 1: a") && out.contains("### Task 2: b"), "{out}");
+        assert!(!out.contains("body one") && !out.contains("body two"), "{out}");
     }
 }

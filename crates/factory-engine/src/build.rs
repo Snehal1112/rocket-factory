@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::StopReason;
-use factory_core::{agent_files_rel_dir, parse_builder_status, BuilderStatus, is_agent_file_name, AGENT_EXCLUDE_PATTERN, ParkKind, ParkPart, Stage, TaskState};
+use factory_core::{agent_files_rel_dir, builder_rulings, builder_status, parse_builder_status, BuilderStatus, is_agent_file_name, AGENT_EXCLUDE_PATTERN, ParkKind, ParkPart, Stage, TaskState};
 use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
@@ -294,6 +294,21 @@ impl Engine<'_> {
         self.park_with(ParkKind::BuilderBlocked, reason, builder_blocked_parts(&status, run)).map(Some)
     }
 
+    /// Writes the builder's `Ruling:` lines and its concerns to the ledger, so the reviewer can read them.
+    fn note_builder_words(&self, n: u32, reply: &str) -> Result<(), EngineError> {
+        for text in builder_rulings(reply) {
+            self.ruling(&format!("builder task {n}: {text}"))?;
+        }
+        if let BuilderStatus::DoneWithConcerns(text) = builder_status(reply) {
+            let folded = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let folded: String = folded.chars().take(600).collect();
+            if !folded.is_empty() {
+                self.ruling(&format!("builder task {n} concerns: {folded}"))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Runs the agent of the next plan task. After the last task it hands over to review.
     fn build_task(&self, job: &JobView, tasks: &[PlanTask]) -> Result<StageOutcome, EngineError> {
         let Some(task) = tasks.get(job.task_index as usize) else {
@@ -373,6 +388,7 @@ impl Engine<'_> {
         };
         let short = new_tip.get(..7).unwrap_or(&new_tip).to_string();
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
+        self.note_builder_words(task.n, &run.result_text)?;
         let session = run.session_id.clone().or(job.session_id.clone());
         let next = job.task_index + 1;
         let last = next as usize >= tasks.len();

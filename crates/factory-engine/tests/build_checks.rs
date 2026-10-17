@@ -1156,3 +1156,34 @@ fn a_long_stale_note_is_cut_to_300_characters_in_the_ledger() {
     let ledger = ledger_of(&fx);
     assert!(ledger.contains(&"n".repeat(300)) && !ledger.contains(&"n".repeat(301)) && !ledger.contains("TAIL-MARKER"), "{ledger}");
 }
+
+#[test]
+fn builder_rulings_land_in_the_ledger_with_a_task_prefix() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![blocked_effect(
+        "a.txt",
+        "Done.\nRuling: kept the old name\nRuling: used a Vec\n```\nRuling: fenced\n```\nStatus: DONE",
+    )]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let ledger = ledger_of(&fx);
+    assert!(ledger.contains("Ruling: builder task 1: kept the old name"), "{ledger}");
+    assert!(ledger.contains("Ruling: builder task 1: used a Vec"), "{ledger}");
+    assert!(!ledger.contains("fenced") && !ledger.contains("Ruling: Ruling:"), "{ledger}");
+}
+
+#[test]
+fn concerns_are_recorded_for_done_with_concerns() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![blocked_effect(
+        "a.txt",
+        "Done.\nStatus: DONE_WITH_CONCERNS\nThe query is slow.\nThe index may be missing.",
+    )]);
+    let out = fx.engine(&runner).build_stage().expect("task 1");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    assert_eq!(fx.job().task_index, 1);
+    let ledger = ledger_of(&fx);
+    assert!(
+        ledger.contains("Ruling: builder task 1 concerns: The query is slow. The index may be missing."),
+        "{ledger}"
+    );
+}

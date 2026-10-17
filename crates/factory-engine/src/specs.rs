@@ -209,9 +209,18 @@ impl Engine<'_> {
     }
 }
 
+/// What the reviewer gets besides the diff: the plan's Review Focus, the builder's rulings and concerns,
+/// and the plan header with its task headings.
+#[derive(Debug, Clone, Default)]
+pub struct ReviewerExtra {
+    pub focus: Option<String>,
+    pub notes: Vec<String>,
+    pub plan_outline: String,
+}
+
 impl Engine<'_> {
     /// The combined reviewer. It is read-only and pages the diff to stay cheap. The agent file carries the checks.
-    pub fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32, rules: &[String]) -> AgentSpec {
+    pub fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32, rules: &[String], extra: &ReviewerExtra) -> AgentSpec {
         let spec_line = self.spec_line();
         // A later round also gets the findings of the round before, so the reviewer can check they were fixed.
         let earlier = self.job_dir.join(format!("review-code-r{}.md", round.saturating_sub(1)));
@@ -221,10 +230,20 @@ impl Engine<'_> {
             String::new()
         };
         let rules_line = if rules.is_empty() { String::new() } else { format!("{}\n", rules.join(" ")) };
+        let mut context = String::new();
+        if let Some(focus) = &extra.focus {
+            context.push_str(&format!("Review focus from the plan:\n{focus}\n"));
+        }
+        if !extra.notes.is_empty() {
+            context.push_str(&format!("Builder notes, rulings and concerns recorded while building:\n{}\n", extra.notes.join("\n")));
+        }
+        if !extra.plan_outline.is_empty() {
+            context.push_str(&format!("Plan outline (header and task headings):\n{}\n", extra.plan_outline));
+        }
         let prompt = format!(
             "Review this round's diff for the job.\n\
-             Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan}, and the worktree at {cwd}. \
-             Round {round}.\n{spec_line}{earlier_line}\
+             Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan} (read it only to look up one step), and the worktree at {cwd}. \
+             Round {round}.\n{spec_line}{earlier_line}{context}\
              Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
              {rules_line}\
              Check: the diff does what the plan asks and nothing else; correctness and edge cases; tests that would fail without the change; no debug leftovers.\n\

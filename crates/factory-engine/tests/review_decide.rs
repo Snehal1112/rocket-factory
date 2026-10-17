@@ -2,7 +2,7 @@ mod common;
 
 use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture, ScriptedRunner};
 use factory_core::{BudgetState, DiffClass, Stage, Verdict};
-use factory_engine::{decide, DecideInput, Decision, StageOutcome};
+use factory_engine::{decide, DecideInput, Decision, ReviewerExtra, StageOutcome};
 
 fn input(verdict: &Verdict) -> DecideInput<'_> {
     DecideInput {
@@ -172,7 +172,7 @@ fn reviewer_prompt_names_the_spec_and_the_earlier_findings_when_they_exist() {
     // With a spec and a round 1 review on disk, a round 2 reviewer is pointed at both.
     std::fs::write(fx.job_dir.join("spec.md"), "# Spec\n").expect("spec");
     std::fs::write(fx.job_dir.join("review-code-r1.md"), "1. [blocker] x\n").expect("earlier review");
-    let spec = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 2, &[]);
+    let spec = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 2, &[], &ReviewerExtra::default());
     assert!(spec.prompt.contains(&format!("The spec is at {}", fx.job_dir.join("spec.md").display())), "{}", spec.prompt);
     assert!(spec.prompt.contains("review-code-r1.md"), "{}", spec.prompt);
 }
@@ -182,7 +182,7 @@ fn reviewer_rules_come_from_the_config_and_are_absent_by_default() {
     let mut fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("ok\nVERDICT: APPROVE");
-    let none = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 1, &fx.config.reviewer_rules);
+    let none = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 1, &fx.config.reviewer_rules, &ReviewerExtra::default());
     for banned in ["unwrap", "shadcn", ".claude/rules", "DDD"] {
         assert!(!none.prompt.contains(banned), "{banned} leaked: {}", none.prompt);
     }
@@ -320,4 +320,41 @@ fn a_fix_round_resets_the_review_state() {
     e.apply_decision(&out).expect("apply");
     assert_eq!(fx.job().stage, Stage::Build);
     assert_eq!(code_review_state(&fx), factory_core::ReviewState::Pending);
+}
+
+const FOCUS_PLAN: &str = "# P\n\nIntro line.\n\n## Review Focus\n\nCheck the lease handling.\n\n### Task 1: first thing\n\nBODY-MARKER one\n";
+
+fn review_prompt_for(plan: &str, ledger: &str) -> String {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, plan).expect("plan");
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let mut text = std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default();
+    text.push_str(ledger);
+    std::fs::write(fx.job_dir.join("progress.md"), text).expect("ledger");
+    let rr = reviewer("ok\nVERDICT: APPROVE");
+    fx.engine(&rr).review_stage().expect("review");
+    rr.last_spec().expect("spec").prompt
+}
+
+#[test]
+fn the_reviewer_prompt_carries_focus_notes_and_outline() {
+    let ledger = "Ruling: builder task 1: kept the old name\nRuling: builder task 1 concerns: slow query\nRuling: other thing\n";
+    let prompt = review_prompt_for(FOCUS_PLAN, ledger);
+    assert!(prompt.contains("Check the lease handling."), "{prompt}");
+    assert_eq!(prompt.matches("Check the lease handling.").count(), 1, "{prompt}");
+    assert!(prompt.contains("\nbuilder task 1: kept the old name"), "{prompt}");
+    assert!(prompt.contains("builder task 1 concerns: slow query"), "{prompt}");
+    assert!(!prompt.contains("other thing"), "{prompt}");
+    assert!(prompt.contains("### Task 1: first thing") && prompt.contains("Intro line."), "{prompt}");
+    assert!(!prompt.contains("BODY-MARKER"), "{prompt}");
+    assert!(!prompt.contains("## Review Focus"), "{prompt}");
+    assert!(prompt.contains("Read the diff in pages"), "{prompt}");
+    assert!(prompt.contains("VERDICT: APPROVE"), "{prompt}");
+}
+
+#[test]
+fn a_plan_without_review_focus_has_no_empty_section() {
+    let prompt = review_prompt_for("# P\n\nIntro line.\n\n### Task 1: first thing\n\nbody\n", "");
+    assert!(!prompt.contains("Review focus"), "{prompt}");
+    assert!(prompt.contains("### Task 1: first thing"), "{prompt}");
 }

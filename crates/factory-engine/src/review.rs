@@ -5,6 +5,8 @@ use factory_core::{budget_state, ReviewState, classify_paths, parse_verdict, Par
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
 use crate::ports::{git_err, io_err};
+use crate::specs::ReviewerExtra;
+use crate::tasks::{plan_outline, review_focus};
 use crate::{Engine, EngineError, StageOutcome};
 
 pub struct ReviewOutcome {
@@ -14,6 +16,16 @@ pub struct ReviewOutcome {
 }
 
 impl Engine<'_> {
+    /// The ledger lines the builder path wrote, `Ruling: builder task N...`, without the `Ruling: ` prefix.
+    pub(crate) fn builder_notes(&self) -> Vec<String> {
+        let text = std::fs::read_to_string(self.job_dir.join("progress.md")).unwrap_or_default();
+        text.lines()
+            .filter(|l| l.starts_with("Ruling: builder task "))
+            .filter_map(|l| l.strip_prefix("Ruling: "))
+            .map(str::to_string)
+            .collect()
+    }
+
     /// Writes the diff files, runs the reviewer once, saves its reply and decides.
     pub fn review_stage(&self) -> Result<ReviewOutcome, EngineError> {
         let job = self.job()?;
@@ -27,7 +39,9 @@ impl Engine<'_> {
         let paths = self.repo.changed_paths(&base, &head).map_err(git_err)?;
 
         let cwd = self.worktree()?;
-        let spec = self.reviewer_spec(&cwd, &round_diff.diff, &round_diff.names, job.round, &self.config.reviewer_rules);
+        let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
+        let extra = ReviewerExtra { focus: review_focus(&plan), notes: self.builder_notes(), plan_outline: plan_outline(&plan) };
+        let spec = self.reviewer_spec(&cwd, &round_diff.diff, &round_diff.names, job.round, &self.config.reviewer_rules, &extra);
         self.update(|j| {
             j.set_review("code", ReviewState::Running);
             Ok(())

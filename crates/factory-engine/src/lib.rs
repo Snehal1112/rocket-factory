@@ -57,7 +57,8 @@ pub use runloop::{create_job, create_job_with_spec, run_job, run_series, RunEnd}
 pub use series::{parse_series, Series, SeriesError, SeriesPlan, MAX_PLANS};
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
-pub use tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
+pub use specs::ReviewerExtra;
+pub use tasks::{parse_tasks, plan_outline, plan_title, review_focus, spec_goal, PlanTask};
 pub use tick::tick_plan;
 pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
 pub use tracker::{GhTracker, Tracker};
