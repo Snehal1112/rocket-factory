@@ -101,6 +101,60 @@ fn resume_with_no_changes_parks_the_job() {
     }
 }
 
+/// Builds once, then puts the job into a fix round of the given source, and returns the head before it.
+fn fix_round_from(fx: &Fixture, runner: &ScriptedRunner, source: Option<&str>) -> Option<String> {
+    fx.engine(runner).build_stage().expect("first");
+    let head = fx.job().head.clone();
+    start_fix_round(fx);
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").fix_source = source.map(str::to_string);
+    board.save(&fx.board_path).expect("save");
+    head
+}
+
+#[test]
+fn a_no_change_fix_round_after_failed_checks_goes_to_review_when_the_checks_now_pass() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let head = fix_round_from(&fx, &runner, Some("checks"));
+    let out = fx.engine(&runner).build_stage().expect("resume");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let job = fx.job();
+    assert_eq!(job.stage, Stage::Review);
+    assert_eq!(job.head, head, "the head is unchanged");
+    let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
+    assert!(ledger.contains("fix round 2 changed nothing and the checks now pass, the earlier failure did not reproduce"), "{ledger}");
+}
+
+#[test]
+fn a_no_change_fix_round_after_failed_checks_parks_as_checks_failed_when_they_still_fail() {
+    let mut fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    fx.config.checks = vec![factory_core::CheckRule { paths: vec!["**".into()], commands: vec!["false".into()] }];
+    fix_round_from(&fx, &runner, Some("checks"));
+    match fx.engine(&runner).build_stage().expect("resume") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("false") && r.contains("still fail"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    let job = fx.job();
+    assert_eq!(job.stage, Stage::NeedsHuman);
+    assert_eq!(job.park_kind.as_deref(), Some("checks-failed"));
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.next, vec!["factory rework 001 <note>"]);
+}
+
+#[test]
+fn a_no_change_fix_round_after_a_review_still_parks_as_nothing_changed() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    fix_round_from(&fx, &runner, Some("review"));
+    match fx.engine(&runner).build_stage().expect("resume") {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(fx.job().park_kind.as_deref(), Some("nothing-changed"));
+}
+
 #[test]
 fn diff_over_the_cap_parks_the_job() {
     let mut fx = committing_fixture();
@@ -178,6 +232,7 @@ fn failing_checks_start_a_fix_round() {
     let job = fx.job();
     assert_eq!(job.round, 2);
     assert_eq!(job.stage, Stage::Build);
+    assert_eq!(job.fix_source.as_deref(), Some("checks"));
     let findings = std::fs::read_to_string(fx.job_dir.join("changes-r2.md")).expect("findings");
     assert!(findings.contains("false"), "{findings}");
     let md = std::fs::read_to_string(fx.job_dir.join("checks.md")).expect("checks.md");

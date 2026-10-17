@@ -29,8 +29,11 @@ impl Engine<'_> {
         let next = job.round + 1;
         std::fs::write(self.job_dir.join(format!("changes-r{next}.md")), findings).map_err(io_err)?;
         // A fix round moves review back to build. That is a backward move, so it is forced and logged as a ruling.
+        // The source tells the builder step what to do when the fix round changes nothing.
+        let fix_source = if kind == ParkKind::ChecksFailed { "checks" } else { "review" };
         self.update(|j| {
             j.round = next;
+            j.fix_source = Some(fix_source.to_string());
             j.reset_reviews();
             j.set_stage(Stage::Build, None, true, now())
         })?;

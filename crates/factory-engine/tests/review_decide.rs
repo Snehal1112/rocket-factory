@@ -229,6 +229,7 @@ fn changes_verdict_starts_a_fix_round_with_the_review_text() {
     assert_eq!(e.apply_decision(&out).expect("apply"), StageOutcome::Advanced(Stage::Build));
     let job = fx.job();
     assert_eq!(job.round, 2);
+    assert_eq!(job.fix_source.as_deref(), Some("review"));
     let findings = std::fs::read_to_string(fx.job_dir.join("changes-r2.md")).expect("findings");
     assert!(findings.contains("[blocker] src/a.rs:3"), "{findings}");
 }
@@ -249,6 +250,9 @@ fn risky_diff_with_approve_needs_a_human_naming_the_path() {
     }
     assert!(matches!(e.apply_decision(&out).expect("apply"), StageOutcome::NeedsHuman(_)));
     assert_eq!(fx.job().stage, Stage::NeedsHuman);
+    // The reviewer ran, so the park offers a plain approve.
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.next, vec!["factory approve 001", "factory rework 001 <note>"]);
 }
 
 #[test]

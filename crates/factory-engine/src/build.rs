@@ -5,7 +5,7 @@ use factory_core::{agent_files_rel_dir, is_agent_file_name, AGENT_EXCLUDE_PATTER
 use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
-use crate::park::builder_stop_parts;
+use crate::park::{builder_stop_parts, part_from_file};
 use crate::ports::{git_err, now, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{Engine, EngineError, StageOutcome};
@@ -87,6 +87,9 @@ impl Engine<'_> {
         let head = match self.commit_work(&wt, kind, title, &floor, &job.issues)? {
             CommitOutcome::Committed { tip, .. } => tip,
             CommitOutcome::NothingStaged => {
+                if !new_work && job.fix_source.as_deref() == Some("checks") {
+                    return self.nothing_changed_after_checks(&job, &base, tip_before, previous_head);
+                }
                 let why = if new_work { "builder made no changes" } else { "builder made no changes on resume" };
                 return self.park_with(ParkKind::NothingChanged, why.to_string(), Vec::new());
             }
@@ -94,6 +97,32 @@ impl Engine<'_> {
         };
         self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
+    }
+
+    /// A fix round that started from failed checks changed nothing. The checks run again once: when they pass,
+    /// the earlier failure did not reproduce and the unchanged head goes to the reviewer, else the job parks.
+    fn nothing_changed_after_checks(
+        &self,
+        job: &JobView,
+        base: &str,
+        head: String,
+        previous_head: Option<String>,
+    ) -> Result<StageOutcome, EngineError> {
+        let report = self.run_checks_now()?;
+        if report.all_passed() {
+            self.ruling(&format!(
+                "fix round {} changed nothing and the checks now pass, the earlier failure did not reproduce",
+                job.round
+            ))?;
+            return self.finish_build(job, base, head, previous_head);
+        }
+        let first = report.failures().first().map_or_else(|| "a check".to_string(), |f| f.command.clone());
+        let parts = part_from_file(&self.job_dir, "checks.md", "Checks").into_iter().collect();
+        self.park_with(
+            ParkKind::ChecksFailed,
+            format!("fix round {} changed nothing and the checks still fail: {first}", job.round),
+            parts,
+        )
     }
 
     /// Creates the job worktree and records the branch and base. The git layer picks all three.
