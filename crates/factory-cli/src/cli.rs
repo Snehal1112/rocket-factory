@@ -71,6 +71,11 @@ pub enum Command {
     },
     /// Print the cost of every job and the figures per size group, and write costs.json.
     Costs,
+    /// Track a feature that is still being specified, before it has a job.
+    Spec {
+        #[command(subcommand)]
+        cmd: SpecCmd,
+    },
     /// Manage the registered projects in the factory home.
     Project {
         #[command(subcommand)]
@@ -98,6 +103,16 @@ pub enum Command {
         #[arg(long)]
         job: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SpecCmd {
+    /// Add a draft card at stage interviewing and print where its spec file goes.
+    Start { slug: String, feature: String },
+    /// Move a draft to interviewing, writing-spec or writing-plans.
+    Stage { slug: String, stage: String },
+    /// Print the stage and spec file of a draft.
+    Resume { slug: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -140,6 +155,17 @@ mod tests {
     fn spec_without_plans_is_a_usage_error() {
         let err = Cli::try_parse_from(["factory", "new", "s", "f", "--spec", "x.md"]).expect_err("needs --plans");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn spec_subcommands_parse() {
+        let cli = Cli::try_parse_from(["factory", "spec", "start", "demo", "a feature"]).expect("start");
+        assert!(matches!(cli.command, Command::Spec { cmd: SpecCmd::Start { ref slug, ref feature } } if slug == "demo" && feature == "a feature"));
+        let cli = Cli::try_parse_from(["factory", "spec", "stage", "demo", "writing-spec"]).expect("stage");
+        assert!(matches!(cli.command, Command::Spec { cmd: SpecCmd::Stage { ref slug, ref stage } } if slug == "demo" && stage == "writing-spec"));
+        let cli = Cli::try_parse_from(["factory", "spec", "resume", "demo"]).expect("resume");
+        assert!(matches!(cli.command, Command::Spec { cmd: SpecCmd::Resume { ref slug } } if slug == "demo"));
+        assert!(Cli::try_parse_from(["factory", "spec", "start", "demo"]).is_err());
     }
 
     #[test]

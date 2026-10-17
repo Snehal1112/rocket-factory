@@ -5,11 +5,11 @@ use std::time::Duration;
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
 use factory_core::{outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
 use factory_engine::{
-    costs_path, create_job_with_spec, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, run_job, run_series, Driver,
+    costs_path, create_job_with_spec, find_draft, remove_draft, set_draft_stage, start_draft, today, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, run_job, run_series, Driver,
     MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT,
 };
 
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, Command, SpecCmd};
 use crate::costs::{estimate_lines, render_costs};
 use crate::status::{render_parked, render_project_line, render_status};
 
@@ -235,7 +235,11 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         }
         Command::Approve { id, without_review } => approve(ctx, &norm(&id)?, without_review),
         Command::Rework { id, note } => rework(ctx, &norm(&id)?, &note),
-        Command::Cancel { id, reason, force } => cancel(ctx, &norm(&id)?, &reason, force),
+        Command::Cancel { id, reason, force } => match factory_core::normalize_id(&id) {
+            Ok(id) => cancel(ctx, &id, &reason, force),
+            Err(_) => cancel_draft(ctx, &id),
+        },
+        Command::Spec { cmd } => spec(ctx, cmd),
         Command::Cleanup { id, discard_commits } => cleanup(ctx, &norm(&id)?, discard_commits),
         Command::Tokens { id } => tokens(ctx, &norm(&id)?),
         Command::Costs => costs(ctx),
@@ -271,6 +275,41 @@ fn new_job(
         out.push_str(&format!("\nno plan yet: put plan.md at {}/plan.md before running it", dir.display()));
     }
     Ok(out)
+}
+
+/// The three lines `spec start` and `spec resume` print.
+fn draft_lines(d: &Driver, draft: &factory_core::Draft) -> String {
+    let file = draft.spec_file.clone().unwrap_or_else(|| {
+        let full = d.layout().draft_spec_file(&draft.created, &draft.slug);
+        full.strip_prefix(&d.layout().repo).unwrap_or(&full).to_string_lossy().into_owned()
+    });
+    let state = if d.layout().repo.join(&file).is_file() { "exists" } else { "missing" };
+    format!("draft {}\nstage {}\nfile {file} ({state})", draft.slug, draft.stage)
+}
+
+/// The `spec` commands only touch draft cards, so they never start agents and skip `runnable`.
+fn spec(ctx: &CliCtx, cmd: SpecCmd) -> Result<String, CliError> {
+    let d = ctx.driver()?;
+    let draft = match cmd {
+        SpecCmd::Start { slug, feature } => start_draft(&d, &slug, &feature, &today(), now_secs())?,
+        SpecCmd::Stage { slug, stage } => {
+            set_draft_stage(&d, &slug, &stage, now_secs())?;
+            return Ok(format!("draft {} moved to {stage}", factory_core::slugify(&slug)));
+        }
+        SpecCmd::Resume { slug } => find_draft(&d, &slug)?
+            .ok_or_else(|| CliError::Refused(format!("no draft named {}", factory_core::slugify(&slug))))?,
+    };
+    Ok(draft_lines(&d, &draft))
+}
+
+/// Removes a draft card. The spec file stays.
+fn cancel_draft(ctx: &CliCtx, name: &str) -> Result<String, CliError> {
+    let d = ctx.driver()?;
+    if find_draft(&d, name)?.is_none() {
+        return Err(CliError::Refused(format!("no job or draft named {name}")));
+    }
+    let draft = remove_draft(&d, name)?;
+    Ok(format!("draft {} cancelled, its spec file was kept", draft.slug))
 }
 
 fn costs(ctx: &CliCtx) -> Result<String, CliError> {

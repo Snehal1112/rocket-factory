@@ -3,6 +3,7 @@
 mod build;
 mod checks_stage;
 mod decide;
+mod drafts;
 mod park;
 mod ports;
 mod review;
@@ -43,6 +44,7 @@ pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
 };
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
+pub use drafts::{find_draft, remove_draft, set_draft_stage, start_draft};
 pub use followups::{follow_ups, FollowUp};
 pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
 pub use compat::{Driver, ProjectGuard, RunnerFactory, HEARTBEAT_SECS, LEASE_TTL_SECS};

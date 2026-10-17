@@ -87,9 +87,17 @@ pub fn render_project_line(status: &ProjectLeaseStatus) -> String {
 }
 
 pub fn render_status(board: &Board, cfg: &Config) -> String {
-    if board.jobs.is_empty() {
-        return "no jobs\n".to_string();
+    let mut out = if board.jobs.is_empty() { "no jobs\n".to_string() } else { render_jobs(board, cfg) };
+    if !board.drafts.is_empty() {
+        out.push_str("drafts:\n");
+        for draft in &board.drafts {
+            out.push_str(&format!("  {:<28} {:<14} {}\n", draft.slug, draft.stage, draft.feature));
+        }
     }
+    out
+}
+
+fn render_jobs(board: &Board, cfg: &Config) -> String {
     let mut out = String::from("ID   STAGE        ROUND  REVIEWS         TOKENS    SERIES  SLUG\n");
     for job in &board.jobs {
         let series = job.series.as_ref().map_or("-".to_string(), |s| format!("{}/{}", s.index, s.total));
