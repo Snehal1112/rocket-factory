@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a demo factory root with jobs in every stage and one five-plan series, for a visual check of the dashboard.
+# Builds a demo factory root with jobs in every stage, one five-plan series and two interview drafts (one stale), for a visual check of the dashboard.
 # Usage: seed-demo.sh <dir>. Safe to run again on the same dir.
 set -eu
 
@@ -61,6 +61,9 @@ printf '# Spec: Baseline benchmarks\n\n## Goal\n\nMeasure the hot paths before a
     job "$id" "Baseline benchmarks" "$stage" null 0 "$none" "[{\"stage\":\"spec\",\"ts\":$((now - 300))}]" \
       "{\"plan_file\":\"plan-0$i.md\",\"index\":$i,\"total\":5,\"id\":\"S1\"}" null
   done
+  printf '],"drafts":['
+  printf '{"slug":"dark-mode","feature":"Add a dark mode","stage":"interviewing","spec_file":null,"created":"2026-10-18","updated_at":%s}' "$((now - 120))"
+  printf ',{"slug":"offline-cache","feature":"Cache responses for offline use","stage":"writing-spec","spec_file":"docs/specs/offline-cache.md","created":"2026-10-17","updated_at":%s}' "$((now - 90000))"
   printf ']}\n'
 } >"$data/board.json.tmp"
 mv "$data/board.json.tmp" "$data/board.json"

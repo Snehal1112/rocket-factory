@@ -165,6 +165,9 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 
 .card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.5rem; font-size: 11.5px; }
 .card-stage { color: var(--stage); font-weight: 500; }
+.card-draft { border-style: dashed; }
+.card-draft .draft-stage { font-weight: 500; }
+.card-draft .chip-warn { margin-left: auto; }
 .card-spec .card-stage { color: var(--muted-foreground); }
 .job-id { padding: 1px 6px; border-radius: 3px; background: var(--muted); font-weight: 600; white-space: nowrap; }
 .job-date { flex: none; margin-left: auto; color: var(--muted-foreground); white-space: nowrap; }

@@ -866,3 +866,78 @@ test("a merged card compares the actual cost with the estimate range", () => {
   assert.match(noActual, /Estimated 220K to 370K/);
   assert.doesNotMatch(noActual, /Cost /);
 });
+
+function makeDraft(overrides) {
+  return Object.assign(
+    {
+      slug: "dark-mode",
+      feature: "Add a dark mode",
+      stage: "interviewing",
+      spec_file: "docs/specs/dark-mode.md",
+      created: "2026-10-18",
+      updated_at: 100,
+      seconds_since_update: 90,
+      stale: false,
+    },
+    overrides,
+  );
+}
+
+test("a draft card shows slug, stage, age and copy chips", () => {
+  const html = board.renderDraftCard(makeDraft());
+  assert.match(html, /<article class="card card-spec card-draft" data-draft="dark-mode">/);
+  assert.match(html, /dark-mode/);
+  assert.match(html, /Draft/);
+  assert.match(html, /Add a dark mode/);
+  assert.match(html, /Interviewing/);
+  assert.match(html, /1m/);
+  assert.doesNotMatch(html, /stale/);
+  assert.match(html, /data-copy="factory spec resume dark-mode"/);
+  assert.match(html, /data-copy="factory cancel dark-mode"/);
+  assert.match(html, /data-copy="docs\/specs\/dark-mode\.md"/);
+  assert.doesNotMatch(html, /file:\/\//);
+  assert.match(board.renderDraftCard(makeDraft({ stage: "writing-plans" })), /Writing plans/);
+  assert.doesNotMatch(board.renderDraftCard(makeDraft({ spec_file: undefined })), /\.md/);
+});
+
+test("a stale draft shows a stale chip in text", () => {
+  const html = board.renderDraftCard(makeDraft({ stale: true, seconds_since_update: 90000 }));
+  assert.match(html, /<span class="chip chip-warn">stale<\/span>/);
+});
+
+test("draft text is escaped", () => {
+  const html = board.renderDraftCard(
+    makeDraft({ slug: "<b>x</b>", feature: "<img src=x>", stage: "<i>odd</i>", spec_file: "<s>.md" }),
+  );
+  assert.doesNotMatch(html, /<b>x|<img|<i>odd|<s>/);
+  assert.match(html, /&lt;i&gt;odd&lt;\/i&gt;/);
+});
+
+test("drafts come first in the spec column and are counted", () => {
+  const state = makeState([makeJob({ id: "005", stage: "spec" })], { drafts: [makeDraft()] });
+  const html = board.renderBoard(state);
+  const column = html.split('<section class="column panel column-spec">')[1].split("</section>")[0];
+  assert.ok(column.indexOf("data-draft") >= 0 && column.indexOf("data-draft") < column.indexOf("data-job"));
+  assert.match(column, /<span class="count">2<\/span>/);
+});
+
+test("a state without drafts still renders the board", () => {
+  const html = board.renderBoard(makeState([makeJob()]));
+  assert.doesNotMatch(html, /data-draft/);
+  assert.match(html, /data-job="001"/);
+  assert.match(board.renderBoard(makeState([], { drafts: null })), /Nothing here/);
+});
+
+test("a job spec warning shows on the card", () => {
+  const html = board.renderCard(makeJob({ spec_warning: "no <decision> recorded" }), 200, []);
+  assert.match(html, /class="reason spec-warning"/);
+  assert.match(html, /Spec warning: no &lt;decision&gt; recorded/);
+  assert.doesNotMatch(board.renderCard(makeJob(), 200, []), /spec-warning/);
+});
+
+test("the summary notes drafts and stale drafts", () => {
+  const html = board.renderSummary(makeState([], { drafts: [makeDraft(), makeDraft({ slug: "b", stale: true })] }));
+  assert.match(html, /2 drafts/);
+  assert.match(html, /1 stale/);
+  assert.doesNotMatch(board.renderSummary(makeState([])), /draft/);
+});

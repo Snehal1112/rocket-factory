@@ -241,6 +241,32 @@
     );
   }
 
+  const DRAFT_STAGES = {
+    interviewing: "Interviewing",
+    "writing-spec": "Writing the spec",
+    "writing-plans": "Writing plans",
+  };
+
+  // One card for an interview draft. It shows copyable commands only: the page never acts on a draft.
+  function renderDraftCard(draft) {
+    const slug = escapeHtml(draft.slug);
+    const stage = Object.prototype.hasOwnProperty.call(DRAFT_STAGES, draft.stage)
+      ? DRAFT_STAGES[draft.stage]
+      : escapeHtml(draft.stage);
+    const stale = draft.stale === true ? `<span class="chip chip-warn">stale</span>` : "";
+    const specFile = draft.spec_file ? copyChip(draft.spec_file) : "";
+    return (
+      `<article class="card card-spec card-draft" data-draft="${slug}">` +
+      `<header class="card-head"><span class="job-id">${slug}</span><span class="card-stage">Draft</span>${stale}` +
+      `<time class="job-date">${escapeHtml(draft.created)}</time></header>` +
+      `<p class="feature">${escapeHtml(draft.feature)}</p>` +
+      `<div class="meta"><span class="draft-stage">${stage}</span>` +
+      `<span class="age">${formatAge(draft.seconds_since_update)} since the last change</span></div>` +
+      `<p class="hint">${copyChip(`factory spec resume ${draft.slug}`)}${copyChip(`factory cancel ${draft.slug}`)}${specFile}</p>` +
+      `</article>`
+    );
+  }
+
   function agentsSection(job, agents, now) {
     if (!agents.length) return "";
     const live = agents.filter((agent) => agent.status !== "done");
@@ -537,6 +563,9 @@
           (reviewMissing(job) ? `<p class="review-missing">The review has not run.</p>` : "") +
           `<p class="hint">${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
+    const warning = job.spec_warning
+      ? `<p class="reason spec-warning">Spec warning: ${escapeHtml(job.spec_warning)}</p>`
+      : "";
     const showAge = job.stage !== "merged" && job.stage !== "needs-human";
     // A plan that has not started has no time, tokens, agents or branch yet, so those sections stay out.
     const parked = job.stage === "spec";
@@ -568,6 +597,7 @@
       chips +
       (parked ? "" : agentsSection(job, job.agents || [], now)) +
       (parked ? "" : facts) +
+      warning +
       reason +
       actionButtons(job) +
       `</article>`
@@ -580,10 +610,12 @@
     const known = new Set(STAGES.map((s) => s.key));
     const unknown = jobs.filter((job) => !known.has(job.stage)).length;
     const specs = state.specs || [];
+    const drafts = Array.isArray(state.drafts) ? state.drafts.filter((draft) => draft) : [];
     const columns = STAGES.map((stage) => {
       let items = jobs.filter((job) => job.stage === stage.key);
       let specCards = specs.filter((spec) => spec && spec.stage === stage.key);
-      const total = items.length + specCards.length;
+      const draftCards = stage.key === "spec" ? drafts : [];
+      const total = items.length + specCards.length + draftCards.length;
       if (stage.key === "merged") {
         // Spec cards have no timestamp, so keep the last ones the server sent.
         specCards = specCards.slice(-MERGED_LIMIT);
@@ -593,8 +625,9 @@
           .slice(0, MERGED_LIMIT);
       }
       const cards =
-        items.length || specCards.length
-          ? specCards.map(renderSpecCard).join("") +
+        total
+          ? draftCards.map(renderDraftCard).join("") +
+            specCards.map(renderSpecCard).join("") +
             items.map((job) => renderCard(job, state.generated_at, specs)).join("")
           : `<p class="empty">Nothing here</p>`;
       return (
@@ -710,6 +743,12 @@
       title = "All caught up";
       detail = `${merged} ${plural(merged, "job", "jobs")} merged. Start the next one with <code>/factory &lt;feature&gt;</code>.`;
     }
+    const drafts = Array.isArray(state.drafts) ? state.drafts : [];
+    if (drafts.length) {
+      const staleDrafts = drafts.filter((draft) => draft && draft.stale === true).length;
+      detail += ` ${drafts.length} ${plural(drafts.length, "draft is", "drafts are")} in the Spec column` +
+        (staleDrafts ? ` (${staleDrafts} stale).` : ".");
+    }
     return (
       `<section class="summary summary-${tone}">` +
       `<h2 class="summary-title">${title}</h2><p class="summary-detail">${detail}</p>${list}</section>`
@@ -728,6 +767,7 @@
     renderCard,
     actionButtons,
     renderSpecCard,
+    renderDraftCard,
     renderSummary,
     renderBoard,
     renderUnassigned,

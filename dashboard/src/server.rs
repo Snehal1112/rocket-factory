@@ -674,6 +674,17 @@ mod tests {
     }
 
     #[test]
+    fn the_page_carries_the_draft_card_script_and_styles() -> TestResult {
+        let (_dir, app) = app_with_board(Some(JOB))?;
+        let host = Some("127.0.0.1:1");
+        let css = String::from_utf8(route(&app, "GET", "/dashboard.css", host, 1, 5.0).body)?;
+        assert!(css.contains("card-draft"), "styles");
+        let js = String::from_utf8(route(&app, "GET", "/board.js", host, 1, 5.0).body)?;
+        assert!(js.contains("renderDraftCard"), "renderer");
+        Ok(())
+    }
+
+    #[test]
     fn the_page_carries_the_cost_panel_and_its_script_and_styles() -> TestResult {
         let (_dir, app) = app_with_board(Some(JOB))?;
         let host = Some("127.0.0.1:1");
