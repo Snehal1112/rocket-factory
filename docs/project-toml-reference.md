@@ -135,7 +135,7 @@ These only group jobs in `factory costs` and in the estimate that `factory new` 
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `cache_ttl` | `"5m"` or `"1h"` | unset | Prompt cache lifetime of every agent run. `"5m"` sets `FORCE_PROMPT_CACHING_5M=1`. `"1h"` sets `ENABLE_PROMPT_CACHING_1H=1`. Unset lets `claude` choose, which is 1 hour on a subscription login. |
+| `cache_ttl` | `"5m"` or `"1h"` | unset, but `factory project add` writes `"5m"` | Prompt cache lifetime of every agent run. `"5m"` sets `FORCE_PROMPT_CACHING_5M=1`. `"1h"` sets `ENABLE_PROMPT_CACHING_1H=1`. Unset lets `claude` choose, which is 1 hour on a subscription login. |
 
 A 1 hour write costs twice a plain input token and a 5 minute write costs 1.25 times, so `"5m"` suits runs that rarely resume. `"1h"` does not beat a `FORCE_PROMPT_CACHING_5M` exported in the driver's own environment. Each `usage.jsonl` line has `cache_creation_1h` to check the effect.
 

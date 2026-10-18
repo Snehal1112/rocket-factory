@@ -54,7 +54,7 @@ The ledger has one line `checks ran: <commands>` (or `none`) before the auto-mer
 ## Prompt cache lifetime
 
 `cache_ttl` (`"5m"` or `"1h"`, a normal setting in `config.toml` or in `[settings]` of `project.toml`) sets the prompt
-cache lifetime of every agent run. Unset (the default) leaves the choice to `claude`, which gives a subscription
+cache lifetime of every agent run. `factory project add` writes `cache_ttl = "5m"` into the new project's `[settings]`. Unset leaves the choice to `claude`, which gives a subscription
 login the 1 hour cache. `"5m"` sets `FORCE_PROMPT_CACHING_5M=1` and `"1h"` sets `ENABLE_PROMPT_CACHING_1H=1` on each
 `claude -p` child. A 1 hour write costs twice a plain input token and a 5 minute write 1.25 times, so `"5m"` suits
 runs that rarely resume. `"1h"` does not override a `FORCE_PROMPT_CACHING_5M` exported in the driver's own
