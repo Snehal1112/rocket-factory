@@ -72,7 +72,7 @@ commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
 
 [[settings.checks]]
 paths = ["src-tauri/**"]
-commands = ["cargo check -j4"]
+commands = ["cargo check -j4 -p rocket", "cargo test -j4 -p rocket"]
 
 [[settings.checks]]
 paths = ["src/**"]
