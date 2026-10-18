@@ -19,6 +19,22 @@ Rocket's factory gained these after the extraction. They are part of this driver
 
 Presets already seeded under `~/.factory/presets/` are not updated by `factory project add`: `preset::seed` writes only the files that are missing and never overwrites one. To bring them up to date, run `factory presets refresh`, see below.
 
+## No-check and no-test gates
+
+The driver parks a job whose code diff ran no checks (`no-checks`), and can park one whose code diff adds no test
+(`no-tests`). A diff of only `*.md`, `docs/**` or `.claude/**` paths is never code. A risky diff is left to the
+merge decision and ends as `risky-diff`. These settings live in `config.toml` or in `[settings]` of
+`project.toml`. A non-empty list replaces its default, and an empty list means the default.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `code_paths` | empty: every path that is not a doc path | Globs that count as code. |
+| `test_paths` | `**/tests/**`, `**/__tests__/**`, `**/*.test.ts`, `**/*.test.tsx`, `**/*.spec.ts`, `**/*_test.rs`, `**/*_test.go` | Globs that count as a test file. |
+| `test_markers` | `#[test]`, `#[tokio::test]`, `#[cfg(test)]`, `describe(`, `it(`, `test(`, `func Test` | Text on an added line that counts as a test. |
+| `require_tests` | `false` | `true` parks a code diff with no test path and no marker. `false` only warns the reviewer. |
+
+The ledger has one line `checks ran: <commands>` (or `none`) before the auto-merge line.
+
 ## Ticket hygiene
 
 After the last plan of a job merges, the driver can file the leftover work as new GitHub tickets, comment on the

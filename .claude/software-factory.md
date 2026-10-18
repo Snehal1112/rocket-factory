@@ -136,6 +136,14 @@ Plan lint: `factory new` lints every plan on the chain before any job exists. A 
 
 The builder runs only per-crate cargo commands (`cargo check -j4 -p <crate>`), never a bare `cargo check -j4`: in a fresh job worktree a workspace-wide check builds the whole app and V8, takes more than ten minutes and stalls the run (seen in job 012). Plans follow the same rule. The driver runs the checks itself, chosen from the changed paths by `config.toml`: `cargo check -j4`, targeted `cargo test -j4 -p <crate>`, `yarn tsc --noEmit`, `yarn check`, `yarn test --run --maxWorkers=50%` (half the workers, so the full suite does not time out under its own load), and the factory crate checks. A failure resumes the builder with trimmed output. The reviewer never sees a red build. Results go to `checks.md`.
 
+### No-check and no-test gates
+
+- `no-checks`: a diff with a code path and no check results parks the job before the reviewer runs. A diff of only `*.md`, `docs/**` or `.claude/**` paths is not code and is not parked. A risky diff skips this gate, so `decide()` still ends it as `risky-diff`. With no config, or a broken one, every path counts as code.
+- `no-tests`: a code diff with no test path and no added test marker writes a ledger line and a note to the reviewer. With `require_tests = true` it parks as `no-tests` instead.
+- Where they run: in the checks stage, and again in the final re-run of the checks on the merge head (the `AutoMerge` arm), so a fix round that leaves no mapped check still parks `no-checks`. Both park through `park_with`. A parked job offers `approve` (as `approve --without-review` when the review has not run) and `rework`.
+- The settings are `code_paths`, `test_paths`, `test_markers` and `require_tests`, see `README.md`.
+- The ledger has one line `checks ran: <commands>` or `checks ran: none` before the `auto-merge approved` line.
+
 ## Budget
 
 Weighted tokens per job: input + cache creation + output + cache read / 10. Defaults: 1,000,000 per job (`DEFAULT_JOB_BUDGET_WEIGHTED`; a config that sets `budget_weighted` keeps its own value), warn at 80 percent, kill the agent and park the job at 100 percent. Diff cap 4,000 changed lines, 2 fix rounds, a stall limit without events.
