@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is rocket-factory, the standalone software factory: a Rust driver workspace at the repo root and a local dashboard in `dashboard/` (its own workspace). It was extracted from Rocket's `tools/factory` and `tools/factory-server` with history. Read `.claude/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here. The design for the standalone version is `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`.
+This is rocket-factory, the standalone software factory: a Rust driver workspace at the repo root and a local dashboard in `dashboard/` (its own workspace). It was extracted from Rocket's `tools/factory` and `tools/factory-server` with history. Read `.claude/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here. A new user starts with `.claude/getting-started.md` (build, PATH, install, register, first run). The design for the standalone version is `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`.
 
 ## Commands
 
