@@ -349,7 +349,7 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .act:hover { border-color: var(--primary); }
 .act:disabled { opacity: 0.5; cursor: default; }
 .act-primary { border-color: var(--primary); color: var(--primary); }
-.act-cancel { color: var(--destructive); }
+.act-cancel { margin-left: auto; color: var(--destructive); }
 .job-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.6rem; }
 .act-dialog { width: min(28rem, calc(100% - 2rem)); padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--foreground); }
 .act-dialog::backdrop { background: oklch(0.2 0.01 230 / 45%); }
