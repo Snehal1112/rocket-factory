@@ -27,6 +27,8 @@ pub enum ParkKind {
     BuilderCommitted,
     NothingChanged,
     CommitFailed,
+    NoChecks,
+    NoTests,
     Other,
 }
 
@@ -43,6 +45,8 @@ impl ParkKind {
             ParkKind::BuilderCommitted => "builder-committed",
             ParkKind::NothingChanged => "nothing-changed",
             ParkKind::CommitFailed => "commit-failed",
+            ParkKind::NoChecks => "no-checks",
+            ParkKind::NoTests => "no-tests",
             ParkKind::Other => "other",
         }
     }
@@ -75,7 +79,11 @@ impl ParkKind {
             | ParkKind::CommitFailed => {
                 vec![rework]
             }
-            ParkKind::ChangesRemain | ParkKind::RiskyDiff | ParkKind::DiffTooLarge => vec![approve, rework],
+            ParkKind::ChangesRemain
+            | ParkKind::RiskyDiff
+            | ParkKind::DiffTooLarge
+            | ParkKind::NoChecks
+            | ParkKind::NoTests => vec![approve, rework],
             ParkKind::BudgetStopped => vec![approve, cancel],
             ParkKind::NothingChanged => vec![rework, cancel],
             ParkKind::Other => vec![approve, rework, cancel],
@@ -191,6 +199,48 @@ mod tests {
         }
         for kind in [ParkKind::Other, ParkKind::RiskyDiff, ParkKind::BudgetStopped] {
             assert_eq!(kind.next_for("012", false), kind.next("012"), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn no_checks_and_no_tests_have_stable_names() {
+        assert_eq!(ParkKind::NoChecks.as_str(), "no-checks");
+        assert_eq!(ParkKind::NoTests.as_str(), "no-tests");
+    }
+
+    #[test]
+    fn no_checks_and_no_tests_offer_approve_and_rework() {
+        for kind in [ParkKind::NoChecks, ParkKind::NoTests] {
+            assert_eq!(
+                kind.next("012"),
+                vec!["factory approve 012".to_string(), "factory rework 012 <note>".to_string()],
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_park_before_the_review_offers_approve_without_review() {
+        let next = ParkKind::NoChecks.next_for("012", true);
+        assert!(next.iter().any(|n| n.contains("factory approve 012 --without-review")), "{next:?}");
+        assert!(!next.contains(&"factory approve 012".to_string()), "{next:?}");
+    }
+
+    #[test]
+    fn an_old_park_record_still_parses() {
+        let json = r#"{"kind":"checks-failed","reason":"r","at":1,"round":1,"next":[],"parts":[]}"#;
+        let rec: ParkRecord = serde_json::from_str(json).expect("old record parses");
+        assert_eq!(rec.kind, ParkKind::ChecksFailed);
+    }
+
+    #[test]
+    fn the_new_kinds_round_trip_through_park_json() {
+        for kind in [ParkKind::NoChecks, ParkKind::NoTests] {
+            let rec = ParkRecord::new(kind, "why", "012", 5, 1, Vec::new());
+            let text = serde_json::to_string(&rec).expect("serialize");
+            assert!(text.contains(kind.as_str()), "{text}");
+            let back: ParkRecord = serde_json::from_str(&text).expect("parse");
+            assert_eq!(back.kind, kind);
         }
     }
 

@@ -46,7 +46,7 @@ commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
 
 [[checks]]
 paths = ["src-tauri/**"]
-commands = ["cargo check -j4"]
+commands = ["cargo check -j4 -p rocket", "cargo test -j4 -p rocket"]
 
 [[checks]]
 paths = ["src/**"]

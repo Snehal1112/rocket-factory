@@ -360,6 +360,8 @@
     "builder-committed": "Builder committed",
     "nothing-changed": "Nothing changed",
     "commit-failed": "Commit failed",
+    "no-checks": "No checks ran",
+    "no-tests": "No tests added",
     other: "Needs a human",
   };
   const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "commit-failed"];

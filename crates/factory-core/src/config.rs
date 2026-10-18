@@ -88,6 +88,14 @@ pub struct Config {
     /// Rules for the plans the `/factory` command writes. The driver never puts them in a prompt.
     pub plan_rules: Vec<String>,
     pub checks: Vec<CheckRule>,
+    /// Globs of the paths that count as code. Empty means every path that is not a doc path.
+    pub code_paths: Vec<String>,
+    /// Globs of the test paths. Empty means the built-in list.
+    pub test_paths: Vec<String>,
+    /// Substrings of an added line that mark a test. Empty means the built-in list.
+    pub test_markers: Vec<String>,
+    /// Park a code diff that adds no test. Off by default.
+    pub require_tests: bool,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
     pub degraded: bool,
@@ -124,6 +132,10 @@ impl Default for Config {
             reviewer_rules: Vec::new(),
             plan_rules: Vec::new(),
             checks: Vec::new(),
+            code_paths: Vec::new(),
+            test_paths: Vec::new(),
+            test_markers: Vec::new(),
+            require_tests: false,
             degraded: false,
         }
     }
@@ -132,7 +144,7 @@ impl Default for Config {
 impl Config {
     /// Every path matches `**`, so every diff is risky and nothing auto-merges.
     pub fn fail_closed() -> Config {
-        Config { risk_paths: vec!["**".to_string()], degraded: true, ..Config::default() }
+        Config { risk_paths: vec!["**".to_string()], code_paths: vec!["**".to_string()], degraded: true, ..Config::default() }
     }
 
     pub fn parse(text: &str) -> Result<Config, CoreError> {
@@ -232,6 +244,32 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_config_without_the_new_keys_parses_with_defaults() {
+        let cfg = Config::parse("diff_cap_lines = 100\n").expect("parses");
+        assert!(cfg.code_paths.is_empty() && cfg.test_paths.is_empty() && cfg.test_markers.is_empty());
+        assert!(!cfg.require_tests);
+    }
+
+    #[test]
+    fn the_new_keys_parse() {
+        let cfg = Config::parse(
+            "code_paths = [\"src/**\"]\ntest_paths = [\"spec/**\"]\ntest_markers = [\"@Test\"]\nrequire_tests = true\n",
+        )
+        .expect("parses");
+        assert_eq!(cfg.code_paths, vec!["src/**".to_string()]);
+        assert_eq!(cfg.test_paths, vec!["spec/**".to_string()]);
+        assert_eq!(cfg.test_markers, vec!["@Test".to_string()]);
+        assert!(cfg.require_tests);
+    }
+
+    #[test]
+    fn fail_closed_makes_every_path_code() {
+        let cfg = Config::fail_closed();
+        assert_eq!(cfg.code_paths, vec!["**".to_string()]);
+        assert!(cfg.test_paths.is_empty() && !cfg.require_tests);
+    }
+
     use super::*;
 
     #[test]

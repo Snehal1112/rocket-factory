@@ -123,3 +123,20 @@ fn plan_rules_carry_the_two_rocket_rules_and_the_old_config_has_none() {
     assert!(rules[1].contains("docs/superpowers/specs/opencollection-spec-reference.md"), "{rules:?}");
     assert!(!OLD_CONFIG.contains("plan_rules"));
 }
+
+#[test]
+fn the_src_tauri_rule_runs_the_tests() {
+    let commands = |cfg: &Config| -> Vec<String> {
+        cfg.checks
+            .iter()
+            .filter(|c| c.matches("src-tauri/src/lib.rs"))
+            .flat_map(|c| c.commands.clone())
+            .collect()
+    };
+    let (_t, r) = resolved();
+    for cmds in [commands(&r.config), commands(&old())] {
+        assert!(cmds.contains(&"cargo check -j4 -p rocket".to_string()), "{cmds:?}");
+        assert!(cmds.contains(&"cargo test -j4 -p rocket".to_string()), "{cmds:?}");
+        assert!(!cmds.contains(&"cargo check -j4".to_string()), "a bare workspace check: {cmds:?}");
+    }
+}
