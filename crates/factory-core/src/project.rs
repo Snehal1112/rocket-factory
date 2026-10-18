@@ -67,6 +67,9 @@ fn read_file(path: &Path) -> Result<ProjectFile, String> {
     Ok(file)
 }
 
+/// The prompt cache lifetime a new project starts with. One-shot agent runs rarely resume, so the cheaper 5 minute write wins.
+pub const DEFAULT_CACHE_TTL: &str = "5m";
+
 /// Registers a project. Every check runs before anything is created.
 pub fn add(
     home: &Home,
@@ -93,6 +96,7 @@ pub fn add(
     }
     repo_ok(&canon).map_err(|why| CoreError::Config(format!("{}: {why}", canon.display())))?;
     let mut settings = toml::Table::new();
+    settings.insert("cache_ttl".into(), toml::Value::String(DEFAULT_CACHE_TTL.into()));
     if let Some(b) = base {
         settings.insert("base_branch".into(), toml::Value::String(valid_base_branch(b)?));
     }
@@ -313,10 +317,12 @@ mod tests {
     }
 
     #[test]
-    fn add_without_base_stores_no_settings() {
+    fn add_without_base_stores_only_the_default_cache_ttl() {
         let e = env();
         add(&e.home, "rocket", &e.repo, "go", None, &ok).expect("add");
-        assert!(get(&e.home, "rocket").expect("get").settings.is_empty());
+        let f = get(&e.home, "rocket").expect("get");
+        assert_eq!(f.settings.len(), 1);
+        assert_eq!(f.settings.get("cache_ttl").and_then(|v| v.as_str()), Some("5m"));
     }
 
     fn assert_refused(e: &Env, r: Result<PathBuf, CoreError>, name: &str) {

@@ -4,6 +4,7 @@ repo = "/home/numericlabs/data/rocket/rocket"
 preset = "rust"
 
 [settings]
+cache_ttl = "5m"
 base_branch = "main"
 diff_cap_lines = 4000
 budget_weighted = 3000000

@@ -4,6 +4,7 @@ repo = "/home/numericlabs/data/rocket/rocketvault"
 preset = "go"
 
 [settings]
+cache_ttl = "5m"
 base_branch = "v-4.0.0"
 diff_cap_lines = 4000
 fix_rounds = 2

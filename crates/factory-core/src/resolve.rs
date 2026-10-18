@@ -315,12 +315,13 @@ mod tests {
     }
 
     #[test]
-    fn no_override_gives_the_preset_with_the_project_base_branch() {
+    fn no_override_gives_the_preset_with_the_project_base_branch_and_default_cache_ttl() {
         let e = env_with(Some("v-4.0.0"), "rust");
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let mut want = preset_config(&e);
         want.base_branch = "v-4.0.0".into();
+        want.cache_ttl = Some("5m".into());
         want.risk_paths.push(FACTORY_RISK.into());
         assert_eq!(r.config, want);
         let names: Vec<&str> = r.agents.iter().map(|a| a.name.as_str()).collect();
