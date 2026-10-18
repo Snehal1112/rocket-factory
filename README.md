@@ -8,6 +8,22 @@ A standalone software factory. A Rust driver builds, checks, reviews and merges 
 
 Status: extracted and tested. It still behaves like Rocket's in-repo factory. The standalone work is described in the plan index.
 
+## Workflow
+
+How one job moves from the `/factory` command to a merge. Yellow steps spend LLM tokens, teal steps are the Rust driver, which spends none, and orange marks a stop for a human.
+
+![One job, start to merge](docs/images/factory-lifecycle.svg)
+
+The order of the gates a job passes, and what each one does when it fails:
+
+![What can stop a merge, in order](docs/images/factory-gates.svg)
+
+The processes behind a job:
+
+![Who talks to whom](docs/images/factory-processes.svg)
+
+The same three diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a private Claude artifact, so only its owner can open it). The page source is `docs/factory-workflow.html` and the images are in `docs/images/`.
+
 ## Features ported from Rocket
 
 Rocket's factory gained these after the extraction. They are part of this driver now:
