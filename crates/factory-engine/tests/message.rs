@@ -62,7 +62,7 @@ fn a_failed_run_still_merges() {
 fn sync_uses_the_committer_message() {
     let effects = vec![reply(GOOD), reply("ok\nVERDICT: APPROVE")];
     let fx = approved_job_with(Arc::new(scripted(effects)), true);
-    common::commit_file(&fx.main, "other.txt", "o");
+    common::commit_file(&fx.main, "other.md", "o");
     merged(&fx);
     assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
     let repo = git2::Repository::open(&fx.main).expect("open");
@@ -96,7 +96,7 @@ fn main_moving_during_the_message_run_syncs_before_merging() {
     let moves = Arc::clone(&main_dir);
     let mover: Effect = Box::new(move |_: &AgentSpec| {
         let dir = moves.lock().expect("dir").clone();
-        common::commit_file(&dir, "late-main.txt", "m");
+        common::commit_file(&dir, "late-main.md", "m");
         GOOD.to_string()
     });
     let effects = vec![mover, reply(GOOD), reply("ok\nVERDICT: APPROVE"), reply(GOOD)];
@@ -155,7 +155,7 @@ fn sync_message_uses_relates_to_then_the_job_footer() {
     let effects = vec![reply(GOOD), reply("ok\nVERDICT: APPROVE")];
     let fx = approved_job_with(Arc::new(scripted(effects)), true);
     with_issues(&fx, vec![20]);
-    common::commit_file(&fx.main, "other.txt", "o");
+    common::commit_file(&fx.main, "other.md", "o");
     merged(&fx);
     let repo = git2::Repository::open(&fx.main).expect("open");
     let branch = fx.driver.job(&fx.id).expect("job").branch;

@@ -40,7 +40,9 @@ impl Engine<'_> {
 
         let cwd = self.worktree()?;
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
-        let extra = ReviewerExtra { focus: review_focus(&plan), notes: self.builder_notes(), plan_outline: plan_outline(&plan) };
+        let whole_text = std::fs::read_to_string(&whole.diff).ok();
+        let no_tests = crate::checks_stage::no_tests_added(&paths, whole_text.as_deref(), &self.config);
+        let extra = ReviewerExtra { focus: review_focus(&plan), notes: self.builder_notes(), plan_outline: plan_outline(&plan), no_tests };
         let class = classify_paths(&paths, &self.config);
         let risky = class == DiffClass::Risky;
         let round_lines = round_diff.changed_lines();
@@ -120,6 +122,13 @@ impl Engine<'_> {
                     let findings = format!("The final checks failed. Fix these failures only.\n\n{}", report.failure_text());
                     return self.fix_or_park(&findings, "final checks failed", ParkKind::ChecksFailed, "checks");
                 }
+                let paths = self.job_changed_paths()?;
+                if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
+                    return self.park_gate(kind, reason);
+                }
+                let commands: Vec<&str> = report.results.iter().map(|r| r.command.as_str()).collect();
+                let list = if commands.is_empty() { "none".to_string() } else { commands.join(", ") };
+                self.ruling(&format!("checks ran: {list}"))?;
                 self.set_stage(Stage::Approve, None, false)?;
                 self.ruling("auto-merge approved, checks green, reviewer approved")?;
                 Ok(StageOutcome::Advanced(Stage::Approve))

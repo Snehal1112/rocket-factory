@@ -237,6 +237,8 @@ pub struct ReviewerExtra {
     pub focus: Option<String>,
     pub notes: Vec<String>,
     pub plan_outline: String,
+    /// True when a code diff adds no test path and no test marker.
+    pub no_tests: bool,
 }
 
 impl Engine<'_> {
@@ -289,6 +291,9 @@ impl Engine<'_> {
         }
         if !extra.plan_outline.is_empty() {
             context.push_str(&format!("Plan outline (header and task headings):\n{}\n", extra.plan_outline));
+        }
+        if extra.no_tests {
+            context.push_str("No test was added in this job. Judge whether the new behavior is covered, and treat missing tests as a blocker.\n");
         }
         let prompt = format!(
             "Review this round's diff for the job.\n\

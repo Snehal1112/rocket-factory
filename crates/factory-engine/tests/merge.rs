@@ -57,7 +57,7 @@ fn a_dirty_main_parks_as_main_busy() {
 #[test]
 fn main_moved_triggers_a_sync_then_merges() {
     let fx = common::approved_job();
-    common::commit_file(&fx.main, "other.txt", "o");
+    common::commit_file(&fx.main, "other.md", "o");
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
     assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
     assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
@@ -166,7 +166,7 @@ fn tip_of(fx: &common::MergeFixture, branch: &str) -> String {
 fn a_sync_merges_the_base_branch_and_leaves_main_alone() {
     let fx = trunk_fixture();
     let main_before = tip_of(&fx, "main");
-    common::commit_file(&fx.main, "other.txt", "o");
+    common::commit_file(&fx.main, "other.md", "o");
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
     assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
     assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);

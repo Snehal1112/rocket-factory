@@ -318,8 +318,10 @@ fn failing_checks_beyond_fix_rounds_need_a_human() {
 fn docs_only_diff_still_writes_a_pass_line() {
     let mut fx = committing_fixture();
     fx.config.checks = vec![factory_core::CheckRule { paths: vec!["src/**".into()], commands: vec!["false".into()] }];
-    let runner = built(&fx);
-    fx.engine(&runner).checks_stage().expect("checks");
+    let runner = scripted_auto(vec![change_effect("a.md", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
     let md = std::fs::read_to_string(fx.job_dir.join("checks.md")).expect("checks.md");
     assert!(md.contains("PASS none"), "{md}");
 }
