@@ -146,3 +146,28 @@ fn an_executable_file_is_still_read() {
     git.commit(Some("refs/heads/main"), &sig(), &sig(), "exe", &tree, &[&parent]).expect("commit");
     assert_eq!(fx.repo().file_at_branch("main", "tool.sh").expect("read").as_deref(), Some("run"));
 }
+
+/// Commits a file with raw bytes into a folder of a branch without a working tree.
+fn commit_bytes(fx: &Fixture, branch: &str, dir: &str, name: &str, bytes: &[u8]) {
+    let git = fx.git();
+    let parent = git.find_branch(branch, git2::BranchType::Local).expect("b").get().peel_to_commit().expect("c");
+    let blob = git.blob(bytes).expect("blob");
+    let mut inner = git.treebuilder(None).expect("tb");
+    inner.insert(name, blob, 0o100644).expect("insert");
+    let inner_id = inner.write().expect("write");
+    let mut root = git.treebuilder(Some(&parent.tree().expect("tree"))).expect("root");
+    root.insert(dir, inner_id, 0o040000).expect("dir");
+    let tree = git.find_tree(root.write().expect("tree")).expect("find");
+    let refname = format!("refs/heads/{branch}");
+    git.commit(Some(&refname), &sig(), &sig(), "bytes", &tree, &[&parent]).expect("commit");
+}
+
+#[test]
+fn a_file_that_is_not_utf8_is_an_error_naming_the_path() {
+    let fx = Fixture::on_branch("main");
+    commit_bytes(&fx, "main", ".factory", "bad.toml", &[0xff, 0xfe, 0x00]);
+    let err = fx.repo().file_at_branch("main", ".factory/bad.toml").expect_err("not utf-8");
+    assert!(err.to_string().contains(".factory/bad.toml") && err.to_string().contains("UTF-8"), "{err}");
+    let err = fx.repo().dir_at_branch("main", ".factory").expect_err("not utf-8 in a listing");
+    assert!(err.to_string().contains("bad.toml") && err.to_string().contains("UTF-8"), "{err}");
+}
