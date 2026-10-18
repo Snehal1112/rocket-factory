@@ -40,7 +40,7 @@ fn match_segment(p: &[char], s: &[char]) -> bool {
     }
 }
 
-fn normalize(path: &str) -> String {
+pub(crate) fn normalize(path: &str) -> String {
     let mut p = path.trim();
     while let Some(rest) = p.strip_prefix("./") {
         p = rest;
@@ -52,7 +52,7 @@ fn has_parent_segment(path: &str) -> bool {
     path.split('/').any(|seg| seg == "..")
 }
 
-fn is_doc_path(path: &str) -> bool {
+pub(crate) fn is_doc_path(path: &str) -> bool {
     path.ends_with(".md") || path.starts_with("docs/") || path.starts_with(".claude/")
 }
 
