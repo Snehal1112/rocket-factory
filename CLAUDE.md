@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is rocket-factory, the standalone software factory: a Rust driver workspace at the repo root and a local dashboard in `dashboard/` (its own workspace). It was extracted from Rocket's `tools/factory` and `tools/factory-server` with history. Read `.claude/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here. A new user starts with `.claude/getting-started.md` (build, PATH, install, register, first run). The design for the standalone version is `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`.
+This is rocket-factory, the standalone software factory: a Rust driver workspace at the repo root and a local dashboard in `dashboard/` (its own workspace). It was extracted from Rocket's `tools/factory` and `tools/factory-server` with history. Read `docs/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here. Every `project.toml` setting, with defaults and examples, is in `docs/project-toml-reference.md`. A new user starts with `docs/getting-started.md` (build, PATH, install, register, first run). The design for the standalone version is `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`.
 
 ## Commands
 
@@ -52,4 +52,4 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 ## Carried over from Rocket
 
-These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), `commands/factory.md` stays as Rocket's copy, while the global command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7), and `software-factory.md` is rewritten for the standalone design.
+These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), `commands/factory.md` stays as Rocket's copy, while the global command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7). The prose docs `software-factory.md` and `getting-started.md` live in `docs/`.

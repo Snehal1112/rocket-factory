@@ -446,7 +446,7 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
 
 #[test]
 fn docs_describe_the_new_design() -> TestResult {
-    let doc = read(".claude/software-factory.md")?;
+    let doc = read("docs/software-factory.md")?;
     require_all(
         &doc,
         "software-factory.md",
@@ -479,7 +479,7 @@ fn docs_describe_the_new_design() -> TestResult {
         &["factory-ctl", "factory-approver", "factory-spec-writer", "log-event", "n/a: <reason>", "required coverage list", "one question at a time"],
     )?;
     let root_doc = read("CLAUDE.md")?;
-    require_all(&root_doc, "CLAUDE.md", &[".claude/software-factory.md"])?;
+    require_all(&root_doc, "CLAUDE.md", &["docs/software-factory.md"])?;
     forbid_all(&root_doc, "CLAUDE.md", &["factory-ctl"])
 }
 

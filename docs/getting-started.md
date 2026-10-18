@@ -436,6 +436,6 @@ nohup factoryd run >> ~/.factory/factoryd.log 2>&1 &
 ## 17. Where to read more
 
 - `README.md`: every command, setting and file in detail.
-- `.claude/software-factory.md`: the pipeline, job model, merge rules and dashboard.
+- `docs/software-factory.md`: the pipeline, job model, merge rules and dashboard.
 - `dashboard/README.md`: dashboard modes and security.
 - `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`: why it is built this way.
