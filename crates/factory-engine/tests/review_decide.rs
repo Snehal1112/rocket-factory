@@ -473,7 +473,7 @@ fn round_two_carries_the_scoped_rereview_rule_and_round_one_does_not() {
 
 #[test]
 fn round_two_still_carries_review_focus() {
-    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new() };
+    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new(), no_tests: false };
     let prompt = direct_prompt(2, &extra);
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
     assert!(prompt.contains("builder task 1: kept the old name"), "{prompt}");
@@ -482,7 +482,7 @@ fn round_two_still_carries_review_focus() {
 
 #[test]
 fn round_two_without_a_round_one_review_is_a_normal_review() {
-    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new() };
+    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new(), no_tests: false };
     let prompt = direct_prompt_with(2, &extra, &[]);
     assert!(!prompt.contains("scoped re-review"), "{prompt}");
     assert!(!prompt.contains("fix diff only"), "{prompt}");

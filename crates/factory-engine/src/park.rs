@@ -67,6 +67,11 @@ impl Engine<'_> {
                 }
                 parts
             }
+            ParkKind::NoChecks | ParkKind::NoTests => {
+                let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks").into_iter().collect();
+                parts.push(ParkPart::new("Why it stopped", "driver", reason));
+                parts
+            }
             ParkKind::BudgetStopped => {
                 let text = format!(
                     "{} weighted tokens used against a budget of {}",
