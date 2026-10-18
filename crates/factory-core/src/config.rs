@@ -96,6 +96,8 @@ pub struct Config {
     pub test_markers: Vec<String>,
     /// Park a code diff that adds no test. Off by default.
     pub require_tests: bool,
+    /// Prompt cache lifetime for every agent run, `5m` or `1h`. `None` leaves the choice to `claude`.
+    pub cache_ttl: Option<String>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
     pub degraded: bool,
@@ -136,6 +138,7 @@ impl Default for Config {
             test_paths: Vec::new(),
             test_markers: Vec::new(),
             require_tests: false,
+            cache_ttl: None,
             degraded: false,
         }
     }
@@ -170,6 +173,9 @@ impl Config {
         }
         if cfg.kb_path.as_deref().is_some_and(|p| p.trim().is_empty()) {
             return Err(CoreError::Config("kb_path must not be empty when it is set".into()));
+        }
+        if cfg.cache_ttl.as_deref().is_some_and(|t| t != "5m" && t != "1h") {
+            return Err(CoreError::Config("cache_ttl must be \"5m\" or \"1h\" when it is set".into()));
         }
         if let Err(why) = check_branch_name(&cfg.base_branch) {
             return Err(CoreError::Config(format!("base_branch: {why}")));
@@ -271,6 +277,16 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn cache_ttl_is_unset_by_default_and_takes_only_5m_or_1h() {
+        assert_eq!(Config::default().cache_ttl, None);
+        assert_eq!(Config::parse("cache_ttl = \"5m\"").expect("parse").cache_ttl.as_deref(), Some("5m"));
+        assert_eq!(Config::parse("cache_ttl = \"1h\"").expect("parse").cache_ttl.as_deref(), Some("1h"));
+        assert!(Config::parse("cache_ttl = \"10m\"").is_err());
+        assert!(Config::parse("cache_ttl = \"\"").is_err());
+        assert!(Config::parse("cache_ttl = 5").is_err());
+    }
 
     #[test]
     fn tickets_on_merge_is_off_by_default_and_can_be_turned_on() {

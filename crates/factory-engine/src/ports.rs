@@ -100,7 +100,10 @@ impl Engine<'_> {
     }
 
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
-    pub(crate) fn run_agent(&self, spec: AgentSpec) -> Result<AgentRun, EngineError> {
+    pub(crate) fn run_agent(&self, mut spec: AgentSpec) -> Result<AgentRun, EngineError> {
+        if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
+            spec.env.push((var.0.to_string(), var.1.to_string()));
+        }
         // Every agent that runs in a job worktree finds the resolved agent files as resolved.
         if !self.agent_files.is_empty() && spec.cwd.starts_with(self.repo.worktrees_dir()) {
             self.write_agent_files(&spec.cwd)?;
@@ -137,6 +140,15 @@ impl Engine<'_> {
     }
 }
 
+/// The `claude` environment variable for a `cache_ttl` setting. `FORCE_PROMPT_CACHING_5M` beats every other TTL setting.
+fn cache_ttl_var(ttl: Option<&str>) -> Option<(&'static str, &'static str)> {
+    match ttl {
+        Some("5m") => Some(("FORCE_PROMPT_CACHING_5M", "1")),
+        Some("1h") => Some(("ENABLE_PROMPT_CACHING_1H", "1")),
+        _ => None,
+    }
+}
+
 /// Builds one `usage.jsonl` line. `usage_v` 2 marks lines with the corrected output count.
 pub(crate) fn usage_line(job_id: &str, spec: &AgentSpec, run: &AgentRun, round: u32, tasks_done: u32, ts: u64) -> serde_json::Value {
     let u = &run.usage;
@@ -147,6 +159,7 @@ pub(crate) fn usage_line(job_id: &str, spec: &AgentSpec, run: &AgentRun, round: 
         "cache_creation": u.cache_creation_input_tokens,
         "output": u.output_tokens,
         "cache_read": u.cache_read_input_tokens,
+        "cache_creation_1h": u.cache_creation_1h_input_tokens,
         "ts": ts,
         "model": spec.model,
         "turns": run.turns,
@@ -171,7 +184,7 @@ mod tests {
 
     fn run_with(stop: StopReason) -> AgentRun {
         AgentRun {
-            usage: Usage { input_tokens: 1, cache_creation_input_tokens: 2, cache_read_input_tokens: 3, output_tokens: 4 },
+            usage: Usage { input_tokens: 1, cache_creation_input_tokens: 2, cache_read_input_tokens: 3, output_tokens: 4, ..Usage::default() },
             turns: 7,
             start_ctx: 55,
             stop_reason: stop,
@@ -200,6 +213,22 @@ mod tests {
         assert_eq!(line["start_ctx"], 55);
         assert_eq!(line["usage_v"], 2);
         assert_eq!(line["tasks_done"], 1);
+    }
+
+    #[test]
+    fn cache_ttl_picks_the_claude_variable() {
+        assert_eq!(cache_ttl_var(Some("5m")), Some(("FORCE_PROMPT_CACHING_5M", "1")));
+        assert_eq!(cache_ttl_var(Some("1h")), Some(("ENABLE_PROMPT_CACHING_1H", "1")));
+        assert_eq!(cache_ttl_var(None), None);
+    }
+
+    #[test]
+    fn the_one_hour_share_of_cache_writes_is_logged() {
+        let mut run = run_with(StopReason::Done);
+        run.usage.cache_creation_1h_input_tokens = 2;
+        let spec = AgentSpec::new("001", "builder", "/w", "p");
+        let line = usage_line("001", &spec, &run, 1, 0, 1);
+        assert_eq!(line["cache_creation_1h"], 2);
     }
 
     #[test]

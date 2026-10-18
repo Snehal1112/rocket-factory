@@ -8,6 +8,9 @@ pub struct Usage {
     pub cache_creation_input_tokens: u64,
     pub cache_read_input_tokens: u64,
     pub output_tokens: u64,
+    /// The part of `cache_creation_input_tokens` written with the 1 hour lifetime.
+    #[serde(default)]
+    pub cache_creation_1h_input_tokens: u64,
 }
 
 fn field(v: &Value, key: &str) -> u64 {
@@ -22,6 +25,7 @@ impl Usage {
             cache_creation_input_tokens: field(v, "cache_creation_input_tokens"),
             cache_read_input_tokens: field(v, "cache_read_input_tokens"),
             output_tokens: field(v, "output_tokens"),
+            cache_creation_1h_input_tokens: v.get("cache_creation").map_or(0, |c| field(c, "ephemeral_1h_input_tokens")),
         }
     }
 
@@ -31,6 +35,7 @@ impl Usage {
             cache_creation_input_tokens: self.cache_creation_input_tokens.saturating_add(other.cache_creation_input_tokens),
             cache_read_input_tokens: self.cache_read_input_tokens.saturating_add(other.cache_read_input_tokens),
             output_tokens: self.output_tokens.saturating_add(other.output_tokens),
+            cache_creation_1h_input_tokens: self.cache_creation_1h_input_tokens.saturating_add(other.cache_creation_1h_input_tokens),
         }
     }
 
@@ -41,6 +46,7 @@ impl Usage {
             cache_creation_input_tokens: self.cache_creation_input_tokens.max(other.cache_creation_input_tokens),
             cache_read_input_tokens: self.cache_read_input_tokens.max(other.cache_read_input_tokens),
             output_tokens: self.output_tokens.max(other.output_tokens),
+            cache_creation_1h_input_tokens: self.cache_creation_1h_input_tokens.max(other.cache_creation_1h_input_tokens),
         }
     }
 

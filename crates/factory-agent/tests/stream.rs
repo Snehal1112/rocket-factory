@@ -63,12 +63,25 @@ fn stream_reports_error_result() {
 
 #[test]
 fn usage_add_and_max() {
-    let a = Usage { input_tokens: 1, cache_creation_input_tokens: 2, cache_read_input_tokens: 3, output_tokens: 9 };
-    let b = Usage { input_tokens: 4, cache_creation_input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 5 };
+    let a = Usage { input_tokens: 1, cache_creation_input_tokens: 2, cache_read_input_tokens: 3, output_tokens: 9, ..Usage::default() };
+    let b = Usage { input_tokens: 4, cache_creation_input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 5, ..Usage::default() };
     assert_eq!(a.add(&b).output_tokens, 14);
     assert_eq!(a.max_with(&b).input_tokens, 4);
     assert_eq!(a.max_with(&b).output_tokens, 9);
     assert!(Usage::default().is_zero());
+}
+
+#[test]
+fn usage_reads_the_one_hour_share_of_cache_writes() {
+    let v: serde_json::Value = serde_json::from_str(
+        r#"{"cache_creation_input_tokens":25032,"cache_creation":{"ephemeral_1h_input_tokens":25000,"ephemeral_5m_input_tokens":32}}"#,
+    )
+    .expect("json");
+    let u = Usage::from_value(&v);
+    assert_eq!(u.cache_creation_input_tokens, 25032);
+    assert_eq!(u.cache_creation_1h_input_tokens, 25000);
+    // A usage object without the breakdown counts as zero.
+    assert_eq!(Usage::from_value(&serde_json::json!({"output_tokens": 1})).cache_creation_1h_input_tokens, 0);
 }
 
 fn caps(agent: bool, max_turns: bool, append: bool) -> Caps {

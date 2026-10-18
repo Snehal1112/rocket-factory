@@ -1403,3 +1403,27 @@ fn every_builder_prompt_names_subagent_driven_development() {
 /// Every builder prompt keeps the builder an implementer, so it never runs a per-task review.
 const NOT_CONTROLLER: &str =
     "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";
+
+#[test]
+fn cache_ttl_reaches_every_agent_run_as_a_claude_variable() {
+    let mut fx = committing_fixture();
+    fx.config.cache_ttl = Some("5m".to_string());
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    for role in ["builder", "committer"] {
+        let specs = runner.specs_for(role);
+        assert!(!specs.is_empty(), "no {role} run");
+        for spec in specs {
+            assert!(spec.env.contains(&("FORCE_PROMPT_CACHING_5M".to_string(), "1".to_string())), "{role}: {:?}", spec.env);
+        }
+    }
+}
+
+#[test]
+fn no_cache_ttl_leaves_the_claude_environment_alone() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let builder = runner.last_spec_for("builder").expect("builder run");
+    assert!(builder.env.iter().all(|(k, _)| !k.contains("PROMPT_CACHING")), "{:?}", builder.env);
+}
