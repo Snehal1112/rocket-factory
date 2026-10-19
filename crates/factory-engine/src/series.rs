@@ -48,7 +48,7 @@ fn resolve(root: &Path, from: &Path, rel: &str) -> PathBuf {
     from.parent().map(|p| p.join(rel)).filter(|p| p.exists()).unwrap_or(a)
 }
 
-fn read_plan(root: &Path, path: &Path) -> Result<SeriesPlan, SeriesError> {
+fn read_plan(root: &Path, path: &Path, max_tasks: Option<usize>) -> Result<SeriesPlan, SeriesError> {
     let text = std::fs::read_to_string(path).map_err(|_| SeriesError::Missing(path.to_path_buf()))?;
     let last = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
     let target = last
@@ -57,7 +57,7 @@ fn read_plan(root: &Path, path: &Path) -> Result<SeriesPlan, SeriesError> {
         .filter(|t| !t.is_empty() && !t.contains(char::is_whitespace))
         .ok_or_else(|| SeriesError::NoNextLine(path.to_path_buf()))?;
     let tasks: Vec<u32> = crate::tasks::parse_checkbox_tasks(&text).into_iter().map(|t| t.n).collect();
-    if tasks.is_empty() || tasks.len() > 3 {
+    if tasks.is_empty() || max_tasks.is_some_and(|max| tasks.len() > max) {
         return Err(SeriesError::TaskCount { path: path.to_path_buf(), found: tasks.len() });
     }
     let next = (target != "none").then(|| resolve(root, path, target));
@@ -70,6 +70,11 @@ fn canon(p: &Path) -> PathBuf {
 
 /// Validates the `Next plan:` chain from `start` (a plan file, or a folder of `plan-*.md` files).
 pub fn parse_series(root: &Path, start: &Path) -> Result<Series, SeriesError> {
+    parse_series_with(root, start, Some(3))
+}
+
+/// `max_tasks` of `None` lifts the upper bound on tasks per plan. A plan still needs at least one task.
+pub fn parse_series_with(root: &Path, start: &Path, max_tasks: Option<usize>) -> Result<Series, SeriesError> {
     let (first, folder_names) = if start.is_dir() {
         let mut names: Vec<PathBuf> = std::fs::read_dir(start)?
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -93,7 +98,7 @@ pub fn parse_series(root: &Path, start: &Path) -> Result<Series, SeriesError> {
         if plans.len() == MAX_PLANS {
             return Err(SeriesError::TooMany(path));
         }
-        let plan = read_plan(root, &path)?;
+        let plan = read_plan(root, &path, max_tasks)?;
         current = plan.next.clone();
         plans.push(plan);
     }

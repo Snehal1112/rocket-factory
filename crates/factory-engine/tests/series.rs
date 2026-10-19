@@ -1,4 +1,4 @@
-use factory_engine::{parse_series, SeriesError};
+use factory_engine::{parse_series, parse_series_with, SeriesError};
 use std::path::Path;
 
 fn plan(dir: &Path, name: &str, tasks: u32, next: &str) {
@@ -73,4 +73,28 @@ fn a_checkbox_only_plan_is_still_accepted() {
     std::fs::write(d.path().join("plan-01-a.md"), text).expect("write plan");
     let s = parse_series(d.path(), d.path()).expect("series");
     assert_eq!(s.plans[0].tasks, vec![1, 2]);
+}
+
+#[test]
+fn parse_series_with_none_accepts_five_tasks() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-a.md", 5, "none");
+    let s = parse_series_with(d.path(), d.path(), None).expect("series");
+    assert_eq!(s.plans[0].tasks, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn parse_series_with_none_still_refuses_zero_tasks() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-a.md", 0, "none");
+    let e = parse_series_with(d.path(), d.path(), None).expect_err("zero tasks");
+    assert!(matches!(e, SeriesError::TaskCount { .. }), "{e}");
+}
+
+#[test]
+fn parse_series_still_refuses_four_tasks() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-a.md", 4, "none");
+    let e = parse_series(d.path(), d.path()).expect_err("four tasks");
+    assert!(matches!(e, SeriesError::TaskCount { .. }), "{e}");
 }

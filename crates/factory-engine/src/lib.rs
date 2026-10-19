@@ -58,7 +58,7 @@ pub use project_lease::{
 };
 pub use lock::{lock_board, BoardLock};
 pub use runloop::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
-pub use series::{parse_series, Series, SeriesError, SeriesPlan, MAX_PLANS};
+pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
 pub use specs::{ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS};
