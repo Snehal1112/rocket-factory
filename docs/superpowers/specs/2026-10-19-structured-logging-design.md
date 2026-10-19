@@ -107,8 +107,10 @@ Events the code emits (each is one `tracing` call at the named level):
 | `merge.done` | info | `merge.rs` | `sha` |
 | `park` | warn | `merge.rs`, `ports.rs` | `reason` (one line, capped) |
 | `step.error` | error | the 30 `eprintln!` sites | `step`, `msg` |
-| `sup.start`, `sup.finish`, `sup.reject` | info | `supervisor.rs` | `request`, `project`, `job` |
-| `sup.error` | error | `supervisor.rs`, `factoryd.rs` | `msg` |
+| `sup.start`, `sup.finish`, `sup.reject` | info | `supervisor.rs` (from the `TickReport` lists `started`, `finished`, `rejected`) | `request`, `outcome` or `reason` |
+| `sup.notice` | info | `supervisor.rs` (report `notices`) | `msg` |
+| `sup.warn` | warn | `supervisor.rs` (report `bad_children`, `orphans`) | `msg` |
+| `sup.error` | error | `supervisor.rs`, `factoryd.rs` (report `errors`, command failures) | `msg` |
 
 A field whose name contains `token`, `key`, `secret` or `password` (case-insensitive substring) is written as `"[redacted]"`. Environment variables, prompts, command output and headers have no event and are never passed as fields. The `command` string of a check is logged in full (it comes from the committed config), but in each whitespace-separated word of the form `--name=value` whose `name` contains a sensitive word, the value is written as `[redacted]`. A check's environment is not logged. The one exception is the field `weighted_tokens`, a count that the redactor lets through by exact name. Example:
 
@@ -122,7 +124,7 @@ A field whose name contains `token`, `key`, `secret` or `password` (case-insensi
 
 ### 6. The stderr layer
 
-stderr keeps human output at `warn` and above, plus the factoryd tick lines (`sup.start`, `sup.finish`, `sup.reject`) at `info`, so a user watching factoryd sees what they see today. The `new_lines` de-duplication (`supervisor.rs:560-585`) runs before the log call, so a repeated line is neither printed nor logged twice. Each site keeps its level: a failure is `error`, a progress line is `info`. The form is `<level> <event>: <msg>` (for example `error step.error: kb refresh error for job 003: ...`). The 30 `eprintln!` sites in the driver and factoryd become `tracing` calls, so each failure is both on stderr and in the file. The CLI's own `eprintln!("factory: {e}")` exit messages and the `note:` lines stay as plain `eprintln!`, because they are the command's result. `factory-shots` and `fake-claude` binaries are not instrumented.
+stderr keeps human output at `warn` and above, plus the one-time factoryd notices (`sup.notice`, for example the daily budget being reached) at `info`, because factoryd prints them today. Today only the report's `errors`, `bad_children`, `orphans` and `notices` reach stderr (`supervisor.rs:194-202`, `factoryd.rs:65-72`); `sup.start`, `sup.finish` and `sup.reject` are new, log-only events. The `new_lines` de-duplication runs before the log call, so a repeated line is neither printed nor logged twice. Each site keeps its level: a failure is `error`, a progress line is `info`. The form is `<level> <event>: <msg>` (for example `error step.error: kb refresh error for job 003: ...`). The 30 `eprintln!` sites in the driver and factoryd become `tracing` calls, so each failure is both on stderr and in the file. The CLI's own `eprintln!("factory: {e}")` exit messages and the `note:` lines stay as plain `eprintln!`, because they are the command's result. `factory-shots` and `fake-claude` binaries are not instrumented.
 
 ### 7. `factory log`
 
@@ -153,7 +155,7 @@ stderr keeps human output at `warn` and above, plus the factoryd tick lines (`su
 - `factory-telemetry` unit tests: `line_has_ts_level_scope_event` , `span_fields_reach_the_line`, `message_is_cut_to_300_chars`, `sensitive_field_names_are_redacted`, `weighted_tokens_is_the_one_field_not_redacted`, `planted_token_never_reaches_the_file`, `command_value_of_a_sensitive_flag_is_redacted`, `rotation_moves_files_to_1_2_3`, `oldest_file_is_dropped`, `concurrent_writers_lose_no_line` (threads past the cap), `init_twice_returns_already_installed`, `write_error_is_counted_not_returned`, `env_filter_beats_log_level`, `invalid_env_filter_is_ignored`, `read_log_filters_by_job_and_level`, `read_log_tail_and_missing_file`, `read_log_skips_corrupt_line`.
 - `factory-core`: `log_level_unset_by_default_and_takes_only_known_values` in `config.rs`; `log_file_is_in_the_state_dir` in `layout.rs`; `factoryd_log_file_is_in_the_home` in `home.rs`.
 - `factory-engine` (`tests/runloop.rs`, `tests/merge.rs`): a capturing layer under `tracing::subscriber::with_default` asserts `stage_change_is_logged_with_from_and_to`, `agent_run_logs_start_and_end`, `merge_logs_sha`, `park_logs_a_warning`, `kb_failure_logs_step_error_and_merge_result_is_unchanged`.
-- `factory-supervisor`: `supervisor_logs_start_and_finish` in `tests/recovery.rs` style.
+- `factory-supervisor`: `supervisor_logs_start_and_finish_without_printing_them` in `tests/recovery.rs` style.
 - `factory-cli`: `tests/log_cmd.rs` with `log_prints_a_jobs_lines`, `log_level_filter`, `no_log_yet_exits_zero`; `tests/no_hardcoded_paths.rs` must still pass; `tests/e2e.rs` asserts a run writes `log.jsonl` with a `merge.done` line and no secret.
 - Commands: `cargo test -j4 -p factory-telemetry`, `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine`, `cargo test -j4 -p factory-supervisor`, `cargo test -j4 -p factory-cli`.
 
