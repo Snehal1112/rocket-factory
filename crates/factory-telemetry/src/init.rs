@@ -57,12 +57,18 @@ fn validate_directives(spec: &str) -> Result<(), String> {
             return Err(format!("{lvl:?} is not a level"));
         }
         if let Some(t) = target {
-            if t.is_empty() || !t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ':') {
+            if t.is_empty()
+                || !t
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
+            {
                 return Err(format!("{t:?} is not a target"));
             }
         }
     }
-    EnvFilter::try_new(spec).map(|_| ()).map_err(|e| e.to_string())
+    EnvFilter::try_new(spec)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn filter_for(spec: &str) -> EnvFilter {
@@ -73,8 +79,8 @@ fn filter_for(spec: &str) -> EnvFilter {
 pub fn init(target: LogTarget, level: &str, env: Option<&str>) -> Result<Guard, TelemetryError> {
     let (spec, note) = resolve_filter(level, env);
     let file = Arc::new(RotatingFile::new(target.path, LOG_CAP_BYTES));
-    let json = JsonLayer::new(file.clone(), target.project, target.scope)
-        .with_filter(filter_for(&spec));
+    let json =
+        JsonLayer::new(file.clone(), target.project, target.scope).with_filter(filter_for(&spec));
     let subscriber = Registry::default().with(json).with(StderrLayer);
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|_| TelemetryError::AlreadyInstalled)?;
@@ -169,7 +175,11 @@ mod tests {
         let layer = JsonLayer::new(file, None, Scope::Cli);
         let sub = Registry::default().with(layer);
         tracing::subscriber::with_default(sub, || {
-            tracing::info!(event = "a", api_token = "sekret-123", msg = "no secrets here");
+            tracing::info!(
+                event = "a",
+                api_token = "sekret-123",
+                msg = "no secrets here"
+            );
         });
         let text = std::fs::read_to_string(&path).expect("read");
         assert!(!text.contains("sekret-123"));

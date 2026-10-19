@@ -105,7 +105,11 @@ mod tests {
         write(
             dir.path(),
             "log.jsonl",
-            &[line("info", "a", 1), line("info", "a", 2), line("info", "a", 3)],
+            &[
+                line("info", "a", 1),
+                line("info", "a", 2),
+                line("info", "a", 3),
+            ],
         );
         let f = LogFilter {
             tail: 2,
@@ -138,7 +142,11 @@ mod tests {
         let got = read_log(&dir.path().join("log.jsonl"), &LogFilter::default()).expect("read");
         assert_eq!(
             got,
-            vec![line("info", "a", 1), line("info", "a", 2), line("info", "a", 3)]
+            vec![
+                line("info", "a", 1),
+                line("info", "a", 2),
+                line("info", "a", 3)
+            ]
         );
     }
 }

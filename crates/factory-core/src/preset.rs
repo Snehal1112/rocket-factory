@@ -19,10 +19,22 @@ static RUST: Preset = Preset {
     config: include_str!("../presets/rust/config.toml"),
     commit_context: include_str!("../presets/rust/commit-context.md"),
     agents: &[
-        ("factory-builder.md", include_str!("../presets/rust/agents/factory-builder.md")),
-        ("factory-code-reviewer.md", include_str!("../presets/rust/agents/factory-code-reviewer.md")),
-        ("factory-committer.md", include_str!("../presets/rust/agents/factory-committer.md")),
-        ("factory-kb-refresher.md", include_str!("../presets/rust/agents/factory-kb-refresher.md")),
+        (
+            "factory-builder.md",
+            include_str!("../presets/rust/agents/factory-builder.md"),
+        ),
+        (
+            "factory-code-reviewer.md",
+            include_str!("../presets/rust/agents/factory-code-reviewer.md"),
+        ),
+        (
+            "factory-committer.md",
+            include_str!("../presets/rust/agents/factory-committer.md"),
+        ),
+        (
+            "factory-kb-refresher.md",
+            include_str!("../presets/rust/agents/factory-kb-refresher.md"),
+        ),
     ],
 };
 
@@ -31,10 +43,22 @@ static GO: Preset = Preset {
     config: include_str!("../presets/go/config.toml"),
     commit_context: include_str!("../presets/go/commit-context.md"),
     agents: &[
-        ("factory-builder.md", include_str!("../presets/go/agents/factory-builder.md")),
-        ("factory-code-reviewer.md", include_str!("../presets/go/agents/factory-code-reviewer.md")),
-        ("factory-committer.md", include_str!("../presets/go/agents/factory-committer.md")),
-        ("factory-kb-refresher.md", include_str!("../presets/go/agents/factory-kb-refresher.md")),
+        (
+            "factory-builder.md",
+            include_str!("../presets/go/agents/factory-builder.md"),
+        ),
+        (
+            "factory-code-reviewer.md",
+            include_str!("../presets/go/agents/factory-code-reviewer.md"),
+        ),
+        (
+            "factory-committer.md",
+            include_str!("../presets/go/agents/factory-committer.md"),
+        ),
+        (
+            "factory-kb-refresher.md",
+            include_str!("../presets/go/agents/factory-kb-refresher.md"),
+        ),
     ],
 };
 
@@ -48,16 +72,35 @@ pub fn embedded(name: &str) -> Option<&'static Preset> {
 
 /// The agent texts that earlier versions seeded: (preset, file, text). `refresh` replaces these without `--force`.
 static LEGACY: [(&str, &str, &str); 4] = [
-    ("rust", "factory-builder.md", include_str!("../presets/legacy/rust-factory-builder.md")),
-    ("rust", "factory-code-reviewer.md", include_str!("../presets/legacy/rust-factory-code-reviewer.md")),
-    ("go", "factory-builder.md", include_str!("../presets/legacy/go-factory-builder.md")),
-    ("go", "factory-code-reviewer.md", include_str!("../presets/legacy/go-factory-code-reviewer.md")),
+    (
+        "rust",
+        "factory-builder.md",
+        include_str!("../presets/legacy/rust-factory-builder.md"),
+    ),
+    (
+        "rust",
+        "factory-code-reviewer.md",
+        include_str!("../presets/legacy/rust-factory-code-reviewer.md"),
+    ),
+    (
+        "go",
+        "factory-builder.md",
+        include_str!("../presets/legacy/go-factory-builder.md"),
+    ),
+    (
+        "go",
+        "factory-code-reviewer.md",
+        include_str!("../presets/legacy/go-factory-code-reviewer.md"),
+    ),
 ];
 
 /// Every file of a preset as (path under `presets_dir`, embedded text, legacy file key).
 fn files_of<'a>(presets_dir: &Path, p: &'a Preset) -> Vec<(PathBuf, &'a str, Option<&'a str>)> {
     let base = presets_dir.join(p.name);
-    let mut files = vec![(base.join("config.toml"), p.config, None), (base.join("commit-context.md"), p.commit_context, None)];
+    let mut files = vec![
+        (base.join("config.toml"), p.config, None),
+        (base.join("commit-context.md"), p.commit_context, None),
+    ];
     for (file, text) in p.agents {
         files.push((base.join("agents").join(file), *text, Some(*file)));
     }
@@ -115,7 +158,11 @@ pub fn refresh(presets_dir: &Path, force: bool) -> Result<RefreshReport, CoreErr
                 report.skipped.push(path);
                 continue;
             }
-            let is_legacy = agent.is_some_and(|file| LEGACY.iter().any(|(n, f, old)| *n == name && *f == file && old.as_bytes() == existing));
+            let is_legacy = agent.is_some_and(|file| {
+                LEGACY
+                    .iter()
+                    .any(|(n, f, old)| *n == name && *f == file && old.as_bytes() == existing)
+            });
             if is_legacy || force {
                 write_atomic(&path, text.as_bytes())?;
                 report.updated.push(path);
@@ -140,7 +187,10 @@ mod tests {
             let cfg = Config::parse(p.config).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(!cfg.degraded);
             assert!(!cfg.risk_paths.is_empty(), "{name} sets risk_paths");
-            assert!(!cfg.builder_rules.is_empty() && !cfg.reviewer_rules.is_empty(), "{name} fills the prompt keys");
+            assert!(
+                !cfg.builder_rules.is_empty() && !cfg.reviewer_rules.is_empty(),
+                "{name} fills the prompt keys"
+            );
             assert!(!cfg.checks.is_empty(), "{name} has checks");
         }
         assert!(embedded("cobol").is_none());
@@ -152,12 +202,33 @@ mod tests {
             let p = embedded(name).expect("preset");
             let mut names: Vec<&str> = p.agents.iter().map(|(n, _)| *n).collect();
             names.sort();
-            assert_eq!(names, ["factory-builder.md", "factory-code-reviewer.md", "factory-committer.md", "factory-kb-refresher.md"]);
+            assert_eq!(
+                names,
+                [
+                    "factory-builder.md",
+                    "factory-code-reviewer.md",
+                    "factory-committer.md",
+                    "factory-kb-refresher.md"
+                ]
+            );
             for (file, text) in p.agents {
                 assert!(text.starts_with("---\n"), "{name}/{file} has frontmatter");
-                assert!(text.contains(&format!("name: {}", file.trim_end_matches(".md"))), "{name}/{file} names itself");
-                for banned in ["Rocket", "src-tauri", "shadcn", "rocket-", "tools/factory", "yarn"] {
-                    assert!(!text.contains(banned), "{name}/{file} must not mention {banned}");
+                assert!(
+                    text.contains(&format!("name: {}", file.trim_end_matches(".md"))),
+                    "{name}/{file} names itself"
+                );
+                for banned in [
+                    "Rocket",
+                    "src-tauri",
+                    "shadcn",
+                    "rocket-",
+                    "tools/factory",
+                    "yarn",
+                ] {
+                    assert!(
+                        !text.contains(banned),
+                        "{name}/{file} must not mention {banned}"
+                    );
                 }
             }
             assert!(!p.commit_context.contains("Rocket"));
@@ -168,9 +239,15 @@ mod tests {
     fn rust_checks_use_cargo_with_j4_and_go_checks_use_go() {
         let rust = Config::parse(embedded("rust").expect("rust").config).expect("parse");
         let all: Vec<&String> = rust.checks.iter().flat_map(|c| &c.commands).collect();
-        assert!(all.iter().all(|c| !c.starts_with("cargo") || c.contains("-j4")));
+        assert!(all
+            .iter()
+            .all(|c| !c.starts_with("cargo") || c.contains("-j4")));
         let go = Config::parse(embedded("go").expect("go").config).expect("parse");
-        assert!(go.checks.iter().flat_map(|c| &c.commands).any(|c| c.starts_with("go test")));
+        assert!(go
+            .checks
+            .iter()
+            .flat_map(|c| &c.commands)
+            .any(|c| c.starts_with("go test")));
     }
 
     #[test]
@@ -178,7 +255,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         let wrote = seed(dir.path()).expect("seed");
         assert!(wrote.iter().any(|p| p.ends_with("rust/config.toml")));
-        assert!(wrote.iter().any(|p| p.ends_with("go/agents/factory-builder.md")));
+        assert!(wrote
+            .iter()
+            .any(|p| p.ends_with("go/agents/factory-builder.md")));
         let edited = dir.path().join("rust/config.toml");
         std::fs::write(&edited, "# mine\n").expect("edit");
         std::fs::remove_file(dir.path().join("go/commit-context.md")).expect("rm");
@@ -217,7 +296,10 @@ mod tests {
         std::fs::write(&path, legacy_builder()).expect("old");
         let r = refresh(dir.path(), false).expect("refresh");
         assert_eq!(r.updated, vec![path.clone()]);
-        assert_eq!(std::fs::read_to_string(&path).expect("read"), embedded("rust").expect("rust").agents[0].1);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            embedded("rust").expect("rust").agents[0].1
+        );
     }
 
     fn shipped(preset: &str, file: &str) -> &'static str {
@@ -231,7 +313,11 @@ mod tests {
     }
 
     fn other_preset(name: &str) -> &'static str {
-        if name == "rust" { "go" } else { "rust" }
+        if name == "rust" {
+            "go"
+        } else {
+            "rust"
+        }
     }
 
     #[test]
@@ -240,7 +326,11 @@ mod tests {
         for (name, file, old) in LEGACY.iter() {
             assert!(seen.insert((*name, *file)), "{name}/{file} appears twice");
             assert!(!old.trim().is_empty(), "{name}/{file} legacy text is empty");
-            assert_ne!(*old, shipped(name, file), "{name}/{file} legacy text equals the shipped text");
+            assert_ne!(
+                *old,
+                shipped(name, file),
+                "{name}/{file} legacy text equals the shipped text"
+            );
         }
     }
 
@@ -253,9 +343,16 @@ mod tests {
             std::fs::write(&path, old).expect("old");
             let r = refresh(dir.path(), false).expect("refresh");
             assert_eq!(r.updated, vec![path.clone()], "{name}/{file}");
-            assert!(r.refused.is_empty() && r.written.is_empty(), "{name}/{file}");
+            assert!(
+                r.refused.is_empty() && r.written.is_empty(),
+                "{name}/{file}"
+            );
             assert_eq!(r.skipped.len(), 11, "{name}/{file}");
-            assert_eq!(std::fs::read_to_string(&path).expect("read"), shipped(name, file), "{name}/{file}");
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("read"),
+                shipped(name, file),
+                "{name}/{file}"
+            );
         }
     }
 
@@ -268,7 +365,11 @@ mod tests {
             let wrong_preset = dir.path().join(other).join("agents").join(file);
             std::fs::write(&wrong_preset, old).expect("write");
             let r = refresh(dir.path(), false).expect("refresh");
-            assert_eq!(r.refused, vec![wrong_preset.clone()], "{name}/{file} in {other}");
+            assert_eq!(
+                r.refused,
+                vec![wrong_preset.clone()],
+                "{name}/{file} in {other}"
+            );
             assert!(r.updated.is_empty(), "{name}/{file} in {other}");
             assert_eq!(std::fs::read_to_string(&wrong_preset).expect("read"), *old);
         }
@@ -285,7 +386,11 @@ mod tests {
             let r = refresh(dir.path(), false).expect("refresh");
             assert_eq!(r.refused, vec![path.clone()], "{name}/{file}");
             assert!(r.updated.is_empty(), "{name}/{file}");
-            assert_eq!(std::fs::read_to_string(&path).expect("read"), edited, "{name}/{file}");
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("read"),
+                edited,
+                "{name}/{file}"
+            );
         }
     }
 
@@ -309,7 +414,10 @@ mod tests {
         let r = refresh(dir.path(), true).expect("refresh");
         assert_eq!(r.updated, vec![path.clone()]);
         assert!(r.refused.is_empty());
-        assert_eq!(std::fs::read_to_string(&path).expect("read"), embedded("go").expect("go").agents[1].1);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            embedded("go").expect("go").agents[1].1
+        );
     }
 
     #[test]
@@ -323,7 +431,13 @@ mod tests {
         std::fs::create_dir_all(repo_layer.parent().expect("parent")).expect("mkdir");
         std::fs::write(&repo_layer, "# repo override\n").expect("write");
         refresh(&presets, true).expect("refresh");
-        assert_eq!(std::fs::read_to_string(&layer).expect("read"), "# project override\n");
-        assert_eq!(std::fs::read_to_string(&repo_layer).expect("read"), "# repo override\n");
+        assert_eq!(
+            std::fs::read_to_string(&layer).expect("read"),
+            "# project override\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&repo_layer).expect("read"),
+            "# repo override\n"
+        );
     }
 }

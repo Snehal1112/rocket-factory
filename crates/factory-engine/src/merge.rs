@@ -41,7 +41,9 @@ pub fn park(driver: &Driver, id: &str, reason: &str) -> Result<(), EngineError> 
     }
     // The ledger takes one line, so the reason is folded into a single line.
     let one_line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
-    driver.ledger(&job).ruling(&format!("parked in needs-human: {one_line}"))?;
+    driver
+        .ledger(&job)
+        .ruling(&format!("parked in needs-human: {one_line}"))?;
     Ok(())
 }
 
@@ -98,7 +100,12 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
 pub(crate) fn git_op<T, E>(op: &str, f: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
     let t = std::time::Instant::now();
     let r = f();
-    tracing::debug!(event = "git.op", op = op, ok = r.is_ok(), duration_ms = t.elapsed().as_millis() as u64);
+    tracing::debug!(
+        event = "git.op",
+        op = op,
+        ok = r.is_ok(),
+        duration_ms = t.elapsed().as_millis() as u64
+    );
     r
 }
 
@@ -107,22 +114,32 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
     let main = repo.base_branch().to_string();
     for _ in 0..=MAX_SYNCS {
         let job = driver.job(id)?;
-        let head = job.head.clone().ok_or_else(|| EngineError::Msg("job has no recorded head".into()))?;
-        let base = job.base.clone().ok_or_else(|| EngineError::Msg("job has no recorded base".into()))?;
+        let head = job
+            .head
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no recorded head".into()))?;
+        let base = job
+            .base
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no recorded base".into()))?;
         // merge_no_ff does not check that main has not moved, so base_state decides first.
         let check = git_op("base_state", || repo.base_state(&base, &head))?;
         match check.state {
             // A crash after the merge commit but before the board update lands here.
             BaseState::Merged => return Ok(Step::Merged(check.main_sha)),
             BaseState::BaseNotMain => {
-                return Ok(Step::Park(format!("the job base is not on {main}, a human must look at the branch")));
+                return Ok(Step::Park(format!(
+                    "the job base is not on {main}, a human must look at the branch"
+                )));
             }
             BaseState::Current | BaseState::MainMoved => {}
         }
         // A branch that was deleted after a hand merge is handled above, so the tip must exist here.
         let tip = git_op("tip", || repo.tip(&job.branch))?;
         if tip != head {
-            return Ok(Step::Park(format!("branch tip {tip} differs from the reviewed head {head}")));
+            return Ok(Step::Park(format!(
+                "branch tip {tip} differs from the reviewed head {head}"
+            )));
         }
         if let Preflight::Busy { reason } = git_op("preflight_main", || repo.preflight_main())? {
             return Ok(Step::Park(format!("{main} busy: {reason}")));
@@ -139,19 +156,30 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         match again.state {
             BaseState::Merged => return Ok(Step::Merged(again.main_sha)),
             BaseState::BaseNotMain => {
-                return Ok(Step::Park(format!("the job base is not on {main}, a human must look at the branch")));
+                return Ok(Step::Park(format!(
+                    "the job base is not on {main}, a human must look at the branch"
+                )));
             }
             BaseState::MainMoved => continue,
             BaseState::Current => {}
         }
-        return match git_op("merge_no_ff", || repo.merge_no_ff(&job.branch, &head, &message))? {
+        return match git_op("merge_no_ff", || {
+            repo.merge_no_ff(&job.branch, &head, &message)
+        })? {
             MergeOutcome::Merged { merge_sha } => Ok(Step::Merged(merge_sha)),
-            MergeOutcome::Conflict { paths } => Ok(Step::Park(format!("merge conflict in {}", paths.join(", ")))),
-            MergeOutcome::UpToDate => Ok(Step::Park(format!("nothing to merge, head already in {main}"))),
+            MergeOutcome::Conflict { paths } => Ok(Step::Park(format!(
+                "merge conflict in {}",
+                paths.join(", ")
+            ))),
+            MergeOutcome::UpToDate => Ok(Step::Park(format!(
+                "nothing to merge, head already in {main}"
+            ))),
             MergeOutcome::Refused { reason } => Ok(Step::Park(format!("merge refused: {reason}"))),
         };
     }
-    Ok(Step::Park(format!("{main} moved again after the maximum number of syncs")))
+    Ok(Step::Park(format!(
+        "{main} moved again after the maximum number of syncs"
+    )))
 }
 
 fn finish_merge(driver: &Driver, id: &str, sha: &str) -> Result<(), EngineError> {
@@ -161,6 +189,8 @@ fn finish_merge(driver: &Driver, id: &str, sha: &str) -> Result<(), EngineError>
         tick_plan(&plan, &driver.ledger(&job), sha)?;
     }
     let now = now_secs();
-    driver.store().update_job(id, |job| crate::ports::set_stage_logged(job, Stage::Merged, None, false, now))?;
+    driver.store().update_job(id, |job| {
+        crate::ports::set_stage_logged(job, Stage::Merged, None, false, now)
+    })?;
     Ok(())
 }

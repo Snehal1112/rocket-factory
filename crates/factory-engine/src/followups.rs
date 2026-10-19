@@ -26,7 +26,12 @@ fn strip_marker(line: &str) -> &str {
 fn title_of(body: &str) -> String {
     let first = body.split_once(". ").map_or(body, |(head, _)| head);
     let first = first.trim().trim_end_matches('.').trim();
-    first.chars().take(MAX_TITLE_CHARS).collect::<String>().trim_end().to_string()
+    first
+        .chars()
+        .take(MAX_TITLE_CHARS)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 /// The bullets under `## Follow-ups`. A continuation line joins the bullet above it, a blank line ends
@@ -53,7 +58,10 @@ pub fn follow_ups(spec: &str) -> Vec<FollowUp> {
     bodies
         .into_iter()
         .filter(|b| !b.is_empty())
-        .map(|body| FollowUp { title: title_of(&body), body })
+        .map(|body| FollowUp {
+            title: title_of(&body),
+            body,
+        })
         .collect()
 }
 
@@ -82,8 +90,14 @@ mod tests {
         let spec = "## Follow-ups\n- Merge QueryParam and Header\n  into one helper for both types.\n- Other\n";
         let items = follow_ups(spec);
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].title, "Merge QueryParam and Header into one helper for both types");
-        assert_eq!(items[0].body, "Merge QueryParam and Header into one helper for both types.");
+        assert_eq!(
+            items[0].title,
+            "Merge QueryParam and Header into one helper for both types"
+        );
+        assert_eq!(
+            items[0].body,
+            "Merge QueryParam and Header into one helper for both types."
+        );
     }
 
     #[test]

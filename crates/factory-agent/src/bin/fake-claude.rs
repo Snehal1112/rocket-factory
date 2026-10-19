@@ -11,7 +11,9 @@ fn emit(line: &str) {
 }
 
 fn init(session: &str) {
-    emit(&format!(r#"{{"type":"system","subtype":"init","session_id":"{session}"}}"#));
+    emit(&format!(
+        r#"{{"type":"system","subtype":"init","session_id":"{session}"}}"#
+    ));
 }
 
 fn assistant(id: &str, output: u64) {
@@ -37,7 +39,9 @@ fn main() {
             init("fake-1");
             assistant("m1", 5);
             assistant("m1", 50);
-            emit(r#"{"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"echo hi"}}],"usage":{"output_tokens":10}}}"#);
+            emit(
+                r#"{"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"echo hi"}}],"usage":{"output_tokens":10}}}"#,
+            );
             result("all good", false, "success");
         }
         "args" => {
@@ -48,7 +52,11 @@ fn main() {
             // The second prompt line names the variable to report.
             let name = prompt.lines().nth(1).map_or("", str::trim).to_string();
             init("fake-1");
-            result(&std::env::var(&name).unwrap_or_else(|_| "<unset>".to_string()), false, "success");
+            result(
+                &std::env::var(&name).unwrap_or_else(|_| "<unset>".to_string()),
+                false,
+                "success",
+            );
         }
         "flood" => {
             init("fake-1");

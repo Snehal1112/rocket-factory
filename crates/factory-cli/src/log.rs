@@ -8,7 +8,12 @@ const LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
 
 /// The log lines of this project, oldest first, joined with newlines.
 /// `no log yet` when neither the file nor a rotated file exists.
-pub fn run_log(ctx: &CliCtx, job: Option<&str>, level: Option<&str>, tail: usize) -> Result<String, CliError> {
+pub fn run_log(
+    ctx: &CliCtx,
+    job: Option<&str>,
+    level: Option<&str>,
+    tail: usize,
+) -> Result<String, CliError> {
     if let Some(l) = level {
         if !LEVELS.contains(&l.to_ascii_lowercase().as_str()) {
             return Err(CliError::Refused(format!(
@@ -30,6 +35,7 @@ pub fn run_log(ctx: &CliCtx, job: Option<&str>, level: Option<&str>, tail: usize
         min_level: level.map(str::to_string),
         tail,
     };
-    let lines = read_log(&path, &filter).map_err(|e| CliError::Refused(format!("cannot read the log: {e}")))?;
+    let lines = read_log(&path, &filter)
+        .map_err(|e| CliError::Refused(format!("cannot read the log: {e}")))?;
     Ok(lines.join("\n"))
 }

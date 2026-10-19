@@ -53,7 +53,12 @@ enum Msg {
 
 impl ClaudeRunner {
     pub fn new(program: impl Into<OsString>, caps: Caps, sink: EventSink) -> ClaudeRunner {
-        ClaudeRunner { program: program.into(), caps, sink, allow_api_key: api_key_allowed_by_env() }
+        ClaudeRunner {
+            program: program.into(),
+            caps,
+            sink,
+            allow_api_key: api_key_allowed_by_env(),
+        }
     }
 
     /// Overrides the `FACTORY_ALLOW_API_KEY` setting. Meant for tests.
@@ -92,7 +97,8 @@ impl ClaudeRunner {
             }
         }
         let mut child = command.spawn().map_err(AgentError::Spawn)?;
-        let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
+        let (stdin, stdout, stderr) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
             let _ = child.kill();
             let _ = child.wait();
@@ -114,7 +120,8 @@ impl ClaudeRunner {
         let mut last_event = Instant::now();
         let mut stop: Option<StopReason> = None;
         let mut warned = false;
-        self.sink.emit(&self.event(spec, EventKind::Start, spec.used_before));
+        self.sink
+            .emit(&self.event(spec, EventKind::Start, spec.used_before));
 
         loop {
             match rx.recv_timeout(POLL) {
@@ -138,7 +145,8 @@ impl ClaudeRunner {
                             }
                             BudgetState::Warn if !warned => {
                                 warned = true;
-                                self.sink.emit(&self.event(spec, EventKind::BudgetWarn, used));
+                                self.sink
+                                    .emit(&self.event(spec, EventKind::BudgetWarn, used));
                             }
                             _ => {}
                         }
@@ -183,19 +191,34 @@ impl ClaudeRunner {
         let (stop_reason, error) = match stop {
             Some(reason) => (reason, None),
             None if !state.has_result() => {
-                let msg = format!("claude exited without a result (exit {exit_code:?}): {}", stderr_tail.trim());
+                let msg = format!(
+                    "claude exited without a result (exit {exit_code:?}): {}",
+                    stderr_tail.trim()
+                );
                 (StopReason::Failed, Some(msg))
             }
             None if state.result_is_error => {
                 let subtype = state.result_subtype.clone().map_or(String::new(), |s| s);
-                let reason = if subtype.contains("max_turns") { StopReason::TurnLimit } else { StopReason::Failed };
+                let reason = if subtype.contains("max_turns") {
+                    StopReason::TurnLimit
+                } else {
+                    StopReason::Failed
+                };
                 (reason, Some(format!("claude reported {subtype}")))
             }
             None => (StopReason::Done, None),
         };
 
-        let mut stop_event = self.event(spec, EventKind::Stop, spec.used_before.saturating_add(weighted));
-        stop_event.last_message = Some(if result_text.is_empty() { error.clone().map_or(String::new(), |e| e) } else { result_text.clone() });
+        let mut stop_event = self.event(
+            spec,
+            EventKind::Stop,
+            spec.used_before.saturating_add(weighted),
+        );
+        stop_event.last_message = Some(if result_text.is_empty() {
+            error.clone().map_or(String::new(), |e| e)
+        } else {
+            result_text.clone()
+        });
         self.sink.emit(&stop_event);
 
         Ok(AgentRun {

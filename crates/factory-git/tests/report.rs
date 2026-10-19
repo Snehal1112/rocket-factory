@@ -7,7 +7,10 @@ use git2::Repository;
 fn job_worktree(fx: &Fixture) -> (Repo, Worktree) {
     let repo = fx.repo();
     let wt = repo
-        .create_worktree(&JobRef { id: "001".into(), slug: "demo".into() })
+        .create_worktree(&JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+        })
         .expect("create worktree");
     (repo, wt)
 }
@@ -26,14 +29,38 @@ fn staged_report_describes_the_staged_change() {
     repo.stage_all(&wt).expect("stage");
 
     let report = repo.staged_report(&wt, 5).expect("report");
-    assert!(report.status.starts_with("On branch factory/001-demo\n"), "status: {}", report.status);
-    assert!(report.status.contains("Changes to be committed:"), "status: {}", report.status);
-    assert!(report.status.contains("\tmodified:   keep.txt\n"), "status: {}", report.status);
-    assert!(report.status.contains("\tnew file:   new.txt\n"), "status: {}", report.status);
+    assert!(
+        report.status.starts_with("On branch factory/001-demo\n"),
+        "status: {}",
+        report.status
+    );
+    assert!(
+        report.status.contains("Changes to be committed:"),
+        "status: {}",
+        report.status
+    );
+    assert!(
+        report.status.contains("\tmodified:   keep.txt\n"),
+        "status: {}",
+        report.status
+    );
+    assert!(
+        report.status.contains("\tnew file:   new.txt\n"),
+        "status: {}",
+        report.status
+    );
     assert!(report.stat.contains("keep.txt"), "stat: {}", report.stat);
-    assert!(report.diff.contains("+++ b/keep.txt"), "diff: {}", report.diff);
+    assert!(
+        report.diff.contains("+++ b/keep.txt"),
+        "diff: {}",
+        report.diff
+    );
     assert!(report.diff.contains("+two\n"), "diff: {}", report.diff);
-    assert!(report.log[0].ends_with("feat(x): add keep"), "log: {:?}", report.log);
+    assert!(
+        report.log[0].ends_with("feat(x): add keep"),
+        "log: {:?}",
+        report.log
+    );
 }
 
 #[test]
@@ -54,7 +81,11 @@ fn staged_report_with_nothing_staged_has_an_empty_diff() {
     let fx = Fixture::new();
     let (repo, wt) = job_worktree(&fx);
     let report = repo.staged_report(&wt, 5).expect("report");
-    assert!(report.status.contains("nothing to commit"), "status: {}", report.status);
+    assert!(
+        report.status.contains("nothing to commit"),
+        "status: {}",
+        report.status
+    );
     assert!(report.diff.is_empty());
     assert!(report.stat.is_empty());
 }
@@ -67,6 +98,10 @@ fn staged_report_shows_a_deletion() {
     repo.stage_all(&wt).expect("stage");
 
     let report = repo.staged_report(&wt, 5).expect("report");
-    assert!(report.status.contains("\tdeleted:    base.txt\n"), "status: {}", report.status);
+    assert!(
+        report.status.contains("\tdeleted:    base.txt\n"),
+        "status: {}",
+        report.status
+    );
     assert!(report.diff.contains("-base\n"), "diff: {}", report.diff);
 }

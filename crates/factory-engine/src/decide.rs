@@ -24,15 +24,24 @@ pub struct DecideInput<'a> {
 pub fn decide(i: &DecideInput) -> Decision {
     // Decision 6: a risky diff always stops for the human.
     if i.class == DiffClass::Risky {
-        return Decision::NeedsHuman { kind: ParkKind::RiskyDiff, reason: format!("risky diff: {}", i.risky_summary) };
+        return Decision::NeedsHuman {
+            kind: ParkKind::RiskyDiff,
+            reason: format!("risky diff: {}", i.risky_summary),
+        };
     }
     if i.budget == BudgetState::Stop {
-        return Decision::NeedsHuman { kind: ParkKind::BudgetStopped, reason: "budget is stopped".to_string() };
+        return Decision::NeedsHuman {
+            kind: ParkKind::BudgetStopped,
+            reason: "budget is stopped".to_string(),
+        };
     }
     if i.diff_lines > i.diff_cap {
         return Decision::NeedsHuman {
             kind: ParkKind::DiffTooLarge,
-            reason: format!("diff has {} changed lines, the cap is {}", i.diff_lines, i.diff_cap),
+            reason: format!(
+                "diff has {} changed lines, the cap is {}",
+                i.diff_lines, i.diff_cap
+            ),
         };
     }
     let used = fix_rounds_used(i.round);
@@ -41,7 +50,10 @@ pub fn decide(i: &DecideInput) -> Decision {
         return if rounds_left {
             Decision::FixRound
         } else {
-            Decision::NeedsHuman { kind: ParkKind::ChecksFailed, reason: format!("checks failed after {used} fix rounds") }
+            Decision::NeedsHuman {
+                kind: ParkKind::ChecksFailed,
+                reason: format!("checks failed after {used} fix rounds"),
+            }
         };
     }
     match i.verdict {
@@ -51,7 +63,10 @@ pub fn decide(i: &DecideInput) -> Decision {
             if rounds_left {
                 Decision::FixRound
             } else {
-                Decision::NeedsHuman { kind: ParkKind::ChangesRemain, reason: format!("changes remain after {used} fix rounds") }
+                Decision::NeedsHuman {
+                    kind: ParkKind::ChangesRemain,
+                    reason: format!("changes remain after {used} fix rounds"),
+                }
             }
         }
     }
@@ -70,6 +85,15 @@ pub fn risk_summary(paths: &[String], cfg: &Config) -> String {
         .collect();
     let shown: Vec<&str> = risky.iter().take(5).map(|s| s.as_str()).collect();
     let more = risky.len().saturating_sub(shown.len());
-    let tail = if more > 0 { format!(" (+{more} more)") } else { String::new() };
-    format!("risky paths ({}): {}{}", risky.len(), shown.join(", "), tail)
+    let tail = if more > 0 {
+        format!(" (+{more} more)")
+    } else {
+        String::new()
+    };
+    format!(
+        "risky paths ({}): {}{}",
+        risky.len(),
+        shown.join(", "),
+        tail
+    )
 }

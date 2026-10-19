@@ -25,7 +25,10 @@ fn built(fx: &Fixture, files: Vec<(&'static str, &'static str)>) -> ScriptedRunn
 }
 
 fn only_src_checks(fx: &mut Fixture) {
-    fx.config.checks = vec![CheckRule { paths: vec!["src/**".into()], commands: vec!["false".into()] }];
+    fx.config.checks = vec![CheckRule {
+        paths: vec!["src/**".into()],
+        commands: vec!["false".into()],
+    }];
 }
 
 fn reviewer(reply: &'static str) -> ScriptedRunner {
@@ -39,14 +42,24 @@ fn a_code_diff_with_no_mapped_check_parks_as_no_checks_before_the_review() {
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
     match out {
-        StageOutcome::NeedsHuman(r) => assert!(r.contains("no check ran") && r.contains("a.txt"), "{r}"),
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("no check ran") && r.contains("a.txt"), "{r}")
+        }
         other => panic!("unexpected {other:?}"),
     }
     assert_eq!(fx.job().stage, Stage::NeedsHuman);
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, ParkKind::NoChecks);
-    assert!(rec.next.iter().any(|n| n.contains("--without-review")), "{:?}", rec.next);
-    assert!(rec.parts.iter().any(|p| p.text.contains("PASS none")), "{:?}", rec.parts);
+    assert!(
+        rec.next.iter().any(|n| n.contains("--without-review")),
+        "{:?}",
+        rec.next
+    );
+    assert!(
+        rec.parts.iter().any(|p| p.text.contains("PASS none")),
+        "{:?}",
+        rec.parts
+    );
 }
 
 #[test]
@@ -77,7 +90,9 @@ fn a_risky_code_diff_with_no_mapped_check_is_left_to_decide() {
 fn the_final_checks_gate_parks_an_approved_job() {
     let mut fx = committing_fixture();
     let runner = built(&fx, vec![("a.txt", "x\n")]);
-    fx.engine(&runner).checks_stage().expect("checks mapped at round 1");
+    fx.engine(&runner)
+        .checks_stage()
+        .expect("checks mapped at round 1");
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let review = fx.engine(&rr).review_stage().expect("review");
     assert_eq!(review.decision, Decision::AutoMerge);
@@ -85,7 +100,10 @@ fn the_final_checks_gate_parks_an_approved_job() {
     only_src_checks(&mut fx);
     let out = fx.engine(&rr).apply_decision(&review).expect("apply");
     assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
-    assert_eq!(ParkRecord::read(&fx.job_dir).expect("park.json").kind, ParkKind::NoChecks);
+    assert_eq!(
+        ParkRecord::read(&fx.job_dir).expect("park.json").kind,
+        ParkKind::NoChecks
+    );
     assert_ne!(fx.job().stage, Stage::Approve);
 }
 
@@ -139,7 +157,11 @@ fn require_tests_parks_a_code_diff_with_no_test() {
     assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, ParkKind::NoTests);
-    assert!(rec.next.iter().any(|n| n.contains("--without-review")), "{:?}", rec.next);
+    assert!(
+        rec.next.iter().any(|n| n.contains("--without-review")),
+        "{:?}",
+        rec.next
+    );
 }
 
 #[test]
@@ -155,10 +177,17 @@ fn require_tests_does_not_park_a_docs_only_diff() {
 fn a_failing_check_still_wins_over_the_no_tests_rule() {
     let mut fx = committing_fixture();
     fx.config.require_tests = true;
-    fx.config.checks = vec![CheckRule { paths: vec!["**".into()], commands: vec!["false".into()] }];
+    fx.config.checks = vec![CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["false".into()],
+    }];
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
-    assert_eq!(out, StageOutcome::Advanced(Stage::Build), "a fix round, not a no-tests park");
+    assert_eq!(
+        out,
+        StageOutcome::Advanced(Stage::Build),
+        "a fix round, not a no-tests park"
+    );
 }
 
 fn approve(fx: &Fixture) {
@@ -166,7 +195,10 @@ fn approve(fx: &Fixture) {
     let e = fx.engine(&rr);
     let review = e.review_stage().expect("review");
     assert_eq!(review.decision, Decision::AutoMerge);
-    assert_eq!(e.apply_decision(&review).expect("apply"), StageOutcome::Advanced(Stage::Approve));
+    assert_eq!(
+        e.apply_decision(&review).expect("apply"),
+        StageOutcome::Advanced(Stage::Approve)
+    );
 }
 
 #[test]

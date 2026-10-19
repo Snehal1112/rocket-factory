@@ -53,14 +53,24 @@ pub fn resolve(home: &Home, name: &str, tip: &dyn BaseTipFiles) -> Result<Resolv
     let agents = merged_agents(home, name, &file, tip, &mut problems, &mut notes);
     let config = match merged {
         Some(cfg) if problems.is_empty() => cfg,
-        _ => Config { base_branch: safe_base_branch(&file), ..Config::fail_closed() },
+        _ => Config {
+            base_branch: safe_base_branch(&file),
+            ..Config::fail_closed()
+        },
     };
-    Ok(Resolved { config, layout, agents, problems, notes })
+    Ok(Resolved {
+        config,
+        layout,
+        agents,
+        problems,
+        notes,
+    })
 }
 
 /// The project's base branch when it is valid, else the default one.
 fn safe_base_branch(file: &ProjectFile) -> String {
-    file.base_branch().unwrap_or_else(|| Config::default().base_branch)
+    file.base_branch()
+        .unwrap_or_else(|| Config::default().base_branch)
 }
 
 fn strings(value: Option<&toml::Value>, key: &str, problems: &mut Vec<String>) -> Vec<String> {
@@ -94,7 +104,12 @@ fn tables(value: Option<&toml::Value>, key: &str, problems: &mut Vec<String>) ->
     }
 }
 
-fn merged_config(home: &Home, file: &ProjectFile, tip: &dyn BaseTipFiles, problems: &mut Vec<String>) -> Option<Config> {
+fn merged_config(
+    home: &Home,
+    file: &ProjectFile,
+    tip: &dyn BaseTipFiles,
+    problems: &mut Vec<String>,
+) -> Option<Config> {
     if project::validate_name(&file.preset).is_err() {
         problems.push(format!("preset name {:?} is not valid", file.preset));
         return None;
@@ -110,7 +125,10 @@ fn merged_config(home: &Home, file: &ProjectFile, tip: &dyn BaseTipFiles, proble
     let mut table: toml::Table = match toml::from_str(&text) {
         Ok(t) => t,
         Err(e) => {
-            problems.push(format!("preset {} is not valid TOML: {e}", preset_path.display()));
+            problems.push(format!(
+                "preset {} is not valid TOML: {e}",
+                preset_path.display()
+            ));
             return None;
         }
     };
@@ -126,17 +144,25 @@ fn merged_config(home: &Home, file: &ProjectFile, tip: &dyn BaseTipFiles, proble
     let mut checks = tables(table.get("checks"), "checks", problems);
 
     match tip.read_file(OVERRIDE_FILE) {
-        Err(e) => problems.push(format!("cannot read {OVERRIDE_FILE} from the base branch: {e}")),
+        Err(e) => problems.push(format!(
+            "cannot read {OVERRIDE_FILE} from the base branch: {e}"
+        )),
         Ok(None) => {}
         Ok(Some(text)) => match toml::from_str::<toml::Table>(&text) {
             Err(e) => problems.push(format!("{OVERRIDE_FILE} is not valid TOML: {e}")),
             Ok(over) => {
                 for key in over.keys() {
                     if key != "risk_paths" && key != "checks" {
-                        problems.push(format!("{OVERRIDE_FILE} may only set risk_paths and checks, not {key:?}"));
+                        problems.push(format!(
+                            "{OVERRIDE_FILE} may only set risk_paths and checks, not {key:?}"
+                        ));
                     }
                 }
-                risk.extend(strings(over.get("risk_paths"), "override risk_paths", problems));
+                risk.extend(strings(
+                    over.get("risk_paths"),
+                    "override risk_paths",
+                    problems,
+                ));
                 checks.extend(tables(over.get("checks"), "override checks", problems));
             }
         },
@@ -152,7 +178,10 @@ fn merged_config(home: &Home, file: &ProjectFile, tip: &dyn BaseTipFiles, proble
             true
         }
     });
-    table.insert("risk_paths".into(), toml::Value::Array(risk.into_iter().map(toml::Value::String).collect()));
+    table.insert(
+        "risk_paths".into(),
+        toml::Value::Array(risk.into_iter().map(toml::Value::String).collect()),
+    );
     if !checks.is_empty() {
         table.insert("checks".into(), toml::Value::Array(checks));
     }
@@ -190,7 +219,9 @@ fn read_agent_dir(dir: &Path, problems: &mut Vec<String>) -> Vec<(String, String
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
         if !path.is_file() || !name.ends_with(".md") {
             continue;
         }
@@ -215,13 +246,20 @@ fn merged_agents(
         let preset_agents = home.presets_dir().join(&file.preset).join("agents");
         by_name.extend(read_agent_dir(&preset_agents, problems));
     }
-    by_name.extend(read_agent_dir(&home.project_dir(name).join("agents"), problems));
+    by_name.extend(read_agent_dir(
+        &home.project_dir(name).join("agents"),
+        problems,
+    ));
     match tip.list_dir(AGENTS_DIR) {
-        Err(e) => problems.push(format!("cannot read {AGENTS_DIR} from the base branch: {e}")),
+        Err(e) => problems.push(format!(
+            "cannot read {AGENTS_DIR} from the base branch: {e}"
+        )),
         Ok(files) => {
             for (n, content) in files {
                 if n.contains('/') || n.contains('\\') || n.contains("..") {
-                    problems.push(format!("agent file name {n:?} in {AGENTS_DIR} is not valid"));
+                    problems.push(format!(
+                        "agent file name {n:?} in {AGENTS_DIR} is not valid"
+                    ));
                 } else if n.ends_with(".md") {
                     by_name.insert(n, content);
                 }
@@ -234,7 +272,9 @@ fn merged_agents(
         if is_agent_file_name(&name) {
             out.push(AgentFile { name, content });
         } else if !name.contains('/') && !name.contains('\\') && !name.contains("..") {
-            notes.push(format!("ignored agent file {name}: names must be factory-<name>.md"));
+            notes.push(format!(
+                "ignored agent file {name}: names must be factory-<name>.md"
+            ));
         }
     }
     out
@@ -304,8 +344,10 @@ mod tests {
     }
 
     fn preset_config(e: &Env) -> Config {
-        Config::parse(&std::fs::read_to_string(e.home.presets_dir().join("rust/config.toml")).expect("read"))
-            .expect("parse")
+        Config::parse(
+            &std::fs::read_to_string(e.home.presets_dir().join("rust/config.toml")).expect("read"),
+        )
+        .expect("parse")
     }
 
     fn assert_fail_closed(r: &Resolved) {
@@ -327,7 +369,12 @@ mod tests {
         let names: Vec<&str> = r.agents.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(
             names,
-            ["factory-builder.md", "factory-code-reviewer.md", "factory-committer.md", "factory-kb-refresher.md"]
+            [
+                "factory-builder.md",
+                "factory-code-reviewer.md",
+                "factory-committer.md",
+                "factory-kb-refresher.md"
+            ]
         );
     }
 
@@ -344,7 +391,12 @@ mod tests {
     #[test]
     fn tickets_on_merge_is_a_valid_project_setting() {
         let e = env();
-        assert!(!resolve(&e.home, "p", &Tip::default()).expect("resolve").config.tickets_on_merge);
+        assert!(
+            !resolve(&e.home, "p", &Tip::default())
+                .expect("resolve")
+                .config
+                .tickets_on_merge
+        );
         set_settings(&e, "tickets_on_merge = true\n");
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
         assert!(r.problems.is_empty(), "{:?}", r.problems);
@@ -354,8 +406,16 @@ mod tests {
     #[test]
     fn override_risk_paths_are_added_never_removed() {
         let e = env();
-        let base = resolve(&e.home, "p", &Tip::default()).expect("resolve").config.risk_paths;
-        let r = resolve(&e.home, "p", &Tip::with_override("risk_paths = [\"extra/**\"]\n")).expect("resolve");
+        let base = resolve(&e.home, "p", &Tip::default())
+            .expect("resolve")
+            .config
+            .risk_paths;
+        let r = resolve(
+            &e.home,
+            "p",
+            &Tip::with_override("risk_paths = [\"extra/**\"]\n"),
+        )
+        .expect("resolve");
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert!(r.config.risk_paths.len() > base.len());
         assert!(r.config.risk_paths.contains(&"extra/**".to_string()));
@@ -367,7 +427,10 @@ mod tests {
     #[test]
     fn an_empty_override_cannot_remove_risk_paths() {
         let e = env();
-        let base = resolve(&e.home, "p", &Tip::default()).expect("resolve").config.risk_paths;
+        let base = resolve(&e.home, "p", &Tip::default())
+            .expect("resolve")
+            .config
+            .risk_paths;
         let r = resolve(&e.home, "p", &Tip::with_override("risk_paths = []\n")).expect("resolve");
         assert_eq!(r.config.risk_paths, base);
     }
@@ -375,12 +438,24 @@ mod tests {
     #[test]
     fn factory_dir_is_always_a_risk_path_exactly_once() {
         let e = env();
-        let count = |r: &Resolved| r.config.risk_paths.iter().filter(|p| *p == FACTORY_RISK).count();
-        assert_eq!(count(&resolve(&e.home, "p", &Tip::default()).expect("r")), 1);
+        let count = |r: &Resolved| {
+            r.config
+                .risk_paths
+                .iter()
+                .filter(|p| *p == FACTORY_RISK)
+                .count()
+        };
+        assert_eq!(
+            count(&resolve(&e.home, "p", &Tip::default()).expect("r")),
+            1
+        );
         let listed = Tip::with_override("risk_paths = [\".factory/**\", \"x/**\"]\n");
         assert_eq!(count(&resolve(&e.home, "p", &listed).expect("r")), 1);
         set_settings(&e, "risk_paths = [\".factory/**\"]\n");
-        assert_eq!(count(&resolve(&e.home, "p", &Tip::default()).expect("r")), 1);
+        assert_eq!(
+            count(&resolve(&e.home, "p", &Tip::default()).expect("r")),
+            1
+        );
         // A degraded config matches everything, so it covers the folder too.
         let bad = resolve(&e.home, "p", &Tip::with_override("diff_cap_lines = 1\n")).expect("r");
         assert_eq!(bad.config.risk_paths, ["**"]);
@@ -395,7 +470,10 @@ mod tests {
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert_eq!(r.config.checks.len(), preset_checks.len() + 1);
         assert_eq!(&r.config.checks[..preset_checks.len()], &preset_checks[..]);
-        assert_eq!(r.config.checks.last().map(|c| c.commands.clone()), Some(vec!["yarn test".to_string()]));
+        assert_eq!(
+            r.config.checks.last().map(|c| c.commands.clone()),
+            Some(vec!["yarn test".to_string()])
+        );
     }
 
     #[test]
@@ -422,9 +500,16 @@ mod tests {
 
     #[test]
     fn any_other_override_key_fails_closed() {
-        for key in ["plan_rules = [\"x\"]", "diff_cap_lines = 10", "base_branch = \"x\"", "budget_weighted = 5", "risk_pathz = [\"a\"]"] {
+        for key in [
+            "plan_rules = [\"x\"]",
+            "diff_cap_lines = 10",
+            "base_branch = \"x\"",
+            "budget_weighted = 5",
+            "risk_pathz = [\"a\"]",
+        ] {
             let e = env_with(Some("v-4.0.0"), "rust");
-            let r = resolve(&e.home, "p", &Tip::with_override(&format!("{key}\n"))).expect("resolve");
+            let r =
+                resolve(&e.home, "p", &Tip::with_override(&format!("{key}\n"))).expect("resolve");
             assert_fail_closed(&r);
             assert_eq!(r.config.base_branch, "v-4.0.0", "{key}");
         }
@@ -433,14 +518,24 @@ mod tests {
     #[test]
     fn an_override_with_good_and_bad_keys_still_fails_closed() {
         let e = env();
-        let r = resolve(&e.home, "p", &Tip::with_override("risk_paths = [\"a/**\"]\nfix_rounds = 9\n")).expect("r");
+        let r = resolve(
+            &e.home,
+            "p",
+            &Tip::with_override("risk_paths = [\"a/**\"]\nfix_rounds = 9\n"),
+        )
+        .expect("r");
         assert_fail_closed(&r);
     }
 
     #[test]
     fn malformed_override_values_fail_closed() {
         let e = env();
-        for text in ["risk_paths = \"a\"", "risk_paths = [1]", "checks = [1]", "checks = \"x\""] {
+        for text in [
+            "risk_paths = \"a\"",
+            "risk_paths = [1]",
+            "checks = [1]",
+            "checks = \"x\"",
+        ] {
             assert_fail_closed(&resolve(&e.home, "p", &Tip::with_override(text)).expect("r"));
         }
         // A check rule with a typo is caught by Config::parse.
@@ -451,10 +546,17 @@ mod tests {
     #[test]
     fn an_unreadable_override_fails_closed_instead_of_meaning_no_override() {
         let e = env_with(Some("v-4.0.0"), "rust");
-        let tip = Tip { fail: true, ..Tip::default() };
+        let tip = Tip {
+            fail: true,
+            ..Tip::default()
+        };
         let r = resolve(&e.home, "p", &tip).expect("resolve");
         assert_fail_closed(&r);
-        assert!(r.problems.iter().any(|p| p.contains(OVERRIDE_FILE)), "{:?}", r.problems);
+        assert!(
+            r.problems.iter().any(|p| p.contains(OVERRIDE_FILE)),
+            "{:?}",
+            r.problems
+        );
         assert_eq!(r.config.base_branch, "v-4.0.0");
     }
 
@@ -462,7 +564,10 @@ mod tests {
     fn broken_inputs_give_a_degraded_config_and_a_problem() {
         let e = env();
         assert_fail_closed(&resolve(&e.home, "p", &Tip::with_override("not = = toml")).expect("r"));
-        let tip_fail = Tip { fail: true, ..Tip::default() };
+        let tip_fail = Tip {
+            fail: true,
+            ..Tip::default()
+        };
         assert_fail_closed(&resolve(&e.home, "p", &tip_fail).expect("r"));
 
         let preset_file = e.home.presets_dir().join("rust/config.toml");
@@ -505,24 +610,38 @@ mod tests {
         tip.dirs.insert(
             AGENTS_DIR.to_string(),
             vec![
-                ("factory-committer.md".to_string(), "repo committer".to_string()),
+                (
+                    "factory-committer.md".to_string(),
+                    "repo committer".to_string(),
+                ),
                 ("factory-aaa-repo.md".to_string(), "repo new".to_string()),
                 ("readme.txt".to_string(), "ignored".to_string()),
             ],
         );
         let r = resolve(&e.home, "p", &tip).expect("resolve");
         assert!(r.problems.is_empty(), "{:?}", r.problems);
-        let got: Vec<(&str, &str)> = r.agents.iter().map(|a| (a.name.as_str(), a.content.as_str())).collect();
-        let preset_reviewer = std::fs::read_to_string(e.home.presets_dir().join("rust/agents/factory-code-reviewer.md"))
-            .expect("read");
-        assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), [
-            "factory-aaa-repo.md",
-            "factory-builder.md",
-            "factory-code-reviewer.md",
-            "factory-committer.md",
-            "factory-kb-refresher.md",
-            "factory-zzz-new.md"
-        ]);
+        let got: Vec<(&str, &str)> = r
+            .agents
+            .iter()
+            .map(|a| (a.name.as_str(), a.content.as_str()))
+            .collect();
+        let preset_reviewer = std::fs::read_to_string(
+            e.home
+                .presets_dir()
+                .join("rust/agents/factory-code-reviewer.md"),
+        )
+        .expect("read");
+        assert_eq!(
+            got.iter().map(|g| g.0).collect::<Vec<_>>(),
+            [
+                "factory-aaa-repo.md",
+                "factory-builder.md",
+                "factory-code-reviewer.md",
+                "factory-committer.md",
+                "factory-kb-refresher.md",
+                "factory-zzz-new.md"
+            ]
+        );
         assert_eq!(got[0].1, "repo new");
         assert_eq!(got[1].1, "project builder");
         assert_eq!(got[2].1, preset_reviewer);
@@ -537,22 +656,35 @@ mod tests {
         let mut tip = Tip::default();
         tip.dirs.insert(
             AGENTS_DIR.to_string(),
-            vec![("README.md".to_string(), "stray".to_string()), ("factory-ok.md".to_string(), "ok".to_string())],
+            vec![
+                ("README.md".to_string(), "stray".to_string()),
+                ("factory-ok.md".to_string(), "ok".to_string()),
+            ],
         );
         let r = resolve(&e.home, "p", &tip).expect("resolve");
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert!(!r.config.degraded);
         assert!(r.agents.iter().all(|a| a.name != "README.md"));
         assert!(r.agents.iter().any(|a| a.name == "factory-ok.md"));
-        assert_eq!(r.notes.iter().filter(|n| n.contains("README.md")).count(), 1, "{:?}", r.notes);
-        assert!(r.notes[0].starts_with("ignored agent file README.md: names must be factory-<name>.md"));
+        assert_eq!(
+            r.notes.iter().filter(|n| n.contains("README.md")).count(),
+            1,
+            "{:?}",
+            r.notes
+        );
+        assert!(
+            r.notes[0].starts_with("ignored agent file README.md: names must be factory-<name>.md")
+        );
     }
 
     #[test]
     fn an_agent_name_with_a_path_separator_is_a_problem() {
         let e = env();
         let mut tip = Tip::default();
-        tip.dirs.insert(AGENTS_DIR.to_string(), vec![("../evil.md".to_string(), "x".to_string())]);
+        tip.dirs.insert(
+            AGENTS_DIR.to_string(),
+            vec![("../evil.md".to_string(), "x".to_string())],
+        );
         let r = resolve(&e.home, "p", &tip).expect("resolve");
         assert_fail_closed(&r);
         assert!(r.agents.iter().all(|a| a.name != "../evil.md"));
@@ -570,7 +702,10 @@ mod tests {
         let e = env();
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
         let file = project::get(&e.home, "p").expect("get");
-        assert_eq!(r.layout, project::layout(&e.home, "p", &file).expect("layout"));
+        assert_eq!(
+            r.layout,
+            project::layout(&e.home, "p", &file).expect("layout")
+        );
     }
 
     #[test]
@@ -578,11 +713,23 @@ mod tests {
         let e = env();
         let mut file = project::get(&e.home, "p").expect("get");
         file.preset = "../../escape".to_string();
-        std::fs::write(e.home.project_dir("p").join("project.toml"), toml::to_string(&file).expect("ser")).expect("write");
+        std::fs::write(
+            e.home.project_dir("p").join("project.toml"),
+            toml::to_string(&file).expect("ser"),
+        )
+        .expect("write");
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
-        assert!(r.problems.iter().any(|p| p.contains("preset name")), "{:?}", r.problems);
+        assert!(
+            r.problems.iter().any(|p| p.contains("preset name")),
+            "{:?}",
+            r.problems
+        );
         assert!(r.layout.commit_context_file.starts_with(&e.home.dir));
-        assert!(!r.layout.commit_context_file.to_string_lossy().contains(".."));
+        assert!(!r
+            .layout
+            .commit_context_file
+            .to_string_lossy()
+            .contains(".."));
         assert!(r.config.degraded);
     }
 }

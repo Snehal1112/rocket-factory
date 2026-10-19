@@ -16,7 +16,10 @@ pub enum TokenError {
 }
 
 fn io_err(home: &Home, e: std::io::Error) -> TokenError {
-    TokenError::Io { path: home.token_file().display().to_string(), reason: e.to_string() }
+    TokenError::Io {
+        path: home.token_file().display().to_string(),
+        reason: e.to_string(),
+    }
 }
 
 fn random_hex() -> std::io::Result<String> {
@@ -32,7 +35,9 @@ pub fn read(home: &Home) -> Result<String, TokenError> {
     if token.len() == TOKEN_BYTES * 2 && token.bytes().all(|b| b.is_ascii_hexdigit()) {
         Ok(token)
     } else {
-        Err(TokenError::Invalid { path: home.token_file().display().to_string() })
+        Err(TokenError::Invalid {
+            path: home.token_file().display().to_string(),
+        })
     }
 }
 
@@ -41,7 +46,11 @@ pub fn ensure(home: &Home) -> Result<String, TokenError> {
     let path = home.token_file();
     std::fs::create_dir_all(&home.dir).map_err(|e| io_err(home, e))?;
     let token = random_hex().map_err(|e| io_err(home, e))?;
-    let created = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path);
+    let created = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path);
     match created {
         Ok(mut f) => {
             f.write_all(token.as_bytes()).map_err(|e| io_err(home, e))?;
@@ -78,7 +87,11 @@ mod tests {
         let tok = ensure(&h).expect("ensure");
         assert_eq!(tok.len(), 64);
         assert!(tok.bytes().all(|b| b.is_ascii_hexdigit()));
-        let mode = std::fs::metadata(h.token_file()).expect("meta").permissions().mode() & 0o777;
+        let mode = std::fs::metadata(h.token_file())
+            .expect("meta")
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600);
     }
 

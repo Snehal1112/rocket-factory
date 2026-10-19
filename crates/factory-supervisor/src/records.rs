@@ -42,10 +42,19 @@ pub struct ChildRecord {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Outcome {
     Merged,
-    NeedsHuman { reason: String },
-    Failed { code: Option<i32>, stderr_tail: String },
-    Lost { reason: String },
-    Rejected { reason: String },
+    NeedsHuman {
+        reason: String,
+    },
+    Failed {
+        code: Option<i32>,
+        stderr_tail: String,
+    },
+    Lost {
+        reason: String,
+    },
+    Rejected {
+        reason: String,
+    },
 }
 
 /// How a request ended. Stored at `results/<request id>.json`.
@@ -71,7 +80,9 @@ pub(crate) fn read_regular(path: &Path, cap: u64) -> Result<String, String> {
     }
     let file = std::fs::File::open(path).map_err(|e| format!("cannot read: {e}"))?;
     let mut text = String::new();
-    file.take(cap + 1).read_to_string(&mut text).map_err(|e| format!("cannot read: {e}"))?;
+    file.take(cap + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("cannot read: {e}"))?;
     if text.len() as u64 > cap {
         return Err("file too large".to_string());
     }
@@ -147,9 +158,14 @@ fn read_folder<T: serde::de::DeserializeOwned>(
     dir: &Path,
     check: impl Fn(&str, &T) -> Result<(), String>,
 ) -> Vec<Result<T, String>> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut names: Vec<String> =
-        entries.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).collect();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with('.'))
+        .collect();
     names.sort();
     names
         .into_iter()
@@ -157,7 +173,8 @@ fn read_folder<T: serde::de::DeserializeOwned>(
             let Some(stem) = name.strip_suffix(&format!(".{EXT}")) else {
                 return Err(format!("{name}: not a .json file"));
             };
-            let text = read_regular(&dir.join(&name), RECORD_CAP).map_err(|e| format!("{name}: {e}"))?;
+            let text =
+                read_regular(&dir.join(&name), RECORD_CAP).map_err(|e| format!("{name}: {e}"))?;
             let rec: T = serde_json::from_str(&text).map_err(|e| format!("{name}: {e}"))?;
             check(stem, &rec).map_err(|e| format!("{name}: {e}"))?;
             Ok(rec)
@@ -181,7 +198,10 @@ pub fn write_result(home: &Home, rec: &ResultRecord) -> Result<(), RecordError> 
     let bytes = serde_json::to_vec_pretty(rec).map_err(CoreError::from)?;
     // A result that is larger than the read cap could never be read back, so it is refused.
     if bytes.len() as u64 > RECORD_CAP {
-        return Err(RecordError::Invalid(format!("result is {} bytes, the cap is {RECORD_CAP}", bytes.len())));
+        return Err(RecordError::Invalid(format!(
+            "result is {} bytes, the cap is {RECORD_CAP}",
+            bytes.len()
+        )));
     }
     write_atomic(&path, &bytes)?;
     Ok(())
@@ -223,7 +243,10 @@ mod tests {
         let (_t, h) = home();
         write_child(&h, &child("b")).expect("write");
         write_child(&h, &child("a")).expect("write");
-        let got: Vec<ChildRecord> = read_children(&h).into_iter().map(|r| r.expect("ok")).collect();
+        let got: Vec<ChildRecord> = read_children(&h)
+            .into_iter()
+            .map(|r| r.expect("ok"))
+            .collect();
         assert_eq!(got, vec![child("a"), child("b")]);
         assert!(h.run_dir().join("children/a.json").is_file());
         remove_child(&h, "a").expect("remove");
@@ -253,10 +276,20 @@ mod tests {
         let outcomes = [
             Outcome::Merged,
             Outcome::NeedsHuman { reason: "r".into() },
-            Outcome::Failed { code: Some(2), stderr_tail: "t".into() },
-            Outcome::Failed { code: None, stderr_tail: String::new() },
-            Outcome::Lost { reason: "gone".into() },
-            Outcome::Rejected { reason: "no".into() },
+            Outcome::Failed {
+                code: Some(2),
+                stderr_tail: "t".into(),
+            },
+            Outcome::Failed {
+                code: None,
+                stderr_tail: String::new(),
+            },
+            Outcome::Lost {
+                reason: "gone".into(),
+            },
+            Outcome::Rejected {
+                reason: "no".into(),
+            },
         ];
         for (i, outcome) in outcomes.iter().enumerate() {
             let rec = ResultRecord {
@@ -267,9 +300,15 @@ mod tests {
                 finished_ms: 9,
             };
             write_result(&h, &rec).expect("write");
-            assert!(h.results_dir().join(format!("{}.json", rec.request_id)).is_file());
+            assert!(h
+                .results_dir()
+                .join(format!("{}.json", rec.request_id))
+                .is_file());
         }
-        let got: Vec<ResultRecord> = read_results(&h).into_iter().map(|r| r.expect("ok")).collect();
+        let got: Vec<ResultRecord> = read_results(&h)
+            .into_iter()
+            .map(|r| r.expect("ok"))
+            .collect();
         let back: Vec<Outcome> = got.into_iter().map(|r| r.outcome).collect();
         assert_eq!(back, outcomes);
     }
@@ -291,19 +330,47 @@ mod tests {
     fn child_validation_refuses_each_bad_field() {
         let ok = child("a");
         assert!(ok.validate().is_ok());
-        assert!(ChildRecord { pid: 1, ..ok.clone() }.validate().is_ok());
+        assert!(ChildRecord {
+            pid: 1,
+            ..ok.clone()
+        }
+        .validate()
+        .is_ok());
         let bad = [
-            ChildRecord { pid: 0, ..ok.clone() },
-            ChildRecord { pid: i32::MAX as u32 + 1, ..ok.clone() },
-            ChildRecord { project: "../x".into(), ..ok.clone() },
-            ChildRecord { job: "x".into(), ..ok.clone() },
-            ChildRecord { request_id: "a/b".into(), ..ok.clone() },
-            ChildRecord { out: PathBuf::from("rel/out.log"), ..ok.clone() },
-            ChildRecord { err: PathBuf::from("/l/../etc/err.log"), ..ok.clone() },
+            ChildRecord {
+                pid: 0,
+                ..ok.clone()
+            },
+            ChildRecord {
+                pid: i32::MAX as u32 + 1,
+                ..ok.clone()
+            },
+            ChildRecord {
+                project: "../x".into(),
+                ..ok.clone()
+            },
+            ChildRecord {
+                job: "x".into(),
+                ..ok.clone()
+            },
+            ChildRecord {
+                request_id: "a/b".into(),
+                ..ok.clone()
+            },
+            ChildRecord {
+                out: PathBuf::from("rel/out.log"),
+                ..ok.clone()
+            },
+            ChildRecord {
+                err: PathBuf::from("/l/../etc/err.log"),
+                ..ok.clone()
+            },
         ];
         for b in bad {
             assert!(b.validate().is_err(), "{b:?}");
-            assert!(write_child(&Home::at(PathBuf::from("/nonexistent-never-written")), &b).is_err());
+            assert!(
+                write_child(&Home::at(PathBuf::from("/nonexistent-never-written")), &b).is_err()
+            );
         }
     }
 
@@ -319,21 +386,37 @@ mod tests {
         };
         assert!(ok.validate().is_ok());
         for b in [
-            ResultRecord { project: "P".into(), ..ok.clone() },
-            ResultRecord { job: "1234567".into(), ..ok.clone() },
-            ResultRecord { request_id: "../x".into(), ..ok.clone() },
+            ResultRecord {
+                project: "P".into(),
+                ..ok.clone()
+            },
+            ResultRecord {
+                job: "1234567".into(),
+                ..ok.clone()
+            },
+            ResultRecord {
+                request_id: "../x".into(),
+                ..ok.clone()
+            },
         ] {
             assert!(write_result(&h, &b).is_err(), "{b:?}");
         }
         // A bad record planted by hand is an Err entry.
         std::fs::create_dir_all(h.results_dir()).expect("mkdir");
-        let planted = ResultRecord { project: "../x".into(), ..ok };
+        let planted = ResultRecord {
+            project: "../x".into(),
+            ..ok
+        };
         let text = serde_json::to_string(&planted).expect("json");
         std::fs::write(h.results_dir().join("0000000000001-p-1.json"), text).expect("write");
         assert!(read_results(&h)[0].is_err());
         // The same for a child record with pid 0.
         std::fs::create_dir_all(h.children_dir()).expect("mkdir");
-        let text = serde_json::to_string(&ChildRecord { pid: 0, ..child("a") }).expect("json");
+        let text = serde_json::to_string(&ChildRecord {
+            pid: 0,
+            ..child("a")
+        })
+        .expect("json");
         std::fs::write(h.children_dir().join("a.json"), text).expect("write");
         assert!(read_children(&h)[0].is_err());
     }
@@ -349,7 +432,10 @@ mod tests {
         std::os::unix::fs::symlink(&target, dir.join("b.json")).expect("symlink");
         std::os::unix::fs::symlink("/dev/zero", dir.join("c.json")).expect("symlink");
         std::fs::write(dir.join("d.json"), vec![b' '; 70 * 1024]).expect("write");
-        match std::process::Command::new("mkfifo").arg(dir.join("e.json")).status() {
+        match std::process::Command::new("mkfifo")
+            .arg(dir.join("e.json"))
+            .status()
+        {
             Ok(s) if s.success() => {}
             _ => eprintln!("mkfifo is missing, the FIFO case is skipped"),
         }

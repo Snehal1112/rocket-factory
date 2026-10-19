@@ -10,12 +10,21 @@ fn merges_the_reviewed_head_with_the_fixed_message() {
     };
     assert_ne!(sha, before);
     let repo = git2::Repository::open(&fx.main).expect("open");
-    let commit = repo.find_commit(git2::Oid::from_str(&sha).expect("oid")).expect("commit");
-    assert_eq!(commit.message().expect("msg").lines().next(), Some("chore(factory): merge job 001 hello"));
-    assert_eq!(commit.parent_id(1).expect("second parent").to_string(), fx.head);
+    let commit = repo
+        .find_commit(git2::Oid::from_str(&sha).expect("oid"))
+        .expect("commit");
+    assert_eq!(
+        commit.message().expect("msg").lines().next(),
+        Some("chore(factory): merge job 001 hello")
+    );
+    assert_eq!(
+        commit.parent_id(1).expect("second parent").to_string(),
+        fx.head
+    );
     let job = fx.driver.job(&fx.id).expect("job");
     assert_eq!(job.stage, factory_core::Stage::Merged);
-    let ledger = std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
     assert!(ledger.contains(&format!("Task 1: complete (merge {sha})")));
 }
 
@@ -31,7 +40,10 @@ fn a_blocking_untracked_file_parks_the_job_and_leaves_main_alone() {
     };
     assert!(!reason.is_empty());
     assert_eq!(common::main_tip(&fx.main), before);
-    assert_eq!(std::fs::read_to_string(fx.main.join("docs/hello.txt")).expect("read"), "mine");
+    assert_eq!(
+        std::fs::read_to_string(fx.main.join("docs/hello.txt")).expect("read"),
+        "mine"
+    );
     let job = fx.driver.job(&fx.id).expect("job");
     assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
     assert_eq!(job.reason.as_deref(), Some(reason.as_str()));
@@ -42,7 +54,10 @@ fn a_moved_branch_tip_parks_without_merging() {
     let fx = common::approved_job();
     common::commit_file(&common::worktree_of(&fx), "late.txt", "x");
     let before = common::main_tip(&fx.main);
-    assert!(matches!(merge_stage(&fx.driver, &fx.id).expect("stage"), MergeResult::Parked(_)));
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("stage"),
+        MergeResult::Parked(_)
+    ));
     assert_eq!(common::main_tip(&fx.main), before);
 }
 
@@ -51,7 +66,10 @@ fn a_dirty_main_parks_as_main_busy() {
     let fx = common::approved_job();
     std::fs::write(fx.main.join("README.md"), "dirty").expect("write");
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
-    assert!(matches!(&r, MergeResult::Parked(m) if m.starts_with("main busy")), "got {r:?}");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.starts_with("main busy")),
+        "got {r:?}"
+    );
 }
 
 #[test]
@@ -72,8 +90,14 @@ fn a_sync_conflict_parks() {
     common::record_head(&fx, &common::branch_tip(&fx));
     common::commit_file(&fx.main, "same.txt", "main");
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
-    assert!(matches!(&r, MergeResult::Parked(m) if m.contains("conflict")), "got {r:?}");
-    assert_eq!(fx.driver.job(&fx.id).expect("job").stage, factory_core::Stage::NeedsHuman);
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("conflict")),
+        "got {r:?}"
+    );
+    assert_eq!(
+        fx.driver.job(&fx.id).expect("job").stage,
+        factory_core::Stage::NeedsHuman
+    );
 }
 
 #[test]
@@ -89,7 +113,10 @@ fn a_third_sync_is_refused() {
     common::commit_file(&fx.main, "other.txt", "o");
     let before = common::main_tip(&fx.main);
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
-    assert!(matches!(&r, MergeResult::Parked(m) if m.contains("syncs")), "got {r:?}");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("syncs")),
+        "got {r:?}"
+    );
     assert_eq!(common::main_tip(&fx.main), before);
 }
 
@@ -112,14 +139,26 @@ fn park_keeps_the_record_of_a_job_that_is_already_parked() {
     let dir = fx.driver.job_dir(&job);
     // This is what a failed check inside the sync leaves behind.
     let part = factory_core::ParkPart::new("Checks", "checks.md", "FAIL cargo check");
-    let rec = factory_core::ParkRecord::new(factory_core::ParkKind::ChecksFailed, "checks failed", &fx.id, job.round, 7, vec![part]);
+    let rec = factory_core::ParkRecord::new(
+        factory_core::ParkKind::ChecksFailed,
+        "checks failed",
+        &fx.id,
+        job.round,
+        7,
+        vec![part],
+    );
     rec.write(&dir).expect("write record");
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
             j.park_kind = Some("checks-failed".to_string());
             j.park_at = Some(7);
-            j.set_stage(factory_core::Stage::NeedsHuman, Some("checks failed"), false, 7.0)
+            j.set_stage(
+                factory_core::Stage::NeedsHuman,
+                Some("checks failed"),
+                false,
+                7.0,
+            )
         })
         .expect("park job");
     factory_engine::park(&fx.driver, &fx.id, "after sync: checks failed").expect("park");
@@ -134,31 +173,51 @@ fn park_keeps_the_record_of_a_job_that_is_already_parked() {
 
 #[test]
 fn a_base_off_the_base_branch_parks_with_the_branch_name() {
-    let config = factory_core::Config { base_branch: "trunk".to_string(), ..factory_core::Config::default() };
+    let config = factory_core::Config {
+        base_branch: "trunk".to_string(),
+        ..factory_core::Config::default()
+    };
     let fx = common::approved_job_config(common::approving_runner(3), false, config);
     // The branch trunk has its own root commit, so the job base is not on it.
     let repo = git2::Repository::open(&fx.main).expect("open");
     let sig = git2::Signature::now("t", "t@example.com").expect("sig");
-    let tree = repo.find_tree(repo.treebuilder(None).expect("tb").write().expect("tree")).expect("find");
-    let root = repo.commit(None, &sig, &sig, "root", &tree, &[]).expect("commit");
-    repo.branch("trunk", &repo.find_commit(root).expect("commit"), true).expect("branch");
+    let tree = repo
+        .find_tree(repo.treebuilder(None).expect("tb").write().expect("tree"))
+        .expect("find");
+    let root = repo
+        .commit(None, &sig, &sig, "root", &tree, &[])
+        .expect("commit");
+    repo.branch("trunk", &repo.find_commit(root).expect("commit"), true)
+        .expect("branch");
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
-    assert!(matches!(&r, MergeResult::Parked(m) if m.contains("not on trunk")), "got {r:?}");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("not on trunk")),
+        "got {r:?}"
+    );
 }
 
 /// A fixture whose base is `trunk` while a local branch `main` also exists. The checkout sits on trunk.
 fn trunk_fixture() -> common::MergeFixture {
-    let config = factory_core::Config { base_branch: "trunk".to_string(), ..factory_core::Config::default() };
+    let config = factory_core::Config {
+        base_branch: "trunk".to_string(),
+        ..factory_core::Config::default()
+    };
     let fx = common::approved_job_config(common::approving_runner(3), false, config);
     let repo = git2::Repository::open(&fx.main).expect("open");
     repo.set_head("refs/heads/trunk").expect("head on trunk");
-    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).expect("checkout");
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .expect("checkout");
     fx
 }
 
 fn tip_of(fx: &common::MergeFixture, branch: &str) -> String {
     let repo = git2::Repository::open(&fx.main).expect("open");
-    let id = repo.revparse_single(branch).expect("branch").peel_to_commit().expect("commit").id();
+    let id = repo
+        .revparse_single(branch)
+        .expect("branch")
+        .peel_to_commit()
+        .expect("commit")
+        .id();
     id.to_string()
 }
 
@@ -170,8 +229,15 @@ fn a_sync_merges_the_base_branch_and_leaves_main_alone() {
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
     assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
     assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
-    assert_eq!(tip_of(&fx, "main"), main_before, "the branch main is untouched");
-    assert!(fx.main.join("docs/hello.txt").exists(), "the job reached trunk");
+    assert_eq!(
+        tip_of(&fx, "main"),
+        main_before,
+        "the branch main is untouched"
+    );
+    assert!(
+        fx.main.join("docs/hello.txt").exists(),
+        "the job reached trunk"
+    );
 }
 
 #[test]
@@ -186,5 +252,8 @@ fn the_sync_cap_text_names_the_base_branch() {
         .expect("syncs");
     common::commit_file(&fx.main, "other.txt", "o");
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
-    assert!(matches!(&r, MergeResult::Parked(m) if m.starts_with("trunk moved again after 2 syncs")), "got {r:?}");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.starts_with("trunk moved again after 2 syncs")),
+        "got {r:?}"
+    );
 }

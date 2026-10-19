@@ -34,7 +34,9 @@ fn save_then_load_is_identical() {
     board.save(&path).expect("save");
     let back = Board::load(&path).expect("reload");
     assert_eq!(back, board);
-    assert!(std::fs::read_to_string(&path).expect("read").ends_with('\n'));
+    assert!(std::fs::read_to_string(&path)
+        .expect("read")
+        .ends_with('\n'));
 }
 
 #[test]
@@ -79,19 +81,28 @@ fn drafts_round_trip_with_every_field() {
         }],
         ..Default::default()
     };
-    let back: Board = serde_json::from_str(&serde_json::to_string(&board).expect("json")).expect("parse");
+    let back: Board =
+        serde_json::from_str(&serde_json::to_string(&board).expect("json")).expect("parse");
     assert_eq!(back, board);
     let mut bare = board.clone();
     bare.drafts[0].spec_file = None;
-    assert!(!serde_json::to_string(&bare).expect("json").contains("spec_file"));
-    assert_eq!(factory_core::DRAFT_STAGES, ["interviewing", "writing-spec", "writing-plans"]);
+    assert!(!serde_json::to_string(&bare)
+        .expect("json")
+        .contains("spec_file"));
+    assert_eq!(
+        factory_core::DRAFT_STAGES,
+        ["interviewing", "writing-spec", "writing-plans"]
+    );
 }
 
 #[test]
 fn spec_warning_is_optional_on_a_job() {
     let mut j = factory_core::Job::new("001", "d", "s", "2026-10-18", "f", 1.0);
-    assert!(!serde_json::to_string(&j).expect("json").contains("spec_warning"));
+    assert!(!serde_json::to_string(&j)
+        .expect("json")
+        .contains("spec_warning"));
     j.spec_warning = Some("no spec".to_string());
-    let back: factory_core::Job = serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
+    let back: factory_core::Job =
+        serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
     assert_eq!(back.spec_warning.as_deref(), Some("no spec"));
 }

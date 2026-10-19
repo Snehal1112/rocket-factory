@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
-use factory_core::{budget_state, ReviewState, classify_paths, parse_verdict, DiffClass, ParkKind, Stage, Verdict};
+use factory_core::{
+    budget_state, classify_paths, parse_verdict, DiffClass, ParkKind, ReviewState, Stage, Verdict,
+};
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
 use crate::ports::{git_err, io_err};
@@ -29,20 +31,38 @@ impl Engine<'_> {
     /// Writes the diff files, runs the reviewer once, saves its reply and decides.
     pub fn review_stage(&self) -> Result<ReviewOutcome, EngineError> {
         let job = self.job()?;
-        let base = job.base.clone().ok_or_else(|| EngineError::Msg("job has no base".into()))?;
-        let head = job.head.clone().ok_or_else(|| EngineError::Msg("job has no head".into()))?;
+        let base = job
+            .base
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no base".into()))?;
+        let head = job
+            .head
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
         // The reviewer sees only the new work of this round. Risk and size judge the whole job diff.
         let round_base = job.prev_head.clone().unwrap_or_else(|| base.clone());
         // The file names carry both short shas, so the round diff and the whole diff never overwrite each other.
-        let round_diff = self.repo.diff_to_files(&round_base, &head, &self.job_dir).map_err(git_err)?;
-        let whole = self.repo.diff_to_files(&base, &head, &self.job_dir).map_err(git_err)?;
+        let round_diff = self
+            .repo
+            .diff_to_files(&round_base, &head, &self.job_dir)
+            .map_err(git_err)?;
+        let whole = self
+            .repo
+            .diff_to_files(&base, &head, &self.job_dir)
+            .map_err(git_err)?;
         let paths = self.repo.changed_paths(&base, &head).map_err(git_err)?;
 
         let cwd = self.worktree()?;
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
         let whole_text = std::fs::read_to_string(&whole.diff).ok();
-        let no_tests = crate::checks_stage::no_tests_added(&paths, whole_text.as_deref(), &self.config);
-        let extra = ReviewerExtra { focus: review_focus(&plan), notes: self.builder_notes(), plan_outline: plan_outline(&plan), no_tests };
+        let no_tests =
+            crate::checks_stage::no_tests_added(&paths, whole_text.as_deref(), &self.config);
+        let extra = ReviewerExtra {
+            focus: review_focus(&plan),
+            notes: self.builder_notes(),
+            plan_outline: plan_outline(&plan),
+            no_tests,
+        };
         let class = classify_paths(&paths, &self.config);
         let risky = class == DiffClass::Risky;
         let round_lines = round_diff.changed_lines();
@@ -51,11 +71,22 @@ impl Engine<'_> {
             let reason = if risky {
                 "risky diff".to_string()
             } else {
-                format!("{round_lines} changed lines, over {}", self.config.reviewer_large_over_lines)
+                format!(
+                    "{round_lines} changed lines, over {}",
+                    self.config.reviewer_large_over_lines
+                )
             };
             self.ruling(&format!("review model: {model} ({reason})"))?;
         }
-        let spec = self.reviewer_spec_with_model(&cwd, &round_diff.diff, &round_diff.names, job.round, &self.config.reviewer_rules, &extra, model);
+        let spec = self.reviewer_spec_with_model(
+            &cwd,
+            &round_diff.diff,
+            &round_diff.names,
+            job.round,
+            &self.config.reviewer_rules,
+            &extra,
+            model,
+        );
         self.update(|j| {
             j.set_review("code", ReviewState::Running);
             Ok(())
@@ -69,7 +100,11 @@ impl Engine<'_> {
         } else {
             Verdict::Missing
         };
-        let state = if verdict == Verdict::Approve { ReviewState::Pass } else { ReviewState::Changes };
+        let state = if verdict == Verdict::Approve {
+            ReviewState::Pass
+        } else {
+            ReviewState::Changes
+        };
         self.update(|j| {
             j.set_review("code", state);
             Ok(())
@@ -95,13 +130,18 @@ impl Engine<'_> {
             Decision::NeedsHuman { .. } => "needs-human",
         };
         tracing::info!(event = "decide", choice = choice, round = job.round);
-        Ok(ReviewOutcome { verdict, review_path, decision })
+        Ok(ReviewOutcome {
+            verdict,
+            review_path,
+            decision,
+        })
     }
 
     /// True when `checks.md` exists and has no FAIL line.
     fn latest_checks_ok(&self) -> Result<bool, EngineError> {
         let text = std::fs::read_to_string(self.job_dir.join("checks.md")).map_err(io_err)?;
-        Ok(text.lines().any(|l| l.starts_with("PASS ")) && !text.lines().any(|l| l.starts_with("FAIL ")))
+        Ok(text.lines().any(|l| l.starts_with("PASS "))
+            && !text.lines().any(|l| l.starts_with("FAIL ")))
     }
 
     /// Re-runs the mapped checks over the whole job diff on the final head.
@@ -119,21 +159,40 @@ impl Engine<'_> {
             }
             Decision::FixRound => {
                 let text = std::fs::read_to_string(&outcome.review_path).map_err(io_err)?;
-                let findings = format!("The reviewer asked for changes. Fix these findings only.\n\n{text}");
-                self.fix_or_park(&findings, "review asked for changes", ParkKind::ChangesRemain, "review reply")
+                let findings =
+                    format!("The reviewer asked for changes. Fix these findings only.\n\n{text}");
+                self.fix_or_park(
+                    &findings,
+                    "review asked for changes",
+                    ParkKind::ChangesRemain,
+                    "review reply",
+                )
             }
             Decision::AutoMerge => {
                 let report = self.final_checks()?;
                 if !report.all_passed() {
-                    let findings = format!("The final checks failed. Fix these failures only.\n\n{}", report.failure_text());
-                    return self.fix_or_park(&findings, "final checks failed", ParkKind::ChecksFailed, "checks");
+                    let findings = format!(
+                        "The final checks failed. Fix these failures only.\n\n{}",
+                        report.failure_text()
+                    );
+                    return self.fix_or_park(
+                        &findings,
+                        "final checks failed",
+                        ParkKind::ChecksFailed,
+                        "checks",
+                    );
                 }
                 let paths = self.job_changed_paths()?;
                 if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
                     return self.park_gate(kind, reason);
                 }
-                let commands: Vec<&str> = report.results.iter().map(|r| r.command.as_str()).collect();
-                let list = if commands.is_empty() { "none".to_string() } else { commands.join(", ") };
+                let commands: Vec<&str> =
+                    report.results.iter().map(|r| r.command.as_str()).collect();
+                let list = if commands.is_empty() {
+                    "none".to_string()
+                } else {
+                    commands.join(", ")
+                };
                 self.ruling(&format!("checks ran: {list}"))?;
                 self.set_stage(Stage::Approve, None, false)?;
                 self.ruling("auto-merge approved, checks green, reviewer approved")?;

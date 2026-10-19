@@ -155,38 +155,76 @@ impl Config {
 
     /// Every path matches `**`, so every diff is risky and nothing auto-merges.
     pub fn fail_closed() -> Config {
-        Config { risk_paths: vec!["**".to_string()], code_paths: vec!["**".to_string()], degraded: true, ..Config::default() }
+        Config {
+            risk_paths: vec!["**".to_string()],
+            code_paths: vec!["**".to_string()],
+            degraded: true,
+            ..Config::default()
+        }
     }
 
     pub fn parse(text: &str) -> Result<Config, CoreError> {
         let cfg: Config = toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
         if cfg.diff_cap_lines == 0 || cfg.budget_weighted == 0 {
-            return Err(CoreError::Config("diff_cap_lines and budget_weighted must be above zero".into()));
+            return Err(CoreError::Config(
+                "diff_cap_lines and budget_weighted must be above zero".into(),
+            ));
         }
         if cfg.commit_budget_weighted == 0 || cfg.kb_budget_weighted == 0 {
-            return Err(CoreError::Config("commit_budget_weighted and kb_budget_weighted must be above zero".into()));
+            return Err(CoreError::Config(
+                "commit_budget_weighted and kb_budget_weighted must be above zero".into(),
+            ));
         }
-        let models = [&cfg.builder_model, &cfg.reviewer_model, &cfg.commit_model, &cfg.kb_model];
+        let models = [
+            &cfg.builder_model,
+            &cfg.reviewer_model,
+            &cfg.commit_model,
+            &cfg.kb_model,
+        ];
         if models.iter().any(|m| m.trim().is_empty()) {
             return Err(CoreError::Config("model names must not be empty".into()));
         }
         if cfg.reviewer_large_over_lines == 0 {
-            return Err(CoreError::Config("reviewer_large_over_lines must be above zero".into()));
+            return Err(CoreError::Config(
+                "reviewer_large_over_lines must be above zero".into(),
+            ));
         }
-        if cfg.reviewer_model_large.as_deref().is_some_and(|m| m.trim().is_empty()) {
-            return Err(CoreError::Config("reviewer_model_large must not be empty when it is set".into()));
+        if cfg
+            .reviewer_model_large
+            .as_deref()
+            .is_some_and(|m| m.trim().is_empty())
+        {
+            return Err(CoreError::Config(
+                "reviewer_model_large must not be empty when it is set".into(),
+            ));
         }
         if cfg.size_small_max_bytes == 0 || cfg.size_small_max_bytes >= cfg.size_medium_max_bytes {
-            return Err(CoreError::Config("size_small_max_bytes must be above zero and below size_medium_max_bytes".into()));
+            return Err(CoreError::Config(
+                "size_small_max_bytes must be above zero and below size_medium_max_bytes".into(),
+            ));
         }
         if cfg.kb_path.as_deref().is_some_and(|p| p.trim().is_empty()) {
-            return Err(CoreError::Config("kb_path must not be empty when it is set".into()));
+            return Err(CoreError::Config(
+                "kb_path must not be empty when it is set".into(),
+            ));
         }
-        if cfg.cache_ttl.as_deref().is_some_and(|t| t != "5m" && t != "1h") {
-            return Err(CoreError::Config("cache_ttl must be \"5m\" or \"1h\" when it is set".into()));
+        if cfg
+            .cache_ttl
+            .as_deref()
+            .is_some_and(|t| t != "5m" && t != "1h")
+        {
+            return Err(CoreError::Config(
+                "cache_ttl must be \"5m\" or \"1h\" when it is set".into(),
+            ));
         }
-        if cfg.log_level.as_deref().is_some_and(|l| !["error", "warn", "info", "debug", "trace"].contains(&l)) {
-            return Err(CoreError::Config("log_level must be one of error, warn, info, debug, trace when it is set".into()));
+        if cfg
+            .log_level
+            .as_deref()
+            .is_some_and(|l| !["error", "warn", "info", "debug", "trace"].contains(&l))
+        {
+            return Err(CoreError::Config(
+                "log_level must be one of error, warn, info, debug, trace when it is set".into(),
+            ));
         }
         if let Err(why) = check_branch_name(&cfg.base_branch) {
             return Err(CoreError::Config(format!("base_branch: {why}")));
@@ -198,8 +236,13 @@ impl Config {
             ("reviewer_rules", &cfg.reviewer_rules),
             ("plan_rules", &cfg.plan_rules),
         ] {
-            if lines.iter().any(|l| l.trim().is_empty() || l.contains('\n') || l.contains('\r')) {
-                return Err(CoreError::Config(format!("{key}: every line must be one non-empty line")));
+            if lines
+                .iter()
+                .any(|l| l.trim().is_empty() || l.contains('\n') || l.contains('\r'))
+            {
+                return Err(CoreError::Config(format!(
+                    "{key}: every line must be one non-empty line"
+                )));
             }
         }
         Ok(cfg)
@@ -236,7 +279,11 @@ fn expand_home(path: &str, home: Option<&str>) -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     };
     let home = home.filter(|h| !h.is_empty())?;
-    Some(if rest.is_empty() { PathBuf::from(home) } else { Path::new(home).join(rest) })
+    Some(if rest.is_empty() {
+        PathBuf::from(home)
+    } else {
+        Path::new(home).join(rest)
+    })
 }
 
 /// A branch name git accepts, and not one of the factory's own job branches.
@@ -244,13 +291,21 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
     if name.trim().is_empty() {
         return Err("must not be empty");
     }
-    if name.starts_with('-') || name.starts_with('/') || name.ends_with('/') || name.ends_with(".lock") || name == "@" {
+    if name.starts_with('-')
+        || name.starts_with('/')
+        || name.ends_with('/')
+        || name.ends_with(".lock")
+        || name == "@"
+    {
         return Err("is not a valid branch name");
     }
     if name.contains("..") || name.contains("@{") {
         return Err("is not a valid branch name");
     }
-    if name.chars().any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c)) {
+    if name
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
+    {
         return Err("is not a valid branch name");
     }
     if name.starts_with("factory/") {
@@ -264,7 +319,9 @@ mod tests {
     #[test]
     fn a_config_without_the_new_keys_parses_with_defaults() {
         let cfg = Config::parse("diff_cap_lines = 100\n").expect("parses");
-        assert!(cfg.code_paths.is_empty() && cfg.test_paths.is_empty() && cfg.test_markers.is_empty());
+        assert!(
+            cfg.code_paths.is_empty() && cfg.test_paths.is_empty() && cfg.test_markers.is_empty()
+        );
         assert!(!cfg.require_tests);
     }
 
@@ -292,8 +349,20 @@ mod tests {
     #[test]
     fn cache_ttl_is_unset_by_default_and_takes_only_5m_or_1h() {
         assert_eq!(Config::default().cache_ttl, None);
-        assert_eq!(Config::parse("cache_ttl = \"5m\"").expect("parse").cache_ttl.as_deref(), Some("5m"));
-        assert_eq!(Config::parse("cache_ttl = \"1h\"").expect("parse").cache_ttl.as_deref(), Some("1h"));
+        assert_eq!(
+            Config::parse("cache_ttl = \"5m\"")
+                .expect("parse")
+                .cache_ttl
+                .as_deref(),
+            Some("5m")
+        );
+        assert_eq!(
+            Config::parse("cache_ttl = \"1h\"")
+                .expect("parse")
+                .cache_ttl
+                .as_deref(),
+            Some("1h")
+        );
         assert!(Config::parse("cache_ttl = \"10m\"").is_err());
         assert!(Config::parse("cache_ttl = \"\"").is_err());
         assert!(Config::parse("cache_ttl = 5").is_err());
@@ -303,15 +372,26 @@ mod tests {
     fn log_level_unset_by_default_and_takes_only_known_values() {
         assert_eq!(Config::default().log_level, None);
         assert_eq!(Config::default().log_level_or_default(), "info");
-        assert_eq!(Config::parse("log_level = \"debug\"").expect("parse").log_level_or_default(), "debug");
+        assert_eq!(
+            Config::parse("log_level = \"debug\"")
+                .expect("parse")
+                .log_level_or_default(),
+            "debug"
+        );
         let err = Config::parse("log_level = \"loud\"").expect_err("bad level");
-        assert!(err.to_string().contains("log_level must be one of error, warn, info, debug, trace"));
+        assert!(err
+            .to_string()
+            .contains("log_level must be one of error, warn, info, debug, trace"));
     }
 
     #[test]
     fn tickets_on_merge_is_off_by_default_and_can_be_turned_on() {
         assert!(!Config::default().tickets_on_merge);
-        assert!(Config::parse("tickets_on_merge = true").expect("parse").tickets_on_merge);
+        assert!(
+            Config::parse("tickets_on_merge = true")
+                .expect("parse")
+                .tickets_on_merge
+        );
         assert!(Config::parse("tickets_on_merge = \"yes\"").is_err());
     }
 
@@ -333,7 +413,8 @@ mod tests {
 
     #[test]
     fn a_config_can_set_both_keys() {
-        let cfg = Config::parse("reviewer_model_large = \"opus\"\nreviewer_large_over_lines = 500").expect("parse");
+        let cfg = Config::parse("reviewer_model_large = \"opus\"\nreviewer_large_over_lines = 500")
+            .expect("parse");
         assert_eq!(cfg.reviewer_model_large.as_deref(), Some("opus"));
         assert_eq!(cfg.reviewer_large_over_lines, 500);
     }
@@ -376,8 +457,16 @@ mod tests {
 
     #[test]
     fn prompt_lines_must_be_one_line_and_not_empty() {
-        for body in ["builder_rules = [\"\"]", "reviewer_rules = [\"a\\nb\"]", "read_first = [\"  \"]", "check_hints = [\"x\\ry\"]"] {
-            assert!(Config::parse(&format!("{body}\n")).is_err(), "{body} must be refused");
+        for body in [
+            "builder_rules = [\"\"]",
+            "reviewer_rules = [\"a\\nb\"]",
+            "read_first = [\"  \"]",
+            "check_hints = [\"x\\ry\"]",
+        ] {
+            assert!(
+                Config::parse(&format!("{body}\n")).is_err(),
+                "{body} must be refused"
+            );
         }
     }
 
@@ -391,15 +480,38 @@ mod tests {
     #[test]
     fn base_branch_accepts_ordinary_names() {
         for name in ["main", "master", "v-4.0.0", "release/2026.10", "dev_1"] {
-            let cfg = Config::parse(&format!("base_branch = \"{name}\"\n")).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let cfg = Config::parse(&format!("base_branch = \"{name}\"\n"))
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(cfg.base_branch, name);
         }
     }
 
     #[test]
     fn base_branch_rejects_unsafe_names() {
-        for name in ["", "  ", "a b", "a..b", "-x", "x/", "/x", "x.lock", "a\\tb", "factory/001-x", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "@", "a@{b"] {
-            assert!(Config::parse(&format!("base_branch = \"{name}\"\n")).is_err(), "{name:?} must be refused");
+        for name in [
+            "",
+            "  ",
+            "a b",
+            "a..b",
+            "-x",
+            "x/",
+            "/x",
+            "x.lock",
+            "a\\tb",
+            "factory/001-x",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "@",
+            "a@{b",
+        ] {
+            assert!(
+                Config::parse(&format!("base_branch = \"{name}\"\n")).is_err(),
+                "{name:?} must be refused"
+            );
         }
     }
 
@@ -409,8 +521,12 @@ mod tests {
         assert_eq!(cfg.size_small_max_bytes, 12_288);
         assert_eq!(cfg.size_medium_max_bytes, 25_600);
         assert!(Config::parse("size_small_max_bytes = 100\nsize_medium_max_bytes = 200\n").is_ok());
-        assert!(Config::parse("size_small_max_bytes = 200\nsize_medium_max_bytes = 200\n").is_err());
-        assert!(Config::parse("size_small_max_bytes = 300\nsize_medium_max_bytes = 200\n").is_err());
+        assert!(
+            Config::parse("size_small_max_bytes = 200\nsize_medium_max_bytes = 200\n").is_err()
+        );
+        assert!(
+            Config::parse("size_small_max_bytes = 300\nsize_medium_max_bytes = 200\n").is_err()
+        );
         assert!(Config::parse("size_small_max_bytes = 0\n").is_err());
         assert!(Config::parse("size_smal_max_bytes = 1\n").is_err());
     }
@@ -422,19 +538,31 @@ mod tests {
 
     #[test]
     fn an_absolute_kb_path_is_kept() {
-        let cfg = Config { kb_path: Some("/kb/rocketapi".into()), ..Config::default() };
+        let cfg = Config {
+            kb_path: Some("/kb/rocketapi".into()),
+            ..Config::default()
+        };
         assert_eq!(cfg.kb_dir(), Some(PathBuf::from("/kb/rocketapi")));
     }
 
     #[test]
     fn expand_home_handles_tilde_forms() {
-        assert_eq!(expand_home("~/kb", Some("/home/u")), Some(PathBuf::from("/home/u/kb")));
-        assert_eq!(expand_home("~", Some("/home/u")), Some(PathBuf::from("/home/u")));
+        assert_eq!(
+            expand_home("~/kb", Some("/home/u")),
+            Some(PathBuf::from("/home/u/kb"))
+        );
+        assert_eq!(
+            expand_home("~", Some("/home/u")),
+            Some(PathBuf::from("/home/u"))
+        );
         assert_eq!(expand_home("~/kb", None), None);
         assert_eq!(expand_home("~/kb", Some("")), None);
         assert_eq!(expand_home("~", None), None);
         assert_eq!(expand_home("/a/~b", None), Some(PathBuf::from("/a/~b")));
-        assert_eq!(expand_home("~b/kb", Some("/home/u")), Some(PathBuf::from("~b/kb")));
+        assert_eq!(
+            expand_home("~b/kb", Some("/home/u")),
+            Some(PathBuf::from("~b/kb"))
+        );
     }
 
     #[test]
@@ -480,7 +608,10 @@ mod tests {
     #[test]
     fn the_default_job_budget_is_one_million() {
         assert_eq!(DEFAULT_JOB_BUDGET_WEIGHTED, 1_000_000);
-        assert_eq!(Config::default().budget_weighted, DEFAULT_JOB_BUDGET_WEIGHTED);
+        assert_eq!(
+            Config::default().budget_weighted,
+            DEFAULT_JOB_BUDGET_WEIGHTED
+        );
     }
 
     #[test]
@@ -555,7 +686,9 @@ mod tests {
     fn rockets_current_config_loads_with_no_problems() {
         // The fixture is a copy of Rocket's `.claude/factory/config.toml`, including `tickets_on_merge = true`.
         let text = include_str!("../tests/fixtures/rocket-config.toml");
-        assert!(text.contains("tickets_on_merge = true") && text.contains("commit_budget_weighted"));
+        assert!(
+            text.contains("tickets_on_merge = true") && text.contains("commit_budget_weighted")
+        );
         let cfg = Config::parse(text).expect("rocket config parses");
         assert!(cfg.tickets_on_merge && !cfg.commit_subagents && !cfg.degraded);
         let dir = tempfile::tempdir().expect("tempdir");
@@ -564,26 +697,39 @@ mod tests {
         let loaded = Config::load(&path);
         assert!(!loaded.degraded, "{loaded:?}");
         assert!(loaded.tickets_on_merge);
-        assert!(Config::parse(&format!("{text}\nnot_a_key = 1\n")).is_err(), "an unknown key still fails");
+        assert!(
+            Config::parse(&format!("{text}\nnot_a_key = 1\n")).is_err(),
+            "an unknown key still fails"
+        );
     }
 
     #[test]
     fn shipped_config_loads_and_maps_the_expected_paths() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../.claude/factory/config.toml");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.claude/factory/config.toml"
+        );
         let cfg = Config::try_load(std::path::Path::new(path)).expect("shipped config is valid");
         assert!(!cfg.degraded);
         let cmds = |p: &str| -> Vec<String> {
-            cfg.checks.iter().filter(|c| c.matches(p)).flat_map(|c| c.commands.clone()).collect()
+            cfg.checks
+                .iter()
+                .filter(|c| c.matches(p))
+                .flat_map(|c| c.commands.clone())
+                .collect()
         };
-        assert!(cmds("crates/rocket-http/src/lib.rs").contains(&"cargo check -j4 -p {crate}".to_string()));
-        assert!(cmds("crates/rocket-http/src/lib.rs").contains(&"cargo test -j4 -p {crate}".to_string()));
+        assert!(cmds("crates/rocket-http/src/lib.rs")
+            .contains(&"cargo check -j4 -p {crate}".to_string()));
+        assert!(cmds("crates/rocket-http/src/lib.rs")
+            .contains(&"cargo test -j4 -p {crate}".to_string()));
         assert!(cmds("src/App.tsx").contains(&"yarn tsc --noEmit".to_string()));
         assert!(cmds("src/App.tsx").contains(&"yarn check".to_string()));
         assert!(cmds("src/App.tsx").contains(&"yarn test --run --maxWorkers=50%".to_string()));
         assert!(cmds("tools/factory/crates/factory-core/src/lib.rs")
             .contains(&"cargo check -j4 --manifest-path tools/factory/Cargo.toml".to_string()));
-        assert!(cmds("tools/factory-server/src/main.rs")
-            .contains(&"cargo check -j4 --manifest-path tools/factory-server/Cargo.toml".to_string()));
+        assert!(cmds("tools/factory-server/src/main.rs").contains(
+            &"cargo check -j4 --manifest-path tools/factory-server/Cargo.toml".to_string()
+        ));
         assert!(cmds("docs/a.md").is_empty());
         assert_eq!(cfg.commit_model, "sonnet");
         assert!(!cfg.commit_subagents);

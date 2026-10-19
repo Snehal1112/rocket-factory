@@ -51,7 +51,9 @@ fn stopped_budget_needs_a_human() {
     let v = Verdict::Approve;
     let mut i = input(&v);
     i.budget = BudgetState::Stop;
-    assert!(matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("budget") && kind == factory_core::ParkKind::BudgetStopped));
+    assert!(
+        matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("budget") && kind == factory_core::ParkKind::BudgetStopped)
+    );
 }
 
 #[test]
@@ -67,7 +69,9 @@ fn diff_over_cap_needs_a_human() {
     let v = Verdict::Approve;
     let mut i = input(&v);
     i.diff_lines = 4001;
-    assert!(matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("cap") && kind == factory_core::ParkKind::DiffTooLarge));
+    assert!(
+        matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("cap") && kind == factory_core::ParkKind::DiffTooLarge)
+    );
 }
 
 #[test]
@@ -77,7 +81,9 @@ fn failing_checks_give_a_fix_round_then_a_human() {
     i.checks_ok = false;
     assert_eq!(decide(&i), Decision::FixRound);
     i.round = 3;
-    assert!(matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("fix rounds") && kind == factory_core::ParkKind::ChecksFailed));
+    assert!(
+        matches!(decide(&i), Decision::NeedsHuman { reason: r, kind } if r.contains("fix rounds") && kind == factory_core::ParkKind::ChecksFailed)
+    );
 }
 
 #[test]
@@ -86,7 +92,13 @@ fn changes_and_missing_verdicts_give_a_fix_round_then_a_human() {
         let mut i = input(&v);
         assert_eq!(decide(&i), Decision::FixRound);
         i.round = 3;
-        assert!(matches!(decide(&i), Decision::NeedsHuman { kind: factory_core::ParkKind::ChangesRemain, .. }));
+        assert!(matches!(
+            decide(&i),
+            Decision::NeedsHuman {
+                kind: factory_core::ParkKind::ChangesRemain,
+                ..
+            }
+        ));
     }
 }
 
@@ -123,10 +135,17 @@ fn the_reviewer_prompt_carries_the_kb_line_only_when_set() {
         let rr = reviewer("ok\nVERDICT: APPROVE");
         fx.engine(&rr).review_stage().expect("review");
         let spec = rr.last_spec().expect("spec");
-        assert_eq!(spec.allowed_tools, vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]);
+        assert_eq!(
+            spec.allowed_tools,
+            vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]
+        );
         match kb {
             Some(dir) => {
-                assert!(spec.prompt.contains(&format!("Knowledge base: {dir}")), "{}", spec.prompt);
+                assert!(
+                    spec.prompt.contains(&format!("Knowledge base: {dir}")),
+                    "{}",
+                    spec.prompt
+                );
                 assert!(spec.prompt.contains("README.md"));
                 assert_eq!(spec.add_dirs, vec![std::path::PathBuf::from(dir)]);
             }
@@ -149,7 +168,10 @@ fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
     let spec = rr.last_spec().expect("a spec was recorded");
     assert_eq!(spec.role, "reviewer");
     assert_eq!(spec.model, Some(fx.config.reviewer_model.clone()));
-    assert_eq!(spec.allowed_tools, vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]);
+    assert_eq!(
+        spec.allowed_tools,
+        vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]
+    );
     assert_eq!(spec.tools, Some("Read,Grep,Glob".to_string()));
     assert_eq!(spec.agent, Some("factory-code-reviewer".to_string()));
     assert_eq!(spec.budget_weighted, Some(fx.config.budget_weighted));
@@ -171,9 +193,24 @@ fn reviewer_prompt_names_the_spec_and_the_earlier_findings_when_they_exist() {
     assert!(!prompt.contains("findings of round"), "{prompt}");
     // With a spec and a round 1 review on disk, a round 2 reviewer is pointed at both.
     std::fs::write(fx.job_dir.join("spec.md"), "# Spec\n").expect("spec");
-    std::fs::write(fx.job_dir.join("review-code-r1.md"), "1. [blocker] x\n").expect("earlier review");
-    let spec = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 2, &[], &ReviewerExtra::default());
-    assert!(spec.prompt.contains(&format!("The spec is at {}", fx.job_dir.join("spec.md").display())), "{}", spec.prompt);
+    std::fs::write(fx.job_dir.join("review-code-r1.md"), "1. [blocker] x\n")
+        .expect("earlier review");
+    let spec = fx.engine(&rr).reviewer_spec(
+        &fx.main,
+        &fx.job_dir.join("d.diff"),
+        &fx.job_dir.join("n.txt"),
+        2,
+        &[],
+        &ReviewerExtra::default(),
+    );
+    assert!(
+        spec.prompt.contains(&format!(
+            "The spec is at {}",
+            fx.job_dir.join("spec.md").display()
+        )),
+        "{}",
+        spec.prompt
+    );
     assert!(spec.prompt.contains("review-code-r1.md"), "{}", spec.prompt);
 }
 
@@ -182,14 +219,31 @@ fn reviewer_rules_come_from_the_config_and_are_absent_by_default() {
     let mut fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("ok\nVERDICT: APPROVE");
-    let none = fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), 1, &fx.config.reviewer_rules, &ReviewerExtra::default());
+    let none = fx.engine(&rr).reviewer_spec(
+        &fx.main,
+        &fx.job_dir.join("d.diff"),
+        &fx.job_dir.join("n.txt"),
+        1,
+        &fx.config.reviewer_rules,
+        &ReviewerExtra::default(),
+    );
     for banned in ["unwrap", "shadcn", ".claude/rules", "DDD"] {
-        assert!(!none.prompt.contains(banned), "{banned} leaked: {}", none.prompt);
+        assert!(
+            !none.prompt.contains(banned),
+            "{banned} leaked: {}",
+            none.prompt
+        );
     }
-    fx.config.reviewer_rules = vec!["Check the error handling.".into(), "Check the naming.".into()];
+    fx.config.reviewer_rules = vec![
+        "Check the error handling.".into(),
+        "Check the naming.".into(),
+    ];
     fx.engine(&rr).review_stage().expect("review");
     let prompt = rr.last_spec().expect("spec").prompt;
-    assert!(prompt.contains("Check the error handling. Check the naming."), "{prompt}");
+    assert!(
+        prompt.contains("Check the error handling. Check the naming."),
+        "{prompt}"
+    );
 }
 
 #[test]
@@ -200,7 +254,10 @@ fn approve_on_a_normal_diff_is_auto_merge_and_apply_sets_approve() {
     let e = fx.engine(&rr);
     let out = e.review_stage().expect("review");
     assert_eq!(out.decision, Decision::AutoMerge);
-    assert_eq!(e.apply_decision(&out).expect("apply"), StageOutcome::Advanced(Stage::Approve));
+    assert_eq!(
+        e.apply_decision(&out).expect("apply"),
+        StageOutcome::Advanced(Stage::Approve)
+    );
     assert_eq!(fx.job().stage, Stage::Approve);
     let md = std::fs::read_to_string(fx.job_dir.join("checks.md")).expect("checks.md");
     assert!(md.contains("PASS"), "{md}");
@@ -208,7 +265,12 @@ fn approve_on_a_normal_diff_is_auto_merge_and_apply_sets_approve() {
 
 #[test]
 fn verdict_not_on_the_last_line_counts_as_changes() {
-    for reply in ["VERDICT: APPROVE\nbut also this", "```\nVERDICT: APPROVE\n```", "verdict: approve", "looks good"] {
+    for reply in [
+        "VERDICT: APPROVE\nbut also this",
+        "```\nVERDICT: APPROVE\n```",
+        "verdict: approve",
+        "looks good",
+    ] {
         let fx = committing_fixture();
         build_and_pass_checks(&fx, &["a.txt"]);
         let rr = reviewer(reply);
@@ -226,7 +288,10 @@ fn changes_verdict_starts_a_fix_round_with_the_review_text() {
     let e = fx.engine(&rr);
     let out = e.review_stage().expect("review");
     assert_eq!(out.decision, Decision::FixRound);
-    assert_eq!(e.apply_decision(&out).expect("apply"), StageOutcome::Advanced(Stage::Build));
+    assert_eq!(
+        e.apply_decision(&out).expect("apply"),
+        StageOutcome::Advanced(Stage::Build)
+    );
     let job = fx.job();
     assert_eq!(job.round, 2);
     assert_eq!(job.fix_source.as_deref(), Some("review"));
@@ -248,11 +313,17 @@ fn risky_diff_with_approve_needs_a_human_naming_the_path() {
         }
         other => panic!("unexpected {other:?}"),
     }
-    assert!(matches!(e.apply_decision(&out).expect("apply"), StageOutcome::NeedsHuman(_)));
+    assert!(matches!(
+        e.apply_decision(&out).expect("apply"),
+        StageOutcome::NeedsHuman(_)
+    ));
     assert_eq!(fx.job().stage, Stage::NeedsHuman);
     // The reviewer ran, so the park offers a plain approve.
     let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
-    assert_eq!(rec.next, vec!["factory approve 001", "factory rework 001 <note>"]);
+    assert_eq!(
+        rec.next,
+        vec!["factory approve 001", "factory rework 001 <note>"]
+    );
 }
 
 #[test]
@@ -264,14 +335,24 @@ fn final_check_failure_blocks_auto_merge() {
     let e = fx.engine(&rr);
     let out = e.review_stage().expect("review");
     assert_eq!(out.decision, Decision::AutoMerge);
-    fx.config.checks = vec![factory_core::CheckRule { paths: vec!["**".into()], commands: vec!["false".into()] }];
+    fx.config.checks = vec![factory_core::CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["false".into()],
+    }];
     let e2 = fx.engine(&rr);
-    assert_eq!(e2.apply_decision(&out).expect("apply"), StageOutcome::Advanced(Stage::Build));
+    assert_eq!(
+        e2.apply_decision(&out).expect("apply"),
+        StageOutcome::Advanced(Stage::Build)
+    );
     assert_eq!(fx.job().round, 2);
 }
 
 fn code_review_state(fx: &Fixture) -> factory_core::ReviewState {
-    fx.job().reviews.get("code").copied().expect("code review state")
+    fx.job()
+        .reviews
+        .get("code")
+        .copied()
+        .expect("code review state")
 }
 
 #[test]
@@ -282,9 +363,11 @@ fn review_state_is_running_during_the_run_and_pass_after_approve() {
     let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
     let seen_in = seen.clone();
     let rr = scripted(vec![Box::new(move |_| {
-        let state = factory_core::Board::load(&board)
-            .ok()
-            .and_then(|b| b.find("001").ok().and_then(|j| j.reviews.get("code").copied()));
+        let state = factory_core::Board::load(&board).ok().and_then(|b| {
+            b.find("001")
+                .ok()
+                .and_then(|j| j.reviews.get("code").copied())
+        });
         if let Ok(mut g) = seen_in.lock() {
             *g = state;
         }
@@ -305,7 +388,11 @@ fn review_state_is_changes_after_changes_and_after_a_missing_verdict() {
         let rr = reviewer(reply);
         let e = fx.engine(&rr);
         e.review_stage().expect("review");
-        assert_eq!(code_review_state(&fx), factory_core::ReviewState::Changes, "{reply}");
+        assert_eq!(
+            code_review_state(&fx),
+            factory_core::ReviewState::Changes,
+            "{reply}"
+        );
     }
 }
 
@@ -341,11 +428,24 @@ fn the_reviewer_prompt_carries_focus_notes_and_outline() {
     let ledger = "Ruling: builder task 1: kept the old name\nRuling: builder task 1 concerns: slow query\nRuling: other thing\n";
     let prompt = review_prompt_for(FOCUS_PLAN, ledger);
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
-    assert_eq!(prompt.matches("Check the lease handling.").count(), 1, "{prompt}");
-    assert!(prompt.contains("\nbuilder task 1: kept the old name"), "{prompt}");
-    assert!(prompt.contains("builder task 1 concerns: slow query"), "{prompt}");
+    assert_eq!(
+        prompt.matches("Check the lease handling.").count(),
+        1,
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("\nbuilder task 1: kept the old name"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("builder task 1 concerns: slow query"),
+        "{prompt}"
+    );
     assert!(!prompt.contains("other thing"), "{prompt}");
-    assert!(prompt.contains("### Task 1: first thing") && prompt.contains("Intro line."), "{prompt}");
+    assert!(
+        prompt.contains("### Task 1: first thing") && prompt.contains("Intro line."),
+        "{prompt}"
+    );
     assert!(!prompt.contains("BODY-MARKER"), "{prompt}");
     assert!(!prompt.contains("## Review Focus"), "{prompt}");
     assert!(prompt.contains("Read the diff in pages"), "{prompt}");
@@ -354,7 +454,10 @@ fn the_reviewer_prompt_carries_focus_notes_and_outline() {
 
 #[test]
 fn a_plan_without_review_focus_has_no_empty_section() {
-    let prompt = review_prompt_for("# P\n\nIntro line.\n\n### Task 1: first thing\n\nbody\n", "");
+    let prompt = review_prompt_for(
+        "# P\n\nIntro line.\n\n### Task 1: first thing\n\nbody\n",
+        "",
+    );
     assert!(!prompt.contains("Review focus"), "{prompt}");
     assert!(prompt.contains("### Task 1: first thing"), "{prompt}");
 }
@@ -389,16 +492,25 @@ fn large_fixture(over: u32) -> Fixture {
 #[test]
 fn a_risky_diff_uses_the_large_model_when_set() {
     let fx = large_fixture(800);
-    assert_eq!(model_of_review(&fx, &["src-tauri/src/lib.rs"]), Some("opus".to_string()));
+    assert_eq!(
+        model_of_review(&fx, &["src-tauri/src/lib.rs"]),
+        Some("opus".to_string())
+    );
 }
 
 #[test]
 fn a_diff_over_the_line_threshold_uses_the_large_model() {
     // Two files of one line each change two lines. At the threshold the normal model stays, one over it switches.
     let at = large_fixture(2);
-    assert_eq!(model_of_review(&at, &["a.txt", "b.txt"]), Some("sonnet".to_string()));
+    assert_eq!(
+        model_of_review(&at, &["a.txt", "b.txt"]),
+        Some("sonnet".to_string())
+    );
     let over = large_fixture(1);
-    assert_eq!(model_of_review(&over, &["a.txt", "b.txt"]), Some("opus".to_string()));
+    assert_eq!(
+        model_of_review(&over, &["a.txt", "b.txt"]),
+        Some("opus".to_string())
+    );
 }
 
 #[test]
@@ -409,10 +521,18 @@ fn a_small_safe_diff_uses_the_normal_model() {
 
 #[test]
 fn with_no_large_model_set_nothing_changes() {
-    for (files, over) in [(vec!["a.txt"], 800), (vec!["a.txt", "b.txt"], 1), (vec!["src-tauri/src/lib.rs"], 800)] {
+    for (files, over) in [
+        (vec!["a.txt"], 800),
+        (vec!["a.txt", "b.txt"], 1),
+        (vec!["src-tauri/src/lib.rs"], 800),
+    ] {
         let mut fx = large_fixture(over);
         fx.config.reviewer_model_large = None;
-        assert_eq!(model_of_review(&fx, &files), Some("sonnet".to_string()), "{files:?}");
+        assert_eq!(
+            model_of_review(&fx, &files),
+            Some("sonnet".to_string()),
+            "{files:?}"
+        );
         let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default();
         assert!(!ledger.contains("review model:"), "{ledger}");
     }
@@ -423,11 +543,17 @@ fn the_choice_is_written_to_the_ledger() {
     let fx = large_fixture(800);
     model_of_review(&fx, &["src-tauri/src/lib.rs"]);
     let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
-    assert!(ledger.contains("review model: opus (risky diff)"), "{ledger}");
+    assert!(
+        ledger.contains("review model: opus (risky diff)"),
+        "{ledger}"
+    );
     let fx = large_fixture(1);
     model_of_review(&fx, &["a.txt", "b.txt"]);
     let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
-    assert!(ledger.contains("review model: opus (2 changed lines, over 1)"), "{ledger}");
+    assert!(
+        ledger.contains("review model: opus (2 changed lines, over 1)"),
+        "{ledger}"
+    );
 }
 
 fn direct_prompt(round: u32, extra: &ReviewerExtra) -> String {
@@ -441,7 +567,16 @@ fn direct_prompt_with(round: u32, extra: &ReviewerExtra, files: &[&str]) -> Stri
         std::fs::write(fx.job_dir.join(f), "1. [blocker] x\n").expect("write");
     }
     let rr = reviewer("ok\nVERDICT: APPROVE");
-    fx.engine(&rr).reviewer_spec(&fx.main, &fx.job_dir.join("d.diff"), &fx.job_dir.join("n.txt"), round, &[], extra).prompt
+    fx.engine(&rr)
+        .reviewer_spec(
+            &fx.main,
+            &fx.job_dir.join("d.diff"),
+            &fx.job_dir.join("n.txt"),
+            round,
+            &[],
+            extra,
+        )
+        .prompt
 }
 
 #[test]
@@ -453,10 +588,16 @@ fn the_reviewer_prompt_has_the_vision_document_rule_and_declined_to_judge_and_gr
     for grade in ["Critical", "Important", "Minor"] {
         assert!(prompt.contains(grade), "{grade}: {prompt}");
     }
-    assert!(prompt.contains("[blocker]") && prompt.contains("[minor]"), "{prompt}");
+    assert!(
+        prompt.contains("[blocker]") && prompt.contains("[minor]"),
+        "{prompt}"
+    );
     assert!(prompt.contains("Any blocker means CHANGES"), "{prompt}");
     assert!(prompt.contains("you do not dispatch subagents"), "{prompt}");
-    assert!(prompt.contains("`VERDICT: APPROVE` or `VERDICT: CHANGES`"), "{prompt}");
+    assert!(
+        prompt.contains("`VERDICT: APPROVE` or `VERDICT: CHANGES`"),
+        "{prompt}"
+    );
 }
 
 #[test]
@@ -473,33 +614,58 @@ fn round_two_carries_the_scoped_rereview_rule_and_round_one_does_not() {
 
 #[test]
 fn round_two_still_carries_review_focus() {
-    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new(), no_tests: false };
+    let extra = ReviewerExtra {
+        focus: Some("Check the lease handling.".into()),
+        notes: vec!["builder task 1: kept the old name".into()],
+        plan_outline: String::new(),
+        no_tests: false,
+    };
     let prompt = direct_prompt(2, &extra);
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
-    assert!(prompt.contains("builder task 1: kept the old name"), "{prompt}");
+    assert!(
+        prompt.contains("builder task 1: kept the old name"),
+        "{prompt}"
+    );
     assert!(prompt.contains("Out-of-scope observations"), "{prompt}");
 }
 
 #[test]
 fn round_two_without_a_round_one_review_is_a_normal_review() {
-    let extra = ReviewerExtra { focus: Some("Check the lease handling.".into()), notes: vec!["builder task 1: kept the old name".into()], plan_outline: String::new(), no_tests: false };
+    let extra = ReviewerExtra {
+        focus: Some("Check the lease handling.".into()),
+        notes: vec!["builder task 1: kept the old name".into()],
+        plan_outline: String::new(),
+        no_tests: false,
+    };
     let prompt = direct_prompt_with(2, &extra, &[]);
     assert!(!prompt.contains("scoped re-review"), "{prompt}");
     assert!(!prompt.contains("fix diff only"), "{prompt}");
     assert!(!prompt.contains("Check that each was fixed"), "{prompt}");
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
-    assert!(prompt.contains("builder task 1: kept the old name"), "{prompt}");
+    assert!(
+        prompt.contains("builder task 1: kept the old name"),
+        "{prompt}"
+    );
 }
 
 #[test]
 fn the_rereview_rule_keeps_the_tag_of_an_unfixed_finding() {
     let prompt = direct_prompt(2, &ReviewerExtra::default());
-    assert!(prompt.contains("A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag."), "{prompt}");
+    assert!(
+        prompt.contains(
+            "A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag."
+        ),
+        "{prompt}"
+    );
 }
 
 #[test]
 fn the_rereview_prompt_names_the_builder_reply_when_it_exists() {
-    let with = direct_prompt_with(2, &ReviewerExtra::default(), &["review-code-r1.md", "builder-r2.md"]);
+    let with = direct_prompt_with(
+        2,
+        &ReviewerExtra::default(),
+        &["review-code-r1.md", "builder-r2.md"],
+    );
     assert!(with.contains("builder-r2.md"), "{with}");
     assert!(with.contains("builder's reply to those findings"), "{with}");
     let without = direct_prompt(2, &ReviewerExtra::default());

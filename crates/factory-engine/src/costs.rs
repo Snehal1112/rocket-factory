@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use factory_core::{count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, JobCost, Layout};
+use factory_core::{
+    count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, JobCost, Layout,
+};
 
 use crate::clock::now_secs;
 use crate::{Driver, EngineError};
@@ -18,7 +20,9 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
         let plan_bytes = plan.as_ref().map_or(0, |t| t.len() as u64);
         let tasks = plan.as_deref().map_or(0, count_tasks);
         let group = plan.as_ref().map(|_| group_of(plan_bytes, cfg));
-        let usage = std::fs::read_to_string(dir.join("usage.jsonl")).map(|t| usage_summary(&t, &job.id)).unwrap_or_default();
+        let usage = std::fs::read_to_string(dir.join("usage.jsonl"))
+            .map(|t| usage_summary(&t, &job.id))
+            .unwrap_or_default();
         let counts = match (&job.base, &job.head) {
             (Some(base), Some(head)) => driver.repo().diff_counts(base, head).ok(),
             _ => None,
@@ -51,7 +55,8 @@ pub fn costs_path(layout: &Layout) -> PathBuf {
 pub fn refresh_costs(driver: &Driver) -> Result<(), EngineError> {
     let jobs = gather_costs(driver)?;
     let file = CostsFile::build(&jobs, driver.config(), now_secs());
-    file.write(&costs_path(driver.layout())).map_err(|e| EngineError::Core(e.to_string()))
+    file.write(&costs_path(driver.layout()))
+        .map_err(|e| EngineError::Core(e.to_string()))
 }
 
 /// The estimate for a plan of `plan_bytes` bytes, from the history now. `None` without history.

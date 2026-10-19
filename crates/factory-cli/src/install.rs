@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use factory_core::{claude_commands_dir, write_atomic};
 pub use factory_core::GLOBAL_COMMAND;
+use factory_core::{claude_commands_dir, write_atomic};
 
 use crate::CliError;
 
@@ -15,7 +15,8 @@ pub fn run(dir: Option<&Path>, force: bool) -> Result<String, CliError> {
         Some(d) => d.to_path_buf(),
         None => {
             let home = std::env::var("HOME").ok().filter(|h| !h.is_empty());
-            let home = home.ok_or_else(|| CliError::Refused("$HOME is not set, pass --dir".into()))?;
+            let home =
+                home.ok_or_else(|| CliError::Refused("$HOME is not set, pass --dir".into()))?;
             claude_commands_dir(Path::new(&home))
         }
     };
@@ -36,7 +37,12 @@ fn install_into(folder: &Path, force: bool) -> Result<String, CliError> {
         }
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(CliError::Refused(format!("cannot read {}: {e}", target.display()))),
+        Err(e) => {
+            return Err(CliError::Refused(format!(
+                "cannot read {}: {e}",
+                target.display()
+            )))
+        }
     }
     write_atomic(&target, GLOBAL_COMMAND.as_bytes())?;
     Ok(format!("installed {}", target.display()))

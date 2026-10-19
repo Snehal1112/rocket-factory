@@ -10,9 +10,18 @@ const MAX_TARGET: usize = 300;
 /// Something the runner reacts to while reading the stream.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
-    Init { session_id: String },
-    Tool { name: String, target: String },
-    Result { text: String, is_error: bool, subtype: String },
+    Init {
+        session_id: String,
+    },
+    Tool {
+        name: String,
+        target: String,
+    },
+    Result {
+        text: String,
+        is_error: bool,
+        subtype: String,
+    },
 }
 
 /// Folds `claude -p --output-format stream-json` lines into run state.
@@ -37,11 +46,18 @@ fn trim_chars(s: &str, max: usize) -> String {
 fn tool_target(input: &Value) -> String {
     for key in ["file_path", "path", "pattern", "url"] {
         if let Some(v) = input.get(key).and_then(Value::as_str) {
-            let v = if key == "url" { v.split(['?', '#']).next().map_or(v, |p| p) } else { v };
+            let v = if key == "url" {
+                v.split(['?', '#']).next().map_or(v, |p| p)
+            } else {
+                v
+            };
             return trim_chars(v, MAX_TARGET);
         }
     }
-    input.get("command").and_then(Value::as_str).map_or(String::new(), |c| trim_chars(c, MAX_COMMAND))
+    input
+        .get("command")
+        .and_then(Value::as_str)
+        .map_or(String::new(), |c| trim_chars(c, MAX_COMMAND))
 }
 
 impl StreamState {
@@ -64,7 +80,9 @@ impl StreamState {
         if let Some(id) = value.get("session_id").and_then(Value::as_str) {
             self.session_id = Some(id.to_string());
             if kind == "system" && value.get("subtype").and_then(Value::as_str) == Some("init") {
-                out.push(StreamEvent::Init { session_id: id.to_string() });
+                out.push(StreamEvent::Init {
+                    session_id: id.to_string(),
+                });
             }
         }
         match kind {
@@ -80,7 +98,9 @@ impl StreamState {
             return;
         };
         if let Some(id) = message.get("id").and_then(Value::as_str) {
-            let seen = message.get("usage").map_or(Usage::default(), Usage::from_value);
+            let seen = message
+                .get("usage")
+                .map_or(Usage::default(), Usage::from_value);
             let merged = match self.usage_by_message.get(id) {
                 Some(old) => old.max_with(&seen),
                 None => seen,
@@ -97,31 +117,53 @@ impl StreamState {
             if item.get("type").and_then(Value::as_str) != Some("tool_use") {
                 continue;
             }
-            let tool_id = item.get("id").and_then(Value::as_str).map_or(String::new(), str::to_string);
+            let tool_id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .map_or(String::new(), str::to_string);
             if !tool_id.is_empty() && !self.seen_tools.insert(tool_id) {
                 continue;
             }
-            let name = item.get("name").and_then(Value::as_str).map_or(String::new(), str::to_string);
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .map_or(String::new(), str::to_string);
             let target = item.get("input").map_or(String::new(), tool_target);
             out.push(StreamEvent::Tool { name, target });
         }
     }
 
     fn on_result(&mut self, value: &Value, out: &mut Vec<StreamEvent>) {
-        let text = value.get("result").and_then(Value::as_str).map_or(String::new(), str::to_string);
-        let is_error = value.get("is_error").and_then(Value::as_bool).unwrap_or(false);
-        let subtype = value.get("subtype").and_then(Value::as_str).map_or(String::new(), str::to_string);
+        let text = value
+            .get("result")
+            .and_then(Value::as_str)
+            .map_or(String::new(), str::to_string);
+        let is_error = value
+            .get("is_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let subtype = value
+            .get("subtype")
+            .and_then(Value::as_str)
+            .map_or(String::new(), str::to_string);
         self.result_usage = value.get("usage").map(Usage::from_value);
         self.result_text = Some(text.clone());
         self.result_is_error = is_error;
         self.result_subtype = Some(subtype.clone());
-        out.push(StreamEvent::Result { text, is_error, subtype });
+        out.push(StreamEvent::Result {
+            text,
+            is_error,
+            subtype,
+        });
     }
 
     /// Sum of the latest usage of each unique message id. Falls back to the result usage when
     /// no per-message usage was seen.
     pub fn usage(&self) -> Usage {
-        let sum = self.usage_by_message.values().fold(Usage::default(), |acc, u| acc.add(u));
+        let sum = self
+            .usage_by_message
+            .values()
+            .fold(Usage::default(), |acc, u| acc.add(u));
         if sum.is_zero() {
             return self.result_usage.map_or(sum, |u| u);
         }
@@ -140,7 +182,10 @@ impl StreamState {
 
     /// Context the run started with: cache creation plus cache read of the first message.
     pub fn start_ctx(&self) -> u64 {
-        self.first_usage.map_or(0, |u| u.cache_creation_input_tokens.saturating_add(u.cache_read_input_tokens))
+        self.first_usage.map_or(0, |u| {
+            u.cache_creation_input_tokens
+                .saturating_add(u.cache_read_input_tokens)
+        })
     }
 
     /// Number of unique assistant messages seen so far.

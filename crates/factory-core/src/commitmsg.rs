@@ -7,7 +7,9 @@ pub const MAX_SUBJECT_CHARS: usize = 72;
 /// Most commits one committer run may make.
 pub const MAX_COMMITS_PER_RUN: usize = 4;
 
-const TYPES: &[&str] = &["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"];
+const TYPES: &[&str] = &[
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
 
 /// Checks a full commit message: a Conventional Commits subject of at most 72 characters
 /// with no trailing period, and a blank line before any body. The error is a short reason.
@@ -19,7 +21,9 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     }
     let chars = subject.chars().count();
     if chars > MAX_SUBJECT_CHARS {
-        return Err(format!("the subject is {chars} characters, the limit is {MAX_SUBJECT_CHARS}"));
+        return Err(format!(
+            "the subject is {chars} characters, the limit is {MAX_SUBJECT_CHARS}"
+        ));
     }
     if subject.ends_with(char::is_whitespace) {
         return Err("the subject ends with whitespace".to_string());
@@ -27,18 +31,23 @@ pub fn validate_message(message: &str) -> Result<(), String> {
     if subject.ends_with('.') {
         return Err("the subject ends with a period".to_string());
     }
-    let (head, description) =
-        subject.split_once(": ").ok_or_else(|| "the subject must look like `type(scope): description`".to_string())?;
+    let (head, description) = subject
+        .split_once(": ")
+        .ok_or_else(|| "the subject must look like `type(scope): description`".to_string())?;
     let head = head.strip_suffix('!').unwrap_or(head);
     let (kind, scope) = match head.split_once('(') {
         Some((kind, rest)) => {
-            let scope = rest.strip_suffix(')').ok_or_else(|| "the scope has no closing parenthesis".to_string())?;
+            let scope = rest
+                .strip_suffix(')')
+                .ok_or_else(|| "the scope has no closing parenthesis".to_string())?;
             (kind, Some(scope))
         }
         None => (head, None),
     };
     if !TYPES.contains(&kind) {
-        return Err(format!("`{kind}` is not a lowercase Conventional Commits type"));
+        return Err(format!(
+            "`{kind}` is not a lowercase Conventional Commits type"
+        ));
     }
     if let Some(scope) = scope {
         if scope.is_empty() || scope.chars().any(char::is_whitespace) {
@@ -67,7 +76,9 @@ const GITHUB_PREFIX: &str = "https://github.com/";
 
 /// True for a GitHub owner or repository name: letters, digits, `-`, `_` and `.`.
 fn is_repo_name(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
 /// The `#N` references. The `#` must start the text or follow a character that is not alphanumeric
@@ -82,7 +93,10 @@ fn hash_refs(text: &str) -> Vec<IssueRef> {
         if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
             continue;
         }
-        let digits: String = chars[i + 1..].iter().take_while(|d| d.is_ascii_digit()).collect();
+        let digits: String = chars[i + 1..]
+            .iter()
+            .take_while(|d| d.is_ascii_digit())
+            .collect();
         if let Ok(number) = digits.parse::<u32>() {
             if number >= 1 {
                 found.push(IssueRef { number, repo: None });
@@ -104,7 +118,10 @@ fn url_refs(text: &str) -> Vec<IssueRef> {
             let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
             if let Ok(number) = digits.parse::<u32>() {
                 if number >= 1 && is_repo_name(owner) && is_repo_name(repo) {
-                    found.push(IssueRef { number, repo: Some(format!("{owner}/{repo}")) });
+                    found.push(IssueRef {
+                        number,
+                        repo: Some(format!("{owner}/{repo}")),
+                    });
                 }
             }
         }
@@ -124,7 +141,10 @@ pub fn parse_issue_refs(text: &str) -> Vec<IssueRef> {
 
 /// Every issue number in the text, sorted and de-duplicated. `#N` and GitHub issue URLs both count.
 pub fn parse_issues(text: &str) -> Vec<u32> {
-    let mut numbers: Vec<u32> = parse_issue_refs(text).into_iter().map(|r| r.number).collect();
+    let mut numbers: Vec<u32> = parse_issue_refs(text)
+        .into_iter()
+        .map(|r| r.number)
+        .collect();
     numbers.sort_unstable();
     numbers.dedup();
     numbers
@@ -153,7 +173,9 @@ fn is_footer_line(line: &str) -> bool {
         Some((key, value)) => {
             !key.is_empty()
                 && !value.trim().is_empty()
-                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ' ')
+                && key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ' ')
                 && !key.starts_with(' ')
                 && !key.ends_with(' ')
         }
@@ -165,14 +187,19 @@ fn is_footer_line(line: &str) -> bool {
 /// existing footer paragraph, or start a new one after a blank line.
 pub fn append_footers(message: &str, lines: &[String]) -> String {
     let base = message.trim_end();
-    let new: Vec<&String> = lines.iter().filter(|l| !base.lines().any(|m| m == l.as_str())).collect();
+    let new: Vec<&String> = lines
+        .iter()
+        .filter(|l| !base.lines().any(|m| m == l.as_str()))
+        .collect();
     if new.is_empty() {
         return base.to_string();
     }
     let mut out = base.to_string();
     let last_paragraph: Vec<&str> = base.rsplit("\n\n").next().unwrap_or("").lines().collect();
     let has_paragraph = base.contains("\n\n");
-    let in_footer = has_paragraph && !last_paragraph.is_empty() && last_paragraph.iter().all(|l| is_footer_line(l));
+    let in_footer = has_paragraph
+        && !last_paragraph.is_empty()
+        && last_paragraph.iter().all(|l| is_footer_line(l));
     out.push_str(if in_footer { "\n" } else { "\n\n" });
     let joined: Vec<&str> = new.iter().map(|l| l.as_str()).collect();
     out.push_str(&joined.join("\n"));
@@ -184,19 +211,29 @@ pub fn append_footers(message: &str, lines: &[String]) -> String {
 pub fn fallback_subject(task_title: &str) -> String {
     let folded = task_title.split_whitespace().collect::<Vec<_>>().join(" ");
     let title = folded.trim_end_matches('.').trim();
-    let title = if title.is_empty() { "commit factory changes" } else { title };
+    let title = if title.is_empty() {
+        "commit factory changes"
+    } else {
+        title
+    };
     let prefix = "chore: ";
     let room = MAX_SUBJECT_CHARS - prefix.chars().count();
     let cut: String = title.chars().take(room).collect();
     let cut = cut.trim_end_matches(|c: char| c == '.' || c.is_whitespace());
-    let cut = if cut.is_empty() { "commit factory changes" } else { cut };
+    let cut = if cut.is_empty() {
+        "commit factory changes"
+    } else {
+        cut
+    };
     format!("{prefix}{cut}")
 }
 
 /// The reason after `BLOCKED:` when the first line of a committer reply starts with it.
 pub fn blocked_reason(reply: &str) -> Option<String> {
     let first = reply.lines().next()?.trim();
-    first.strip_prefix("BLOCKED:").map(|reason| reason.trim().to_string())
+    first
+        .strip_prefix("BLOCKED:")
+        .map(|reason| reason.trim().to_string())
 }
 
 /// What a builder reply says about how the task went.
@@ -245,7 +282,9 @@ pub fn parse_builder_status(reply: &str) -> Option<BuilderStatus> {
         let Some(value) = status_value(line) else {
             continue;
         };
-        let word_end = value.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(value.len());
+        let word_end = value
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(value.len());
         let (word, tail) = value.split_at(word_end);
         let make: fn(String) -> BuilderStatus = match word.to_ascii_uppercase().as_str() {
             "DONE" => |_| BuilderStatus::Done,
@@ -254,8 +293,15 @@ pub fn parse_builder_status(reply: &str) -> Option<BuilderStatus> {
             "NEEDS_CONTEXT" => BuilderStatus::NeedsContext,
             _ => continue,
         };
-        let mut text = tail.trim_start_matches(|c: char| c == '*' || c == '`' || c == ':' || c == '-' || c.is_whitespace()).to_string();
-        for rest in lines[at + 1..].iter().take_while(|l| !l.trim().starts_with("Ruling:")) {
+        let mut text = tail
+            .trim_start_matches(|c: char| {
+                c == '*' || c == '`' || c == ':' || c == '-' || c.is_whitespace()
+            })
+            .to_string();
+        for rest in lines[at + 1..]
+            .iter()
+            .take_while(|l| !l.trim().starts_with("Ruling:"))
+        {
             text.push('\n');
             text.push_str(rest);
         }
@@ -352,7 +398,10 @@ mod tests {
     #[test]
     fn fallback_subject_is_a_valid_chore_subject() {
         assert_eq!(fallback_subject("Add the thing."), "chore: Add the thing");
-        assert_eq!(fallback_subject("  Add   the\nthing  "), "chore: Add the thing");
+        assert_eq!(
+            fallback_subject("  Add   the\nthing  "),
+            "chore: Add the thing"
+        );
         assert_eq!(fallback_subject(""), "chore: commit factory changes");
         let long = fallback_subject(&"word ".repeat(40));
         assert!(long.chars().count() <= MAX_SUBJECT_CHARS);
@@ -379,26 +428,42 @@ mod tests {
 
     #[test]
     fn blocked_reason_reads_only_the_first_line() {
-        assert_eq!(blocked_reason("BLOCKED: no skill\nmore"), Some("no skill".to_string()));
-        assert_eq!(blocked_reason("  BLOCKED:   spaced  "), Some("spaced".to_string()));
+        assert_eq!(
+            blocked_reason("BLOCKED: no skill\nmore"),
+            Some("no skill".to_string())
+        );
+        assert_eq!(
+            blocked_reason("  BLOCKED:   spaced  "),
+            Some("spaced".to_string())
+        );
         assert_eq!(blocked_reason("abc1234 feat: x\nBLOCKED: later line"), None);
         assert_eq!(blocked_reason(""), None);
     }
 
     #[test]
     fn builder_status_reads_a_first_line_blocked() {
-        assert_eq!(builder_status("BLOCKED: no schema\nmore"), BuilderStatus::Blocked("no schema".to_string()));
+        assert_eq!(
+            builder_status("BLOCKED: no schema\nmore"),
+            BuilderStatus::Blocked("no schema".to_string())
+        );
     }
 
     #[test]
     fn builder_status_reads_a_status_line_in_a_longer_reply() {
-        let reply = "I did the work.\n\n- **Status:** NEEDS_CONTEXT the API is unclear\nWhich endpoint?";
+        let reply =
+            "I did the work.\n\n- **Status:** NEEDS_CONTEXT the API is unclear\nWhich endpoint?";
         assert_eq!(
             builder_status(reply),
             BuilderStatus::NeedsContext("the API is unclear\nWhich endpoint?".to_string())
         );
-        assert_eq!(builder_status("ok\nStatus: DONE_WITH_CONCERNS\nslow"), BuilderStatus::DoneWithConcerns("slow".to_string()));
-        assert_eq!(builder_status("ok\nStatus: BLOCKED: no db"), BuilderStatus::Blocked("no db".to_string()));
+        assert_eq!(
+            builder_status("ok\nStatus: DONE_WITH_CONCERNS\nslow"),
+            BuilderStatus::DoneWithConcerns("slow".to_string())
+        );
+        assert_eq!(
+            builder_status("ok\nStatus: BLOCKED: no db"),
+            BuilderStatus::Blocked("no db".to_string())
+        );
         assert_eq!(builder_status("Status: DONE"), BuilderStatus::Done);
     }
 
@@ -428,20 +493,33 @@ mod tests {
             "- **Status:** BLOCKED",
             "`Status: BLOCKED`",
         ] {
-            assert_eq!(parse_builder_status(reply), Some(BuilderStatus::Blocked(String::new())), "{reply}");
+            assert_eq!(
+                parse_builder_status(reply),
+                Some(BuilderStatus::Blocked(String::new())),
+                "{reply}"
+            );
         }
         assert_eq!(
             parse_builder_status("ok\n**Status**: `NEEDS_CONTEXT` which table?"),
             Some(BuilderStatus::NeedsContext("which table?".to_string()))
         );
-        assert_eq!(parse_builder_status("**Status: DONE_WITH_CONCERNS**\nslow"), Some(BuilderStatus::DoneWithConcerns("slow".to_string())));
+        assert_eq!(
+            parse_builder_status("**Status: DONE_WITH_CONCERNS**\nslow"),
+            Some(BuilderStatus::DoneWithConcerns("slow".to_string()))
+        );
     }
 
     #[test]
     fn builder_status_skips_an_unknown_value_and_keeps_searching() {
         let reply = "Status: tests green\nwork done\nStatus: BLOCKED: no db";
-        assert_eq!(parse_builder_status(reply), Some(BuilderStatus::Blocked("no db".to_string())));
-        assert_eq!(parse_builder_status("Status: tests green\nStatus: maybe"), None);
+        assert_eq!(
+            parse_builder_status(reply),
+            Some(BuilderStatus::Blocked("no db".to_string()))
+        );
+        assert_eq!(
+            parse_builder_status("Status: tests green\nStatus: maybe"),
+            None
+        );
     }
 
     #[test]
@@ -450,7 +528,9 @@ mod tests {
                      Ruling: kept the name \u{2014} the plan says so \u{2014} a rename later\nRuling: second \u{2014} why \u{2014} cost";
         assert_eq!(
             parse_builder_status(reply),
-            Some(BuilderStatus::DoneWithConcerns("The cap is tight.\nIt may be slow.".to_string()))
+            Some(BuilderStatus::DoneWithConcerns(
+                "The cap is tight.\nIt may be slow.".to_string()
+            ))
         );
         assert_eq!(builder_rulings(reply).len(), 2);
     }
@@ -458,39 +538,66 @@ mod tests {
     #[test]
     fn a_blocked_reason_stops_at_the_first_ruling_line() {
         let reply = "Status: BLOCKED\nThe schema file is gone.\nRuling: stopped \u{2014} nothing to build on \u{2014} a retry";
-        assert_eq!(parse_builder_status(reply), Some(BuilderStatus::Blocked("The schema file is gone.".to_string())));
-        assert_eq!(builder_rulings(reply), vec!["stopped \u{2014} nothing to build on \u{2014} a retry".to_string()]);
+        assert_eq!(
+            parse_builder_status(reply),
+            Some(BuilderStatus::Blocked(
+                "The schema file is gone.".to_string()
+            ))
+        );
+        assert_eq!(
+            builder_rulings(reply),
+            vec!["stopped \u{2014} nothing to build on \u{2014} a retry".to_string()]
+        );
         let reply = "Status: NEEDS_CONTEXT which table?\nRuling: a \u{2014} b \u{2014} c";
-        assert_eq!(parse_builder_status(reply), Some(BuilderStatus::NeedsContext("which table?".to_string())));
+        assert_eq!(
+            parse_builder_status(reply),
+            Some(BuilderStatus::NeedsContext("which table?".to_string()))
+        );
     }
 
     #[test]
     fn builder_rulings_strips_prefix_and_drops_empty_bodies() {
         let reply = "x\nRuling: kept the old name\n  Ruling:   \nRuling:\n```\nRuling: fenced\n```\nRuling: second one  ";
-        assert_eq!(builder_rulings(reply), vec!["kept the old name".to_string(), "second one".to_string()]);
+        assert_eq!(
+            builder_rulings(reply),
+            vec!["kept the old name".to_string(), "second one".to_string()]
+        );
     }
 
     #[test]
     fn extract_message_takes_the_first_marker_pair() {
         let reply = "noise\n---BEGIN MESSAGE---\nfeat(x): add y\n\nbody line\n---END MESSAGE---\n---BEGIN MESSAGE---\nother\n---END MESSAGE---";
-        assert_eq!(extract_message(reply).as_deref(), Some("feat(x): add y\n\nbody line"));
+        assert_eq!(
+            extract_message(reply).as_deref(),
+            Some("feat(x): add y\n\nbody line")
+        );
     }
 
     #[test]
     fn extract_message_needs_both_markers_and_text() {
         assert_eq!(extract_message("feat(x): add y"), None);
         assert_eq!(extract_message("---BEGIN MESSAGE---\nfeat(x): y"), None);
-        assert_eq!(extract_message("---BEGIN MESSAGE---\n  \n---END MESSAGE---"), None);
+        assert_eq!(
+            extract_message("---BEGIN MESSAGE---\n  \n---END MESSAGE---"),
+            None
+        );
     }
 
     #[test]
     fn refs_read_hash_numbers_and_urls() {
-        let refs = parse_issue_refs("fix #20 and https://github.com/Snehal1112/rocket/issues/76 now");
+        let refs =
+            parse_issue_refs("fix #20 and https://github.com/Snehal1112/rocket/issues/76 now");
         assert_eq!(
             refs,
             vec![
-                IssueRef { number: 20, repo: None },
-                IssueRef { number: 76, repo: Some("Snehal1112/rocket".to_string()) },
+                IssueRef {
+                    number: 20,
+                    repo: None
+                },
+                IssueRef {
+                    number: 76,
+                    repo: Some("Snehal1112/rocket".to_string())
+                },
             ]
         );
     }
@@ -498,15 +605,33 @@ mod tests {
     #[test]
     fn url_followed_by_punctuation() {
         let refs = parse_issue_refs("see (https://github.com/o/r/issues/76).");
-        assert_eq!(refs, vec![IssueRef { number: 76, repo: Some("o/r".to_string()) }]);
+        assert_eq!(
+            refs,
+            vec![IssueRef {
+                number: 76,
+                repo: Some("o/r".to_string())
+            }]
+        );
         let refs = parse_issue_refs("https://github.com/o/r/issues/76.");
-        assert_eq!(refs, vec![IssueRef { number: 76, repo: Some("o/r".to_string()) }]);
+        assert_eq!(
+            refs,
+            vec![IssueRef {
+                number: 76,
+                repo: Some("o/r".to_string())
+            }]
+        );
     }
 
     #[test]
     fn url_with_fragment_counts_once() {
         let refs = parse_issue_refs("https://github.com/o/r/issues/76#issuecomment-5");
-        assert_eq!(refs, vec![IssueRef { number: 76, repo: Some("o/r".to_string()) }]);
+        assert_eq!(
+            refs,
+            vec![IssueRef {
+                number: 76,
+                repo: Some("o/r".to_string())
+            }]
+        );
     }
 
     #[test]
@@ -521,9 +646,18 @@ mod tests {
         assert_eq!(
             refs,
             vec![
-                IssueRef { number: 3, repo: None },
-                IssueRef { number: 3, repo: Some("o/r".to_string()) },
-                IssueRef { number: 9, repo: None },
+                IssueRef {
+                    number: 3,
+                    repo: None
+                },
+                IssueRef {
+                    number: 3,
+                    repo: Some("o/r".to_string())
+                },
+                IssueRef {
+                    number: 9,
+                    repo: None
+                },
             ]
         );
     }
@@ -533,14 +667,23 @@ mod tests {
         assert_eq!(parse_issues("fix #20, #21 and #20"), vec![20, 21]);
         assert_eq!(parse_issues("no issues here"), Vec::<u32>::new());
         assert_eq!(parse_issues("abc#5 and #0 and #x"), Vec::<u32>::new());
-        assert_eq!(parse_issues("https://github.com/o/r/issues/76 and #5"), vec![5, 76]);
+        assert_eq!(
+            parse_issues("https://github.com/o/r/issues/76 and #5"),
+            vec![5, 76]
+        );
     }
 
     #[test]
     fn parse_issues_reads_hash_numbers_only() {
-        assert_eq!(parse_issues("GitHub issue #20 (https://github.com/o/r/issues/20)"), vec![20]);
+        assert_eq!(
+            parse_issues("GitHub issue #20 (https://github.com/o/r/issues/20)"),
+            vec![20]
+        );
         assert_eq!(parse_issues("fix #21, #20 and #21"), vec![20, 21]);
-        assert_eq!(parse_issues("C# and a#1 and #abc and #0 and #99999999999"), Vec::<u32>::new());
+        assert_eq!(
+            parse_issues("C# and a#1 and #abc and #0 and #99999999999"),
+            Vec::<u32>::new()
+        );
         assert_eq!(parse_issues("(#7)"), vec![7]);
         assert_eq!(parse_issues("#3\n#4"), vec![3, 4]);
     }
@@ -548,18 +691,35 @@ mod tests {
     #[test]
     fn footers_are_built_and_checked() {
         assert_eq!(issue_footer("Relates to", &[]), None);
-        assert_eq!(issue_footer("Fixes", &[20, 21]).as_deref(), Some("Fixes: #20, #21"));
+        assert_eq!(
+            issue_footer("Fixes", &[20, 21]).as_deref(),
+            Some("Fixes: #20, #21")
+        );
         assert!(has_footer("feat: x", "Relates to", &[]));
-        assert!(has_footer("feat: x\n\nRelates to: #20", "Relates to", &[20]));
-        assert!(!has_footer("feat: x\n\nRelates to: #20", "Relates to", &[20, 21]));
+        assert!(has_footer(
+            "feat: x\n\nRelates to: #20",
+            "Relates to",
+            &[20]
+        ));
+        assert!(!has_footer(
+            "feat: x\n\nRelates to: #20",
+            "Relates to",
+            &[20, 21]
+        ));
         assert!(!has_footer("feat: x", "Relates to", &[20]));
     }
 
     #[test]
     fn append_footers_adds_each_line_once() {
         let lines = vec!["Fixes: #20".to_string(), "Factory-Job: 001".to_string()];
-        assert_eq!(append_footers("feat: x\n", &lines), "feat: x\n\nFixes: #20\nFactory-Job: 001");
-        assert_eq!(append_footers("feat: x\n\nFixes: #20", &lines), "feat: x\n\nFixes: #20\nFactory-Job: 001");
+        assert_eq!(
+            append_footers("feat: x\n", &lines),
+            "feat: x\n\nFixes: #20\nFactory-Job: 001"
+        );
+        assert_eq!(
+            append_footers("feat: x\n\nFixes: #20", &lines),
+            "feat: x\n\nFixes: #20\nFactory-Job: 001"
+        );
         assert_eq!(append_footers("feat: x", &[]), "feat: x");
     }
 

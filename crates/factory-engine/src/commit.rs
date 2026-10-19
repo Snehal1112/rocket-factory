@@ -4,7 +4,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use factory_agent::{AgentRun, AgentSpec, StopReason};
-use factory_core::{append_footers, blocked_reason, fallback_subject, has_footer, issue_footer, validate_message, Config, MAX_COMMITS_PER_RUN};
+use factory_core::{
+    append_footers, blocked_reason, fallback_subject, has_footer, issue_footer, validate_message,
+    Config, MAX_COMMITS_PER_RUN,
+};
 use factory_git::{CommitInfo, GitError, StagedReport, Worktree};
 
 use crate::ports::{git_err, short_sha};
@@ -155,7 +158,14 @@ pub fn committer_spec(job_id: &str, config: &Config, cwd: &Path, prompt: &str) -
 
 /// The settings every committer-agent run shares: a per-run cap, no harness gate and strict MCP.
 /// The role and the tools stay with the caller, because they differ per mode.
-pub(crate) fn committer_base_spec(job_id: &str, role: &str, config: &Config, cwd: &Path, prompt: &str, tools: &str) -> AgentSpec {
+pub(crate) fn committer_base_spec(
+    job_id: &str,
+    role: &str,
+    config: &Config,
+    cwd: &Path,
+    prompt: &str,
+    tools: &str,
+) -> AgentSpec {
     let mut spec = AgentSpec::new(job_id, role, cwd, prompt);
     spec.agent = Some(COMMITTER_AGENT.to_string());
     spec.model = Some(config.commit_model.clone());
@@ -226,7 +236,11 @@ impl Check {
 /// A short note on why the run itself looks wrong, or an empty string.
 fn run_note(run: &AgentRun) -> String {
     if run.stop_reason != StopReason::Done {
-        let detail = run.error.as_deref().map(|e| format!(": {e}")).unwrap_or_default();
+        let detail = run
+            .error
+            .as_deref()
+            .map(|e| format!(": {e}"))
+            .unwrap_or_default();
         return format!("the run ended with {:?}{detail}", run.stop_reason);
     }
     if let Some(reason) = blocked_reason(&run.result_text) {
@@ -271,7 +285,11 @@ impl Engine<'_> {
     /// rules in the spec. A failed run gets one retry by resuming the session, then a plain
     /// `git2` fallback commit. Rewriting the floor is returned as `Park`, never retried.
     /// The step does not change the job stage: the caller parks on `Park`.
-    pub fn commit_step(&self, wt: &Worktree, req: &CommitRequest<'_>) -> Result<CommitOutcome, EngineError> {
+    pub fn commit_step(
+        &self,
+        wt: &Worktree,
+        req: &CommitRequest<'_>,
+    ) -> Result<CommitOutcome, EngineError> {
         let staged = self.repo.stage_all(wt).map_err(git_err)?;
         if staged.is_empty() {
             return Ok(CommitOutcome::NothingStaged);
@@ -281,7 +299,9 @@ impl Engine<'_> {
         let before = above.clone();
         let context = match self.commit_context_text() {
             Ok(text) => text,
-            Err(e) => return self.fallback_commit(wt, req, &format!("commit context unreadable: {e}")),
+            Err(e) => {
+                return self.fallback_commit(wt, req, &format!("commit context unreadable: {e}"))
+            }
         };
         let report = self.repo.staged_report(wt, 5).map_err(git_err)?;
         let prompt = committer_prompt(&context, req, &report, &above, self.config.commit_subagents);
@@ -297,7 +317,10 @@ impl Engine<'_> {
             check = self.verify_commit_run(wt, req, &before, &run)?;
         }
         match check {
-            Check::Good(tip) => Ok(CommitOutcome::Committed { tip, fallback: false }),
+            Check::Good(tip) => Ok(CommitOutcome::Committed {
+                tip,
+                fallback: false,
+            }),
             Check::Park(reason) => Ok(CommitOutcome::Park(reason)),
             Check::RunFault(reason) => self.fallback_commit(wt, req, &reason),
             Check::MessageFault(problems) => {
@@ -305,7 +328,10 @@ impl Engine<'_> {
                     self.ruling(&format!("commit message check failed, {problem}"))?;
                 }
                 let tip = self.repo.tip(&wt.branch).map_err(git_err)?;
-                Ok(CommitOutcome::Committed { tip, fallback: false })
+                Ok(CommitOutcome::Committed {
+                    tip,
+                    fallback: false,
+                })
             }
         }
     }
@@ -320,19 +346,28 @@ impl Engine<'_> {
         run: &AgentRun,
     ) -> Result<Check, EngineError> {
         if !self.repo.head_is_on_branch(wt).map_err(git_err)? {
-            return Ok(Check::Park("committer moved HEAD off the job branch".to_string()));
+            return Ok(Check::Park(
+                "committer moved HEAD off the job branch".to_string(),
+            ));
         }
         let tip = match self.repo.tip(&wt.branch) {
             Ok(tip) => tip,
-            Err(GitError::NotFound(_)) => return Ok(Check::Park("the job branch is gone".to_string())),
+            Err(GitError::NotFound(_)) => {
+                return Ok(Check::Park("the job branch is gone".to_string()))
+            }
             Err(e) => return Err(git_err(e)),
         };
         if !self.repo.is_ancestor(req.floor, &tip).map_err(git_err)? {
-            return Ok(Check::Park("committer rewrote history at or below the floor".to_string()));
+            return Ok(Check::Park(
+                "committer rewrote history at or below the floor".to_string(),
+            ));
         }
         let dirty = !self.repo.worktree_is_clean(wt).map_err(git_err)?;
         let now = self.repo.commits_above(req.floor, &tip).map_err(git_err)?;
-        let changed: Vec<&CommitInfo> = now.iter().filter(|c| !before.iter().any(|b| b.sha == c.sha)).collect();
+        let changed: Vec<&CommitInfo> = now
+            .iter()
+            .filter(|c| !before.iter().any(|b| b.sha == c.sha))
+            .collect();
         if dirty || changed.is_empty() {
             let mut notes = Vec::new();
             let note = run_note(run);
@@ -351,10 +386,15 @@ impl Engine<'_> {
         // A rebase rewrites every later commit, so only the net growth counts as new commits.
         let net = now.len().saturating_sub(before.len());
         if net > MAX_COMMITS_PER_RUN {
-            problems.push(format!("{net} commits were made, the limit is {MAX_COMMITS_PER_RUN}"));
+            problems.push(format!(
+                "{net} commits were made, the limit is {MAX_COMMITS_PER_RUN}"
+            ));
         }
         // A rewritten commit keeps its message, so only messages not seen before are checked.
-        for commit in changed.iter().filter(|c| !before.iter().any(|b| b.message == c.message)) {
+        for commit in changed
+            .iter()
+            .filter(|c| !before.iter().any(|b| b.message == c.message))
+        {
             let short = short_sha(&commit.sha);
             if let Err(reason) = validate_message(&commit.message) {
                 problems.push(format!("commit {short}: {reason}"));
@@ -373,7 +413,12 @@ impl Engine<'_> {
     }
 
     /// The fallback of a batch run: one `chore: <title>` commit per snapshot, rebuilt from the snapshot trees.
-    fn fallback_batch(&self, wt: &Worktree, req: &CommitRequest<'_>, why: &str) -> Result<CommitOutcome, EngineError> {
+    fn fallback_batch(
+        &self,
+        wt: &Worktree,
+        req: &CommitRequest<'_>,
+        why: &str,
+    ) -> Result<CommitOutcome, EngineError> {
         self.repo.reset_hard(wt, req.floor).map_err(git_err)?;
         let mut tip: Option<String> = None;
         for snap in req.snapshots {
@@ -387,28 +432,47 @@ impl Engine<'_> {
             }
         }
         let Some(sha) = tip else {
-            return Ok(CommitOutcome::Park(format!("the batch fallback made no commit: {why}")));
+            return Ok(CommitOutcome::Park(format!(
+                "the batch fallback made no commit: {why}"
+            )));
         };
         let short = short_sha(&sha);
-        self.ruling(&format!("committer failed ({why}), batch fallback commits up to {short}"))?;
-        Ok(CommitOutcome::Committed { tip: sha, fallback: true })
+        self.ruling(&format!(
+            "committer failed ({why}), batch fallback commits up to {short}"
+        ))?;
+        Ok(CommitOutcome::Committed {
+            tip: sha,
+            fallback: true,
+        })
     }
 
     /// The plain `git2` commit used when the committer failed twice: `chore: <task title>`.
     /// Parks when there is nothing left to commit, because then the run lost the changes.
-    fn fallback_commit(&self, wt: &Worktree, req: &CommitRequest<'_>, why: &str) -> Result<CommitOutcome, EngineError> {
+    fn fallback_commit(
+        &self,
+        wt: &Worktree,
+        req: &CommitRequest<'_>,
+        why: &str,
+    ) -> Result<CommitOutcome, EngineError> {
         if req.kind == CommitKind::Batch && !req.snapshots.is_empty() {
             return self.fallback_batch(wt, req, why);
         }
         let staged = self.repo.stage_all(wt).map_err(git_err)?;
         if staged.is_empty() {
-            return Ok(CommitOutcome::Park(format!("the committer left nothing to commit: {why}")));
+            return Ok(CommitOutcome::Park(format!(
+                "the committer left nothing to commit: {why}"
+            )));
         }
         let message = fallback_message(req.task_title, req.issues);
         let sha = self.repo.commit_staged(wt, &message).map_err(git_err)?;
         let short = short_sha(&sha);
-        self.ruling(&format!("committer failed ({why}), fallback commit {short}"))?;
-        Ok(CommitOutcome::Committed { tip: sha, fallback: true })
+        self.ruling(&format!(
+            "committer failed ({why}), fallback commit {short}"
+        ))?;
+        Ok(CommitOutcome::Committed {
+            tip: sha,
+            fallback: true,
+        })
     }
 }
 
@@ -431,7 +495,8 @@ mod tests {
 
     fn report(diff: &str) -> StagedReport {
         StagedReport {
-            status: "On branch factory/001-demo\nChanges to be committed:\n\tnew file:   a.txt\n".to_string(),
+            status: "On branch factory/001-demo\nChanges to be committed:\n\tnew file:   a.txt\n"
+                .to_string(),
             stat: " a.txt | 1 +\n".to_string(),
             diff: diff.to_string(),
             log: vec!["1111111 feat(x): earlier".to_string()],
@@ -449,17 +514,42 @@ mod tests {
 
     #[test]
     fn prompt_carries_the_context_the_run_and_the_precomputed_analysis() {
-        let above = vec![info("aaaaaaa1111", "feat(x): first", &["one.txt"]), info("bbbbbbb2222", "feat(x): second", &["two.txt"])];
-        let prompt = committer_prompt("CONTEXT TEXT", &request(), &report("+++ b/a.txt\n+hi\n"), &above, false);
+        let above = vec![
+            info("aaaaaaa1111", "feat(x): first", &["one.txt"]),
+            info("bbbbbbb2222", "feat(x): second", &["two.txt"]),
+        ];
+        let prompt = committer_prompt(
+            "CONTEXT TEXT",
+            &request(),
+            &report("+++ b/a.txt\n+hi\n"),
+            &above,
+            false,
+        );
         assert!(prompt.starts_with("CONTEXT TEXT"));
-        for want in ["Kind: task", "Plan: Demo plan", "Task: Add the thing", "Goal: add the thing", "Floor: abc1234def"] {
+        for want in [
+            "Kind: task",
+            "Plan: Demo plan",
+            "Task: Add the thing",
+            "Goal: add the thing",
+            "Floor: abc1234def",
+        ] {
             assert!(prompt.contains(want), "missing {want}");
         }
-        for want in ["### git status", "new file:   a.txt", "### git diff --staged --stat", "### git diff --staged", "+hi", "### git log --oneline -5", "1111111 feat(x): earlier"] {
+        for want in [
+            "### git status",
+            "new file:   a.txt",
+            "### git diff --staged --stat",
+            "### git diff --staged",
+            "+hi",
+            "### git log --oneline -5",
+            "1111111 feat(x): earlier",
+        ] {
             assert!(prompt.contains(want), "missing {want}");
         }
         // Newest first, with the files of each candidate.
-        let second = prompt.find("bbbbbbb feat(x): second").expect("second listed");
+        let second = prompt
+            .find("bbbbbbb feat(x): second")
+            .expect("second listed");
         let first = prompt.find("aaaaaaa feat(x): first").expect("first listed");
         assert!(second < first);
         assert!(prompt.contains("  two.txt"));
@@ -467,9 +557,15 @@ mod tests {
 
     #[test]
     fn prompt_names_the_issue_footer_or_none() {
-        let with = CommitRequest { issues: &[20, 21], ..request() };
+        let with = CommitRequest {
+            issues: &[20, 21],
+            ..request()
+        };
         let prompt = committer_prompt("c", &with, &report(""), &[], false);
-        assert!(prompt.contains("Issue footer: Relates to: #20, #21"), "{prompt}");
+        assert!(
+            prompt.contains("Issue footer: Relates to: #20, #21"),
+            "{prompt}"
+        );
         assert!(prompt.contains("every commit of the run"));
         let none = committer_prompt("c", &request(), &report(""), &[], false);
         assert!(none.contains("Issue footer: none"));
@@ -488,7 +584,9 @@ mod tests {
     fn retry_text_carries_the_prompt_only_without_a_session() {
         assert_eq!(retry_text("PROMPT", "RETRY", true), "RETRY");
         let text = retry_text("PROMPT", "RETRY", false);
-        assert!(text.starts_with("PROMPT\n\n(The analysis above was computed before the first run."));
+        assert!(
+            text.starts_with("PROMPT\n\n(The analysis above was computed before the first run.")
+        );
         assert!(text.ends_with("\n\nRETRY"));
     }
 
@@ -523,28 +621,54 @@ mod tests {
         assert_eq!(spec.used_before, 0);
         assert_eq!(spec.max_turns, Some(40));
         assert_eq!(spec.stall_after, Some(Duration::from_secs(420)));
-        assert_eq!(spec.env, vec![("HARNESS_GATE".to_string(), "0".to_string())]);
+        assert_eq!(
+            spec.env,
+            vec![("HARNESS_GATE".to_string(), "0".to_string())]
+        );
         assert!(spec.strict_mcp);
         assert_eq!(spec.tools.as_deref(), Some("Bash,Read,Skill"));
         assert_eq!(spec.prompt, "the prompt");
     }
 
     fn snap(n: u32, title: &str, files: &[&str]) -> SnapshotRef {
-        SnapshotRef { n, sha: format!("{n}{n}{n}{n}{n}{n}{n}"), title: title.to_string(), files: files.iter().map(|f| f.to_string()).collect() }
+        SnapshotRef {
+            n,
+            sha: format!("{n}{n}{n}{n}{n}{n}{n}"),
+            title: title.to_string(),
+            files: files.iter().map(|f| f.to_string()).collect(),
+        }
     }
 
     #[test]
     fn a_batch_prompt_lists_the_tasks_with_their_files() {
-        let snaps = vec![snap(1, "first thing", &["a.txt"]), snap(2, "second thing", &["b.txt", "c.txt"])];
-        let req = CommitRequest { kind: CommitKind::Batch, snapshots: &snaps, ..request() };
+        let snaps = vec![
+            snap(1, "first thing", &["a.txt"]),
+            snap(2, "second thing", &["b.txt", "c.txt"]),
+        ];
+        let req = CommitRequest {
+            kind: CommitKind::Batch,
+            snapshots: &snaps,
+            ..request()
+        };
         let prompt = committer_prompt("CONTEXT", &req, &report("+x\n"), &[], false);
         assert!(prompt.contains("Kind: batch"), "{prompt}");
         assert!(prompt.contains("## Tasks in this change"), "{prompt}");
-        assert!(prompt.contains("Make at most 4 commits; group tasks when there are more than 4."), "{prompt}");
-        assert!(prompt.contains("Task 1: first thing\n  a.txt\n"), "{prompt}");
-        assert!(prompt.contains("Task 2: second thing\n  b.txt\n  c.txt\n"), "{prompt}");
+        assert!(
+            prompt.contains("Make at most 4 commits; group tasks when there are more than 4."),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("Task 1: first thing\n  a.txt\n"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("Task 2: second thing\n  b.txt\n  c.txt\n"),
+            "{prompt}"
+        );
         let tasks = prompt.find("## Tasks in this change").expect("tasks");
-        let step1 = prompt.find("## Output of the skill's step 1 commands").expect("step 1");
+        let step1 = prompt
+            .find("## Output of the skill's step 1 commands")
+            .expect("step 1");
         assert!(tasks < step1);
     }
 
@@ -556,7 +680,10 @@ mod tests {
 
     #[test]
     fn shipped_context_file_has_the_style_and_the_standing_answers() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../.claude/factory/commit-context.md");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.claude/factory/commit-context.md"
+        );
         let text = std::fs::read_to_string(path).expect("shipped context file");
         for want in [
             "Conventional Commits",

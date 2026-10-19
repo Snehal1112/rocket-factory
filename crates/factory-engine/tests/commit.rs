@@ -18,7 +18,12 @@ fn context(fx: &Fixture) {
 }
 
 fn worktree(fx: &Fixture) -> Worktree {
-    fx.repo.create_worktree(&JobRef { id: "001".into(), slug: "demo".into() }).expect("worktree")
+    fx.repo
+        .create_worktree(&JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+        })
+        .expect("worktree")
 }
 
 fn request(floor: &str) -> CommitRequest<'_> {
@@ -45,10 +50,14 @@ fn commit_paths(dir: &Path, paths: &[&str], message: &str) -> String {
         index.add_path(Path::new(p)).expect("add");
     }
     index.write().expect("write index");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find tree");
     let sig = Signature::now("t", "t@example.com").expect("sig");
     let parent = repo.head().expect("head").peel_to_commit().expect("commit");
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+        .expect("commit")
+        .to_string()
 }
 
 /// Stages the given paths and amends HEAD with them, like `git commit --amend`.
@@ -59,9 +68,13 @@ fn amend_with(dir: &Path, paths: &[&str], message: &str) -> String {
         index.add_path(Path::new(p)).expect("add");
     }
     index.write().expect("write index");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find tree");
     let head = repo.head().expect("head").peel_to_commit().expect("commit");
-    head.amend(Some("HEAD"), None, None, None, Some(message), Some(&tree)).expect("amend").to_string()
+    head.amend(Some("HEAD"), None, None, None, Some(message), Some(&tree))
+        .expect("amend")
+        .to_string()
 }
 
 /// Like `commit_paths`, but with a fixed commit time so the sha differs from an earlier twin.
@@ -72,10 +85,14 @@ fn commit_paths_at(dir: &Path, paths: &[&str], message: &str, secs: i64) -> Stri
         index.add_path(Path::new(p)).expect("add");
     }
     index.write().expect("write index");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find tree");
     let sig = Signature::new("t", "t@example.com", &git2::Time::new(secs, 0)).expect("sig");
     let parent = repo.head().expect("head").peel_to_commit().expect("commit");
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+        .expect("commit")
+        .to_string()
 }
 
 /// Moves the branch and the index to `rev`, keeping the files in the work tree.
@@ -95,7 +112,12 @@ fn nothing() -> Effect {
 
 fn subjects(fx: &Fixture, wt: &Worktree, floor: &str) -> Vec<String> {
     let tip = fx.repo.tip(&wt.branch).expect("tip");
-    fx.repo.commits_above(floor, &tip).expect("commits").into_iter().map(|c| c.subject).collect()
+    fx.repo
+        .commits_above(floor, &tip)
+        .expect("commits")
+        .into_iter()
+        .map(|c| c.subject)
+        .collect()
 }
 
 #[test]
@@ -108,7 +130,10 @@ fn one_valid_commit_is_accepted_and_the_run_is_trimmed_and_capped() {
         commit_paths(dir, &["a.txt"], GOOD);
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
     match out {
         CommitOutcome::Committed { tip, fallback } => {
             assert!(!fallback);
@@ -122,7 +147,10 @@ fn one_valid_commit_is_accepted_and_the_run_is_trimmed_and_capped() {
     assert_eq!(spec.agent.as_deref(), Some("factory-committer"));
     assert_eq!(spec.budget_weighted, Some(60_000));
     assert_eq!(spec.used_before, 0);
-    assert_eq!(spec.env, vec![("HARNESS_GATE".to_string(), "0".to_string())]);
+    assert_eq!(
+        spec.env,
+        vec![("HARNESS_GATE".to_string(), "0".to_string())]
+    );
     assert!(spec.strict_mcp);
     assert_eq!(spec.tools.as_deref(), Some("Bash,Read,Skill"));
     assert!(spec.prompt.starts_with("TEST CONTEXT"));
@@ -142,9 +170,24 @@ fn a_split_into_two_commits_is_accepted() {
         commit_paths(dir, &["b.txt"], "feat(x): add b");
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
-    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add a", "feat(x): add b"]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        subjects(&fx, &wt, &wt.base),
+        vec!["feat(x): add a", "feat(x): add b"]
+    );
 }
 
 #[test]
@@ -159,9 +202,24 @@ fn amending_a_commit_above_the_floor_is_accepted() {
         amend_with(dir, &["b.txt"], "feat(x): add the thing and b");
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
-    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add the thing and b"]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        subjects(&fx, &wt, &wt.base),
+        vec!["feat(x): add the thing and b"]
+    );
 }
 
 #[test]
@@ -177,15 +235,28 @@ fn rewriting_the_floor_commit_parks_at_once() {
         amend_with(dir, &["b.txt"], GOOD);
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&floor)).expect("step");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&floor))
+        .expect("step");
     match out {
-        CommitOutcome::Park(reason) => assert!(reason.contains("at or below the floor"), "{reason}"),
+        CommitOutcome::Park(reason) => {
+            assert!(reason.contains("at or below the floor"), "{reason}")
+        }
         other => panic!("unexpected outcome {other:?}"),
     }
     // A retry would record a second spec that resumes the session and carries the findings.
     let spec = runner.last_spec().expect("spec");
-    assert!(spec.resume.is_none(), "unexpected resume: {:?}", spec.resume);
-    assert!(!spec.prompt.contains("Findings:"), "unexpected retry prompt: {}", spec.prompt);
+    assert!(
+        spec.resume.is_none(),
+        "unexpected resume: {:?}",
+        spec.resume
+    );
+    assert!(
+        !spec.prompt.contains("Findings:"),
+        "unexpected retry prompt: {}",
+        spec.prompt
+    );
 }
 
 #[test]
@@ -201,11 +272,27 @@ fn an_uncommitted_tree_is_retried_once_by_resuming_the_session() {
             "done".to_string()
         }),
     ]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
     let retry = runner.last_spec().expect("retry spec");
     assert_eq!(retry.resume.as_deref(), Some("sess-1"));
-    assert!(retry.prompt.contains("uncommitted"), "retry prompt: {}", retry.prompt);
+    assert!(
+        retry.prompt.contains("uncommitted"),
+        "retry prompt: {}",
+        retry.prompt
+    );
 }
 
 #[test]
@@ -215,10 +302,20 @@ fn two_failed_runs_fall_back_to_a_plain_commit_and_write_a_ruling() {
     let wt = worktree(&fx);
     write_change(&wt, "a.txt");
     let runner = scripted(vec![nothing(), nothing()]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: Add the thing"]);
-    assert!(fx.ledger().contains("fallback commit"), "ledger: {}", fx.ledger());
+    assert!(
+        fx.ledger().contains("fallback commit"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -227,10 +324,23 @@ fn a_blocked_reply_twice_falls_back_and_names_the_reason() {
     context(&fx);
     let wt = worktree(&fx);
     write_change(&wt, "a.txt");
-    let runner = scripted(vec![effect(|_| "BLOCKED: no skill".to_string()), effect(|_| "BLOCKED: no skill".to_string())]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
-    assert!(fx.ledger().contains("BLOCKED: no skill"), "ledger: {}", fx.ledger());
+    let runner = scripted(vec![
+        effect(|_| "BLOCKED: no skill".to_string()),
+        effect(|_| "BLOCKED: no skill".to_string()),
+    ]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
+    assert!(
+        fx.ledger().contains("BLOCKED: no skill"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -246,10 +356,26 @@ fn an_invalid_subject_after_the_retry_keeps_the_commit_and_writes_a_ruling() {
         }),
         nothing(),
     ]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["Added the thing."]);
-    assert!(fx.ledger().contains("commit message check failed"), "ledger: {}", fx.ledger());
+    assert!(
+        fx.ledger().contains("commit message check failed"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -269,10 +395,26 @@ fn more_than_four_commits_are_kept_with_a_ruling() {
         }),
         nothing(),
     ]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
     assert_eq!(subjects(&fx, &wt, &wt.base).len(), 5);
-    assert!(fx.ledger().contains("5 commits were made"), "ledger: {}", fx.ledger());
+    assert!(
+        fx.ledger().contains("5 commits were made"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -281,7 +423,10 @@ fn nothing_staged_makes_no_agent_call() {
     context(&fx);
     let wt = worktree(&fx);
     let runner = scripted(vec![]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
     assert_eq!(out, CommitOutcome::NothingStaged);
     assert!(runner.last_spec().is_none());
 }
@@ -292,10 +437,20 @@ fn a_missing_context_file_uses_the_fallback_without_an_agent_call() {
     let wt = worktree(&fx);
     write_change(&wt, "a.txt");
     let runner = scripted(vec![]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
     assert!(runner.last_spec().is_none());
-    assert!(fx.ledger().contains("commit context"), "ledger: {}", fx.ledger());
+    assert!(
+        fx.ledger().contains("commit context"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -308,8 +463,20 @@ fn a_valid_commit_with_a_clean_tree_is_accepted_even_if_the_run_failed() {
         commit_paths(dir, &["a.txt"], GOOD);
         "BLOCKED: gave up after committing".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
 }
 
 #[test]
@@ -327,17 +494,37 @@ fn a_rewritten_chain_of_earlier_commits_is_not_counted_as_new_commits() {
     let runner = scripted(vec![effect(move |dir| {
         reset_mixed(dir, &base);
         for (i, name) in ["c1.txt", "c2.txt", "c3.txt", "c4.txt"].iter().enumerate() {
-            commit_paths_at(dir, &[name], &format!("feat(x): add {name}"), 1_900_000_000 + i as i64);
+            commit_paths_at(
+                dir,
+                &[name],
+                &format!("feat(x): add {name}"),
+                1_900_000_000 + i as i64,
+            );
         }
         commit_paths(dir, &["e.txt"], "feat(x): add e.txt");
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
     assert_eq!(subjects(&fx, &wt, &wt.base).len(), 5);
     let log = fx.ledger();
     assert!(!log.contains("commits were made"), "ledger: {log}");
-    assert!(!log.contains("commit message check failed"), "ledger: {log}");
+    assert!(
+        !log.contains("commit message check failed"),
+        "ledger: {log}"
+    );
 }
 
 #[test]
@@ -348,18 +535,34 @@ fn detaching_head_parks_without_a_retry() {
     write_change(&wt, "a.txt");
     let runner = scripted(vec![effect(|dir| {
         let repo = Repository::open(dir).expect("open");
-        let oid = repo.head().expect("head").peel_to_commit().expect("commit").id();
+        let oid = repo
+            .head()
+            .expect("head")
+            .peel_to_commit()
+            .expect("commit")
+            .id();
         repo.set_head_detached(oid).expect("detach");
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
     match out {
         CommitOutcome::Park(reason) => assert!(reason.contains("job branch"), "{reason}"),
         other => panic!("unexpected outcome {other:?}"),
     }
     let spec = runner.last_spec().expect("spec");
-    assert!(spec.resume.is_none(), "unexpected resume: {:?}", spec.resume);
-    assert!(!spec.prompt.contains("Findings:"), "unexpected retry prompt: {}", spec.prompt);
+    assert!(
+        spec.resume.is_none(),
+        "unexpected resume: {:?}",
+        spec.resume
+    );
+    assert!(
+        !spec.prompt.contains("Findings:"),
+        "unexpected retry prompt: {}",
+        spec.prompt
+    );
 }
 
 #[test]
@@ -377,12 +580,20 @@ fn a_floor_rewrite_on_the_retry_run_parks() {
             "done".to_string()
         }),
     ]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&floor)).expect("step");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&floor))
+        .expect("step");
     match out {
-        CommitOutcome::Park(reason) => assert!(reason.contains("at or below the floor"), "{reason}"),
+        CommitOutcome::Park(reason) => {
+            assert!(reason.contains("at or below the floor"), "{reason}")
+        }
         other => panic!("unexpected outcome {other:?}"),
     }
-    assert_eq!(runner.last_spec().expect("spec").resume.as_deref(), Some("sess-1"));
+    assert_eq!(
+        runner.last_spec().expect("spec").resume.as_deref(),
+        Some("sess-1")
+    );
 }
 
 #[test]
@@ -401,10 +612,26 @@ fn a_message_fault_fixed_by_the_retry_leaves_no_ruling() {
             "done".to_string()
         }),
     ]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add the thing"]);
-    assert!(!fx.ledger().contains("commit message check failed"), "ledger: {}", fx.ledger());
+    assert!(
+        !fx.ledger().contains("commit message check failed"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -423,19 +650,36 @@ fn a_dirty_tree_after_valid_commits_goes_to_the_fallback() {
         }),
         nothing(),
     ]);
-    let out = fx.engine(&runner).commit_step(&wt, &request(&wt.base)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
-    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add the thing", "chore: Add the thing"]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&wt.base))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
+    assert_eq!(
+        subjects(&fx, &wt, &wt.base),
+        vec!["feat(x): add the thing", "chore: Add the thing"]
+    );
     assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));
 }
 
 fn request_with<'a>(floor: &'a str, issues: &'a [u32]) -> CommitRequest<'a> {
-    CommitRequest { issues, ..request(floor) }
+    CommitRequest {
+        issues,
+        ..request(floor)
+    }
 }
 
 fn messages(fx: &Fixture, wt: &Worktree, floor: &str) -> Vec<String> {
     let tip = fx.repo.tip(&wt.branch).expect("tip");
-    fx.repo.commits_above(floor, &tip).expect("commits").into_iter().map(|c| c.message).collect()
+    fx.repo
+        .commits_above(floor, &tip)
+        .expect("commits")
+        .into_iter()
+        .map(|c| c.message)
+        .collect()
 }
 
 #[test]
@@ -448,10 +692,26 @@ fn a_commit_without_the_issue_footer_is_kept_with_a_ruling() {
         commit_paths(dir, &["a.txt"], "feat(test): build step");
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request_with(&wt.base, &[20]))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(test): build step"]);
-    assert!(fx.ledger().contains("missing footer `Relates to: #20`"), "ledger: {}", fx.ledger());
+    assert!(
+        fx.ledger().contains("missing footer `Relates to: #20`"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -464,9 +724,19 @@ fn a_commit_with_the_issue_footer_is_accepted_without_a_ruling() {
         commit_paths(dir, &["a.txt"], "feat(test): build step\n\nRelates to: #20");
         "done".to_string()
     })]);
-    fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
-    assert!(!fx.ledger().contains("missing footer"), "ledger: {}", fx.ledger());
-    assert!(runner.last_spec().expect("spec").prompt.contains("Issue footer: Relates to: #20"));
+    fx.engine(&runner)
+        .commit_step(&wt, &request_with(&wt.base, &[20]))
+        .expect("step");
+    assert!(
+        !fx.ledger().contains("missing footer"),
+        "ledger: {}",
+        fx.ledger()
+    );
+    assert!(runner
+        .last_spec()
+        .expect("spec")
+        .prompt
+        .contains("Issue footer: Relates to: #20"));
 }
 
 #[test]
@@ -476,13 +746,30 @@ fn the_fallback_commit_carries_the_issue_footer() {
     let wt = worktree(&fx);
     write_change(&wt, "a.txt");
     let runner = scripted(vec![nothing(), nothing()]);
-    let out = fx.engine(&runner).commit_step(&wt, &request_with(&wt.base, &[20])).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
-    assert_eq!(messages(&fx, &wt, &wt.base), vec!["chore: Add the thing\n\nRelates to: #20"]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request_with(&wt.base, &[20]))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
+    assert_eq!(
+        messages(&fx, &wt, &wt.base),
+        vec!["chore: Add the thing\n\nRelates to: #20"]
+    );
 }
 
-fn batch_request<'a>(floor: &'a str, snaps: &'a [factory_engine::SnapshotRef]) -> CommitRequest<'a> {
-    CommitRequest { kind: CommitKind::Batch, task_title: "demo plan", snapshots: snaps, ..request(floor) }
+fn batch_request<'a>(
+    floor: &'a str,
+    snaps: &'a [factory_engine::SnapshotRef],
+) -> CommitRequest<'a> {
+    CommitRequest {
+        kind: CommitKind::Batch,
+        task_title: "demo plan",
+        snapshots: snaps,
+        ..request(floor)
+    }
 }
 
 /// Makes two snapshot commits on the job branch, then soft-resets to the base like the build stage does.
@@ -493,8 +780,18 @@ fn two_snapshots(wt: &Worktree) -> Vec<factory_engine::SnapshotRef> {
     let second = commit_paths(&wt.path, &["b.txt"], "wip: task 2 second thing");
     reset_mixed(&wt.path, &wt.base);
     vec![
-        factory_engine::SnapshotRef { n: 1, sha: first, title: "first thing".into(), files: vec!["a.txt".into()] },
-        factory_engine::SnapshotRef { n: 2, sha: second, title: "second thing".into(), files: vec!["b.txt".into()] },
+        factory_engine::SnapshotRef {
+            n: 1,
+            sha: first,
+            title: "first thing".into(),
+            files: vec!["a.txt".into()],
+        },
+        factory_engine::SnapshotRef {
+            n: 2,
+            sha: second,
+            title: "second thing".into(),
+            files: vec!["b.txt".into()],
+        },
     ]
 }
 
@@ -509,12 +806,31 @@ fn a_batch_run_is_capped_at_twice_the_commit_budget_and_names_the_tasks() {
         commit_paths(dir, &["b.txt"], "feat(x): add b");
         "done".to_string()
     })]);
-    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
-    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["feat(x): add a", "feat(x): add b"]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &batch_request(&wt.base, &snaps))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        subjects(&fx, &wt, &wt.base),
+        vec!["feat(x): add a", "feat(x): add b"]
+    );
     let spec = runner.last_spec().expect("spec");
     assert_eq!(spec.budget_weighted, Some(120_000));
-    assert!(spec.prompt.contains("Kind: batch") && spec.prompt.contains("Task 2: second thing"), "{}", spec.prompt);
+    assert!(
+        spec.prompt.contains("Kind: batch") && spec.prompt.contains("Task 2: second thing"),
+        "{}",
+        spec.prompt
+    );
 }
 
 #[test]
@@ -531,8 +847,20 @@ fn the_retry_of_a_batch_run_keeps_the_doubled_cap() {
             "done".to_string()
         }),
     ]);
-    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: false, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &batch_request(&wt.base, &snaps))
+        .expect("step");
+    assert!(
+        matches!(
+            out,
+            CommitOutcome::Committed {
+                fallback: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
     let retry = runner.last_spec().expect("retry spec");
     assert_eq!(retry.resume.as_deref(), Some("sess-1"));
     assert_eq!(retry.budget_weighted, Some(120_000));
@@ -545,12 +873,25 @@ fn a_failed_batch_falls_back_to_one_chore_commit_per_snapshot() {
     let wt = worktree(&fx);
     let snaps = two_snapshots(&wt);
     let runner = scripted(vec![nothing(), nothing()]);
-    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
-    assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: first thing", "chore: second thing"]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &batch_request(&wt.base, &snaps))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
+    assert_eq!(
+        subjects(&fx, &wt, &wt.base),
+        vec!["chore: first thing", "chore: second thing"]
+    );
     assert!(wt.path.join("a.txt").exists() && wt.path.join("b.txt").exists());
     assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));
-    assert!(fx.ledger().contains("fallback commit"), "ledger: {}", fx.ledger());
+    assert!(
+        fx.ledger().contains("fallback commit"),
+        "ledger: {}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -565,17 +906,42 @@ fn a_batch_fallback_skips_a_snapshot_that_changed_nothing() {
         let repo = Repository::open(&wt.path).expect("open");
         let head = repo.head().expect("head").peel_to_commit().expect("commit");
         let sig = Signature::now("t", "t@example.com").expect("sig");
-        let oid = repo.commit(Some("HEAD"), &sig, &sig, "wip: task 2 empty", &head.tree().expect("tree"), &[&head]).expect("commit");
+        let oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "wip: task 2 empty",
+                &head.tree().expect("tree"),
+                &[&head],
+            )
+            .expect("commit");
         oid.to_string()
     };
     reset_mixed(&wt.path, &wt.base);
     let snaps = vec![
-        factory_engine::SnapshotRef { n: 1, sha: first, title: "first thing".into(), files: vec!["a.txt".into()] },
-        factory_engine::SnapshotRef { n: 2, sha: second, title: "empty thing".into(), files: vec![] },
+        factory_engine::SnapshotRef {
+            n: 1,
+            sha: first,
+            title: "first thing".into(),
+            files: vec!["a.txt".into()],
+        },
+        factory_engine::SnapshotRef {
+            n: 2,
+            sha: second,
+            title: "empty thing".into(),
+            files: vec![],
+        },
     ];
     let runner = scripted(vec![nothing(), nothing()]);
-    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &batch_request(&wt.base, &snaps))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
     assert_eq!(subjects(&fx, &wt, &wt.base), vec!["chore: first thing"]);
 }
 
@@ -589,8 +955,14 @@ fn a_failed_batch_leaves_exactly_the_work_of_the_snapshots() {
     // A stray file the failing committer run left behind must not survive the fallback.
     std::fs::write(wt.path.join("stray.txt"), "x\n").expect("stray");
     let runner = scripted(vec![nothing(), nothing()]);
-    let out = fx.engine(&runner).commit_step(&wt, &batch_request(&wt.base, &snaps)).expect("step");
-    assert!(matches!(out, CommitOutcome::Committed { fallback: true, .. }), "{out:?}");
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &batch_request(&wt.base, &snaps))
+        .expect("step");
+    assert!(
+        matches!(out, CommitOutcome::Committed { fallback: true, .. }),
+        "{out:?}"
+    );
     let tip = fx.repo.tip(&wt.branch).expect("tip");
     assert!(fx.repo.same_tree(&tip, &last).expect("same tree"));
     assert!(fx.repo.worktree_is_clean(&wt).expect("clean"));

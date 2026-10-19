@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use factory_core::project::{self, ProjectFile};
-use factory_core::{resolve, Board, Config, Home};
 use factory_core::PROJECT_LEASE_FILE;
+use factory_core::{resolve, Board, Config, Home};
 use factory_engine::{now_secs, project_lease_status, ProjectLeaseStatus, RepoTip};
 use factory_git::Repo;
 
@@ -14,7 +14,12 @@ use crate::CliError;
 
 pub fn run(home: &Home, cmd: ProjectCmd) -> Result<String, CliError> {
     match cmd {
-        ProjectCmd::Add { path, preset, base, name } => add(home, &path, &preset, base.as_deref(), name.as_deref()),
+        ProjectCmd::Add {
+            path,
+            preset,
+            base,
+            name,
+        } => add(home, &path, &preset, base.as_deref(), name.as_deref()),
         ProjectCmd::List => list(home),
         ProjectCmd::Which { path } => which(home, path.as_deref()),
         ProjectCmd::Show { name } => show(home, &name),
@@ -24,7 +29,8 @@ pub fn run(home: &Home, cmd: ProjectCmd) -> Result<String, CliError> {
 
 /// The central base branch of a project. A missing or invalid value gives the default, like `resolve` does.
 pub(crate) fn base_of(file: &ProjectFile) -> String {
-    file.base_branch().unwrap_or_else(|| Config::default().base_branch)
+    file.base_branch()
+        .unwrap_or_else(|| Config::default().base_branch)
 }
 
 /// The base branch only when `project.toml` holds a valid one. A project never falls back to the default.
@@ -37,7 +43,10 @@ pub(crate) fn open_repo(path: &Path, base: &str) -> Result<Repo, String> {
     let repo = Repo::open(path).map_err(|e| format!("not a git repository: {e}"))?;
     let same = std::fs::canonicalize(repo.root()).ok() == std::fs::canonicalize(path).ok();
     if !same {
-        return Err(format!("{} is not the top folder of a git repository", path.display()));
+        return Err(format!(
+            "{} is not the top folder of a git repository",
+            path.display()
+        ));
     }
     Ok(repo.with_base_branch(base))
 }
@@ -47,15 +56,24 @@ fn name_from_folder(path: &Path) -> Result<String, CliError> {
     let folder = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
     let guess = folder.to_lowercase();
     if project::validate_name(&guess).is_err() {
-        return Err(CliError::Refused(format!("cannot derive a project name from the folder {folder:?}, pass --name")));
+        return Err(CliError::Refused(format!(
+            "cannot derive a project name from the folder {folder:?}, pass --name"
+        )));
     }
     Ok(guess)
 }
 
-fn add(home: &Home, path: &Path, preset: &str, base: Option<&str>, name: Option<&str>) -> Result<String, CliError> {
+fn add(
+    home: &Home,
+    path: &Path,
+    preset: &str,
+    base: Option<&str>,
+    name: Option<&str>,
+) -> Result<String, CliError> {
     // A relative or non-canonical path (such as ".") is resolved first, so the name and the registry see the real folder.
-    let path = std::fs::canonicalize(path)
-        .map_err(|e| CliError::Refused(format!("repo path {} is not usable: {e}", path.display())))?;
+    let path = std::fs::canonicalize(path).map_err(|e| {
+        CliError::Refused(format!("repo path {} is not usable: {e}", path.display()))
+    })?;
     let path = path.as_path();
     let name = match name {
         Some(n) => n.to_string(),
@@ -75,11 +93,16 @@ fn add(home: &Home, path: &Path, preset: &str, base: Option<&str>, name: Option<
         if names.contains(&base) {
             Ok(())
         } else {
-            Err(format!("base branch {base} does not exist in the repository"))
+            Err(format!(
+                "base branch {base} does not exist in the repository"
+            ))
         }
     };
     let dir = project::add(home, &name, path, preset, Some(&base), &check)?;
-    Ok(format!("added project {name} ({preset}, base {base}) at {}", dir.display()))
+    Ok(format!(
+        "added project {name} ({preset}, base {base}) at {}",
+        dir.display()
+    ))
 }
 
 /// Why a readable project cannot be used, or `None` when its repo opens.
@@ -101,7 +124,13 @@ fn list(home: &Home) -> Result<String, CliError> {
             Err(why) => format!("{}  disabled: {why}", e.name),
             Ok(f) => match disabled_reason(&f) {
                 Some(why) => format!("{}  disabled: {why}", e.name),
-                None => format!("{} {} {} {}", e.name, f.preset, base_of(&f), f.repo.display()),
+                None => format!(
+                    "{} {} {} {}",
+                    e.name,
+                    f.preset,
+                    base_of(&f),
+                    f.repo.display()
+                ),
             },
         };
         lines.push(line);
@@ -116,7 +145,10 @@ fn which(home: &Home, path: Option<&Path>) -> Result<String, CliError> {
     };
     match project::find_by_path(home, &path)? {
         Some(name) => Ok(name),
-        None => Err(CliError::Refused(format!("no registered project contains {}", path.display()))),
+        None => Err(CliError::Refused(format!(
+            "no registered project contains {}",
+            path.display()
+        ))),
     }
 }
 
@@ -138,7 +170,9 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     let mut problems = resolved.problems.clone();
     if !resolved.config.degraded {
         if let Err(e) = factory_checks::validate_config(&resolved.config) {
-            problems.push(format!("a check command would be rejected when a job starts: {e}"));
+            problems.push(format!(
+                "a check command would be rejected when a job starts: {e}"
+            ));
         }
     }
     let l = &resolved.layout;
@@ -153,7 +187,14 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         format!("tickets on merge: {}", resolved.config.tickets_on_merge),
     ];
     let names: Vec<&str> = resolved.agents.iter().map(|a| a.name.as_str()).collect();
-    out.push(format!("agent files: {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
+    out.push(format!(
+        "agent files: {}",
+        if names.is_empty() {
+            "none".to_string()
+        } else {
+            names.join(", ")
+        }
+    ));
     if !resolved.config.plan_rules.is_empty() {
         out.push("plan rules:".to_string());
         out.extend(resolved.config.plan_rules.iter().map(|r| format!("- {r}")));
@@ -180,7 +221,9 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
         Ok(f) => Some(f),
         Err(e) if dir.is_dir() => {
             if !force {
-                return Err(CliError::Refused(format!("project {name} is broken ({e}), use --force to remove it")));
+                return Err(CliError::Refused(format!(
+                    "project {name} is broken ({e}), use --force to remove it"
+                )));
             }
             None
         }
@@ -188,7 +231,12 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
     };
     let worktrees = dir.join("worktrees");
     // A running driver owns the project, and --force does not override that.
-    if let ProjectLeaseStatus::Held { owner, job, secs_left } = project_lease_status(&dir.join("state"), now_secs()) {
+    if let ProjectLeaseStatus::Held {
+        owner,
+        job,
+        secs_left,
+    } = project_lease_status(&dir.join("state"), now_secs())
+    {
         return Err(CliError::Refused(format!(
             "project {name} is busy: job {job} is running (leased by {owner} for another {secs_left} seconds). \
              If the process that held it is gone, run `factory --project {name} cancel {job} --force`, or delete {}",
@@ -217,7 +265,10 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
                 match repo.prune_worktrees_under(&worktrees) {
                     Ok(r) => {
                         if !r.pruned.is_empty() {
-                            notes.push(format!("pruned {} worktree registration(s)", r.pruned.len()));
+                            notes.push(format!(
+                                "pruned {} worktree registration(s)",
+                                r.pruned.len()
+                            ));
                         }
                         if !r.skipped.is_empty() {
                             notes.push(format!(
@@ -226,7 +277,9 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
                             ));
                         }
                     }
-                    Err(e) => notes.push(format!("could not prune the worktree registrations: {e}")),
+                    Err(e) => {
+                        notes.push(format!("could not prune the worktree registrations: {e}"))
+                    }
                 }
                 let left: Vec<String> = repo
                     .local_branch_names()
@@ -238,13 +291,18 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
                     notes.push(format!("job branches left in place: {}", left.join(", ")));
                 }
             }
-            Err(why) => notes.push(format!("worktree registrations not pruned, the repo cannot be opened: {why}")),
+            Err(why) => notes.push(format!(
+                "worktree registrations not pruned, the repo cannot be opened: {why}"
+            )),
         }
     } else {
         notes.push("project.toml is unreadable, so worktree registrations and job branches were not checked".to_string());
     }
     project::remove(home, name)?;
-    let mut out = format!("removed project {name} ({}), the repository and the presets are untouched", dir.display());
+    let mut out = format!(
+        "removed project {name} ({}), the repository and the presets are untouched",
+        dir.display()
+    );
     for n in notes {
         out.push('\n');
         out.push_str(&n);

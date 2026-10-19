@@ -66,7 +66,11 @@ pub fn next_job_id(board_ids: &[String], dir_names: &[String], branch_names: &[S
     let from_board = board_ids.iter().filter_map(|i| leading_number(i));
     let from_dirs = dir_names.iter().filter_map(|d| id_from_dir(d));
     let from_branches = branch_names.iter().filter_map(|b| id_from_branch(b));
-    let max = from_board.chain(from_dirs).chain(from_branches).max().unwrap_or(0);
+    let max = from_board
+        .chain(from_dirs)
+        .chain(from_branches)
+        .max()
+        .unwrap_or(0);
     format!("{:03}", max.saturating_add(1))
 }
 

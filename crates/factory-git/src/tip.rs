@@ -10,7 +10,9 @@ use std::path::Path;
 fn entry_at(tree: &Tree<'_>, rel: &str) -> Result<Option<TreeEntry<'static>>> {
     match tree.get_path(Path::new(rel)) {
         Ok(e) => Ok(Some(e)),
-        Err(e) if e.code() == ErrorCode::NotFound && e.class() == git2::ErrorClass::Tree => Ok(None),
+        Err(e) if e.code() == ErrorCode::NotFound && e.class() == git2::ErrorClass::Tree => {
+            Ok(None)
+        }
         Err(e) => Err(GitError::Git(e)),
     }
 }
@@ -63,11 +65,13 @@ impl Repo {
             }
             if !is_regular(&item) {
                 let n = item.name().unwrap_or("?");
-                return Err(GitError::Refused(format!("{rel}/{n} is not a regular file")));
+                return Err(GitError::Refused(format!(
+                    "{rel}/{n} is not a regular file"
+                )));
             }
-            let name = item
-                .name()
-                .ok_or_else(|| GitError::BadInput(format!("a file name in {rel} is not valid UTF-8")))?;
+            let name = item.name().ok_or_else(|| {
+                GitError::BadInput(format!("a file name in {rel} is not valid UTF-8"))
+            })?;
             let blob = self.inner.find_blob(item.id())?;
             let text = std::str::from_utf8(blob.content())
                 .map_err(|_| GitError::BadInput(format!("{rel}/{name} is not valid UTF-8")))?;

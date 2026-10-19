@@ -18,7 +18,14 @@ pub fn pick_browser(installed: impl Fn(&str) -> bool) -> Option<&'static str> {
     BROWSERS.iter().copied().find(|n| installed(n))
 }
 
-pub fn shot_args(browser: &str, file: &str, w: u32, h: u32, url: &str, extra: &[&str]) -> Vec<String> {
+pub fn shot_args(
+    browser: &str,
+    file: &str,
+    w: u32,
+    h: u32,
+    url: &str,
+    extra: &[&str],
+) -> Vec<String> {
     if browser == "firefox" {
         return vec![
             "--headless".into(),
@@ -29,8 +36,14 @@ pub fn shot_args(browser: &str, file: &str, w: u32, h: u32, url: &str, extra: &[
             url.into(),
         ];
     }
-    let mut args: Vec<String> =
-        ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars"].map(String::from).to_vec();
+    let mut args: Vec<String> = [
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--hide-scrollbars",
+    ]
+    .map(String::from)
+    .to_vec();
     args.extend(extra.iter().map(|s| s.to_string()));
     args.push("--virtual-time-budget=4000".into());
     args.push(format!("--window-size={w},{h}"));
@@ -52,11 +65,15 @@ pub fn free_port() -> std::io::Result<u16> {
 }
 
 fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH").map(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file())).unwrap_or(false)
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+        .unwrap_or(false)
 }
 
 fn healthy(port: u16) -> bool {
-    let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else { return false };
+    let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
     let request = format!("GET /healthz HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n");
     if s.write_all(request.as_bytes()).is_err() {
         return false;
@@ -78,19 +95,37 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         eprintln!("{}", blocked_message());
         return Ok(3);
     };
-    let out = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| ".superpowers/factory/screenshots".into()));
+    let out = PathBuf::from(
+        std::env::args()
+            .nth(1)
+            .unwrap_or_else(|| ".superpowers/factory/screenshots".into()),
+    );
     std::fs::create_dir_all(&out)?;
     let tmp = tempfile::tempdir()?;
     let root = tmp.path().join("root");
     let port = free_port()?;
 
-    let args: Vec<String> = SEED_ARGS.iter().map(|a| a.replace("{root}", &root.to_string_lossy())).collect();
-    if !Command::new(SEED_PROGRAM).args(&args).stdout(Stdio::null()).status()?.success() {
+    let args: Vec<String> = SEED_ARGS
+        .iter()
+        .map(|a| a.replace("{root}", &root.to_string_lossy()))
+        .collect();
+    if !Command::new(SEED_PROGRAM)
+        .args(&args)
+        .stdout(Stdio::null())
+        .status()?
+        .success()
+    {
         eprintln!("FAIL: the demo seeder failed");
         return Ok(1);
     }
     let built = Command::new("cargo")
-        .args(["build", "-j4", "-q", "--manifest-path", "dashboard/Cargo.toml"])
+        .args([
+            "build",
+            "-j4",
+            "-q",
+            "--manifest-path",
+            "dashboard/Cargo.toml",
+        ])
         .status()?;
     if !built.success() {
         eprintln!("FAIL: the server did not build");
@@ -99,7 +134,12 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let log = std::fs::File::create(tmp.path().join("server.log"))?;
     let _server = Server(
         Command::new(SERVER_BIN)
-            .args(["--root", &root.to_string_lossy(), "--port", &port.to_string()])
+            .args([
+                "--root",
+                &root.to_string_lossy(),
+                "--port",
+                &port.to_string(),
+            ])
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log))
             .spawn()?,
@@ -118,21 +158,36 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let shots: [(&str, u32, u32, &[&str]); 3] = [
         ("desktop-dark.png", 1440, 1500, &[]),
         ("phone-dark.png", 400, 2600, &[]),
-        ("desktop-light.png", 1440, 1500, &["--blink-settings=preferredColorScheme=1"]),
+        (
+            "desktop-light.png",
+            1440,
+            1500,
+            &["--blink-settings=preferredColorScheme=1"],
+        ),
     ];
     let mut failed = false;
     for (name, w, h, extra) in shots {
         let file = out.join(name);
         let args = shot_args(browser, &file.to_string_lossy(), w, h, &url, extra);
-        let _ = Command::new(browser).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
-        if std::fs::metadata(&file).map(|m| m.len() > 0).unwrap_or(false) {
+        let _ = Command::new(browser)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        if std::fs::metadata(&file)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+        {
             println!("wrote {}", file.display());
         } else {
             eprintln!("FAIL: no screenshot {}", file.display());
             failed = true;
         }
     }
-    let (dark, light) = (std::fs::read(out.join("desktop-dark.png")), std::fs::read(out.join("desktop-light.png")));
+    let (dark, light) = (
+        std::fs::read(out.join("desktop-dark.png")),
+        std::fs::read(out.join("desktop-light.png")),
+    );
     if let (Ok(d), Ok(l)) = (dark, light) {
         if d == l {
             println!("NOTE: the light screenshot equals the dark one, so the light theme was not exercised.");
@@ -157,13 +212,23 @@ mod tests {
 
     #[test]
     fn pick_browser_takes_the_first_installed_in_order() {
-        assert_eq!(pick_browser(|n| n == "firefox" || n == "chromium"), Some("chromium"));
+        assert_eq!(
+            pick_browser(|n| n == "firefox" || n == "chromium"),
+            Some("chromium")
+        );
         assert_eq!(pick_browser(|_| false), None);
     }
 
     #[test]
     fn chrome_args_set_size_and_screenshot_path() {
-        let args = shot_args("google-chrome", "/o/a.png", 400, 2600, "http://127.0.0.1:9/", &[]);
+        let args = shot_args(
+            "google-chrome",
+            "/o/a.png",
+            400,
+            2600,
+            "http://127.0.0.1:9/",
+            &[],
+        );
         assert!(args.contains(&"--headless=new".to_string()));
         assert!(args.contains(&"--window-size=400,2600".to_string()));
         assert!(args.contains(&"--screenshot=/o/a.png".to_string()));
@@ -172,7 +237,14 @@ mod tests {
 
     #[test]
     fn firefox_args_use_its_own_flags() {
-        let args = shot_args("firefox", "/o/a.png", 1440, 1500, "http://127.0.0.1:9/", &[]);
+        let args = shot_args(
+            "firefox",
+            "/o/a.png",
+            1440,
+            1500,
+            "http://127.0.0.1:9/",
+            &[],
+        );
         assert_eq!(args[0], "--headless");
         assert!(args.contains(&"/o/a.png".to_string()));
         assert!(args.contains(&"1440,1500".to_string()));

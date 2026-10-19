@@ -31,10 +31,17 @@ pub(crate) fn civil(days: u64) -> String {
 pub fn per_day(text: &str) -> BTreeMap<String, u64> {
     let mut out = BTreeMap::new();
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         let Some(ts) = v["ts"].as_u64() else { continue };
         let n = |k: &str| v[k].as_u64().unwrap_or(0);
-        let w = weighted_tokens(n("input"), n("cache_creation"), n("output"), n("cache_read"));
+        let w = weighted_tokens(
+            n("input"),
+            n("cache_creation"),
+            n("output"),
+            n("cache_read"),
+        );
         let slot = out.entry(civil(ts / SECS_PER_DAY)).or_insert(0u64);
         *slot = slot.saturating_add(w);
     }
@@ -45,21 +52,33 @@ fn parse_days(query: &str) -> Result<u32, String> {
     let mut days = DEFAULT_DAYS;
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         if let Some(("days", value)) = pair.split_once('=') {
-            days = value.parse::<u32>().ok().filter(|d| (1..=MAX_DAYS).contains(d)).ok_or_else(|| {
-                format!("days must be a number from 1 to {MAX_DAYS}")
-            })?;
+            days = value
+                .parse::<u32>()
+                .ok()
+                .filter(|d| (1..=MAX_DAYS).contains(d))
+                .ok_or_else(|| format!("days must be a number from 1 to {MAX_DAYS}"))?;
         }
     }
     Ok(days)
 }
 
 /// The sum of every job folder's usage for one project, per day.
-pub(crate) fn project_usage(home: &Home, name: &str, file: &project::ProjectFile) -> BTreeMap<String, u64> {
+pub(crate) fn project_usage(
+    home: &Home,
+    name: &str,
+    file: &project::ProjectFile,
+) -> BTreeMap<String, u64> {
     let mut total = BTreeMap::new();
-    let Ok(layout) = project::layout(home, name, file) else { return total };
-    let Ok(dir) = std::fs::read_dir(&layout.jobs_dir) else { return total };
+    let Ok(layout) = project::layout(home, name, file) else {
+        return total;
+    };
+    let Ok(dir) = std::fs::read_dir(&layout.jobs_dir) else {
+        return total;
+    };
     for entry in dir.flatten() {
-        let Ok(text) = std::fs::read_to_string(entry.path().join("usage.jsonl")) else { continue };
+        let Ok(text) = std::fs::read_to_string(entry.path().join("usage.jsonl")) else {
+            continue;
+        };
         for (day, tokens) in per_day(&text) {
             let slot = total.entry(day).or_insert(0u64);
             *slot = slot.saturating_add(tokens);
@@ -78,19 +97,28 @@ pub fn report(home: &Home, deps: &ApiDeps, query: &str) -> ApiResponse {
         Err(e) => return error_response(500, "failed", &e.to_string()),
     };
     let today = (deps.now_ms)() / 1000 / SECS_PER_DAY;
-    let window: Vec<String> = (0..u64::from(days)).rev().map(|back| civil(today.saturating_sub(back))).collect();
+    let window: Vec<String> = (0..u64::from(days))
+        .rev()
+        .map(|back| civil(today.saturating_sub(back)))
+        .collect();
     let mut projects = Vec::new();
     for e in entries {
         let Ok(file) = &e.file else { continue };
         let sums = project_usage(home, &e.name, file);
-        let per: Vec<Value> =
-            window.iter().map(|d| json!({"day": d, "tokens": sums.get(d).copied().unwrap_or(0)})).collect();
-        let total = window.iter().fold(0u64, |acc, d| acc.saturating_add(sums.get(d).copied().unwrap_or(0)));
+        let per: Vec<Value> = window
+            .iter()
+            .map(|d| json!({"day": d, "tokens": sums.get(d).copied().unwrap_or(0)}))
+            .collect();
+        let total = window.iter().fold(0u64, |acc, d| {
+            acc.saturating_add(sums.get(d).copied().unwrap_or(0))
+        });
         projects.push(json!({"name": e.name, "total": total, "perDay": per}));
     }
     let mut body = json!({"days": days, "projects": projects});
     // An invalid config.toml hides the budget instead of failing the report.
-    let limit = factory_core::HomeConfig::load(home).ok().and_then(|c| c.daily_budget_weighted);
+    let limit = factory_core::HomeConfig::load(home)
+        .ok()
+        .and_then(|c| c.daily_budget_weighted);
     if let Some(b) = crate::daily::status(home, limit, (deps.now_ms)()) {
         body["dailyBudget"] = json!({"limit": b.limit, "used": b.used, "resetsAt": crate::daily::rfc3339_utc(b.resets_at_ms)});
     }

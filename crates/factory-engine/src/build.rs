@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::StopReason;
-use factory_core::{agent_files_rel_dir, builder_rulings, builder_status, parse_builder_status, BuilderStatus, is_agent_file_name, AGENT_EXCLUDE_PATTERN, ParkKind, ParkPart, Stage, TaskState};
+use factory_core::{
+    agent_files_rel_dir, builder_rulings, builder_status, is_agent_file_name, parse_builder_status,
+    BuilderStatus, ParkKind, ParkPart, Stage, TaskState, AGENT_EXCLUDE_PATTERN,
+};
 use factory_git::{CommitInfo, JobRef, Worktree};
 
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
@@ -37,7 +40,11 @@ impl Engine<'_> {
         let new_work = fresh || job.session_id.is_none();
         let (cwd, base, previous_head, branch) = if fresh {
             let (cwd, base, branch) = self.start_worktree(&job)?;
-            self.ledger_task(1, TaskState::Dispatched, &format!("BASE {base}, {}", self.config.builder_model))?;
+            self.ledger_task(
+                1,
+                TaskState::Dispatched,
+                &format!("BASE {base}, {}", self.config.builder_model),
+            )?;
             (cwd, base, None, branch)
         } else {
             let (cwd, base) = self.existing_worktree(&job)?;
@@ -48,10 +55,16 @@ impl Engine<'_> {
             Some(session) if !fresh => {
                 // A rework note from the user wins over a round findings file.
                 let note = self.job_dir.join("rework-note.md");
-                let findings =
-                    if note.exists() { note } else { self.job_dir.join(format!("changes-r{}.md", job.round)) };
+                let findings = if note.exists() {
+                    note
+                } else {
+                    self.job_dir.join(format!("changes-r{}.md", job.round))
+                };
                 if !findings.exists() {
-                    return Err(EngineError::Msg(format!("missing findings file {}", findings.display())));
+                    return Err(EngineError::Msg(format!(
+                        "missing findings file {}",
+                        findings.display()
+                    )));
                 }
                 self.builder_resume_spec(&job, &cwd, &findings, session)
             }
@@ -69,9 +82,17 @@ impl Engine<'_> {
             Ok(())
         })?;
         // The reply to the findings may hold push-back reasons, so keep it for the reviewer and the human.
-        let reply = if new_work { None } else { self.save_builder_reply(job.round, &run.result_text) };
+        let reply = if new_work {
+            None
+        } else {
+            self.save_builder_reply(job.round, &run.result_text)
+        };
         if run.stop_reason != StopReason::Done {
-            return self.park_with(ParkKind::BuilderStopped, format!("builder stopped: {:?}", run.stop_reason), builder_stop_parts(&run));
+            return self.park_with(
+                ParkKind::BuilderStopped,
+                format!("builder stopped: {:?}", run.stop_reason),
+                builder_stop_parts(&run),
+            );
         }
         if let Some(out) = self.park_if_blocked(&run, None)? {
             return Ok(out);
@@ -79,13 +100,19 @@ impl Engine<'_> {
         if self.repo.tip(&branch).map_err(git_err)? != tip_before {
             return self.park_with(
                 ParkKind::BuilderCommitted,
-                format!("builder committed on its own (the branch was at {} before the run)", short_sha(&tip_before)),
+                format!(
+                    "builder committed on its own (the branch was at {} before the run)",
+                    short_sha(&tip_before)
+                ),
                 Vec::new(),
             );
         }
         // The floor is the base in the first round and the last reviewed head in a fix round.
         let floor = previous_head.clone().unwrap_or_else(|| base.clone());
-        let before = self.repo.commits_above(&floor, &tip_before).map_err(git_err)?;
+        let before = self
+            .repo
+            .commits_above(&floor, &tip_before)
+            .map_err(git_err)?;
         let wt = self.job_worktree(&job, &cwd, &base, &branch);
         let (kind, title) = if new_work {
             (CommitKind::Legacy, "build the plan")
@@ -96,13 +123,27 @@ impl Engine<'_> {
             CommitOutcome::Committed { tip, .. } => tip,
             CommitOutcome::NothingStaged => {
                 if !new_work && job.fix_source.as_deref() == Some("checks") {
-                    return self.nothing_changed_after_checks(&job, &base, tip_before, previous_head);
+                    return self.nothing_changed_after_checks(
+                        &job,
+                        &base,
+                        tip_before,
+                        previous_head,
+                    );
                 }
-                let why = if new_work { "builder made no changes" } else { "builder made no changes on resume" };
-                let parts = reply.map(|text| ParkPart::new("Builder reply", "builder", &text)).into_iter().collect();
+                let why = if new_work {
+                    "builder made no changes"
+                } else {
+                    "builder made no changes on resume"
+                };
+                let parts = reply
+                    .map(|text| ParkPart::new("Builder reply", "builder", &text))
+                    .into_iter()
+                    .collect();
                 return self.park_with(ParkKind::NothingChanged, why.to_string(), parts);
             }
-            CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
+            CommitOutcome::Park(reason) => {
+                return self.park_with(ParkKind::CommitFailed, reason, Vec::new())
+            }
         };
         self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
@@ -136,11 +177,19 @@ impl Engine<'_> {
             ))?;
             return self.finish_build(job, base, head, previous_head);
         }
-        let first = report.failures().first().map_or_else(|| "a check".to_string(), |f| f.command.clone());
-        let parts = part_from_file(&self.job_dir, "checks.md", "Checks").into_iter().collect();
+        let first = report
+            .failures()
+            .first()
+            .map_or_else(|| "a check".to_string(), |f| f.command.clone());
+        let parts = part_from_file(&self.job_dir, "checks.md", "Checks")
+            .into_iter()
+            .collect();
         self.park_with(
             ParkKind::ChecksFailed,
-            format!("fix round {} changed nothing and the checks still fail: {first}", job.round),
+            format!(
+                "fix round {} changed nothing and the checks still fail: {first}",
+                job.round
+            ),
             parts,
         )
     }
@@ -151,9 +200,16 @@ impl Engine<'_> {
         self.check_agent_names()?;
         let wt = self
             .repo
-            .create_worktree(&JobRef { id: self.job_id.clone(), slug: job.slug.clone() })
+            .create_worktree(&JobRef {
+                id: self.job_id.clone(),
+                slug: job.slug.clone(),
+            })
             .map_err(git_err)?;
-        let (path, base, branch) = (wt.path.to_string_lossy().to_string(), wt.base.clone(), wt.branch.clone());
+        let (path, base, branch) = (
+            wt.path.to_string_lossy().to_string(),
+            wt.base.clone(),
+            wt.branch.clone(),
+        );
         let (b, br) = (base.clone(), branch.clone());
         self.update(|j| {
             j.worktree = Some(path);
@@ -166,7 +222,10 @@ impl Engine<'_> {
     fn check_agent_names(&self) -> Result<(), EngineError> {
         for f in &self.agent_files {
             if !is_agent_file_name(&f.name) {
-                return Err(EngineError::Msg(format!("agent file name {:?} is not allowed, use factory-<name>.md", f.name)));
+                return Err(EngineError::Msg(format!(
+                    "agent file name {:?} is not allowed, use factory-<name>.md",
+                    f.name
+                )));
             }
         }
         Ok(())
@@ -190,11 +249,25 @@ impl Engine<'_> {
             )));
         }
         let rel_dir = agent_files_rel_dir();
-        self.repo.exclude_paths(&[AGENT_EXCLUDE_PATTERN]).map_err(git_err)?;
+        self.repo
+            .exclude_paths(&[AGENT_EXCLUDE_PATTERN])
+            .map_err(git_err)?;
         let dir = wt.join(&rel_dir);
-        for p in [wt.join(rel_dir.components().next().map(|c| c.as_os_str()).unwrap_or_default()), dir.clone()] {
+        for p in [
+            wt.join(
+                rel_dir
+                    .components()
+                    .next()
+                    .map(|c| c.as_os_str())
+                    .unwrap_or_default(),
+            ),
+            dir.clone(),
+        ] {
             if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
-                return Err(EngineError::Msg(format!("{} is a symlink, agent files are not written", p.display())));
+                return Err(EngineError::Msg(format!(
+                    "{} is a symlink, agent files are not written",
+                    p.display()
+                )));
             }
         }
         std::fs::create_dir_all(&dir)?;
@@ -202,7 +275,11 @@ impl Engine<'_> {
         for f in &self.agent_files {
             let rel = rel_dir.join(&f.name);
             let rel_text = rel.to_string_lossy().replace('\\', "/");
-            if self.repo.is_tracked_at_branch(self.repo.base_branch(), &rel_text).map_err(git_err)? {
+            if self
+                .repo
+                .is_tracked_at_branch(self.repo.base_branch(), &rel_text)
+                .map_err(git_err)?
+            {
                 shadowed.push(f.name.as_str());
                 continue;
             }
@@ -210,8 +287,12 @@ impl Engine<'_> {
         }
         if !shadowed.is_empty() {
             // Noted once per job, because this runs on every build step.
-            let note = format!("repo agent files shadow the resolved ones: {}", shadowed.join(", "));
-            let seen = std::fs::read_to_string(self.job_dir.join("progress.md")).unwrap_or_default();
+            let note = format!(
+                "repo agent files shadow the resolved ones: {}",
+                shadowed.join(", ")
+            );
+            let seen =
+                std::fs::read_to_string(self.job_dir.join("progress.md")).unwrap_or_default();
             if !seen.contains(&note) {
                 self.ruling(&note)?;
             }
@@ -231,25 +312,43 @@ impl Engine<'_> {
                 // Remove first, so a hard link to a file outside is never written through.
                 std::fs::remove_file(path)?;
             }
-            Ok(_) => return Err(EngineError::Msg(format!("{} is not a regular file", path.display()))),
+            Ok(_) => {
+                return Err(EngineError::Msg(format!(
+                    "{} is not a regular file",
+                    path.display()
+                )))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
         std::io::Write::write_all(&mut file, content.as_bytes())?;
         Ok(())
     }
 
     fn existing_worktree(&self, job: &JobView) -> Result<(PathBuf, String), EngineError> {
-        let cwd = job.worktree.clone().ok_or_else(|| EngineError::Msg("job has no worktree".into()))?;
-        let base = job.base.clone().ok_or_else(|| EngineError::Msg("job has no base".into()))?;
+        let cwd = job
+            .worktree
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no worktree".into()))?;
+        let base = job
+            .base
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no base".into()))?;
         Ok((cwd, base))
     }
 
     /// The worktree handle the git layer needs, built from the job record.
     fn job_worktree(&self, job: &JobView, cwd: &Path, base: &str, branch: &str) -> Worktree {
         Worktree {
-            name: JobRef { id: self.job_id.clone(), slug: job.slug.clone() }.dir_name(),
+            name: JobRef {
+                id: self.job_id.clone(),
+                slug: job.slug.clone(),
+            }
+            .dir_name(),
             path: cwd.to_path_buf(),
             branch: branch.to_string(),
             base: base.to_string(),
@@ -268,12 +367,26 @@ impl Engine<'_> {
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
         let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
         let (plan_title, goal) = (plan_title(&plan), spec_goal(&spec));
-        let req = CommitRequest { kind, plan_title: &plan_title, task_title, goal: &goal, floor, issues, snapshots: &[] };
+        let req = CommitRequest {
+            kind,
+            plan_title: &plan_title,
+            task_title,
+            goal: &goal,
+            floor,
+            issues,
+            snapshots: &[],
+        };
         self.commit_step(wt, &req)
     }
 
     /// Writes a ruling when the committer rewrote commits that were above the floor before the run.
-    fn note_rewrites(&self, label: &str, floor: &str, before: &[CommitInfo], tip: &str) -> Result<(), EngineError> {
+    fn note_rewrites(
+        &self,
+        label: &str,
+        floor: &str,
+        before: &[CommitInfo],
+        tip: &str,
+    ) -> Result<(), EngineError> {
         let after = self.repo.commits_above(floor, tip).map_err(git_err)?;
         let gone: Vec<&str> = before
             .iter()
@@ -284,17 +397,26 @@ impl Engine<'_> {
             return Ok(());
         }
         let short = short_sha(tip);
-        self.ruling(&format!("{label} commit rewrote earlier commits {}, the branch is now at {short}", gone.join(", ")))
+        self.ruling(&format!(
+            "{label} commit rewrote earlier commits {}, the branch is now at {short}",
+            gone.join(", ")
+        ))
     }
 
     /// Parks the job when the builder reply says BLOCKED or NEEDS_CONTEXT, before anything is committed.
     /// A reply without a usable status line counts as done, and a task run notes that in the ledger.
-    fn park_if_blocked(&self, run: &factory_agent::AgentRun, task: Option<u32>) -> Result<Option<StageOutcome>, EngineError> {
+    fn park_if_blocked(
+        &self,
+        run: &factory_agent::AgentRun,
+        task: Option<u32>,
+    ) -> Result<Option<StageOutcome>, EngineError> {
         let status = match parse_builder_status(&run.result_text) {
             Some(status) => status,
             None => {
                 if let Some(n) = task {
-                    self.ruling(&format!("builder task {n}: no status line, treated as done"))?;
+                    self.ruling(&format!(
+                        "builder task {n}: no status line, treated as done"
+                    ))?;
                 }
                 return Ok(None);
             }
@@ -308,7 +430,12 @@ impl Engine<'_> {
         let first: String = first.chars().take(300).collect();
         let place = task.map_or(String::new(), |n| format!(" in task {n}"));
         let reason = format!("builder {what}{place}: {first}");
-        self.park_with(ParkKind::BuilderBlocked, reason, builder_blocked_parts(&status, run)).map(Some)
+        self.park_with(
+            ParkKind::BuilderBlocked,
+            reason,
+            builder_blocked_parts(&status, run),
+        )
+        .map(Some)
     }
 
     /// Writes the builder's `Ruling:` lines and its concerns to the ledger, so the reviewer can read them.
@@ -357,12 +484,17 @@ impl Engine<'_> {
         }
         let tip = self.repo.tip(&branch).map_err(git_err)?;
         let earlier = self.repo.log_oneline(&base, &tip).map_err(git_err)?;
-        self.ledger_task(task.n, TaskState::Dispatched, &format!("BASE {base}, {}", self.config.builder_model))?;
+        self.ledger_task(
+            task.n,
+            TaskState::Dispatched,
+            &format!("BASE {base}, {}", self.config.builder_model),
+        )?;
         let mut spec = self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier);
         let note_path = self.job_dir.join("rework-note.md");
         let note = std::fs::read_to_string(&note_path).ok();
         if let Some(text) = &note {
-            spec.prompt.push_str(&format!("\nA note from the user for this task:\n{text}\n"));
+            spec.prompt
+                .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
         }
         let run = self.run_agent(spec)?;
         if note.is_some() {
@@ -370,7 +502,11 @@ impl Engine<'_> {
             let _ = std::fs::remove_file(&note_path);
         }
         if run.stop_reason != StopReason::Done {
-            return self.park_with(ParkKind::BuilderStopped, format!("builder stopped in task {}: {:?}", task.n, run.stop_reason), builder_stop_parts(&run));
+            return self.park_with(
+                ParkKind::BuilderStopped,
+                format!("builder stopped in task {}: {:?}", task.n, run.stop_reason),
+                builder_stop_parts(&run),
+            );
         }
         if let Some(out) = self.park_if_blocked(&run, Some(task.n))? {
             return Ok(out);
@@ -378,7 +514,11 @@ impl Engine<'_> {
         if self.repo.tip(&branch).map_err(git_err)? != tip {
             return self.park_with(
                 ParkKind::BuilderCommitted,
-                format!("builder committed on its own in task {} (the branch was at {} before the run)", task.n, short_sha(&tip)),
+                format!(
+                    "builder committed on its own in task {} (the branch was at {} before the run)",
+                    task.n,
+                    short_sha(&tip)
+                ),
                 Vec::new(),
             );
         }
@@ -386,10 +526,9 @@ impl Engine<'_> {
         let new_tip = if self.config.commit_batch {
             if !self.repo.head_is_on_branch(&wt).map_err(git_err)? {
                 let short = short_sha(&tip);
-                let at = self
-                    .repo
-                    .head_sha(&wt)
-                    .map_or(String::new(), |id| format!(", HEAD is at {}", short_sha(&id)));
+                let at = self.repo.head_sha(&wt).map_or(String::new(), |id| {
+                    format!(", HEAD is at {}", short_sha(&id))
+                });
                 return self.park_with(
                     ParkKind::BuilderCommitted,
                     format!(
@@ -401,18 +540,31 @@ impl Engine<'_> {
             }
             let staged = self.repo.stage_all(&wt).map_err(git_err)?;
             if staged.is_empty() {
-                return self.park_with(ParkKind::NothingChanged, format!("task {} changed nothing", task.n), Vec::new());
+                return self.park_with(
+                    ParkKind::NothingChanged,
+                    format!("task {} changed nothing", task.n),
+                    Vec::new(),
+                );
             }
-            self.repo.commit_staged(&wt, &snapshot_subject(task.n, &task.title)).map_err(git_err)?
+            self.repo
+                .commit_staged(&wt, &snapshot_subject(task.n, &task.title))
+                .map_err(git_err)?
         } else {
             let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
-            let new_tip = match self.commit_work(&wt, CommitKind::Task, &task.title, &base, &job.issues)? {
-                CommitOutcome::Committed { tip, .. } => tip,
-                CommitOutcome::NothingStaged => {
-                    return self.park_with(ParkKind::NothingChanged, format!("task {} changed nothing", task.n), Vec::new())
-                }
-                CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
-            };
+            let new_tip =
+                match self.commit_work(&wt, CommitKind::Task, &task.title, &base, &job.issues)? {
+                    CommitOutcome::Committed { tip, .. } => tip,
+                    CommitOutcome::NothingStaged => {
+                        return self.park_with(
+                            ParkKind::NothingChanged,
+                            format!("task {} changed nothing", task.n),
+                            Vec::new(),
+                        )
+                    }
+                    CommitOutcome::Park(reason) => {
+                        return self.park_with(ParkKind::CommitFailed, reason, Vec::new())
+                    }
+                };
             self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
             new_tip
         };
@@ -443,7 +595,10 @@ impl Engine<'_> {
     /// Runs the one committer of a job after its last task. It is safe to call again after a park:
     /// the branch is either still at the snapshot tip or already reset to the base.
     fn resume_batch(&self, job: &JobView, tasks: &[PlanTask]) -> Result<StageOutcome, EngineError> {
-        let snapshot = job.batch_snapshot.clone().ok_or_else(|| EngineError::Msg("no pending batch commit".into()))?;
+        let snapshot = job
+            .batch_snapshot
+            .clone()
+            .ok_or_else(|| EngineError::Msg("no pending batch commit".into()))?;
         let (cwd, base) = self.existing_worktree(job)?;
         let branch = job.branch.clone();
         let wt = self.job_worktree(job, &cwd, &base, &branch);
@@ -478,15 +633,26 @@ impl Engine<'_> {
         let head = match self.commit_step(&wt, &req)? {
             CommitOutcome::Committed { tip, .. } => tip,
             CommitOutcome::NothingStaged => {
-                return self.park_with(ParkKind::NothingChanged, "the batch commit found nothing staged".to_string(), Vec::new())
+                return self.park_with(
+                    ParkKind::NothingChanged,
+                    "the batch commit found nothing staged".to_string(),
+                    Vec::new(),
+                )
             }
-            CommitOutcome::Park(reason) => return self.park_with(ParkKind::CommitFailed, reason, Vec::new()),
+            CommitOutcome::Park(reason) => {
+                return self.park_with(ParkKind::CommitFailed, reason, Vec::new())
+            }
         };
         self.finish_batch(job, &base, head, snaps.len(), &snapshot)
     }
 
     /// True when the tip holds the snapshot work as real commits: above the base, no `wip:` subject, same tree.
-    fn batch_already_committed(&self, base: &str, tip: &str, snapshot: &str) -> Result<bool, EngineError> {
+    fn batch_already_committed(
+        &self,
+        base: &str,
+        tip: &str,
+        snapshot: &str,
+    ) -> Result<bool, EngineError> {
         if !self.repo.is_ancestor(base, tip).map_err(git_err)? {
             return Ok(false);
         }
@@ -501,19 +667,34 @@ impl Engine<'_> {
     /// Its text goes to the ledger and the file is removed.
     fn keep_unsent_note(&self) -> Result<(), EngineError> {
         let path = self.job_dir.join("rework-note.md");
-        let Ok(text) = std::fs::read_to_string(&path) else { return Ok(()) };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Ok(());
+        };
         let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let kept: String = one_line.chars().take(300).collect();
-        self.ruling(&format!("rework note not sent to a builder because the batch commit ran no builder: {kept}"))?;
+        self.ruling(&format!(
+            "rework note not sent to a builder because the batch commit ran no builder: {kept}"
+        ))?;
         let _ = std::fs::remove_file(&path);
         Ok(())
     }
 
     /// Records the end of a batch commit: a ruling, a cleared flag, then the usual build finish.
-    fn finish_batch(&self, job: &JobView, base: &str, head: String, count: usize, snapshot: &str) -> Result<StageOutcome, EngineError> {
+    fn finish_batch(
+        &self,
+        job: &JobView,
+        base: &str,
+        head: String,
+        count: usize,
+        snapshot: &str,
+    ) -> Result<StageOutcome, EngineError> {
         let short = short_sha(&head).to_string();
         let was = short_sha(snapshot);
-        let what = if count == 0 { format!("batch commit already done, replaced the snapshots up to {was}") } else { format!("batch commit replaced {count} snapshots") };
+        let what = if count == 0 {
+            format!("batch commit already done, replaced the snapshots up to {was}")
+        } else {
+            format!("batch commit replaced {count} snapshots")
+        };
         self.ruling(&format!("{what}, the branch is at {short}"))?;
         self.keep_unsent_note()?;
         self.update(|j| {
@@ -524,7 +705,12 @@ impl Engine<'_> {
     }
 
     /// The snapshot commits above the base, oldest first, matched to the plan tasks by position.
-    fn snapshot_refs(&self, base: &str, snapshot: &str, tasks: &[PlanTask]) -> Result<Vec<SnapshotRef>, EngineError> {
+    fn snapshot_refs(
+        &self,
+        base: &str,
+        snapshot: &str,
+        tasks: &[PlanTask],
+    ) -> Result<Vec<SnapshotRef>, EngineError> {
         let commits = self.repo.commits_above(base, snapshot).map_err(git_err)?;
         Ok(commits
             .into_iter()
@@ -532,7 +718,9 @@ impl Engine<'_> {
             .map(|(i, c)| SnapshotRef {
                 n: tasks.get(i).map_or(i as u32 + 1, |t| t.n),
                 sha: c.sha,
-                title: tasks.get(i).map_or_else(|| c.subject.clone(), |t| t.title.clone()),
+                title: tasks
+                    .get(i)
+                    .map_or_else(|| c.subject.clone(), |t| t.title.clone()),
                 files: c.files,
             })
             .collect())
@@ -546,10 +734,16 @@ impl Engine<'_> {
         head: String,
         previous_head: Option<String>,
     ) -> Result<StageOutcome, EngineError> {
-        let info = self.repo.diff_to_files(base, &head, &self.job_dir).map_err(git_err)?;
+        let info = self
+            .repo
+            .diff_to_files(base, &head, &self.job_dir)
+            .map_err(git_err)?;
         let cap = self.config.diff_cap_lines as usize;
         if info.changed_lines() > cap {
-            let reason = format!("diff has {} changed lines, the cap is {cap}", info.changed_lines());
+            let reason = format!(
+                "diff has {} changed lines, the cap is {cap}",
+                info.changed_lines()
+            );
             // The new head is not recorded yet, so the stat comes from the diff computed above.
             let mut parts = vec![ParkPart::new("Why it stopped", "driver", &reason)];
             if let Ok(stat) = std::fs::read_to_string(&info.stat) {
@@ -569,7 +763,9 @@ impl Engine<'_> {
 
     /// The directory of the worktree, or an error when the job has none yet.
     pub(crate) fn worktree(&self) -> Result<PathBuf, EngineError> {
-        self.job()?.worktree.ok_or_else(|| EngineError::Msg("job has no worktree".into()))
+        self.job()?
+            .worktree
+            .ok_or_else(|| EngineError::Msg("job has no worktree".into()))
     }
 }
 

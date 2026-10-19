@@ -25,14 +25,22 @@ impl Default for FakeCli {
         FakeCli {
             calls: Mutex::new(Vec::new()),
             replies: Mutex::new(VecDeque::new()),
-            last: Mutex::new(CliOutput { code: 0, stdout: String::new(), stderr: String::new() }),
+            last: Mutex::new(CliOutput {
+                code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
         }
     }
 }
 
 impl FakeCli {
     pub fn reply(&self, code: i32, stdout: &str, stderr: &str) {
-        *self.last.lock().expect("lock") = CliOutput { code, stdout: stdout.to_string(), stderr: stderr.to_string() };
+        *self.last.lock().expect("lock") = CliOutput {
+            code,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+        };
     }
 
     pub fn reply_stdout(&self, stdout: &str) {
@@ -46,14 +54,20 @@ impl FakeCli {
 
 impl FactoryCli for FakeCli {
     fn run(&self, project: &str, args: &[String]) -> Result<CliOutput, CliSpawnError> {
-        self.calls.lock().expect("lock").push((project.to_string(), args.to_vec()));
+        self.calls
+            .lock()
+            .expect("lock")
+            .push((project.to_string(), args.to_vec()));
         let queued = self.replies.lock().expect("lock").pop_front();
         Ok(queued.unwrap_or_else(|| self.last.lock().expect("lock").clone()))
     }
 }
 
 pub fn deps_with(cli: Arc<FakeCli>) -> ApiDeps {
-    ApiDeps { now_ms: Arc::new(|| NOW_MS), cli }
+    ApiDeps {
+        now_ms: Arc::new(|| NOW_MS),
+        cli,
+    }
 }
 
 pub fn deps() -> ApiDeps {
@@ -71,7 +85,10 @@ pub fn headers(token: Option<&str>, host: &str) -> Vec<(String, String)> {
 fn register(home: &Home, name: &str, repo: &Path) {
     let dir = home.project_dir(name);
     std::fs::create_dir_all(&dir).expect("project dir");
-    let text = format!("repo = {:?}\npreset = \"rust\"\n[settings]\nbase_branch = \"trunk\"\n", repo.display().to_string());
+    let text = format!(
+        "repo = {:?}\npreset = \"rust\"\n[settings]\nbase_branch = \"trunk\"\n",
+        repo.display().to_string()
+    );
     std::fs::write(dir.join("project.toml"), text).expect("project.toml");
 }
 
@@ -103,7 +120,11 @@ pub fn job_json(id: &str, dir: &str) -> String {
 }
 
 pub fn write_usage(home: &Home, dir: &str, text: &str) {
-    let d = home.project_dir("good").join("state").join("jobs").join(dir);
+    let d = home
+        .project_dir("good")
+        .join("state")
+        .join("jobs")
+        .join(dir);
     std::fs::create_dir_all(&d).expect("job dir");
     std::fs::write(d.join("usage.jsonl"), text).expect("usage");
 }

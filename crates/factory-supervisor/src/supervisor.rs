@@ -118,7 +118,8 @@ fn read_tail(path: &Path) -> Result<String, String> {
     let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let len = meta.len();
     if len > TAIL_BYTES {
-        f.seek(std::io::SeekFrom::Start(len - TAIL_BYTES)).map_err(|e| format!("{}: {e}", path.display()))?;
+        f.seek(std::io::SeekFrom::Start(len - TAIL_BYTES))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let mut buf = Vec::new();
     let _ = f.take(TAIL_BYTES).read_to_end(&mut buf);
@@ -139,9 +140,15 @@ fn cap_text(text: &str, max: usize) -> String {
 /// The tail keeps its last chars, because the end of stderr says most.
 fn cap_outcome(outcome: Outcome) -> Outcome {
     match outcome {
-        Outcome::NeedsHuman { reason } => Outcome::NeedsHuman { reason: cap_text(&reason, LINE_CAP) },
-        Outcome::Lost { reason } => Outcome::Lost { reason: cap_text(&reason, LINE_CAP) },
-        Outcome::Rejected { reason } => Outcome::Rejected { reason: cap_text(&reason, LINE_CAP) },
+        Outcome::NeedsHuman { reason } => Outcome::NeedsHuman {
+            reason: cap_text(&reason, LINE_CAP),
+        },
+        Outcome::Lost { reason } => Outcome::Lost {
+            reason: cap_text(&reason, LINE_CAP),
+        },
+        Outcome::Rejected { reason } => Outcome::Rejected {
+            reason: cap_text(&reason, LINE_CAP),
+        },
         Outcome::Failed { code, stderr_tail } => {
             let count = stderr_tail.chars().count();
             let tail = if count > TAIL_CHARS {
@@ -150,7 +157,10 @@ fn cap_outcome(outcome: Outcome) -> Outcome {
             } else {
                 stderr_tail
             };
-            Outcome::Failed { code, stderr_tail: tail }
+            Outcome::Failed {
+                code,
+                stderr_tail: tail,
+            }
         }
         other => other,
     }
@@ -159,41 +169,71 @@ fn cap_outcome(outcome: Outcome) -> Outcome {
 fn stderr_tail(text: &str) -> String {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let from = lines.len().saturating_sub(TAIL_LINES);
-    lines[from..].iter().map(|l| l.chars().take(LINE_CAP).collect::<String>()).collect::<Vec<_>>().join("\n")
+    lines[from..]
+        .iter()
+        .map(|l| l.chars().take(LINE_CAP).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Decides how a finished child ended. `code` is Some only for a child this process started.
 /// The last non-empty stdout line is what `factory run` and `factory approve` print:
 /// `merged`, `merged <sha>`, `needs-human: <reason>` or `parked: <reason>`.
 pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
-    let last = out.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let last = out
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     if last == "merged" || last.starts_with("merged ") {
         return Outcome::Merged;
     }
     if let Some(rest) = last.strip_prefix("needs-human") {
         if rest.is_empty() || rest.starts_with(':') || rest.starts_with(' ') {
-            return Outcome::NeedsHuman { reason: rest.trim().trim_start_matches(':').trim().to_string() };
+            return Outcome::NeedsHuman {
+                reason: rest.trim().trim_start_matches(':').trim().to_string(),
+            };
         }
     }
     if let Some(rest) = last.strip_prefix("parked:") {
-        return Outcome::NeedsHuman { reason: rest.trim().to_string() };
+        return Outcome::NeedsHuman {
+            reason: rest.trim().to_string(),
+        };
     }
     match code {
-        Some(code) => Outcome::Failed { code, stderr_tail: stderr_tail(err) },
-        None => Outcome::Lost { reason: "the process ended without a result".to_string() },
+        Some(code) => Outcome::Failed {
+            code,
+            stderr_tail: stderr_tail(err),
+        },
+        None => Outcome::Lost {
+            reason: "the process ended without a result".to_string(),
+        },
     }
 }
 
 /// The lines worth printing for a report: its errors and bad child records. A line that was printed
 /// before is not returned again, and `prev` forgets lines that are gone, so a returning problem shows again.
 pub fn new_lines(prev: &mut HashSet<String>, report: &TickReport) -> Vec<String> {
-    let mut now: Vec<String> = report.errors.iter().map(|e| format!("factoryd: {e}")).collect();
-    now.extend(report.bad_children.iter().map(|b| format!("factoryd: bad child record {b}")));
+    let mut now: Vec<String> = report
+        .errors
+        .iter()
+        .map(|e| format!("factoryd: {e}"))
+        .collect();
+    now.extend(
+        report
+            .bad_children
+            .iter()
+            .map(|b| format!("factoryd: bad child record {b}")),
+    );
     now.extend(report.orphans.iter().map(|p| format!("factoryd: project {p} is busy, its lease belongs to a live process that is not a child of factoryd")));
     let fresh: Vec<String> = now.iter().filter(|l| !prev.contains(*l)).cloned().collect();
     *prev = now.into_iter().collect();
     let mut seen = HashSet::new();
-    fresh.into_iter().filter(|l| seen.insert(l.clone())).collect()
+    fresh
+        .into_iter()
+        .filter(|l| seen.insert(l.clone()))
+        .collect()
 }
 
 /// Logs a tick report. Start, finish and reject are always logged. Errors, bad child records and
@@ -204,10 +244,18 @@ pub fn log_report(report: &TickReport, printed: &mut HashSet<String>) {
     }
     for (id, outcome) in &report.finished {
         let outcome = format!("{outcome:?}");
-        tracing::info!(event = "sup.finish", request = id.as_str(), outcome = outcome.as_str());
+        tracing::info!(
+            event = "sup.finish",
+            request = id.as_str(),
+            outcome = outcome.as_str()
+        );
     }
     for (id, reason) in &report.rejected {
-        tracing::info!(event = "sup.reject", request = id.as_str(), reason = reason.as_str());
+        tracing::info!(
+            event = "sup.reject",
+            request = id.as_str(),
+            reason = reason.as_str()
+        );
     }
     let mut fresh: HashSet<String> = new_lines(printed, report).into_iter().collect();
     for e in &report.errors {
@@ -245,12 +293,26 @@ impl Supervisor {
     /// Makes a supervisor without the instance lock. It requires that no other supervisor runs on this
     /// home, see the type docs. Use `new_locked` in production.
     pub fn new(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Supervisor {
-        Supervisor { home, spawner, clock, max_parallel: HomeConfig::default().max_parallel, daily_limit: None, daily_exhausted: false, started_ids: HashSet::new(), recovered: false, _lock: None }
+        Supervisor {
+            home,
+            spawner,
+            clock,
+            max_parallel: HomeConfig::default().max_parallel,
+            daily_limit: None,
+            daily_exhausted: false,
+            started_ids: HashSet::new(),
+            recovered: false,
+            _lock: None,
+        }
     }
 
     /// Takes the instance lock of the home and keeps it as long as the supervisor lives. Fails with the
     /// pid of the supervisor that already runs.
-    pub fn new_locked(home: Home, spawner: Box<dyn Spawner>, clock: Box<dyn Fn() -> u64>) -> Result<Supervisor, LockError> {
+    pub fn new_locked(
+        home: Home,
+        spawner: Box<dyn Spawner>,
+        clock: Box<dyn Fn() -> u64>,
+    ) -> Result<Supervisor, LockError> {
         let lock = InstanceLock::acquire(&home)?;
         let mut s = Supervisor::new(home, spawner, clock);
         s._lock = Some(lock);
@@ -266,7 +328,9 @@ impl Supervisor {
     fn reload_daily_limit(&mut self, report: &mut TickReport) {
         match HomeConfig::load(&self.home) {
             Ok(cfg) => self.daily_limit = cfg.daily_budget_weighted,
-            Err(e) => report.errors.push(format!("config.toml is invalid, keeping the last daily budget: {e}")),
+            Err(e) => report.errors.push(format!(
+                "config.toml is invalid, keeping the last daily budget: {e}"
+            )),
         }
     }
 
@@ -296,9 +360,18 @@ impl Supervisor {
 
     /// Writes the result unless one exists for the id. An existing result is never overwritten, and
     /// the outcome that is stored is the one returned.
-    fn record_result(&self, req_id: &str, project: &str, job: &str, outcome: Outcome) -> Result<Outcome, SupervisorError> {
+    fn record_result(
+        &self,
+        req_id: &str,
+        project: &str,
+        job: &str,
+        outcome: Outcome,
+    ) -> Result<Outcome, SupervisorError> {
         if self.result_path(req_id).exists() {
-            let stored = records::read_results(&self.home).into_iter().flatten().find(|r| r.request_id == req_id);
+            let stored = records::read_results(&self.home)
+                .into_iter()
+                .flatten()
+                .find(|r| r.request_id == req_id);
             return Ok(stored.map(|r| r.outcome).unwrap_or(outcome));
         }
         let outcome = cap_outcome(outcome);
@@ -323,7 +396,12 @@ impl Supervisor {
 
     /// Result first, then the queue entry, then the child record. An error before the last step keeps
     /// the child record, so the project stays busy and the next tick retries.
-    fn finish(&self, child: &ChildRecord, outcome: Outcome, report: &mut TickReport) -> Result<(), SupervisorError> {
+    fn finish(
+        &self,
+        child: &ChildRecord,
+        outcome: Outcome,
+        report: &mut TickReport,
+    ) -> Result<(), SupervisorError> {
         let outcome = self.record_result(&child.request_id, &child.project, &child.job, outcome)?;
         self.drop_queued(&child.request_id)?;
         records::remove_child(&self.home, &child.project)?;
@@ -331,19 +409,31 @@ impl Supervisor {
         Ok(())
     }
 
-    fn project_states(&self, child_pids: &BTreeSet<u32>) -> Result<BTreeMap<String, ProjectState>, SupervisorError> {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    fn project_states(
+        &self,
+        child_pids: &BTreeSet<u32>,
+    ) -> Result<BTreeMap<String, ProjectState>, SupervisorError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
         let mut states = BTreeMap::new();
         for entry in project::list(&self.home)? {
             let state = match &entry.file {
-                Err(reason) => ProjectState::Disabled { reason: reason.clone() },
-                Ok(file) if !file.repo.is_dir() => {
-                    ProjectState::Disabled { reason: format!("repo path {} is missing", file.repo.display()) }
-                }
+                Err(reason) => ProjectState::Disabled {
+                    reason: reason.clone(),
+                },
+                Ok(file) if !file.repo.is_dir() => ProjectState::Disabled {
+                    reason: format!("repo path {} is missing", file.repo.display()),
+                },
                 Ok(file) => match project::layout(&self.home, &entry.name, file) {
-                    Err(e) => ProjectState::Disabled { reason: e.to_string() },
+                    Err(e) => ProjectState::Disabled {
+                        reason: e.to_string(),
+                    },
                     Ok(layout) => match project_lease_status(&layout.state_dir, now) {
-                        ProjectLeaseStatus::Held { owner, .. } if !owner_pid(&owner).is_some_and(|p| child_pids.contains(&p)) => {
+                        ProjectLeaseStatus::Held { owner, .. }
+                            if !owner_pid(&owner).is_some_and(|p| child_pids.contains(&p)) =>
+                        {
                             ProjectState::LeaseHeld { owner }
                         }
                         _ => ProjectState::Ready,
@@ -357,8 +447,21 @@ impl Supervisor {
 
     /// Ends a request without a usable child. The result goes first, because a request that has a
     /// result is never started. The queue drop is best effort: the next tick repeats it.
-    fn end_request(&self, req: &Request, text: String, report: &mut TickReport) -> Result<(), SupervisorError> {
-        let outcome = self.record_result(&req.id, &req.project, &req.job, Outcome::Failed { code: None, stderr_tail: text })?;
+    fn end_request(
+        &self,
+        req: &Request,
+        text: String,
+        report: &mut TickReport,
+    ) -> Result<(), SupervisorError> {
+        let outcome = self.record_result(
+            &req.id,
+            &req.project,
+            &req.job,
+            Outcome::Failed {
+                code: None,
+                stderr_tail: text,
+            },
+        )?;
         report.finished.push((req.id.clone(), outcome));
         if let Err(e) = self.drop_queued(&req.id) {
             report.errors.push(format!("drop {}: {e}", req.id));
@@ -395,7 +498,10 @@ impl Supervisor {
                         let text = format!("started pid {pid} but could not record it: {e}");
                         report.errors.push(format!("request {} {text}", req.id));
                         if let Err(e2) = self.end_request(req, text, report) {
-                            report.errors.push(format!("request {} has no result and is blocked in memory only: {e2}", req.id));
+                            report.errors.push(format!(
+                                "request {} has no result and is blocked in memory only: {e2}",
+                                req.id
+                            ));
                         }
                         Ok(())
                     }
@@ -404,8 +510,20 @@ impl Supervisor {
         }
     }
 
-    fn reject(&self, req: &Request, reason: String, report: &mut TickReport) -> Result<(), SupervisorError> {
-        self.record_result(&req.id, &req.project, &req.job, Outcome::Rejected { reason: reason.clone() })?;
+    fn reject(
+        &self,
+        req: &Request,
+        reason: String,
+        report: &mut TickReport,
+    ) -> Result<(), SupervisorError> {
+        self.record_result(
+            &req.id,
+            &req.project,
+            &req.job,
+            Outcome::Rejected {
+                reason: reason.clone(),
+            },
+        )?;
         // A failure here is repaired by the next tick, which drops a request that has a result.
         if let Err(e) = self.drop_queued(&req.id) {
             report.errors.push(format!("drop {}: {e}", req.id));
@@ -454,13 +572,17 @@ impl Supervisor {
             if !notes.is_empty() {
                 let note = format!("(log not read: {})", notes.join("; "));
                 match &mut outcome {
-                    Outcome::Failed { stderr_tail, .. } => stderr_tail.push_str(&format!("\n{note}")),
+                    Outcome::Failed { stderr_tail, .. } => {
+                        stderr_tail.push_str(&format!("\n{note}"))
+                    }
                     Outcome::Lost { reason } => reason.push_str(&format!(" {note}")),
                     _ => {}
                 }
             }
             if let Err(e) = self.finish(&child, outcome, report) {
-                report.errors.push(format!("finish {}: {e}", child.request_id));
+                report
+                    .errors
+                    .push(format!("finish {}: {e}", child.request_id));
                 running.push(child);
             }
         }
@@ -468,7 +590,10 @@ impl Supervisor {
     }
 
     /// Projects held by a live driver process that has no child record.
-    fn find_orphans(states: &BTreeMap<String, ProjectState>, running_projects: &[String]) -> Vec<String> {
+    fn find_orphans(
+        states: &BTreeMap<String, ProjectState>,
+        running_projects: &[String],
+    ) -> Vec<String> {
         states
             .iter()
             .filter(|(name, state)| {
@@ -490,12 +615,15 @@ impl Supervisor {
     }
 
     /// Recovery plus the children still running and the blocked projects, so a tick need not look again.
-    fn recover_inner(&mut self) -> Result<(RecoveryReport, Vec<ChildRecord>, Vec<String>), SupervisorError> {
+    fn recover_inner(
+        &mut self,
+    ) -> Result<(RecoveryReport, Vec<ChildRecord>, Vec<String>), SupervisorError> {
         let mut report = TickReport::default();
         let (running, blocked) = self.settle_children(&mut report);
         for item in queue::list(&self.home) {
             let QueueItem::Ok(r) = item else { continue };
-            let tracked = running.iter().any(|c| c.request_id == r.id) || blocked.contains(&r.project);
+            let tracked =
+                running.iter().any(|c| c.request_id == r.id) || blocked.contains(&r.project);
             if tracked || self.result_path(&r.id).exists() {
                 continue;
             }
@@ -550,7 +678,10 @@ impl Supervisor {
                         report.errors.push(format!("drop {}: {e}", r.id));
                     }
                 } else if self.started_ids.contains(&r.id) {
-                    report.errors.push(format!("request {} was started but is untracked, not starting it again", r.id));
+                    report.errors.push(format!(
+                        "request {} was started but is untracked, not starting it again",
+                        r.id
+                    ));
                 } else {
                     queue.push(r);
                 }
@@ -568,7 +699,13 @@ impl Supervisor {
         }
         self.reload_daily_limit(&mut report);
         let daily_exhausted = self.daily_exhausted_now(&mut report);
-        let input = SchedulerInput { max_parallel: self.max_parallel, queue, running_projects, project_states, daily_exhausted };
+        let input = SchedulerInput {
+            max_parallel: self.max_parallel,
+            queue,
+            running_projects,
+            project_states,
+            daily_exhausted,
+        };
         // Step 3: act.
         for decision in decide(&input) {
             // One failing decision never stops the others.
@@ -598,7 +735,10 @@ impl Supervisor {
                 Ok(report) => log_report(&report, &mut printed),
                 Err(e) => {
                     // The same failure is logged once, through the same filter as the other lines.
-                    let failed = TickReport { errors: vec![format!("tick failed: {e}")], ..TickReport::default() };
+                    let failed = TickReport {
+                        errors: vec![format!("tick failed: {e}")],
+                        ..TickReport::default()
+                    };
                     log_report(&failed, &mut printed);
                 }
             }
@@ -634,30 +774,72 @@ mod tests {
     #[test]
     fn classifies_by_the_last_stdout_line() {
         use factory_core::outcome_lines::{merged_line, needs_human_line, parked_line};
-        assert_eq!(classify(&format!("a\n{}\n\n", merged_line(None)), "", Some(Some(0))), Outcome::Merged);
-        assert_eq!(classify(&format!("{}\n", needs_human_line("risky")), "", None), Outcome::NeedsHuman { reason: "risky".into() });
-        assert_eq!(classify(&format!("{}\n", merged_line(Some("abc1234"))), "", Some(Some(0))), Outcome::Merged);
-        assert_eq!(classify(&format!("{}\n", parked_line("x")), "", Some(Some(0))), Outcome::NeedsHuman { reason: "x".into() });
+        assert_eq!(
+            classify(&format!("a\n{}\n\n", merged_line(None)), "", Some(Some(0))),
+            Outcome::Merged
+        );
+        assert_eq!(
+            classify(&format!("{}\n", needs_human_line("risky")), "", None),
+            Outcome::NeedsHuman {
+                reason: "risky".into()
+            }
+        );
+        assert_eq!(
+            classify(
+                &format!("{}\n", merged_line(Some("abc1234"))),
+                "",
+                Some(Some(0))
+            ),
+            Outcome::Merged
+        );
+        assert_eq!(
+            classify(&format!("{}\n", parked_line("x")), "", Some(Some(0))),
+            Outcome::NeedsHuman { reason: "x".into() }
+        );
         assert_eq!(
             classify("x\n", "e1\n\ne2\n", Some(Some(1))),
-            Outcome::Failed { code: Some(1), stderr_tail: "e1\ne2".into() }
+            Outcome::Failed {
+                code: Some(1),
+                stderr_tail: "e1\ne2".into()
+            }
         );
         assert!(matches!(classify("", "", None), Outcome::Lost { .. }));
     }
 
     #[test]
     fn classifies_the_approve_shapes() {
-        assert_eq!(classify("merged abc1234\n", "", Some(Some(0))), Outcome::Merged);
-        assert_eq!(classify("parked: x\n", "", Some(Some(0))), Outcome::NeedsHuman { reason: "x".into() });
-        assert_eq!(classify("needs-human\n", "", None), Outcome::NeedsHuman { reason: String::new() });
-        assert!(matches!(classify("needs-humanfoo\n", "", None), Outcome::Lost { .. }));
-        assert!(matches!(classify("mergedx\n", "", Some(Some(0))), Outcome::Failed { .. }));
+        assert_eq!(
+            classify("merged abc1234\n", "", Some(Some(0))),
+            Outcome::Merged
+        );
+        assert_eq!(
+            classify("parked: x\n", "", Some(Some(0))),
+            Outcome::NeedsHuman { reason: "x".into() }
+        );
+        assert_eq!(
+            classify("needs-human\n", "", None),
+            Outcome::NeedsHuman {
+                reason: String::new()
+            }
+        );
+        assert!(matches!(
+            classify("needs-humanfoo\n", "", None),
+            Outcome::Lost { .. }
+        ));
+        assert!(matches!(
+            classify("mergedx\n", "", Some(Some(0))),
+            Outcome::Failed { .. }
+        ));
     }
 
     #[test]
     fn new_lines_print_once_per_change() {
         let mut prev = HashSet::new();
-        let mut r = TickReport { errors: vec!["a".into()], bad_children: vec!["x.json: bad".into()], ..TickReport::default() };
+        let mut r = TickReport {
+            errors: vec!["a".into()],
+            bad_children: vec!["x.json: bad".into()],
+            ..TickReport::default()
+        };
         assert_eq!(new_lines(&mut prev, &r).len(), 2);
         assert!(new_lines(&mut prev, &r).is_empty());
         r.errors.push("b".into());
@@ -671,12 +853,17 @@ mod tests {
     #[test]
     fn the_interval_has_a_floor() {
         assert_eq!(clamp_interval(Duration::ZERO), MIN_INTERVAL);
-        assert_eq!(clamp_interval(Duration::from_secs(3)), Duration::from_secs(3));
+        assert_eq!(
+            clamp_interval(Duration::from_secs(3)),
+            Duration::from_secs(3)
+        );
     }
 
     #[test]
     fn stderr_tail_is_capped() {
-        let text: String = (0..30).map(|i| format!("{i}{}\n", "x".repeat(600))).collect();
+        let text: String = (0..30)
+            .map(|i| format!("{i}{}\n", "x".repeat(600)))
+            .collect();
         let tail = stderr_tail(&text);
         assert_eq!(tail.lines().count(), 20);
         assert!(tail.lines().all(|l| l.chars().count() <= 500));
@@ -689,7 +876,13 @@ mod tests {
     }
 
     impl Spawner for DropProbe {
-        fn spawn(&self, _: &Home, _: &Request, _: &Path, _: &Path) -> Result<u32, crate::spawn::SpawnError> {
+        fn spawn(
+            &self,
+            _: &Home,
+            _: &Request,
+            _: &Path,
+            _: &Path,
+        ) -> Result<u32, crate::spawn::SpawnError> {
             Err(crate::spawn::SpawnError::Unsupported)
         }
     }
@@ -697,7 +890,8 @@ mod tests {
     impl Drop for DropProbe {
         fn drop(&mut self) {
             let held = InstanceLock::acquire(&self.home).is_err();
-            self.lock_held_at_drop.store(held, std::sync::atomic::Ordering::SeqCst);
+            self.lock_held_at_drop
+                .store(held, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -706,21 +900,38 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = Home::at(tmp.path().join("home"));
         let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let probe = DropProbe { home: home.clone(), lock_held_at_drop: flag.clone() };
+        let probe = DropProbe {
+            home: home.clone(),
+            lock_held_at_drop: flag.clone(),
+        };
         let sup = Supervisor::new_locked(home, Box::new(probe), Box::new(|| 1)).expect("locked");
         drop(sup);
-        assert!(flag.load(std::sync::atomic::Ordering::SeqCst), "the lock was already released when the spawner dropped");
+        assert!(
+            flag.load(std::sync::atomic::Ordering::SeqCst),
+            "the lock was already released when the spawner dropped"
+        );
     }
 
     fn result_roundtrip(outcome: Outcome) -> Outcome {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = Home::at(tmp.path().join("home"));
         let id = crate::request::make_id(1, "p", "1");
-        let sup = Supervisor::new(home.clone(), Box::new(DropProbe { home: home.clone(), lock_held_at_drop: Default::default() }), Box::new(|| 1));
+        let sup = Supervisor::new(
+            home.clone(),
+            Box::new(DropProbe {
+                home: home.clone(),
+                lock_held_at_drop: Default::default(),
+            }),
+            Box::new(|| 1),
+        );
         sup.record_result(&id, "p", "1", outcome).expect("record");
         let read = records::read_results(&home);
         assert_eq!(read.len(), 1);
-        read.into_iter().next().expect("one").expect("readable").outcome
+        read.into_iter()
+            .next()
+            .expect("one")
+            .expect("readable")
+            .outcome
     }
 
     #[test]
@@ -729,7 +940,9 @@ mod tests {
         for line in [format!("needs-human: {huge}"), format!("parked: {huge}")] {
             let outcome = classify(&format!("{line}\n"), "", None);
             match result_roundtrip(outcome) {
-                Outcome::NeedsHuman { reason } => assert!(reason.chars().count() <= LINE_CAP + 1, "{}", reason.len()),
+                Outcome::NeedsHuman { reason } => {
+                    assert!(reason.chars().count() <= LINE_CAP + 1, "{}", reason.len())
+                }
                 other => panic!("unexpected {other:?}"),
             }
         }
@@ -738,10 +951,14 @@ mod tests {
     #[test]
     fn an_escape_heavy_stderr_tail_stays_readable() {
         // Control chars cost six bytes each in JSON, and quotes and backslashes two.
-        let err: String = (0..40).map(|_| format!("{}\n", "\u{1}\"\\".repeat(400))).collect();
+        let err: String = (0..40)
+            .map(|_| format!("{}\n", "\u{1}\"\\".repeat(400)))
+            .collect();
         let outcome = classify("", &err, Some(Some(1)));
         match result_roundtrip(outcome) {
-            Outcome::Failed { stderr_tail, .. } => assert!(stderr_tail.chars().count() <= TAIL_CHARS + 1),
+            Outcome::Failed { stderr_tail, .. } => {
+                assert!(stderr_tail.chars().count() <= TAIL_CHARS + 1)
+            }
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -754,7 +971,9 @@ mod tests {
             request_id: crate::request::make_id(1, "p", "1"),
             project: "p".into(),
             job: "1".into(),
-            outcome: Outcome::Lost { reason: "x".repeat(70 * 1024) },
+            outcome: Outcome::Lost {
+                reason: "x".repeat(70 * 1024),
+            },
             finished_ms: 1,
         };
         assert!(records::write_result(&home, &rec).is_err());

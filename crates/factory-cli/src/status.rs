@@ -6,7 +6,10 @@ pub const PARK_EXCERPT_LINES: usize = 12;
 
 /// The block under the table for one parked job: reason, excerpt and next commands.
 pub fn render_park_details(job: &Job, record: Option<&ParkRecord>) -> String {
-    let reason = job.reason.clone().unwrap_or_else(|| "needs a human".to_string());
+    let reason = job
+        .reason
+        .clone()
+        .unwrap_or_else(|| "needs a human".to_string());
     let mut out = format!("{} needs a human: {}\n", job.id, reason);
     let Some(rec) = record else {
         return out;
@@ -18,7 +21,10 @@ pub fn render_park_details(job: &Job, record: Option<&ParkRecord>) -> String {
         }
         let total = part.text.lines().count();
         if total > PARK_EXCERPT_LINES {
-            out.push_str(&format!("    ... {} more lines in park.json\n", total - PARK_EXCERPT_LINES));
+            out.push_str(&format!(
+                "    ... {} more lines in park.json\n",
+                total - PARK_EXCERPT_LINES
+            ));
         }
     }
     for command in &rec.next {
@@ -30,7 +36,11 @@ pub fn render_park_details(job: &Job, record: Option<&ParkRecord>) -> String {
 /// Park blocks for every parked job that was not cancelled, or an empty string when there are none.
 pub fn render_parked(board: &Board, read: impl Fn(&Job) -> Option<ParkRecord>) -> String {
     let mut out = String::new();
-    for job in board.jobs.iter().filter(|j| j.stage == Stage::NeedsHuman && !j.cancelled) {
+    for job in board
+        .jobs
+        .iter()
+        .filter(|j| j.stage == Stage::NeedsHuman && !j.cancelled)
+    {
         if out.is_empty() {
             out.push('\n');
         }
@@ -62,7 +72,11 @@ fn review_word(state: ReviewState) -> &'static str {
 
 /// The reviewer states as `code:pass` pairs, joined by spaces.
 fn reviews_text(job: &Job) -> String {
-    let pairs: Vec<String> = job.reviews.iter().map(|(k, v)| format!("{k}:{}", review_word(*v))).collect();
+    let pairs: Vec<String> = job
+        .reviews
+        .iter()
+        .map(|(k, v)| format!("{k}:{}", review_word(*v)))
+        .collect();
     if pairs.is_empty() {
         "-".to_string()
     } else {
@@ -78,20 +92,35 @@ fn stage_name(stage: Stage) -> &'static str {
 pub fn render_project_line(status: &ProjectLeaseStatus) -> String {
     match status {
         ProjectLeaseStatus::Free => "project: free\n".to_string(),
-        ProjectLeaseStatus::Held { owner, job, secs_left } => {
+        ProjectLeaseStatus::Held {
+            owner,
+            job,
+            secs_left,
+        } => {
             format!("project: busy, job {job} (owner {owner}, {secs_left} s left)\n")
         }
-        ProjectLeaseStatus::Stale { owner, job } => format!("project: stale lease from {owner} (job {job}), parked\n"),
-        ProjectLeaseStatus::Unreadable(reason) => format!("project: lease file unreadable: {reason}\n"),
+        ProjectLeaseStatus::Stale { owner, job } => {
+            format!("project: stale lease from {owner} (job {job}), parked\n")
+        }
+        ProjectLeaseStatus::Unreadable(reason) => {
+            format!("project: lease file unreadable: {reason}\n")
+        }
     }
 }
 
 pub fn render_status(board: &Board, cfg: &Config) -> String {
-    let mut out = if board.jobs.is_empty() { "no jobs\n".to_string() } else { render_jobs(board, cfg) };
+    let mut out = if board.jobs.is_empty() {
+        "no jobs\n".to_string()
+    } else {
+        render_jobs(board, cfg)
+    };
     if !board.drafts.is_empty() {
         out.push_str("drafts:\n");
         for draft in &board.drafts {
-            out.push_str(&format!("  {:<28} {:<14} {}\n", draft.slug, draft.stage, draft.feature));
+            out.push_str(&format!(
+                "  {:<28} {:<14} {}\n",
+                draft.slug, draft.stage, draft.feature
+            ));
         }
     }
     out
@@ -100,9 +129,16 @@ pub fn render_status(board: &Board, cfg: &Config) -> String {
 fn render_jobs(board: &Board, cfg: &Config) -> String {
     let mut out = String::from("ID   STAGE        ROUND  REVIEWS         TOKENS    SERIES  SLUG\n");
     for job in &board.jobs {
-        let series = job.series.as_ref().map_or("-".to_string(), |s| format!("{}/{}", s.index, s.total));
+        let series = job
+            .series
+            .as_ref()
+            .map_or("-".to_string(), |s| format!("{}/{}", s.index, s.total));
         let weighted = job.tokens.weighted();
-        let pct = if cfg.budget_weighted > 0 { weighted * 100 / cfg.budget_weighted } else { 0 };
+        let pct = if cfg.budget_weighted > 0 {
+            weighted * 100 / cfg.budget_weighted
+        } else {
+            0
+        };
         out.push_str(&format!(
             "{:<4} {:<12} {:<6} {:<15} {:<9} {:<7} {}\n",
             job.id,
@@ -125,17 +161,30 @@ mod tests {
     #[test]
     fn status_shows_stage_round_reviews_tokens_and_series_position() {
         let mut board = factory_core::Board::default();
-        let mut job = factory_core::Job::new("002", "d-002-x", "pagination", "2026-10-13", "f", 0.0);
-        job.set_stage(factory_core::Stage::Review, None, false, 1.0).expect("stage");
+        let mut job =
+            factory_core::Job::new("002", "d-002-x", "pagination", "2026-10-13", "f", 0.0);
+        job.set_stage(factory_core::Stage::Review, None, false, 1.0)
+            .expect("stage");
         job.round = 1;
-        job.series = Some(factory_core::SeriesPos { plan_file: "p".into(), index: 2, total: 5, id: None });
+        job.series = Some(factory_core::SeriesPos {
+            plan_file: "p".into(),
+            index: 2,
+            total: 5,
+            id: None,
+        });
         board.jobs.push(job);
         let out = render_status(&board, &factory_core::Config::default());
         let line = out.lines().nth(1).expect("row");
         for needle in ["002", "review", "1", "2/5", "pagination"] {
             assert!(line.contains(needle), "missing {needle} in {line}");
         }
-        assert_eq!(render_status(&factory_core::Board::default(), &factory_core::Config::default()), "no jobs\n");
+        assert_eq!(
+            render_status(
+                &factory_core::Board::default(),
+                &factory_core::Config::default()
+            ),
+            "no jobs\n"
+        );
     }
 
     #[test]
@@ -147,13 +196,18 @@ mod tests {
 
     fn parked_job(id: &str, reason: &str) -> factory_core::Job {
         let mut job = factory_core::Job::new(id, "d", "slug", "2026-10-16", "feature", 1.0);
-        job.set_stage(Stage::Build, None, false, 2.0).expect("build");
-        job.set_stage(Stage::NeedsHuman, Some(reason), false, 3.0).expect("park");
+        job.set_stage(Stage::Build, None, false, 2.0)
+            .expect("build");
+        job.set_stage(Stage::NeedsHuman, Some(reason), false, 3.0)
+            .expect("park");
         job
     }
 
     fn record(id: &str, lines: usize) -> ParkRecord {
-        let text = (1..=lines).map(|n| format!("line {n}")).collect::<Vec<_>>().join("\n");
+        let text = (1..=lines)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         ParkRecord::new(
             ParkKind::ChecksFailed,
             "checks failed after 2 fix rounds",
@@ -168,9 +222,15 @@ mod tests {
     fn a_parked_job_shows_reason_excerpt_and_next_commands() {
         let job = parked_job("012", "checks failed after 2 fix rounds");
         let text = render_park_details(&job, Some(&record("012", 3)));
-        assert!(text.contains("012 needs a human: checks failed after 2 fix rounds"), "{text}");
+        assert!(
+            text.contains("012 needs a human: checks failed after 2 fix rounds"),
+            "{text}"
+        );
         assert!(text.contains("Failing checks (checks.md)"), "{text}");
-        assert!(text.contains("    line 1") && text.contains("    line 3"), "{text}");
+        assert!(
+            text.contains("    line 1") && text.contains("    line 3"),
+            "{text}"
+        );
         assert!(text.contains("  next: factory rework 012 <note>"), "{text}");
         assert!(!text.contains("more lines"), "{text}");
     }
@@ -198,7 +258,14 @@ mod tests {
         let mut cancelled = parked_job("002", "cancelled: x");
         cancelled.cancelled = true;
         board.jobs.push(cancelled);
-        board.jobs.push(factory_core::Job::new("003", "d", "s", "2026-10-16", "f", 1.0));
+        board.jobs.push(factory_core::Job::new(
+            "003",
+            "d",
+            "s",
+            "2026-10-16",
+            "f",
+            1.0,
+        ));
         let text = render_parked(&board, |j| Some(record(&j.id, 1)));
         assert!(text.contains("001 needs a human: first"), "{text}");
         assert!(!text.contains("002") && !text.contains("003"), "{text}");

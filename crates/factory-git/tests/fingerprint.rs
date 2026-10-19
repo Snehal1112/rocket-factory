@@ -70,7 +70,11 @@ fn deleting_another_branch_changes_it() {
     let fx = Fixture::new();
     fx.job_branch("job/x", &[("x.txt", "x")]);
     let before = print(&fx);
-    fx.git().find_branch("job/x", git2::BranchType::Local).expect("branch").delete().expect("delete");
+    fx.git()
+        .find_branch("job/x", git2::BranchType::Local)
+        .expect("branch")
+        .delete()
+        .expect("delete");
     assert_ne!(before, print(&fx));
 }
 
@@ -80,7 +84,8 @@ fn creating_a_tag_changes_it() {
     let before = print(&fx);
     let git = fx.git();
     let head = git.head().expect("head").peel_to_commit().expect("commit");
-    git.tag_lightweight("v1", head.as_object(), false).expect("tag");
+    git.tag_lightweight("v1", head.as_object(), false)
+        .expect("tag");
     assert_ne!(before, print(&fx));
 }
 

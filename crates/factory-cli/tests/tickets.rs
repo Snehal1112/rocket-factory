@@ -32,8 +32,18 @@ impl Tracker for NoCalls {
 fn tickets_on_an_unmerged_job_skips_without_calls() {
     let mut fx = Fixture::new();
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");
-    fx.run(&["new", "hello", "work on #76", "--plans", plans.to_str().expect("utf8")]).expect("new");
+    fx.run(&[
+        "new",
+        "hello",
+        "work on #76",
+        "--plans",
+        plans.to_str().expect("utf8"),
+    ])
+    .expect("new");
     fx.ctx = fx.ctx.clone().with_tracker(Arc::new(NoCalls));
     let out = fx.run(&["tickets", "1"]).expect("tickets");
-    assert!(out.contains("skipped") && out.contains("not merged"), "{out}");
+    assert!(
+        out.contains("skipped") && out.contains("not merged"),
+        "{out}"
+    );
 }

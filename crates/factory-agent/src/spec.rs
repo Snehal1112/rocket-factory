@@ -12,7 +12,11 @@ pub struct Caps {
 impl Default for Caps {
     fn default() -> Self {
         // Values from the 2026-10-13 probe report: all three flags are accepted by claude 2.1.296.
-        Caps { agent: true, max_turns: true, append_system_prompt: true }
+        Caps {
+            agent: true,
+            max_turns: true,
+            append_system_prompt: true,
+        }
     }
 }
 
@@ -80,7 +84,10 @@ impl AgentSpec {
 
     /// Builds the argument list. The prompt itself goes to stdin, see `stdin_prompt`.
     pub fn args(&self, caps: &Caps) -> Vec<String> {
-        let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose"].iter().map(|s| s.to_string()).collect();
+        let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         if self.strict_mcp {
             a.push("--strict-mcp-config".to_string());
         }

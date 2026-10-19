@@ -54,12 +54,20 @@ pub struct EventSink {
 
 impl EventSink {
     pub fn new(path: impl Into<PathBuf>, job_id: &str) -> EventSink {
-        EventSink { path: Some(path.into()), job_id: job_id.to_string(), failures: AtomicU64::new(0) }
+        EventSink {
+            path: Some(path.into()),
+            job_id: job_id.to_string(),
+            failures: AtomicU64::new(0),
+        }
     }
 
     /// A sink that writes nothing. Used in tests.
     pub fn null(job_id: &str) -> EventSink {
-        EventSink { path: None, job_id: job_id.to_string(), failures: AtomicU64::new(0) }
+        EventSink {
+            path: None,
+            job_id: job_id.to_string(),
+            failures: AtomicU64::new(0),
+        }
     }
 
     pub fn failures(&self) -> u64 {
@@ -97,7 +105,9 @@ impl EventSink {
         let Some(path) = &self.path else {
             return;
         };
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
         let mut line = self.line(ev, ts);
         line.push('\n');
         let result = (|| -> std::io::Result<()> {

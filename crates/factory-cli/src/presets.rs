@@ -32,7 +32,9 @@ fn refresh(home: &Home, force: bool) -> Result<String, CliError> {
         report.refused.len()
     ));
     if !report.refused.is_empty() {
-        lines.push("refused files differ from every known text, use --force to overwrite them".to_string());
+        lines.push(
+            "refused files differ from every known text, use --force to overwrite them".to_string(),
+        );
     }
     Ok(lines.join("\n"))
 }

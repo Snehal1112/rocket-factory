@@ -53,7 +53,8 @@ fn concurrent_sinks_write_whole_valid_lines() -> Result<(), String> {
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let mut count = 0;
     for line in text.lines() {
-        serde_json::from_str::<serde_json::Value>(line).map_err(|e| format!("bad line {line}: {e}"))?;
+        serde_json::from_str::<serde_json::Value>(line)
+            .map_err(|e| format!("bad line {line}: {e}"))?;
         count += 1;
     }
     assert_eq!(count, threads * per_thread);

@@ -34,13 +34,29 @@ fn a_cycle_is_rejected() {
 fn bad_plans_are_rejected_with_clear_errors() {
     let d = tempfile::tempdir().expect("tmp");
     plan(d.path(), "plan-01-a.md", 4, "none");
-    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::TaskCount { .. })));
+    assert!(matches!(
+        parse_series(d.path(), d.path()),
+        Err(SeriesError::TaskCount { .. })
+    ));
     plan(d.path(), "plan-01-a.md", 0, "none");
-    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::TaskCount { .. })));
+    assert!(matches!(
+        parse_series(d.path(), d.path()),
+        Err(SeriesError::TaskCount { .. })
+    ));
     plan(d.path(), "plan-01-a.md", 1, "plan-09-missing.md");
-    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::Missing(_))));
-    std::fs::write(d.path().join("plan-01-a.md"), "### Task 1: t\n\nno pointer here\n").expect("w");
-    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::NoNextLine(_))));
+    assert!(matches!(
+        parse_series(d.path(), d.path()),
+        Err(SeriesError::Missing(_))
+    ));
+    std::fs::write(
+        d.path().join("plan-01-a.md"),
+        "### Task 1: t\n\nno pointer here\n",
+    )
+    .expect("w");
+    assert!(matches!(
+        parse_series(d.path(), d.path()),
+        Err(SeriesError::NoNextLine(_))
+    ));
 }
 
 #[test]
@@ -48,13 +64,23 @@ fn an_orphan_plan_file_and_a_seventh_plan_are_rejected() {
     let d = tempfile::tempdir().expect("tmp");
     plan(d.path(), "plan-01-a.md", 1, "none");
     plan(d.path(), "plan-02-orphan.md", 1, "none");
-    assert!(matches!(parse_series(d.path(), d.path()), Err(SeriesError::Orphan(_))));
+    assert!(matches!(
+        parse_series(d.path(), d.path()),
+        Err(SeriesError::Orphan(_))
+    ));
     let e = tempfile::tempdir().expect("tmp");
     for i in 1..=7 {
-        let next = if i == 7 { "none".to_string() } else { format!("plan-0{}-x.md", i + 1) };
+        let next = if i == 7 {
+            "none".to_string()
+        } else {
+            format!("plan-0{}-x.md", i + 1)
+        };
         plan(e.path(), &format!("plan-0{i}-x.md"), 1, &next);
     }
-    assert!(matches!(parse_series(e.path(), e.path()), Err(SeriesError::TooMany(_))));
+    assert!(matches!(
+        parse_series(e.path(), e.path()),
+        Err(SeriesError::TooMany(_))
+    ));
 }
 
 #[test]

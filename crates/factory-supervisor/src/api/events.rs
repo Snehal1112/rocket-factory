@@ -57,19 +57,34 @@ fn tag(project: &str, line: &[u8]) -> Option<String> {
 impl EventFollower {
     /// Opens the file and returns the follower and the last `replay` lines.
     pub fn open(path: PathBuf, project: &str, replay: usize) -> (EventFollower, Vec<String>) {
-        let mut f = EventFollower { path, project: project.to_string(), pos: 0, ident: None, partial: Vec::new() };
+        let mut f = EventFollower {
+            path,
+            project: project.to_string(),
+            pos: 0,
+            ident: None,
+            partial: Vec::new(),
+        };
         let lines = f.replay(replay);
         (f, lines)
     }
 
     fn replay(&mut self, count: usize) -> Vec<String> {
-        let Ok(mut file) = std::fs::File::open(&self.path) else { return Vec::new() };
-        let Ok(meta) = file.metadata() else { return Vec::new() };
+        let Ok(mut file) = std::fs::File::open(&self.path) else {
+            return Vec::new();
+        };
+        let Ok(meta) = file.metadata() else {
+            return Vec::new();
+        };
         self.ident = ident_of(&meta);
         let len = meta.len();
         let start = len.saturating_sub(TAIL_BYTES);
         let mut bytes = Vec::new();
-        if file.seek(SeekFrom::Start(start)).is_err() || (&mut file).take(len - start).read_to_end(&mut bytes).is_err() {
+        if file.seek(SeekFrom::Start(start)).is_err()
+            || (&mut file)
+                .take(len - start)
+                .read_to_end(&mut bytes)
+                .is_err()
+        {
             return Vec::new();
         }
         // Everything up to the last newline is complete. The rest waits for its newline.
@@ -86,14 +101,21 @@ impl EventFollower {
                 None => &[],
             };
         }
-        let all: Vec<String> = body.split(|b| *b == b'\n').filter_map(|l| tag(&self.project, l)).collect();
+        let all: Vec<String> = body
+            .split(|b| *b == b'\n')
+            .filter_map(|l| tag(&self.project, l))
+            .collect();
         all[all.len().saturating_sub(count)..].to_vec()
     }
 
     /// The new complete lines since the last call. A shorter or replaced file is read again from the start.
     pub fn poll(&mut self) -> Vec<String> {
-        let Ok(mut file) = std::fs::File::open(&self.path) else { return Vec::new() };
-        let Ok(meta) = file.metadata() else { return Vec::new() };
+        let Ok(mut file) = std::fs::File::open(&self.path) else {
+            return Vec::new();
+        };
+        let Ok(meta) = file.metadata() else {
+            return Vec::new();
+        };
         let ident = ident_of(&meta);
         if meta.len() < self.pos || (self.ident.is_some() && ident != self.ident) {
             self.pos = 0;
@@ -104,7 +126,9 @@ impl EventFollower {
             return Vec::new();
         }
         let mut bytes = Vec::new();
-        if file.seek(SeekFrom::Start(self.pos)).is_err() || (&mut file).take(CHUNK).read_to_end(&mut bytes).is_err() {
+        if file.seek(SeekFrom::Start(self.pos)).is_err()
+            || (&mut file).take(CHUNK).read_to_end(&mut bytes).is_err()
+        {
             return Vec::new();
         }
         self.pos += bytes.len() as u64;
@@ -133,7 +157,11 @@ pub struct Timing {
 
 impl Default for Timing {
     fn default() -> Timing {
-        Timing { poll: Duration::from_millis(500), keepalive: Duration::from_secs(15), refresh: Duration::from_secs(5) }
+        Timing {
+            poll: Duration::from_millis(500),
+            keepalive: Duration::from_secs(15),
+            refresh: Duration::from_secs(5),
+        }
     }
 }
 
@@ -181,13 +209,17 @@ impl EventStream {
 
     fn add_new_projects(&mut self) {
         let Some(home) = &self.discover else { return };
-        let Ok(entries) = project::list(home) else { return };
+        let Ok(entries) = project::list(home) else {
+            return;
+        };
         for e in entries {
             if self.followers.iter().any(|f| f.project == e.name) {
                 continue;
             }
             let Ok(file) = e.file else { continue };
-            let Ok(layout) = project::layout(home, &e.name, &file) else { continue };
+            let Ok(layout) = project::layout(home, &e.name, &file) else {
+                continue;
+            };
             let (f, lines) = EventFollower::open(layout.events_file(), &e.name, REPLAY);
             for l in &lines {
                 self.pending.extend(frame(l));
@@ -198,7 +230,10 @@ impl EventStream {
 
     fn step(&mut self) {
         let now = Instant::now();
-        if self.last_poll.is_some_and(|t| now.duration_since(t) < self.timing.poll) {
+        if self
+            .last_poll
+            .is_some_and(|t| now.duration_since(t) < self.timing.poll)
+        {
             std::thread::sleep(Duration::from_millis(20).min(self.timing.poll));
             return;
         }
@@ -212,7 +247,8 @@ impl EventStream {
                 self.pending.extend(frame(&l));
             }
         }
-        if self.pending.is_empty() && now.duration_since(self.last_output) >= self.timing.keepalive {
+        if self.pending.is_empty() && now.duration_since(self.last_output) >= self.timing.keepalive
+        {
             self.pending.extend_from_slice(b": keepalive\n\n");
         }
     }
@@ -255,20 +291,36 @@ pub fn pump<R: Read, W: Write>(mut stream: R, out: &mut W) {
 }
 
 /// Builds the stream for `GET /events?project=<p>`. No `project` means every project.
-pub fn open(home: &Home, query: &str, stop: Arc<AtomicBool>, timing: Timing) -> Result<EventStream, ApiResponse> {
+pub fn open(
+    home: &Home,
+    query: &str,
+    stop: Arc<AtomicBool>,
+    timing: Timing,
+) -> Result<EventStream, ApiResponse> {
     let mut only: Option<String> = None;
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         match pair.split_once('=') {
             Some(("project", v)) if only.is_none() => only = Some(v.to_string()),
-            _ => return Err(error_response(400, "bad_request", "the only query parameter is project=<name>")),
+            _ => {
+                return Err(error_response(
+                    400,
+                    "bad_request",
+                    "the only query parameter is project=<name>",
+                ))
+            }
         }
     }
     let mut followers = Vec::new();
     let mut replay = Vec::new();
     if let Some(name) = &only {
-        project::validate_name(name).map_err(|e| error_response(400, "bad_request", &e.to_string()))?;
+        project::validate_name(name)
+            .map_err(|e| error_response(400, "bad_request", &e.to_string()))?;
         if !home.project_dir(name).is_dir() {
-            return Err(error_response(404, "not_found", &format!("no project named {name}")));
+            return Err(error_response(
+                404,
+                "not_found",
+                &format!("no project named {name}"),
+            ));
         }
         let disabled = |why: String| error_response(409, "project_disabled", &why);
         let file = project::get(home, name).map_err(|e| disabled(e.to_string()))?;
@@ -291,7 +343,11 @@ mod tests {
     use crate::api::testutil::*;
 
     fn append(path: &std::path::Path, text: &str) {
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).expect("open");
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("open");
         f.write_all(text.as_bytes()).expect("append");
     }
 
@@ -305,7 +361,14 @@ mod tests {
         let path = t.path().join("events.jsonl");
         append(&path, &lines(5));
         let (_f, replay) = EventFollower::open(path, "p", 3);
-        assert_eq!(replay, vec![r#"{"n":3,"project":"p"}"#, r#"{"n":4,"project":"p"}"#, r#"{"n":5,"project":"p"}"#]);
+        assert_eq!(
+            replay,
+            vec![
+                r#"{"n":3,"project":"p"}"#,
+                r#"{"n":4,"project":"p"}"#,
+                r#"{"n":5,"project":"p"}"#
+            ]
+        );
     }
 
     #[test]
@@ -369,7 +432,11 @@ mod tests {
     }
 
     fn fast() -> Timing {
-        Timing { poll: Duration::from_millis(10), keepalive: Duration::from_millis(80), refresh: Duration::from_millis(30) }
+        Timing {
+            poll: Duration::from_millis(10),
+            keepalive: Duration::from_millis(80),
+            refresh: Duration::from_millis(30),
+        }
     }
 
     fn read_some(s: &mut EventStream) -> String {
@@ -398,10 +465,26 @@ mod tests {
     fn open_checks_the_project_and_the_query() {
         let (_t, home) = fixture();
         let stop = Arc::new(AtomicBool::new(false));
-        let code = |q: &str| open(&home, q, stop.clone(), fast()).err().map(|r| (r.status, r.body["error"]["code"].as_str().map(str::to_string)));
-        assert_eq!(code("project=Bad..Name"), Some((400, Some("bad_request".to_string()))));
-        assert_eq!(code("other=1"), Some((400, Some("bad_request".to_string()))));
-        assert_eq!(code("project=ghost"), Some((404, Some("not_found".to_string()))));
+        let code = |q: &str| {
+            open(&home, q, stop.clone(), fast()).err().map(|r| {
+                (
+                    r.status,
+                    r.body["error"]["code"].as_str().map(str::to_string),
+                )
+            })
+        };
+        assert_eq!(
+            code("project=Bad..Name"),
+            Some((400, Some("bad_request".to_string())))
+        );
+        assert_eq!(
+            code("other=1"),
+            Some((400, Some("bad_request".to_string())))
+        );
+        assert_eq!(
+            code("project=ghost"),
+            Some((404, Some("not_found".to_string())))
+        );
         assert_eq!(code("project=good"), None);
         assert_eq!(code(""), None);
     }
@@ -414,7 +497,10 @@ mod tests {
         append(&state.join("events.jsonl"), "{\"k\":1}\n");
         let stop = Arc::new(AtomicBool::new(false));
         let mut s = open(&home, "", stop, fast()).expect("open");
-        assert_eq!(read_some(&mut s), "data: {\"k\":1,\"project\":\"good\"}\n\n");
+        assert_eq!(
+            read_some(&mut s),
+            "data: {\"k\":1,\"project\":\"good\"}\n\n"
+        );
     }
 
     #[test]
@@ -438,7 +524,10 @@ mod tests {
         drop(client);
         let began = Instant::now();
         while !handle.is_finished() {
-            assert!(began.elapsed() < Duration::from_secs(5), "the pump did not end");
+            assert!(
+                began.elapsed() < Duration::from_secs(5),
+                "the pump did not end"
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
         handle.join().expect("join");

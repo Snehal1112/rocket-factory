@@ -23,7 +23,11 @@ pub fn lock_board(path: &Path, wait: Duration) -> Result<BoardLock, StoreError> 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let file = std::fs::OpenOptions::new().create(true).write(true).truncate(false).open(path)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)?;
     let start = Instant::now();
     loop {
         match file.try_lock_exclusive() {

@@ -17,9 +17,16 @@ pub fn claude_commands_dir(user_home: &Path) -> PathBuf {
 
 /// True for `factory-<a-z, 0-9, ->.md`, the only names the exclude line covers and the engine writes.
 pub fn is_agent_file_name(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("factory-") else { return false };
-    let Some(stem) = rest.strip_suffix(".md") else { return false };
-    !stem.is_empty() && stem.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    let Some(rest) = name.strip_prefix("factory-") else {
+        return false;
+    };
+    let Some(stem) = rest.strip_suffix(".md") else {
+        return false;
+    };
+    !stem.is_empty()
+        && stem
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// The file name of the project lease, inside the state folder.
@@ -88,7 +95,9 @@ impl Layout {
 
     /// The spec file of a draft card, inside the repository.
     pub fn draft_spec_file(&self, date: &str, slug: &str) -> PathBuf {
-        self.repo.join("docs/superpowers/specs").join(format!("{date}-{slug}-design.md"))
+        self.repo
+            .join("docs/superpowers/specs")
+            .join(format!("{date}-{slug}-design.md"))
     }
 }
 
@@ -98,7 +107,10 @@ mod tests {
 
     #[test]
     fn log_file_is_in_the_state_dir() {
-        assert_eq!(Layout::in_repo(Path::new("/r")).log_file(), PathBuf::from("/r/.superpowers/factory/log.jsonl"));
+        assert_eq!(
+            Layout::in_repo(Path::new("/r")).log_file(),
+            PathBuf::from("/r/.superpowers/factory/log.jsonl")
+        );
     }
 
     #[test]
@@ -114,15 +126,39 @@ mod tests {
     fn in_repo_reproduces_the_rocket_paths() {
         let l = Layout::in_repo(Path::new("/r"));
         assert_eq!(l.repo, PathBuf::from("/r"));
-        assert_eq!(l.board_file(), PathBuf::from("/r/.superpowers/factory/board.json"));
-        assert_eq!(l.events_file(), PathBuf::from("/r/.superpowers/factory/events.jsonl"));
-        assert_eq!(l.costs_file(), PathBuf::from("/r/.superpowers/factory/costs.json"));
-        assert_eq!(l.kb_stop_file(), PathBuf::from("/r/.superpowers/factory/kb-stopped"));
-        assert_eq!(l.project_lease_file(), PathBuf::from("/r/.superpowers/factory/project.lease"));
-        assert_eq!(l.job_dir("2026-10-16-001-x"), PathBuf::from("/r/.superpowers/sdd/2026-10-16-001-x"));
+        assert_eq!(
+            l.board_file(),
+            PathBuf::from("/r/.superpowers/factory/board.json")
+        );
+        assert_eq!(
+            l.events_file(),
+            PathBuf::from("/r/.superpowers/factory/events.jsonl")
+        );
+        assert_eq!(
+            l.costs_file(),
+            PathBuf::from("/r/.superpowers/factory/costs.json")
+        );
+        assert_eq!(
+            l.kb_stop_file(),
+            PathBuf::from("/r/.superpowers/factory/kb-stopped")
+        );
+        assert_eq!(
+            l.project_lease_file(),
+            PathBuf::from("/r/.superpowers/factory/project.lease")
+        );
+        assert_eq!(
+            l.job_dir("2026-10-16-001-x"),
+            PathBuf::from("/r/.superpowers/sdd/2026-10-16-001-x")
+        );
         assert_eq!(l.worktrees_dir, PathBuf::from("/r/.claude/worktrees"));
-        assert_eq!(l.config_file, PathBuf::from("/r/.claude/factory/config.toml"));
-        assert_eq!(l.commit_context_file, PathBuf::from("/r/.claude/factory/commit-context.md"));
+        assert_eq!(
+            l.config_file,
+            PathBuf::from("/r/.claude/factory/config.toml")
+        );
+        assert_eq!(
+            l.commit_context_file,
+            PathBuf::from("/r/.claude/factory/commit-context.md")
+        );
     }
 
     #[test]
@@ -137,7 +173,16 @@ mod tests {
         for ok in ["factory-builder.md", "factory-a-1.md"] {
             assert!(is_agent_file_name(ok), "{ok}");
         }
-        for bad in ["factory-.md", "builder.md", "factory-x.txt", "factory-X.md", "factory-../x.md", "factory-a/b.md", "factory-a.md.md", "factory-a b.md"] {
+        for bad in [
+            "factory-.md",
+            "builder.md",
+            "factory-x.txt",
+            "factory-X.md",
+            "factory-../x.md",
+            "factory-a/b.md",
+            "factory-a.md.md",
+            "factory-a b.md",
+        ] {
             assert!(!is_agent_file_name(bad), "{bad}");
         }
     }
@@ -146,7 +191,13 @@ mod tests {
     fn fields_can_point_outside_the_repo() {
         let mut l = Layout::in_repo(Path::new("/r"));
         l.state_dir = PathBuf::from("/home/u/.factory/projects/p/state");
-        assert_eq!(l.board_file(), PathBuf::from("/home/u/.factory/projects/p/state/board.json"));
-        assert_eq!(l.kb_stop_file(), PathBuf::from("/home/u/.factory/projects/p/state/kb-stopped"));
+        assert_eq!(
+            l.board_file(),
+            PathBuf::from("/home/u/.factory/projects/p/state/board.json")
+        );
+        assert_eq!(
+            l.kb_stop_file(),
+            PathBuf::from("/home/u/.factory/projects/p/state/kb-stopped")
+        );
     }
 }

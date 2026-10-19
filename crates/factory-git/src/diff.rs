@@ -44,7 +44,11 @@ impl Repo {
     pub fn diff_counts(&self, base: &str, head: &str) -> Result<DiffCounts> {
         let diff = self.tree_diff(base, head)?;
         let stats = diff.stats()?;
-        Ok(DiffCounts { files: stats.files_changed(), insertions: stats.insertions(), deletions: stats.deletions() })
+        Ok(DiffCounts {
+            files: stats.files_changed(),
+            insertions: stats.insertions(),
+            deletions: stats.deletions(),
+        })
     }
 
     /// Writes `review-<base7>..<head7>.diff`, `.stat` and `.names` into `dir`.

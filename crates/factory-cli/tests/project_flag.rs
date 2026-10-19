@@ -27,7 +27,8 @@ impl AgentRunner for Roles {
         let text = match spec.role.as_str() {
             "builder" => {
                 *self.builder_agent.lock().expect("lock") =
-                    std::fs::read_to_string(spec.cwd.join(".claude/agents/factory-builder.md")).ok();
+                    std::fs::read_to_string(spec.cwd.join(".claude/agents/factory-builder.md"))
+                        .ok();
                 let path = spec.cwd.join("docs/x.txt");
                 std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
                 std::fs::write(path, "built\n").expect("write");
@@ -41,20 +42,35 @@ impl AgentRunner for Roles {
             "committer" => {
                 let repo = Repository::open(&spec.cwd).expect("open");
                 let mut index = repo.index().expect("index");
-                let tree = repo.find_tree(index.write_tree().expect("tree")).expect("tree");
+                let tree = repo
+                    .find_tree(index.write_tree().expect("tree"))
+                    .expect("tree");
                 let sig = Signature::now("t", "t@t").expect("sig");
                 let parent = repo.head().expect("head").peel_to_commit().expect("commit");
-                repo.commit(Some("HEAD"), &sig, &sig, "feat(test): build step", &tree, &[&parent]).expect("commit");
+                repo.commit(
+                    Some("HEAD"),
+                    &sig,
+                    &sig,
+                    "feat(test): build step",
+                    &tree,
+                    &[&parent],
+                )
+                .expect("commit");
                 "done".to_string()
             }
             "reviewer" => {
-                *self.reviewer_agent.lock().expect("lock") =
-                    std::fs::read_to_string(spec.cwd.join(".claude/agents/factory-code-reviewer.md")).ok();
+                *self.reviewer_agent.lock().expect("lock") = std::fs::read_to_string(
+                    spec.cwd.join(".claude/agents/factory-code-reviewer.md"),
+                )
+                .ok();
                 "fine\nVERDICT: APPROVE".to_string()
             }
             _ => "fine\nVERDICT: APPROVE".to_string(),
         };
-        AgentRun { session_id: Some("s".to_string()), ..AgentRun::done(&text) }
+        AgentRun {
+            session_id: Some("s".to_string()),
+            ..AgentRun::done(&text)
+        }
     }
 }
 
@@ -75,11 +91,19 @@ fn commit_files(repo: &Repository, files: &[(&str, &str)], msg: &str) {
         index.add_path(Path::new(name)).expect("add");
     }
     index.write().expect("write index");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("tree");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("tree");
     let sig = Signature::now("t", "t@t").expect("sig");
-    let parents: Vec<git2::Commit> = repo.head().ok().map(|h| h.peel_to_commit().expect("c")).into_iter().collect();
+    let parents: Vec<git2::Commit> = repo
+        .head()
+        .ok()
+        .map(|h| h.peel_to_commit().expect("c"))
+        .into_iter()
+        .collect();
     let refs: Vec<&git2::Commit> = parents.iter().collect();
-    repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &refs).expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &refs)
+        .expect("commit");
 }
 
 /// A repo on `v-4.0.0` with a local `main` at the first commit, added as project `p`.
@@ -90,7 +114,14 @@ fn setup(extra: &[(&str, &str)]) -> Env {
     let mut opts = RepositoryInitOptions::new();
     opts.initial_head(BASE);
     let repo = Repository::init_opts(&repo_path, &opts).expect("init");
-    commit_files(&repo, &[("Cargo.toml", "[package]\nname = \"t\"\n"), ("src/lib.rs", "")], "init");
+    commit_files(
+        &repo,
+        &[
+            ("Cargo.toml", "[package]\nname = \"t\"\n"),
+            ("src/lib.rs", ""),
+        ],
+        "init",
+    );
     let first = repo.head().expect("head").peel_to_commit().expect("commit");
     repo.branch("main", &first, false).expect("main branch");
     if !extra.is_empty() {
@@ -98,15 +129,34 @@ fn setup(extra: &[(&str, &str)]) -> Env {
     }
     let home = Home::at(tmp.path().join("home"));
     let cli = Cli::try_parse_from([
-        "factory", "project", "add", repo_path.to_str().expect("utf8"), "--preset", "rust", "--name", "p", "--base", BASE,
+        "factory",
+        "project",
+        "add",
+        repo_path.to_str().expect("utf8"),
+        "--preset",
+        "rust",
+        "--name",
+        "p",
+        "--base",
+        BASE,
     ])
     .expect("parse");
     match cli.command {
         Command::Project { cmd } => project::run(&home, cmd).expect("add"),
         _ => unreachable!(),
     };
-    let runner = Arc::new(Roles { calls: AtomicUsize::new(0), builder_agent: Mutex::new(None), reviewer_agent: Mutex::new(None), also: Mutex::new(None) });
-    Env { tmp, home, repo: repo_path, runner }
+    let runner = Arc::new(Roles {
+        calls: AtomicUsize::new(0),
+        builder_agent: Mutex::new(None),
+        reviewer_agent: Mutex::new(None),
+        also: Mutex::new(None),
+    });
+    Env {
+        tmp,
+        home,
+        repo: repo_path,
+        runner,
+    }
 }
 
 impl Env {
@@ -126,12 +176,27 @@ impl Env {
         std::fs::create_dir_all(&dir).expect("plans dir");
         let plan = dir.join("plan-01-hello.md");
         std::fs::write(&plan, "# Plan\n\n### Task 1: t\n\nNext plan: none\n").expect("plan");
-        self.run(ctx, &["new", "hello", "say hello", "--plans", plan.to_str().expect("utf8")]).expect("new");
+        self.run(
+            ctx,
+            &[
+                "new",
+                "hello",
+                "say hello",
+                "--plans",
+                plan.to_str().expect("utf8"),
+            ],
+        )
+        .expect("new");
     }
 
     fn tip(&self, branch: &str) -> String {
         let repo = Repository::open(&self.repo).expect("open");
-        let id = repo.revparse_single(branch).expect("branch").peel_to_commit().expect("commit").id();
+        let id = repo
+            .revparse_single(branch)
+            .expect("branch")
+            .peel_to_commit()
+            .expect("commit")
+            .id();
         id.to_string()
     }
 }
@@ -157,12 +222,36 @@ fn a_full_job_runs_through_the_project_and_leaves_the_repo_clean() {
     assert!(pdir.join("state/board.json").exists());
     let shown = e.run(&ctx, &["show", "1"]).expect("show");
     let job: serde_json::Value = serde_json::from_str(&shown).expect("show prints the job as json");
-    let wt = job["worktree"].as_str().expect("the job records its worktree");
-    assert!(std::path::Path::new(wt).starts_with(pdir.join("worktrees")), "{wt}");
-    assert!(e.runner.builder_agent.lock().expect("lock").as_deref().is_some_and(|t| !t.is_empty()), "builder saw its agent file");
-    assert!(e.runner.reviewer_agent.lock().expect("lock").as_deref().is_some_and(|t| !t.is_empty()), "reviewer saw its agent file");
+    let wt = job["worktree"]
+        .as_str()
+        .expect("the job records its worktree");
+    assert!(
+        std::path::Path::new(wt).starts_with(pdir.join("worktrees")),
+        "{wt}"
+    );
+    assert!(
+        e.runner
+            .builder_agent
+            .lock()
+            .expect("lock")
+            .as_deref()
+            .is_some_and(|t| !t.is_empty()),
+        "builder saw its agent file"
+    );
+    assert!(
+        e.runner
+            .reviewer_agent
+            .lock()
+            .expect("lock")
+            .as_deref()
+            .is_some_and(|t| !t.is_empty()),
+        "reviewer saw its agent file"
+    );
     for dir in [".superpowers", ".claude", ".factory"] {
-        assert!(!e.repo.join(dir).exists(), "{dir} must not exist in the target repo");
+        assert!(
+            !e.repo.join(dir).exists(),
+            "{dir} must not exist in the target repo"
+        );
     }
     let repo = Repository::open(&e.repo).expect("open");
     let statuses = repo.statuses(None).expect("statuses");
@@ -191,13 +280,23 @@ fn a_job_touching_the_factory_folder_parks_for_a_human() {
     e.new_job(&ctx);
     let out = e.run(&ctx, &["run", "1"]).expect("run");
     assert!(out.starts_with("needs-human"), "{out}");
-    assert!(out.contains("risky paths") && out.contains(".factory/note.txt"), "{out}");
-    assert!(e.run(&ctx, &["show", "1"]).expect("show").contains("\"stage\": \"needs-human\""));
+    assert!(
+        out.contains("risky paths") && out.contains(".factory/note.txt"),
+        "{out}"
+    );
+    assert!(e
+        .run(&ctx, &["show", "1"])
+        .expect("show")
+        .contains("\"stage\": \"needs-human\""));
 }
 
 fn assert_blocked(e: &Env, reason: &str) {
     let ctx = e.ctx().expect("ctx");
-    assert!(ctx.blocked.as_deref().is_some_and(|b| b.contains(reason)), "{:?}", ctx.blocked);
+    assert!(
+        ctx.blocked.as_deref().is_some_and(|b| b.contains(reason)),
+        "{:?}",
+        ctx.blocked
+    );
     // Job 1 exists, so `show` really reads it.
     e.new_job(&ctx);
     let calls = e.runner.calls.load(Ordering::SeqCst);
@@ -205,7 +304,11 @@ fn assert_blocked(e: &Env, reason: &str) {
         let err = e.run(&ctx, &cmd).expect_err("blocked").to_string();
         assert!(err.contains(reason), "{err}");
     }
-    assert_eq!(e.runner.calls.load(Ordering::SeqCst), calls, "no agent started");
+    assert_eq!(
+        e.runner.calls.load(Ordering::SeqCst),
+        calls,
+        "no agent started"
+    );
     e.run(&ctx, &["status"]).expect("status works");
     e.run(&ctx, &["show", "1"]).expect("show is not blocked");
 }
@@ -230,10 +333,19 @@ fn a_project_without_a_base_branch_setting_is_blocked() {
     let e = setup(&[]);
     let file = e.home.project_dir("p").join("project.toml");
     let text = std::fs::read_to_string(&file).expect("read");
-    let kept: Vec<&str> = text.lines().filter(|l| !l.trim_start().starts_with("base_branch")).collect();
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("base_branch"))
+        .collect();
     std::fs::write(&file, kept.join("\n")).expect("write");
     let ctx = e.ctx().expect("ctx");
-    assert!(ctx.blocked.as_deref().is_some_and(|b| b.contains("base_branch")), "{:?}", ctx.blocked);
+    assert!(
+        ctx.blocked
+            .as_deref()
+            .is_some_and(|b| b.contains("base_branch")),
+        "{:?}",
+        ctx.blocked
+    );
     let err = e.run(&ctx, &["run", "1"]).expect_err("blocked").to_string();
     assert!(err.contains("base_branch"), "{err}");
 }
@@ -242,7 +354,9 @@ fn a_project_without_a_base_branch_setting_is_blocked() {
 fn unknown_and_missing_projects_are_refused() {
     let e = setup(&[]);
     let r: Arc<dyn AgentRunner> = e.runner.clone();
-    let err = CliCtx::for_project(&e.home, "nope", Some(r), "t", Duration::from_secs(1)).err().expect("error");
+    let err = CliCtx::for_project(&e.home, "nope", Some(r), "t", Duration::from_secs(1))
+        .err()
+        .expect("error");
     assert!(err.to_string().contains("no project named nope"), "{err}");
     std::fs::remove_dir_all(&e.repo).expect("remove repo");
     let err = e.ctx().err().expect("refused").to_string();

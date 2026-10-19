@@ -18,7 +18,11 @@ impl EnvVarGuard {
         let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::env::var(key).ok();
         std::env::set_var(key, value);
-        EnvVarGuard { key, old, _lock: lock }
+        EnvVarGuard {
+            key,
+            old,
+            _lock: lock,
+        }
     }
 }
 

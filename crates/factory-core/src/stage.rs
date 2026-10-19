@@ -74,7 +74,14 @@ mod tests {
 
     #[test]
     fn forward_and_same_moves_are_allowed() {
-        for (from, to) in [(Spec, Build), (Build, Review), (Review, Approve), (Approve, Merged), (Spec, Merged), (Build, Build)] {
+        for (from, to) in [
+            (Spec, Build),
+            (Build, Review),
+            (Review, Approve),
+            (Approve, Merged),
+            (Spec, Merged),
+            (Build, Build),
+        ] {
             assert!(Stage::check_move(from, to, false).is_ok(), "{from} -> {to}");
         }
     }
@@ -89,7 +96,10 @@ mod tests {
     #[test]
     fn merged_is_final_unless_forced() {
         for to in [Spec, Build, Review, Approve, NeedsHuman] {
-            assert!(Stage::check_move(Merged, to, false).is_err(), "merged -> {to}");
+            assert!(
+                Stage::check_move(Merged, to, false).is_err(),
+                "merged -> {to}"
+            );
         }
         assert!(Stage::check_move(Merged, Build, true).is_ok());
     }
@@ -100,7 +110,10 @@ mod tests {
             assert!(Stage::check_move(from, NeedsHuman, false).is_ok());
         }
         for to in [Build, Review, Approve, Merged] {
-            assert!(Stage::check_move(NeedsHuman, to, false).is_ok(), "needs-human -> {to}");
+            assert!(
+                Stage::check_move(NeedsHuman, to, false).is_ok(),
+                "needs-human -> {to}"
+            );
         }
         assert!(Stage::check_move(NeedsHuman, Spec, false).is_err());
     }
@@ -111,6 +124,16 @@ mod tests {
             .iter()
             .map(|s| serde_json::to_string(s).expect("serialize"))
             .collect();
-        assert_eq!(names, vec!["\"spec\"", "\"build\"", "\"review\"", "\"approve\"", "\"merged\"", "\"needs-human\""]);
+        assert_eq!(
+            names,
+            vec![
+                "\"spec\"",
+                "\"build\"",
+                "\"review\"",
+                "\"approve\"",
+                "\"merged\"",
+                "\"needs-human\""
+            ]
+        );
     }
 }

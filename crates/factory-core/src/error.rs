@@ -3,7 +3,10 @@ use crate::stage::Stage;
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
     #[error("io error on {path}: {source}")]
-    Io { path: String, source: std::io::Error },
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("job id must be digits, got {0:?}")]
@@ -22,6 +25,9 @@ pub enum CoreError {
 
 impl CoreError {
     pub fn io(path: &std::path::Path, source: std::io::Error) -> CoreError {
-        CoreError::Io { path: path.display().to_string(), source }
+        CoreError::Io {
+            path: path.display().to_string(),
+            source,
+        }
     }
 }

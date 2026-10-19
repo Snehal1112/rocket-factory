@@ -9,7 +9,10 @@ use crate::{Engine, EngineError, StageOutcome};
 
 /// The reviewer's `[blocker]` lines, or the whole reply when it has none.
 pub(crate) fn blocker_lines(review_text: &str) -> String {
-    let blockers: Vec<&str> = review_text.lines().filter(|l| l.contains("[blocker]")).collect();
+    let blockers: Vec<&str> = review_text
+        .lines()
+        .filter(|l| l.contains("[blocker]"))
+        .collect();
     if blockers.is_empty() {
         review_text.to_string()
     } else {
@@ -32,7 +35,12 @@ pub(crate) fn write_record(dir: &Path, record: &ParkRecord) {
 
 impl Engine<'_> {
     /// Records why the job parks, then parks it. Writing `park.json` is best effort.
-    pub(crate) fn park_with(&self, kind: ParkKind, reason: String, parts: Vec<ParkPart>) -> Result<StageOutcome, EngineError> {
+    pub(crate) fn park_with(
+        &self,
+        kind: ParkKind,
+        reason: String,
+        parts: Vec<ParkPart>,
+    ) -> Result<StageOutcome, EngineError> {
         let job = self.job().ok();
         let round = job.as_ref().map_or(1, |j| j.round);
         let review_missing = job.as_ref().is_some_and(|j| j.review_missing);
@@ -52,11 +60,17 @@ impl Engine<'_> {
     /// Evidence for a park the decision step chose. Anything that cannot be read is left out.
     pub(crate) fn decision_parts(&self, kind: ParkKind, reason: &str, round: u32) -> Vec<ParkPart> {
         match kind {
-            ParkKind::ChecksFailed => part_from_file(&self.job_dir, "checks.md", "Checks").into_iter().collect(),
+            ParkKind::ChecksFailed => part_from_file(&self.job_dir, "checks.md", "Checks")
+                .into_iter()
+                .collect(),
             ParkKind::ChangesRemain => {
                 let file = format!("review-code-r{round}.md");
                 match std::fs::read_to_string(self.job_dir.join(&file)) {
-                    Ok(text) => vec![ParkPart::new("Reviewer findings", &file, &blocker_lines(&text))],
+                    Ok(text) => vec![ParkPart::new(
+                        "Reviewer findings",
+                        &file,
+                        &blocker_lines(&text),
+                    )],
                     Err(_) => Vec::new(),
                 }
             }
@@ -68,7 +82,9 @@ impl Engine<'_> {
                 parts
             }
             ParkKind::NoChecks | ParkKind::NoTests => {
-                let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks").into_iter().collect();
+                let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks")
+                    .into_iter()
+                    .collect();
                 parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 parts
             }
@@ -100,13 +116,19 @@ pub(crate) fn builder_stop_parts(run: &factory_agent::AgentRun) -> Vec<ParkPart>
         text.push_str(&format!("\nError: {error}"));
     }
     if !run.result_text.trim().is_empty() {
-        text.push_str(&format!("\n\nLast message from the builder:\n{}", run.result_text));
+        text.push_str(&format!(
+            "\n\nLast message from the builder:\n{}",
+            run.result_text
+        ));
     }
     vec![ParkPart::new("Builder stopped", "builder", &text)]
 }
 
 /// Evidence for a builder that reported BLOCKED or NEEDS_CONTEXT: the status, its text and the full reply.
-pub(crate) fn builder_blocked_parts(status: &factory_core::BuilderStatus, run: &factory_agent::AgentRun) -> Vec<ParkPart> {
+pub(crate) fn builder_blocked_parts(
+    status: &factory_core::BuilderStatus,
+    run: &factory_agent::AgentRun,
+) -> Vec<ParkPart> {
     let (label, why) = match status {
         factory_core::BuilderStatus::NeedsContext(why) => ("NEEDS_CONTEXT", why),
         factory_core::BuilderStatus::Blocked(why) => ("BLOCKED", why),
@@ -114,7 +136,10 @@ pub(crate) fn builder_blocked_parts(status: &factory_core::BuilderStatus, run: &
     };
     let mut text = format!("Status: {label}\nReason: {why}");
     if !run.result_text.trim().is_empty() {
-        text.push_str(&format!("\n\nLast message from the builder:\n{}", run.result_text));
+        text.push_str(&format!(
+            "\n\nLast message from the builder:\n{}",
+            run.result_text
+        ));
     }
     vec![ParkPart::new("Builder blocked", "builder", &text)]
 }
@@ -131,7 +156,11 @@ mod tests {
         let parts = builder_stop_parts(&run);
         assert_eq!(parts.len(), 1);
         assert!(parts[0].text.contains("turn-limit"), "{}", parts[0].text);
-        assert!(parts[0].text.contains("I could not find the file."), "{}", parts[0].text);
+        assert!(
+            parts[0].text.contains("I could not find the file."),
+            "{}",
+            parts[0].text
+        );
     }
 
     #[test]
@@ -145,7 +174,10 @@ mod tests {
     #[test]
     fn blocker_lines_keeps_only_the_blockers() {
         let text = "Summary line\n[blocker] src/a.rs:1 wrong\n[minor] nit\n[blocker] src/b.rs:2 bad\nVERDICT: CHANGES";
-        assert_eq!(blocker_lines(text), "[blocker] src/a.rs:1 wrong\n[blocker] src/b.rs:2 bad");
+        assert_eq!(
+            blocker_lines(text),
+            "[blocker] src/a.rs:1 wrong\n[blocker] src/b.rs:2 bad"
+        );
     }
 
     #[test]
@@ -155,7 +187,8 @@ mod tests {
     }
 
     #[test]
-    fn part_from_file_reads_the_file_and_skips_a_missing_one() -> Result<(), Box<dyn std::error::Error>> {
+    fn part_from_file_reads_the_file_and_skips_a_missing_one(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         std::fs::write(dir.path().join("checks.md"), "FAIL cargo check")?;
         let p = part_from_file(dir.path(), "checks.md", "Checks");
@@ -165,13 +198,18 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_write_never_leaves_the_old_record_behind() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_failed_write_never_leaves_the_old_record_behind() -> Result<(), Box<dyn std::error::Error>>
+    {
         let dir = tempfile::tempdir()?;
         let old = ParkRecord::new(ParkKind::Other, "old park", "job", 1, 1, Vec::new());
         old.write(dir.path())?;
         assert!(dir.path().join(factory_core::PARK_FILE).exists());
         // A directory in the temp file's place makes the new write fail.
-        let tmp = dir.path().join(format!(".{}.{}.tmp", factory_core::PARK_FILE, std::process::id()));
+        let tmp = dir.path().join(format!(
+            ".{}.{}.tmp",
+            factory_core::PARK_FILE,
+            std::process::id()
+        ));
         std::fs::create_dir(&tmp)?;
         let new = ParkRecord::new(ParkKind::ChecksFailed, "new park", "job", 2, 2, Vec::new());
         write_record(dir.path(), &new);

@@ -10,7 +10,9 @@ use factory_agent::{AgentRunner, EventSink};
 use factory_core::{Config, CoreError, Job, Layout, Ledger};
 use factory_git::{GitError, Repo};
 
-use crate::{BoardStore, Engine, DEFAULT_LOCK_WAIT, EngineError, ReviewOutcome, StageOutcome, StoreError};
+use crate::{
+    BoardStore, Engine, EngineError, ReviewOutcome, StageOutcome, StoreError, DEFAULT_LOCK_WAIT,
+};
 
 impl From<CoreError> for EngineError {
     fn from(e: CoreError) -> Self {
@@ -174,7 +176,14 @@ impl BeatCtx {
             // The lock keeps a release of the job lease from racing with a renewal.
             let held = lock_held(&self.shared);
             let at = crate::now_secs();
-            let project = crate::acquire_project_lease(&self.state_dir, &held.project_job, &self.owner, self.ttl, at, self.wait);
+            let project = crate::acquire_project_lease(
+                &self.state_dir,
+                &held.project_job,
+                &self.owner,
+                self.ttl,
+                at,
+                self.wait,
+            );
             if matches!(project, Err(crate::ProjectLeaseError::Held { .. })) {
                 self.lost.store(true, Ordering::SeqCst);
                 return;
@@ -192,13 +201,25 @@ impl BeatCtx {
 }
 
 impl Driver {
-    pub fn new(layout: Layout, config: Config, runner_for: RunnerFactory) -> Result<Driver, EngineError> {
+    pub fn new(
+        layout: Layout,
+        config: Config,
+        runner_for: RunnerFactory,
+    ) -> Result<Driver, EngineError> {
         let repo = Repo::open(&layout.repo)?
             .with_base_branch(&config.base_branch)
             .with_worktrees_dir(layout.worktrees_dir.clone());
         let store = BoardStore::new(&layout.board_file(), DEFAULT_LOCK_WAIT);
         let tracker: Box<dyn crate::Tracker> = Box::new(crate::GhTracker::new(&layout.repo));
-        Ok(Driver { layout, repo, config, store, runner_for, lease_owner: None, lock_wait: DEFAULT_LOCK_WAIT, agent_files: Vec::new(),
+        Ok(Driver {
+            layout,
+            repo,
+            config,
+            store,
+            runner_for,
+            lease_owner: None,
+            lock_wait: DEFAULT_LOCK_WAIT,
+            agent_files: Vec::new(),
             project_holds: AtomicU32::new(0),
             lease_ttl: LEASE_TTL_SECS,
             heartbeat: Duration::from_secs(HEARTBEAT_SECS),
@@ -405,25 +426,36 @@ impl Driver {
 
     /// Asks the committer for the message of the merge (`Merge`) or the sync (`Sync`) commit of a job.
     /// Always returns a valid message, falling back to the fixed text.
-    pub fn commit_message(&self, id: &str, kind: crate::MessageKind) -> Result<String, EngineError> {
+    pub fn commit_message(
+        &self,
+        id: &str,
+        kind: crate::MessageKind,
+    ) -> Result<String, EngineError> {
         let job = self.job(id)?;
         let base = job.base.clone().unwrap_or_default();
         let tip = match kind {
             crate::MessageKind::Merge => job.head.clone().unwrap_or_default(),
             crate::MessageKind::Sync => self.repo.tip(self.repo.base_branch())?,
         };
-        let cwd = job.worktree.as_ref().map(PathBuf::from).unwrap_or_else(|| self.layout.repo.clone());
+        let cwd = job
+            .worktree
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.layout.repo.clone());
         self.with_engine(id, |e| {
-            e.message_step(&cwd, &crate::MessageRequest {
-                kind,
-                job_id: &job.id,
-                slug: &job.slug,
-                title: &job.feature,
-                base: &base,
-                tip: &tip,
-                issues: &job.issues,
-                partial: crate::message::spec_has_follow_ups(&self.job_dir(&job)),
-            })
+            e.message_step(
+                &cwd,
+                &crate::MessageRequest {
+                    kind,
+                    job_id: &job.id,
+                    slug: &job.slug,
+                    title: &job.feature,
+                    base: &base,
+                    tip: &tip,
+                    issues: &job.issues,
+                    partial: crate::message::spec_has_follow_ups(&self.job_dir(&job)),
+                },
+            )
         })
     }
 
@@ -443,18 +475,29 @@ impl Driver {
             Ok(text)
         };
         if !manual && marker.exists() {
-            return say(format!("kb refresh skipped, stopped by an earlier change to the main checkout (see {})", marker.display()));
+            return say(format!(
+                "kb refresh skipped, stopped by an earlier change to the main checkout (see {})",
+                marker.display()
+            ));
         }
-        let outcome = match self.with_engine(id, |e| e.kb_refresh_step(Some((&job.id, &job.slug)))) {
+        let outcome = match self.with_engine(id, |e| e.kb_refresh_step(Some((&job.id, &job.slug))))
+        {
             Ok(o) => o,
             Err(e) => crate::KbOutcome::Failed(e.to_string()),
         };
-        if manual && matches!(outcome, crate::KbOutcome::Refreshed { .. } | crate::KbOutcome::UpToDate) {
+        if manual
+            && matches!(
+                outcome,
+                crate::KbOutcome::Refreshed { .. } | crate::KbOutcome::UpToDate
+            )
+        {
             // A missing marker is fine, so the result is ignored.
             let _ = std::fs::remove_file(&marker);
         }
         match outcome {
-            crate::KbOutcome::Refreshed { pages } => say(format!("kb refreshed, pages: {}", pages.join(", "))),
+            crate::KbOutcome::Refreshed { pages } => {
+                say(format!("kb refreshed, pages: {}", pages.join(", ")))
+            }
             crate::KbOutcome::UpToDate => say("kb up to date".to_string()),
             crate::KbOutcome::Failed(r) => say(format!("kb refresh failed, {r}")),
             crate::KbOutcome::Tampered(r) => {
@@ -462,7 +505,8 @@ impl Driver {
                     .parent()
                     .map_or(Ok(()), std::fs::create_dir_all)
                     .and_then(|()| std::fs::write(&marker, format!("{r}\n")));
-                let mut text = format!("kb refresh changed the main checkout, further refreshes stopped: {r}");
+                let mut text =
+                    format!("kb refresh changed the main checkout, further refreshes stopped: {r}");
                 if let Err(e) = written {
                     text.push_str(&format!(" (marker not written: {e})"));
                 }

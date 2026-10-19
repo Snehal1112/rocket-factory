@@ -25,17 +25,25 @@ impl Usage {
             cache_creation_input_tokens: field(v, "cache_creation_input_tokens"),
             cache_read_input_tokens: field(v, "cache_read_input_tokens"),
             output_tokens: field(v, "output_tokens"),
-            cache_creation_1h_input_tokens: v.get("cache_creation").map_or(0, |c| field(c, "ephemeral_1h_input_tokens")),
+            cache_creation_1h_input_tokens: v
+                .get("cache_creation")
+                .map_or(0, |c| field(c, "ephemeral_1h_input_tokens")),
         }
     }
 
     pub fn add(&self, other: &Usage) -> Usage {
         Usage {
             input_tokens: self.input_tokens.saturating_add(other.input_tokens),
-            cache_creation_input_tokens: self.cache_creation_input_tokens.saturating_add(other.cache_creation_input_tokens),
-            cache_read_input_tokens: self.cache_read_input_tokens.saturating_add(other.cache_read_input_tokens),
+            cache_creation_input_tokens: self
+                .cache_creation_input_tokens
+                .saturating_add(other.cache_creation_input_tokens),
+            cache_read_input_tokens: self
+                .cache_read_input_tokens
+                .saturating_add(other.cache_read_input_tokens),
             output_tokens: self.output_tokens.saturating_add(other.output_tokens),
-            cache_creation_1h_input_tokens: self.cache_creation_1h_input_tokens.saturating_add(other.cache_creation_1h_input_tokens),
+            cache_creation_1h_input_tokens: self
+                .cache_creation_1h_input_tokens
+                .saturating_add(other.cache_creation_1h_input_tokens),
         }
     }
 
@@ -43,10 +51,16 @@ impl Usage {
     pub fn max_with(&self, other: &Usage) -> Usage {
         Usage {
             input_tokens: self.input_tokens.max(other.input_tokens),
-            cache_creation_input_tokens: self.cache_creation_input_tokens.max(other.cache_creation_input_tokens),
-            cache_read_input_tokens: self.cache_read_input_tokens.max(other.cache_read_input_tokens),
+            cache_creation_input_tokens: self
+                .cache_creation_input_tokens
+                .max(other.cache_creation_input_tokens),
+            cache_read_input_tokens: self
+                .cache_read_input_tokens
+                .max(other.cache_read_input_tokens),
             output_tokens: self.output_tokens.max(other.output_tokens),
-            cache_creation_1h_input_tokens: self.cache_creation_1h_input_tokens.max(other.cache_creation_1h_input_tokens),
+            cache_creation_1h_input_tokens: self
+                .cache_creation_1h_input_tokens
+                .max(other.cache_creation_1h_input_tokens),
         }
     }
 

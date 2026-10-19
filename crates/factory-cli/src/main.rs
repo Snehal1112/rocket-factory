@@ -40,13 +40,15 @@ fn main() {
         return;
     }
     let built = match &cli.project {
-        Some(name) => factory_core::Home::from_env().map_err(factory_cli::CliError::from).and_then(|home| {
-            let ctx = CliCtx::for_project(&home, name, None, &env_owner(), env_lock_wait())?;
-            for n in &ctx.notes {
-                eprintln!("note: {n}");
-            }
-            Ok(ctx)
-        }),
+        Some(name) => factory_core::Home::from_env()
+            .map_err(factory_cli::CliError::from)
+            .and_then(|home| {
+                let ctx = CliCtx::for_project(&home, name, None, &env_owner(), env_lock_wait())?;
+                for n in &ctx.notes {
+                    eprintln!("note: {n}");
+                }
+                Ok(ctx)
+            }),
         None => CliCtx::from_env(cli.root.clone()),
     };
     let ctx = match built {
@@ -61,7 +63,11 @@ fn main() {
         None
     } else {
         let env = std::env::var("FACTORY_LOG").ok();
-        match factory_telemetry::init(ctx.log_target(cli.project.as_deref()), &ctx.log_level(), env.as_deref()) {
+        match factory_telemetry::init(
+            ctx.log_target(cli.project.as_deref()),
+            &ctx.log_level(),
+            env.as_deref(),
+        ) {
             Ok(guard) => {
                 if let Some(note) = guard.note() {
                     eprintln!("note: FACTORY_LOG ignored: {note}");
@@ -78,7 +84,10 @@ fn main() {
         Ok(text) => println!("{text}"),
         Err(e) => {
             // The consent refusal is printed bare so its line starts with `needs consent:`.
-            if matches!(e, factory_cli::CliError::Engine(factory_engine::EngineError::NeedsConsent { .. })) {
+            if matches!(
+                e,
+                factory_cli::CliError::Engine(factory_engine::EngineError::NeedsConsent { .. })
+            ) {
                 eprintln!("{e}");
             } else {
                 eprintln!("factory: {e}");

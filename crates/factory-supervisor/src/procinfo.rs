@@ -36,9 +36,15 @@ mod tests {
 
     #[test]
     fn this_process_started_before_a_record_an_hour_later() {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let pid = std::process::id();
-        assert!(process_start_ms(pid).is_some(), "this machine must say when a pid started");
+        assert!(
+            process_start_ms(pid).is_some(),
+            "this machine must say when a pid started"
+        );
         assert!(may_be_our_child(pid, now));
         assert!(!may_be_our_child(pid, now + 3_600_000));
         assert!(!may_be_our_child(pid, now.saturating_sub(3_600_000)));

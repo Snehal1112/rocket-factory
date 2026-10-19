@@ -7,7 +7,10 @@ use git2::Repository;
 fn job_worktree(fx: &Fixture) -> (Repo, Worktree) {
     let repo = fx.repo();
     let wt = repo
-        .create_worktree(&JobRef { id: "001".into(), slug: "demo".into() })
+        .create_worktree(&JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+        })
         .expect("create worktree");
     (repo, wt)
 }
@@ -24,7 +27,10 @@ fn reset_soft_moves_the_branch_and_keeps_the_work_staged() {
     commit_files(&inside(&wt), &[("b.txt", "b\n")], "wip: task 2 b");
     repo.reset_soft(&wt, &wt.base).expect("reset");
     assert_eq!(repo.tip(&wt.branch).expect("tip"), wt.base);
-    assert_eq!(repo.stage_all(&wt).expect("stage"), vec!["a.txt".to_string(), "b.txt".to_string()]);
+    assert_eq!(
+        repo.stage_all(&wt).expect("stage"),
+        vec!["a.txt".to_string(), "b.txt".to_string()]
+    );
     assert!(wt.path.join("b.txt").exists());
 }
 
@@ -51,7 +57,10 @@ fn restore_tree_makes_the_files_and_index_match_a_commit_and_keeps_the_branch() 
     assert_eq!(repo.tip(&wt.branch).expect("tip"), wt.base);
     assert!(wt.path.join("a.txt").exists());
     assert!(!wt.path.join("b.txt").exists());
-    assert_eq!(repo.stage_all(&wt).expect("stage"), vec!["a.txt".to_string()]);
+    assert_eq!(
+        repo.stage_all(&wt).expect("stage"),
+        vec!["a.txt".to_string()]
+    );
 }
 
 #[test]
@@ -65,7 +74,10 @@ fn restore_tree_removes_staged_files_that_the_target_tree_lacks() {
     repo.restore_tree(&wt, &first).expect("restore");
     assert!(wt.path.join("a.txt").exists());
     assert!(!wt.path.join("b.txt").exists());
-    assert_eq!(repo.stage_all(&wt).expect("stage"), vec!["a.txt".to_string()]);
+    assert_eq!(
+        repo.stage_all(&wt).expect("stage"),
+        vec!["a.txt".to_string()]
+    );
 }
 
 #[test]

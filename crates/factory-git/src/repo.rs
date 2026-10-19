@@ -42,7 +42,12 @@ impl Repo {
             .ok_or_else(|| GitError::Refused("bare repositories are not supported".into()))?
             .to_path_buf();
         let worktrees = root.join(".claude").join("worktrees");
-        Ok(Repo { inner: repo, root, base: DEFAULT_BASE_BRANCH.to_string(), worktrees })
+        Ok(Repo {
+            inner: repo,
+            root,
+            base: DEFAULT_BASE_BRANCH.to_string(),
+            worktrees,
+        })
     }
 
     /// The same repo with another base branch.
@@ -86,13 +91,16 @@ impl Repo {
 
     /// The commit a local branch points at.
     pub(crate) fn branch_commit(&self, branch: &str) -> Result<Commit<'_>> {
-        let found = self.inner.find_branch(branch, BranchType::Local).map_err(|e| {
-            if e.code() == ErrorCode::NotFound {
-                GitError::NotFound(format!("branch {branch}"))
-            } else {
-                GitError::Git(e)
-            }
-        })?;
+        let found = self
+            .inner
+            .find_branch(branch, BranchType::Local)
+            .map_err(|e| {
+                if e.code() == ErrorCode::NotFound {
+                    GitError::NotFound(format!("branch {branch}"))
+                } else {
+                    GitError::Git(e)
+                }
+            })?;
         Ok(found.get().peel_to_commit()?)
     }
 
@@ -180,7 +188,9 @@ impl Repo {
         }
         let head_id = self.commit_of(head)?.id();
         if head_id == self.commit_of(base)?.id() {
-            return Err(GitError::Refused("job has no commits, head equals base".into()));
+            return Err(GitError::Refused(
+                "job has no commits, head equals base".into(),
+            ));
         }
         let main = self.tip(&self.base)?;
         if self.is_ancestor(head, &main)? {

@@ -1,8 +1,12 @@
-use factory_agent::{AgentEvent, AgentSpec, Caps, EventKind, EventSink, StopReason, StreamEvent, StreamState, Usage};
+use factory_agent::{
+    AgentEvent, AgentSpec, Caps, EventKind, EventSink, StopReason, StreamEvent, StreamState, Usage,
+};
 use std::path::PathBuf;
 
 fn feed_file(name: &str) -> (StreamState, Vec<StreamEvent>) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
     let text = std::fs::read_to_string(path).expect("fixture");
     let mut state = StreamState::default();
     let mut events = Vec::new();
@@ -63,8 +67,20 @@ fn stream_reports_error_result() {
 
 #[test]
 fn usage_add_and_max() {
-    let a = Usage { input_tokens: 1, cache_creation_input_tokens: 2, cache_read_input_tokens: 3, output_tokens: 9, ..Usage::default() };
-    let b = Usage { input_tokens: 4, cache_creation_input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 5, ..Usage::default() };
+    let a = Usage {
+        input_tokens: 1,
+        cache_creation_input_tokens: 2,
+        cache_read_input_tokens: 3,
+        output_tokens: 9,
+        ..Usage::default()
+    };
+    let b = Usage {
+        input_tokens: 4,
+        cache_creation_input_tokens: 1,
+        cache_read_input_tokens: 0,
+        output_tokens: 5,
+        ..Usage::default()
+    };
     assert_eq!(a.add(&b).output_tokens, 14);
     assert_eq!(a.max_with(&b).input_tokens, 4);
     assert_eq!(a.max_with(&b).output_tokens, 9);
@@ -81,11 +97,18 @@ fn usage_reads_the_one_hour_share_of_cache_writes() {
     assert_eq!(u.cache_creation_input_tokens, 25032);
     assert_eq!(u.cache_creation_1h_input_tokens, 25000);
     // A usage object without the breakdown counts as zero.
-    assert_eq!(Usage::from_value(&serde_json::json!({"output_tokens": 1})).cache_creation_1h_input_tokens, 0);
+    assert_eq!(
+        Usage::from_value(&serde_json::json!({"output_tokens": 1})).cache_creation_1h_input_tokens,
+        0
+    );
 }
 
 fn caps(agent: bool, max_turns: bool, append: bool) -> Caps {
-    Caps { agent, max_turns, append_system_prompt: append }
+    Caps {
+        agent,
+        max_turns,
+        append_system_prompt: append,
+    }
 }
 
 #[test]
@@ -100,7 +123,14 @@ fn args_full_spec() {
     let args = spec.args(&caps(true, true, true));
     let joined = args.join(" ");
     assert!(joined.starts_with("-p --output-format stream-json --verbose"));
-    for want in ["--model sonnet", "--resume sess-1", "--permission-mode acceptEdits", "--allowedTools Read,Bash", "--agent factory-builder", "--max-turns 40"] {
+    for want in [
+        "--model sonnet",
+        "--resume sess-1",
+        "--permission-mode acceptEdits",
+        "--allowedTools Read,Bash",
+        "--agent factory-builder",
+        "--max-turns 40",
+    ] {
         assert!(joined.contains(want), "missing {want} in {joined}");
     }
     assert_eq!(spec.stdin_prompt(&caps(true, true, true)), "do it");
@@ -118,8 +148,14 @@ fn args_fall_back_without_agent_or_max_turns() {
     assert!(joined.contains("--append-system-prompt You are the builder."));
     // With no append support the agent text moves into the user prompt.
     let no_append = caps(false, false, false);
-    assert!(!spec.args(&no_append).join(" ").contains("--append-system-prompt"));
-    assert_eq!(spec.stdin_prompt(&no_append), "You are the builder.\n\ndo it");
+    assert!(!spec
+        .args(&no_append)
+        .join(" ")
+        .contains("--append-system-prompt"));
+    assert_eq!(
+        spec.stdin_prompt(&no_append),
+        "You are the builder.\n\ndo it"
+    );
 }
 
 #[test]
@@ -138,8 +174,14 @@ fn args_carry_strict_mcp_and_tools_as_single_arguments() {
     spec.strict_mcp = true;
     spec.tools = Some("Bash,Read,Skill".into());
     let args = spec.args(&caps(true, true, true));
-    assert!(args.iter().any(|a| a == "--strict-mcp-config"), "args: {args:?}");
-    let at = args.iter().position(|a| a == "--tools").expect("--tools present");
+    assert!(
+        args.iter().any(|a| a == "--strict-mcp-config"),
+        "args: {args:?}"
+    );
+    let at = args
+        .iter()
+        .position(|a| a == "--tools")
+        .expect("--tools present");
     assert_eq!(args[at + 1], "Bash,Read,Skill");
 }
 
@@ -155,10 +197,16 @@ fn args_omit_strict_mcp_and_tools_by_default() {
 #[test]
 fn args_carry_one_add_dir_flag_per_entry_and_none_by_default() {
     let mut spec = AgentSpec::new("001", "builder", "/w", "build");
-    assert!(!spec.args(&caps(true, true, true)).iter().any(|a| a == "--add-dir"));
+    assert!(!spec
+        .args(&caps(true, true, true))
+        .iter()
+        .any(|a| a == "--add-dir"));
     spec.add_dirs = vec!["/kb/one".into(), "/kb/two".into()];
     let args = spec.args(&caps(true, true, true));
-    let at = args.iter().position(|a| a == "--add-dir").expect("--add-dir present");
+    let at = args
+        .iter()
+        .position(|a| a == "--add-dir")
+        .expect("--add-dir present");
     assert_eq!(args[at + 1], "/kb/one");
     assert_eq!(args.iter().filter(|a| *a == "--add-dir").count(), 2);
     assert!(args.iter().any(|a| a == "/kb/two"));
@@ -180,7 +228,8 @@ fn sample_event() -> AgentEvent {
 #[test]
 fn sink_line_has_server_fields_and_new_ones() {
     let sink = EventSink::null("001");
-    let v: serde_json::Value = serde_json::from_str(&sink.line(&sample_event(), 12.5)).expect("json");
+    let v: serde_json::Value =
+        serde_json::from_str(&sink.line(&sample_event(), 12.5)).expect("json");
     assert_eq!(v["hook_event_name"], "PostToolUse");
     assert_eq!(v["agent_id"], "001-builder");
     assert_eq!(v["agent_type"], "factory-builder");
@@ -201,7 +250,10 @@ fn sink_trims_long_last_message_on_a_char_boundary() {
     ev.last_message = Some("é".repeat(500));
     let v: serde_json::Value = serde_json::from_str(&sink.line(&ev, 1.0)).expect("json");
     assert_eq!(v["hook_event_name"], "SubagentStop");
-    assert_eq!(v["last_message"].as_str().expect("str").chars().count(), 300);
+    assert_eq!(
+        v["last_message"].as_str().expect("str").chars().count(),
+        300
+    );
 }
 
 #[test]

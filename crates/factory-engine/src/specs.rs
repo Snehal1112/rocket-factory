@@ -49,9 +49,15 @@ impl Engine<'_> {
         let plan = self.plan_file.display();
         match (with_excerpt, self.config.read_first.is_empty()) {
             (false, true) => format!("Read the plan at {plan}."),
-            (false, false) => format!("Read {}, and the plan at {plan}.", self.config.read_first.join(", ")),
+            (false, false) => format!(
+                "Read {}, and the plan at {plan}.",
+                self.config.read_first.join(", ")
+            ),
             (true, true) => format!("The plan is at {plan}."),
-            (true, false) => format!("Read {}. The plan is at {plan}.", self.config.read_first.join(", ")),
+            (true, false) => format!(
+                "Read {}. The plan is at {plan}.",
+                self.config.read_first.join(", ")
+            ),
         }
     }
 
@@ -67,7 +73,11 @@ impl Engine<'_> {
     /// The prompt line that names the job's spec, or nothing when the job has none.
     fn spec_line(&self) -> String {
         let spec_file = self.job_dir.join("spec.md");
-        if spec_file.exists() { format!("The spec is at {}.\n", spec_file.display()) } else { String::new() }
+        if spec_file.exists() {
+            format!("The spec is at {}.\n", spec_file.display())
+        } else {
+            String::new()
+        }
     }
 
     /// Sets the model, the budget and the stall limit from the config. Every agent spec goes through this.
@@ -75,7 +85,9 @@ impl Engine<'_> {
         spec.model = Some(model.to_string());
         spec.budget_weighted = Some(self.config.budget_weighted);
         spec.used_before = self.job_weighted_tokens();
-        spec.stall_after = Some(Duration::from_secs(u64::from(self.config.stall_minutes) * 60));
+        spec.stall_after = Some(Duration::from_secs(
+            u64::from(self.config.stall_minutes) * 60,
+        ));
         spec
     }
 
@@ -166,7 +178,10 @@ impl Engine<'_> {
         let done = if earlier.is_empty() {
             "No earlier task has a commit yet.".to_string()
         } else {
-            format!("Commits of earlier tasks, oldest first:\n{}", earlier.join("\n"))
+            format!(
+                "Commits of earlier tasks, oldest first:\n{}",
+                earlier.join("\n")
+            )
         };
         let prompt = format!(
             "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
@@ -197,11 +212,22 @@ impl Engine<'_> {
     }
 
     /// The resumed builder for a fix round.
-    pub(crate) fn builder_resume_spec(&self, job: &JobView, cwd: &Path, findings: &Path, session: &str) -> AgentSpec {
+    pub(crate) fn builder_resume_spec(
+        &self,
+        job: &JobView,
+        cwd: &Path,
+        findings: &Path,
+        session: &str,
+    ) -> AgentSpec {
         let hints = if self.config.check_hints.is_empty() {
             String::new()
         } else {
-            let list: Vec<String> = self.config.check_hints.iter().map(|h| format!("`{h}`")).collect();
+            let list: Vec<String> = self
+                .config
+                .check_hints
+                .iter()
+                .map(|h| format!("`{h}`"))
+                .collect();
             format!(" (for example {})", list.join(", "))
         };
         let prompt = format!(
@@ -243,25 +269,60 @@ pub struct ReviewerExtra {
 
 impl Engine<'_> {
     /// The combined reviewer. It is read-only and pages the diff to stay cheap. The agent file carries the checks.
-    pub fn reviewer_spec(&self, cwd: &Path, diff: &Path, names: &Path, round: u32, rules: &[String], extra: &ReviewerExtra) -> AgentSpec {
-        self.reviewer_spec_with_model(cwd, diff, names, round, rules, extra, &self.config.reviewer_model)
+    pub fn reviewer_spec(
+        &self,
+        cwd: &Path,
+        diff: &Path,
+        names: &Path,
+        round: u32,
+        rules: &[String],
+        extra: &ReviewerExtra,
+    ) -> AgentSpec {
+        self.reviewer_spec_with_model(
+            cwd,
+            diff,
+            names,
+            round,
+            rules,
+            extra,
+            &self.config.reviewer_model,
+        )
     }
 
     /// The model for a review: the large one when it is set and the diff is risky or over the line threshold.
     pub(crate) fn reviewer_model_for(&self, changed_lines: usize, risky: bool) -> &str {
         match &self.config.reviewer_model_large {
-            Some(large) if risky || changed_lines > self.config.reviewer_large_over_lines as usize => large,
+            Some(large)
+                if risky || changed_lines > self.config.reviewer_large_over_lines as usize =>
+            {
+                large
+            }
             _ => &self.config.reviewer_model,
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn reviewer_spec_with_model(&self, cwd: &Path, diff: &Path, names: &Path, round: u32, rules: &[String], extra: &ReviewerExtra, model: &str) -> AgentSpec {
+    pub(crate) fn reviewer_spec_with_model(
+        &self,
+        cwd: &Path,
+        diff: &Path,
+        names: &Path,
+        round: u32,
+        rules: &[String],
+        extra: &ReviewerExtra,
+        model: &str,
+    ) -> AgentSpec {
         let spec_line = self.spec_line();
         // A later round also gets the findings of the round before, so the reviewer can check they were fixed.
-        let earlier = self.job_dir.join(format!("review-code-r{}.md", round.saturating_sub(1)));
+        let earlier = self
+            .job_dir
+            .join(format!("review-code-r{}.md", round.saturating_sub(1)));
         let earlier_line = if round > 1 && earlier.exists() {
-            format!("The findings of round {} are at {}. Check that each was fixed.\n", round - 1, earlier.display())
+            format!(
+                "The findings of round {} are at {}. Check that each was fixed.\n",
+                round - 1,
+                earlier.display()
+            )
         } else {
             String::new()
         };
@@ -281,16 +342,26 @@ impl Engine<'_> {
         } else {
             format!("The builder's reply to those findings is at {}. It may explain why a finding was not changed.\n", builder_reply.display())
         };
-        let rules_line = if rules.is_empty() { String::new() } else { format!("{}\n", rules.join(" ")) };
+        let rules_line = if rules.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", rules.join(" "))
+        };
         let mut context = String::new();
         if let Some(focus) = &extra.focus {
             context.push_str(&format!("Review focus from the plan:\n{focus}\n"));
         }
         if !extra.notes.is_empty() {
-            context.push_str(&format!("Builder notes, rulings and concerns recorded while building:\n{}\n", extra.notes.join("\n")));
+            context.push_str(&format!(
+                "Builder notes, rulings and concerns recorded while building:\n{}\n",
+                extra.notes.join("\n")
+            ));
         }
         if !extra.plan_outline.is_empty() {
-            context.push_str(&format!("Plan outline (header and task headings):\n{}\n", extra.plan_outline));
+            context.push_str(&format!(
+                "Plan outline (header and task headings):\n{}\n",
+                extra.plan_outline
+            ));
         }
         if extra.no_tests {
             context.push_str("No test was added in this job. Judge whether the new behavior is covered, and treat missing tests as a blocker.\n");

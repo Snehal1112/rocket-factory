@@ -25,9 +25,12 @@ fn make_repo(parent: &Path, folder: &str, branch: &str) -> PathBuf {
     std::fs::write(path.join("a.txt"), "a").expect("write");
     let mut index = repo.index().expect("index");
     index.add_path(Path::new("a.txt")).expect("add");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find");
     let sig = Signature::now("t", "t@t").expect("sig");
-    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+        .expect("commit");
     path
 }
 
@@ -47,7 +50,20 @@ fn s(p: &Path) -> &str {
 
 fn add_demo(e: &Env) -> PathBuf {
     let repo = make_repo(e.tmp.path(), "demo-repo", "main");
-    run(e, &["add", s(&repo), "--preset", "rust", "--name", "demo", "--base", "main"]).expect("add");
+    run(
+        e,
+        &[
+            "add",
+            s(&repo),
+            "--preset",
+            "rust",
+            "--name",
+            "demo",
+            "--base",
+            "main",
+        ],
+    )
+    .expect("add");
     repo
 }
 
@@ -55,11 +71,27 @@ fn add_demo(e: &Env) -> PathBuf {
 fn add_then_list() {
     let e = env();
     let repo = make_repo(e.tmp.path(), "r1", "main");
-    let out = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "demo", "--base", "main"]).expect("add");
+    let out = run(
+        &e,
+        &[
+            "add",
+            s(&repo),
+            "--preset",
+            "rust",
+            "--name",
+            "demo",
+            "--base",
+            "main",
+        ],
+    )
+    .expect("add");
     assert!(out.contains(s(&e.home.project_dir("demo"))), "{out}");
     assert!(e.home.presets_dir().join("rust/config.toml").exists());
     let canon = std::fs::canonicalize(&repo).expect("canon");
-    assert_eq!(run(&e, &["list"]).expect("list"), format!("demo rust main {}", canon.display()));
+    assert_eq!(
+        run(&e, &["list"]).expect("list"),
+        format!("demo rust main {}", canon.display())
+    );
 }
 
 #[test]
@@ -67,7 +99,9 @@ fn add_records_the_current_branch_when_no_base_is_given() {
     let e = env();
     let repo = make_repo(e.tmp.path(), "r1", "trunk");
     run(&e, &["add", s(&repo), "--preset", "go", "--name", "demo"]).expect("add");
-    assert!(run(&e, &["list"]).expect("list").starts_with("demo go trunk "));
+    assert!(run(&e, &["list"])
+        .expect("list")
+        .starts_with("demo go trunk "));
 }
 
 #[test]
@@ -77,7 +111,9 @@ fn the_name_defaults_to_the_lowercased_folder() {
     run(&e, &["add", s(&ok), "--preset", "rust"]).expect("add");
     assert!(run(&e, &["list"]).expect("list").starts_with("good-repo "));
     let bad = make_repo(e.tmp.path(), "My Repo", "main");
-    let err = run(&e, &["add", s(&bad), "--preset", "rust"]).expect_err("refused").to_string();
+    let err = run(&e, &["add", s(&bad), "--preset", "rust"])
+        .expect_err("refused")
+        .to_string();
     assert!(err.contains("--name"), "{err}");
 }
 
@@ -89,16 +125,39 @@ fn add_refusals() {
     assert!(run(&e, &["add", s(&plain), "--preset", "rust", "--name", "p"]).is_err());
     let sub = make_repo(e.tmp.path(), "outer", "main").join("inner");
     std::fs::create_dir_all(&sub).expect("mkdir");
-    assert!(run(&e, &["add", s(&sub), "--preset", "rust", "--name", "p"]).is_err(), "a subfolder is not a repo root");
+    assert!(
+        run(&e, &["add", s(&sub), "--preset", "rust", "--name", "p"]).is_err(),
+        "a subfolder is not a repo root"
+    );
     let repo = make_repo(e.tmp.path(), "r1", "main");
-    let err = run(&e, &["add", s(&repo), "--preset", "nope", "--name", "p"]).expect_err("preset").to_string();
+    let err = run(&e, &["add", s(&repo), "--preset", "nope", "--name", "p"])
+        .expect_err("preset")
+        .to_string();
     assert!(err.contains("unknown preset"), "{err}");
-    let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "p", "--base", "ghost"]).expect_err("base").to_string();
+    let err = run(
+        &e,
+        &[
+            "add",
+            s(&repo),
+            "--preset",
+            "rust",
+            "--name",
+            "p",
+            "--base",
+            "ghost",
+        ],
+    )
+    .expect_err("base")
+    .to_string();
     assert!(err.contains("ghost"), "{err}");
     run(&e, &["add", s(&repo), "--preset", "rust", "--name", "p"]).expect("add");
-    let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "p"]).expect_err("dup name").to_string();
+    let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "p"])
+        .expect_err("dup name")
+        .to_string();
     assert!(err.contains("already exists"), "{err}");
-    let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "q"]).expect_err("dup repo").to_string();
+    let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "q"])
+        .expect_err("dup repo")
+        .to_string();
     assert!(err.contains("already project p"), "{err}");
 }
 
@@ -111,7 +170,10 @@ fn list_shows_a_missing_repo_as_disabled_and_keeps_the_others() {
     run(&e, &["add", s(&other), "--preset", "go", "--name", "other"]).expect("add");
     std::fs::remove_dir_all(&gone).expect("rm");
     let out = run(&e, &["list"]).expect("list");
-    assert!(out.contains("demo  disabled: repo path is missing"), "{out}");
+    assert!(
+        out.contains("demo  disabled: repo path is missing"),
+        "{out}"
+    );
     assert!(out.contains("other go main"), "{out}");
 }
 
@@ -152,9 +214,15 @@ fn show_prints_the_plan_rules_block_after_the_agent_files_line() {
     add_demo(&e);
     set_plan_rules(&e, "plan_rules = [\"first rule\", \"second rule\"]\n");
     let out = run(&e, &["show", "demo"]).expect("show");
-    assert!(out.contains("\nplan rules:\n- first rule\n- second rule\n"), "{out}");
+    assert!(
+        out.contains("\nplan rules:\n- first rule\n- second rule\n"),
+        "{out}"
+    );
     let agents = out.find("agent files:").expect("agent files");
-    assert!(agents < out.find("plan rules:").expect("plan rules"), "{out}");
+    assert!(
+        agents < out.find("plan rules:").expect("plan rules"),
+        "{out}"
+    );
     assert!(!out.contains("degraded"), "{out}");
     assert!(out.contains("problems: none"), "{out}");
 }
@@ -172,7 +240,9 @@ fn show_reports_a_missing_base_branch_as_degraded() {
     let e = env();
     add_demo(&e);
     let file = e.home.project_dir("demo").join("project.toml");
-    let text = std::fs::read_to_string(&file).expect("read").replace("\"main\"", "\"gone\"");
+    let text = std::fs::read_to_string(&file)
+        .expect("read")
+        .replace("\"main\"", "\"gone\"");
     std::fs::write(&file, text).expect("write");
     let out = run(&e, &["show", "demo"]).expect("show");
     assert!(out.contains("degraded"), "{out}");
@@ -191,11 +261,16 @@ fn show_reports_an_override_the_engine_would_reject() {
     )
     .expect("write");
     let mut index = git.index().expect("index");
-    index.add_path(Path::new(".factory/override.toml")).expect("add");
-    let tree = git.find_tree(index.write_tree().expect("tree")).expect("find");
+    index
+        .add_path(Path::new(".factory/override.toml"))
+        .expect("add");
+    let tree = git
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find");
     let sig = Signature::now("t", "t@t").expect("sig");
     let parent = git.head().expect("head").peel_to_commit().expect("commit");
-    git.commit(Some("HEAD"), &sig, &sig, "override", &tree, &[&parent]).expect("commit");
+    git.commit(Some("HEAD"), &sig, &sig, "override", &tree, &[&parent])
+        .expect("commit");
     let out = run(&e, &["show", "demo"]).expect("show");
     assert!(out.contains("would be rejected"), "{out}");
 }
@@ -217,9 +292,18 @@ fn remove_refuses_open_jobs_unless_forced() {
     add_demo(&e);
     let state = e.home.project_dir("demo").join("state");
     let mut board = factory_core::Board::default();
-    board.jobs.push(factory_core::Job::new("001", "2026-10-13-001-x", "x", "2026-10-13", "feature", 0.0));
+    board.jobs.push(factory_core::Job::new(
+        "001",
+        "2026-10-13-001-x",
+        "x",
+        "2026-10-13",
+        "feature",
+        0.0,
+    ));
     board.save(&state.join("board.json")).expect("save");
-    let err = run(&e, &["remove", "demo"]).expect_err("refused").to_string();
+    let err = run(&e, &["remove", "demo"])
+        .expect_err("refused")
+        .to_string();
     assert!(err.contains("--force") && err.contains("001"), "{err}");
     assert!(e.home.project_dir("demo").exists());
     run(&e, &["remove", "demo", "--force"]).expect("forced");
@@ -240,7 +324,10 @@ fn add_accepts_a_non_canonical_path_and_names_it_from_the_real_folder() {
     let odd = e.tmp.path().join("x").join("..").join("Real").join(".");
     run(&e, &["add", s(&odd), "--preset", "rust"]).expect("add");
     let canon = std::fs::canonicalize(&repo).expect("canon");
-    assert_eq!(run(&e, &["list"]).expect("list"), format!("real rust main {}", canon.display()));
+    assert_eq!(
+        run(&e, &["list"]).expect("list"),
+        format!("real rust main {}", canon.display())
+    );
 }
 
 /// Restores the process working directory when dropped, also when the test panics.
@@ -270,13 +357,20 @@ fn add_accepts_a_relative_path() {
         run(&e, &["add", ".", "--preset", "rust"])
     };
     out.expect("add");
-    assert!(run(&e, &["list"]).expect("list").starts_with("rel rust main "));
+    assert!(run(&e, &["list"])
+        .expect("list")
+        .starts_with("rel rust main "));
 }
 
 #[test]
 fn add_refuses_a_path_that_does_not_exist() {
     let e = env();
-    let err = run(&e, &["add", "/no/such/dir", "--preset", "rust", "--name", "x"]).expect_err("refused").to_string();
+    let err = run(
+        &e,
+        &["add", "/no/such/dir", "--preset", "rust", "--name", "x"],
+    )
+    .expect_err("refused")
+    .to_string();
     assert!(err.contains("not usable"), "{err}");
 }
 
@@ -302,9 +396,12 @@ fn commit_entries(repo: &Path, entries: &[(&str, &[u8], i32)]) {
         };
         index.add_frombuffer(&entry, content).expect("add");
     }
-    let tree = git.find_tree(index.write_tree().expect("tree")).expect("find");
+    let tree = git
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find");
     let sig = Signature::now("t", "t@t").expect("sig");
-    git.commit(Some("HEAD"), &sig, &sig, "files", &tree, &[&parent]).expect("commit");
+    git.commit(Some("HEAD"), &sig, &sig, "files", &tree, &[&parent])
+        .expect("commit");
 }
 
 #[test]
@@ -314,17 +411,26 @@ fn stray_agent_files_are_noted_and_do_not_degrade() {
     std::fs::write(e.home.project_dir("demo").join("agents/README.md"), "stray").expect("write");
     commit_entries(&repo, &[(".factory/agents/README.md", b"stray", 0o100644)]);
     let out = run(&e, &["show", "demo"]).expect("show");
-    assert!(out.contains("note: ignored agent file README.md: names must be factory-<name>.md"), "{out}");
+    assert!(
+        out.contains("note: ignored agent file README.md: names must be factory-<name>.md"),
+        "{out}"
+    );
     assert!(!out.contains("degraded"), "{out}");
     assert!(out.contains("problems: none"), "{out}");
-    assert!(!out.contains("agent files: README.md") && !out.contains(", README.md"), "{out}");
+    assert!(
+        !out.contains("agent files: README.md") && !out.contains(", README.md"),
+        "{out}"
+    );
 }
 
 #[test]
 fn a_committed_symlink_override_degrades_the_project() {
     let e = env();
     let repo = add_demo(&e);
-    commit_entries(&repo, &[(".factory/override.toml", b"/etc/passwd", 0o120000)]);
+    commit_entries(
+        &repo,
+        &[(".factory/override.toml", b"/etc/passwd", 0o120000)],
+    );
     let out = run(&e, &["show", "demo"]).expect("show");
     assert!(out.contains("degraded"), "{out}");
     assert!(out.contains("not a regular file"), "{out}");
@@ -334,7 +440,14 @@ fn a_committed_symlink_override_degrades_the_project() {
 fn a_committed_symlink_agent_file_degrades_the_project() {
     let e = env();
     let repo = add_demo(&e);
-    commit_entries(&repo, &[(".factory/agents/factory-builder.md", b"/etc/passwd", 0o120000)]);
+    commit_entries(
+        &repo,
+        &[(
+            ".factory/agents/factory-builder.md",
+            b"/etc/passwd",
+            0o120000,
+        )],
+    );
     let out = run(&e, &["show", "demo"]).expect("show");
     assert!(out.contains("degraded"), "{out}");
     assert!(out.contains("not a regular file"), "{out}");
@@ -348,20 +461,31 @@ fn show_of_a_project_with_a_missing_repo_is_disabled_like_list() {
     let out = run(&e, &["show", "demo"]).expect("show succeeds");
     assert!(out.contains("disabled: repo path is missing"), "{out}");
     assert!(out.contains("project: demo"), "{out}");
-    assert!(run(&e, &["list"]).expect("list").contains("demo  disabled: repo path is missing"));
+    assert!(run(&e, &["list"])
+        .expect("list")
+        .contains("demo  disabled: repo path is missing"));
 }
 
 #[test]
 fn remove_of_a_broken_project_needs_force() {
     let e = env();
     add_demo(&e);
-    std::fs::write(e.home.project_dir("demo").join("project.toml"), "this is = = broken").expect("write");
-    let err = run(&e, &["remove", "demo"]).expect_err("refused").to_string();
+    std::fs::write(
+        e.home.project_dir("demo").join("project.toml"),
+        "this is = = broken",
+    )
+    .expect("write");
+    let err = run(&e, &["remove", "demo"])
+        .expect_err("refused")
+        .to_string();
     assert!(err.contains("--force"), "{err}");
     assert!(e.home.project_dir("demo").exists());
     run(&e, &["remove", "demo", "--force"]).expect("forced");
     assert!(!e.home.project_dir("demo").exists());
-    assert!(run(&e, &["remove", "demo", "--force"]).is_err(), "an unknown project is still an error");
+    assert!(
+        run(&e, &["remove", "demo", "--force"]).is_err(),
+        "an unknown project is still an error"
+    );
 }
 
 #[test]
@@ -370,19 +494,40 @@ fn remove_prunes_worktree_registrations_and_leaves_job_branches() {
     let e = env();
     let repo_path = add_demo(&e);
     let worktrees = e.home.project_dir("demo").join("worktrees");
-    let repo = Repo::open(&repo_path).expect("open").with_worktrees_dir(worktrees.clone());
-    let valid = repo.create_worktree(&JobRef { id: "001".into(), slug: "valid".into() }).expect("wt");
-    let stale = repo.create_worktree(&JobRef { id: "002".into(), slug: "stale".into() }).expect("wt");
+    let repo = Repo::open(&repo_path)
+        .expect("open")
+        .with_worktrees_dir(worktrees.clone());
+    let valid = repo
+        .create_worktree(&JobRef {
+            id: "001".into(),
+            slug: "valid".into(),
+        })
+        .expect("wt");
+    let stale = repo
+        .create_worktree(&JobRef {
+            id: "002".into(),
+            slug: "stale".into(),
+        })
+        .expect("wt");
     std::fs::remove_dir_all(&stale.path).expect("stale folder gone");
     let out = run(&e, &["remove", "demo"]).expect("remove");
     assert!(out.contains("pruned 2 worktree registration(s)"), "{out}");
-    assert!(out.contains("factory/001-valid") && out.contains("factory/002-stale"), "{out}");
+    assert!(
+        out.contains("factory/001-valid") && out.contains("factory/002-stale"),
+        "{out}"
+    );
     assert!(!e.home.project_dir("demo").exists());
     assert!(!valid.path.exists());
     let raw = Repository::open(&repo_path).expect("open");
     assert!(raw.worktrees().expect("worktrees").is_empty());
-    assert!(raw.find_branch("factory/001-valid", git2::BranchType::Local).is_ok(), "branches are never deleted");
-    assert!(raw.find_branch("factory/002-stale", git2::BranchType::Local).is_ok());
+    assert!(
+        raw.find_branch("factory/001-valid", git2::BranchType::Local)
+            .is_ok(),
+        "branches are never deleted"
+    );
+    assert!(raw
+        .find_branch("factory/002-stale", git2::BranchType::Local)
+        .is_ok());
 }
 
 #[test]
@@ -391,17 +536,32 @@ fn show_reads_the_override_from_the_base_tip_not_from_head() {
     let repo = add_demo(&e);
     commit_entries(
         &repo,
-        &[(".factory/override.toml", b"[[checks]]\npaths = [\"**\"]\ncommands = [\"cargo test --workspace\"]\n", 0o100644)],
+        &[(
+            ".factory/override.toml",
+            b"[[checks]]\npaths = [\"**\"]\ncommands = [\"cargo test --workspace\"]\n",
+            0o100644,
+        )],
     );
     let git = Repository::open(&repo).expect("open");
     let head = git.head().expect("head").peel_to_commit().expect("commit");
     git.branch("side", &head, false).expect("branch");
     git.set_head("refs/heads/side").expect("set head");
-    git.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).expect("checkout");
-    commit_entries(&repo, &[(".factory/override.toml", b"risk_paths = [\"docs/**\"]\n", 0o100644)]);
+    git.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .expect("checkout");
+    commit_entries(
+        &repo,
+        &[(
+            ".factory/override.toml",
+            b"risk_paths = [\"docs/**\"]\n",
+            0o100644,
+        )],
+    );
     assert_eq!(git.head().expect("head").shorthand(), Some("side"));
     let out = run(&e, &["show", "demo"]).expect("show");
-    assert!(out.contains("would be rejected"), "the base branch override must win:\n{out}");
+    assert!(
+        out.contains("would be rejected"),
+        "the base branch override must win:\n{out}"
+    );
 }
 
 #[test]
@@ -414,12 +574,25 @@ fn remove_is_refused_while_the_project_lease_is_held_even_with_force() {
     acquire_project_lease(&state, "001", "someone-else", 600.0, now_secs(), wait).expect("lease");
     for args in [&["remove", "demo"][..], &["remove", "demo", "--force"][..]] {
         let err = run(&e, args).expect_err("busy").to_string();
-        assert!(err.contains("busy") && err.contains("cancel 001 --force") && err.contains("project.lease"), "{err}");
+        assert!(
+            err.contains("busy")
+                && err.contains("cancel 001 --force")
+                && err.contains("project.lease"),
+            "{err}"
+        );
         assert!(e.home.project_dir("demo").exists());
     }
     // A dead driver's lease does not block the removal.
     std::fs::remove_file(state.join("project.lease")).expect("rm");
-    acquire_project_lease(&state, "001", "driver-4294967000-1", 600.0, now_secs(), wait).expect("lease");
+    acquire_project_lease(
+        &state,
+        "001",
+        "driver-4294967000-1",
+        600.0,
+        now_secs(),
+        wait,
+    )
+    .expect("lease");
     run(&e, &["remove", "demo", "--force"]).expect("removed");
     assert!(!e.home.project_dir("demo").exists());
 }

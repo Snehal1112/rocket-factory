@@ -19,24 +19,32 @@ pub fn commit_file(dir: &Path, name: &str, content: &str) -> String {
     let mut index = repo.index().expect("index");
     index.add_path(Path::new(name)).expect("add");
     index.write().expect("write index");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find tree");
     let sig = Signature::now("t", "t@example.com").expect("sig");
     let parents: Vec<git2::Commit> = match repo.head() {
         Ok(h) => vec![h.peel_to_commit().expect("commit")],
         Err(_) => vec![],
     };
     let refs: Vec<&git2::Commit> = parents.iter().collect();
-    repo.commit(Some("HEAD"), &sig, &sig, "test commit", &tree, &refs).expect("commit").to_string()
+    repo.commit(Some("HEAD"), &sig, &sig, "test commit", &tree, &refs)
+        .expect("commit")
+        .to_string()
 }
 
 /// Commits whatever is staged in `dir`, like a committer agent would.
 pub fn commit_index(dir: &Path, message: &str) -> String {
     let repo = Repository::open(dir).expect("open repo");
     let mut index = repo.index().expect("index");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find tree");
     let sig = Signature::now("t", "t@example.com").expect("sig");
     let parent = repo.head().expect("head").peel_to_commit().expect("commit");
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+        .expect("commit")
+        .to_string()
 }
 
 /// The builder commits a new file, the reviewer approves. It never runs the real `claude`.
@@ -52,7 +60,10 @@ impl RoleRunner {
     }
 
     pub fn counting(builder_calls: Arc<AtomicUsize>) -> RoleRunner {
-        RoleRunner { counter: AtomicUsize::new(0), builder_calls }
+        RoleRunner {
+            counter: AtomicUsize::new(0),
+            builder_calls,
+        }
     }
 }
 
@@ -71,7 +82,10 @@ impl AgentRunner for RoleRunner {
         } else {
             "fine\nVERDICT: APPROVE".to_string()
         };
-        AgentRun { session_id: Some("sess-1".to_string()), ..AgentRun::done(&text) }
+        AgentRun {
+            session_id: Some("sess-1".to_string()),
+            ..AgentRun::done(&text)
+        }
     }
 }
 
@@ -97,13 +111,25 @@ impl Fixture {
         commit_file(&root, "README.md", "hello\n");
         // The config stays untracked, which the merge preflight allows.
         std::fs::create_dir_all(root.join(".claude/factory")).expect("mkdir config");
-        std::fs::write(root.join(".claude/factory/config.toml"), format!("risk_paths = [\"{risk}\"]\n"))
-            .expect("config");
-        std::fs::write(root.join(".claude/factory/commit-context.md"), "TEST CONTEXT\n").expect("context");
+        std::fs::write(
+            root.join(".claude/factory/config.toml"),
+            format!("risk_paths = [\"{risk}\"]\n"),
+        )
+        .expect("config");
+        std::fs::write(
+            root.join(".claude/factory/commit-context.md"),
+            "TEST CONTEXT\n",
+        )
+        .expect("context");
         let builder_calls = Arc::new(AtomicUsize::new(0));
         let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::counting(builder_calls.clone()));
         let ctx = CliCtx::new(root.clone(), runner, "tester");
-        Fixture { tmp, root, ctx, builder_calls }
+        Fixture {
+            tmp,
+            root,
+            ctx,
+            builder_calls,
+        }
     }
 
     pub fn write_plan(&self, name: &str, tasks: u32, next: &str) -> PathBuf {
@@ -131,7 +157,12 @@ impl Fixture {
 
     fn main_commit(&self) -> git2::Oid {
         let repo = Repository::open(&self.root).expect("open");
-        let id = repo.revparse_single("main").expect("main").peel_to_commit().expect("commit").id();
+        let id = repo
+            .revparse_single("main")
+            .expect("main")
+            .peel_to_commit()
+            .expect("commit")
+            .id();
         id
     }
 
@@ -141,7 +172,12 @@ impl Fixture {
 
     pub fn main_message(&self) -> String {
         let repo = Repository::open(&self.root).expect("open");
-        let msg = repo.find_commit(self.main_commit()).expect("commit").message().unwrap_or("").to_string();
+        let msg = repo
+            .find_commit(self.main_commit())
+            .expect("commit")
+            .message()
+            .unwrap_or("")
+            .to_string();
         msg
     }
 
@@ -150,7 +186,9 @@ impl Fixture {
     }
 
     pub fn worktree_path(&self, id: u32) -> PathBuf {
-        self.root.join(".claude/worktrees").join(format!("factory-{id:03}-hello"))
+        self.root
+            .join(".claude/worktrees")
+            .join(format!("factory-{id:03}-hello"))
     }
 
     /// Takes a live lease as another driver.
@@ -159,6 +197,7 @@ impl Fixture {
             &factory_core::Layout::in_repo(&self.root).board_file(),
             std::time::Duration::from_secs(15),
         );
-        factory_engine::acquire_lease(&store, id, owner, 600.0, factory_engine::now_secs()).expect("lease");
+        factory_engine::acquire_lease(&store, id, owner, 600.0, factory_engine::now_secs())
+            .expect("lease");
     }
 }

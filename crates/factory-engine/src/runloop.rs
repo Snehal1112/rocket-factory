@@ -2,7 +2,10 @@ use std::path::Path;
 
 use factory_core::{Job, Ledger, SeriesPos, Stage};
 
-use crate::{merge_stage, now_secs, park, parse_series, today, Driver, EngineError, MergeResult, StageOutcome};
+use crate::{
+    merge_stage, now_secs, park, parse_series, today, Driver, EngineError, MergeResult,
+    StageOutcome,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunEnd {
@@ -23,7 +26,11 @@ pub(crate) fn add_job(
 ) -> Result<Job, EngineError> {
     // Folder and branch names keep a new id from colliding with a leftover of an older job.
     let dirs: Vec<String> = std::fs::read_dir(&driver.layout().jobs_dir)
-        .map(|rd| rd.filter_map(|e| e.ok()).filter_map(|e| e.file_name().into_string().ok()).collect())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect()
+        })
         .unwrap_or_default();
     let branches = driver.repo().local_branch_names()?;
     let job = driver.store().update(|board| {
@@ -47,12 +54,16 @@ pub(crate) fn add_job(
     let mut job = job;
     let dir = driver.job_dir(&job);
     std::fs::create_dir_all(&dir)?;
-    Ledger::new(dir.join("progress.md"))
-        .create(&format!("# SDD ledger, plan: {}", dir.join("plan.md").display()))?;
+    Ledger::new(dir.join("progress.md")).create(&format!(
+        "# SDD ledger, plan: {}",
+        dir.join("plan.md").display()
+    ))?;
     if let Some(pos) = &job.series {
         std::fs::copy(&pos.plan_file, dir.join("plan.md"))?;
         // The estimate is best effort: no history or a failed read gives no estimate, never an error.
-        let bytes = std::fs::metadata(dir.join("plan.md")).map(|m| m.len()).unwrap_or(0);
+        let bytes = std::fs::metadata(dir.join("plan.md"))
+            .map(|m| m.len())
+            .unwrap_or(0);
         if let Some(estimate) = crate::costs::estimate_for_plan(driver, bytes) {
             let stored = estimate.clone();
             // A failed write is ignored, so the job simply has no estimate.
@@ -65,7 +76,11 @@ pub(crate) fn add_job(
             }
         }
     }
-    let series_label = job.series.as_ref().and_then(|s| s.id.clone()).unwrap_or_default();
+    let series_label = job
+        .series
+        .as_ref()
+        .and_then(|s| s.id.clone())
+        .unwrap_or_default();
     tracing::info!(
         event = "job.created",
         job_id = job.id.as_str(),
@@ -169,7 +184,11 @@ pub(crate) const NO_USER_DECISION: &str = "no decision in this spec was answered
 /// How many list items in the `## Decisions` section say `Decided by: user`. No section gives 0.
 pub(crate) fn user_decisions(spec: &str) -> usize {
     section_body(spec, "Decisions")
-        .map(|body| body.lines().filter(|l| is_list_item(l) && l.contains("Decided by: user")).count())
+        .map(|body| {
+            body.lines()
+                .filter(|l| is_list_item(l) && l.contains("Decided by: user"))
+                .count()
+        })
         .unwrap_or(0)
 }
 
@@ -177,7 +196,10 @@ pub(crate) fn user_decisions(spec: &str) -> usize {
 /// It goes to stderr and, when the ledger takes it, to a ruling line of the job.
 fn note_failure(driver: &Driver, job: &Job, what: &str, slug: &str, err: &EngineError) {
     tracing::error!(event = "step.error", step = "note_failure", msg = %format!("{what} error for {slug}: {err}"));
-    let line = format!("{what} error: {err}").split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = format!("{what} error: {err}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if let Err(ledger_err) = Ledger::new(driver.job_dir(job).join("progress.md")).ruling(&line) {
         tracing::error!(event = "step.error", step = "note_failure_ledger", msg = %format!("{what} ledger note error for {slug}: {ledger_err}"));
     }
@@ -186,7 +208,9 @@ fn note_failure(driver: &Driver, job: &Job, what: &str, slug: &str, err: &Engine
 /// Removes the draft card of this slug, if there is one. A failure, such as a draft that a concurrent
 /// cancel removed first, is reported and never changes the result.
 pub(crate) fn adopt_draft(driver: &Driver, slug: &str, job: &Job) {
-    adopt_draft_with(driver, slug, job, |d, s| crate::remove_draft(d, s).map(|_| ()));
+    adopt_draft_with(driver, slug, job, |d, s| {
+        crate::remove_draft(d, s).map(|_| ())
+    });
 }
 
 fn adopt_draft_with(
@@ -235,8 +259,16 @@ fn check_spec(spec: &str, name: &str) -> Result<(), EngineError> {
     for title in ["Goal", "Acceptance criteria"] {
         let body = match section_body(spec, title) {
             Some(body) if !body.trim().is_empty() => body,
-            Some(_) => return Err(EngineError::Msg(format!("{name} section `## {title}` is empty"))),
-            None => return Err(EngineError::Msg(format!("{name} has no `## {title}` section"))),
+            Some(_) => {
+                return Err(EngineError::Msg(format!(
+                    "{name} section `## {title}` is empty"
+                )))
+            }
+            None => {
+                return Err(EngineError::Msg(format!(
+                    "{name} has no `## {title}` section"
+                )))
+            }
         };
         if title == "Goal" && body.split_whitespace().count() < MIN_GOAL_WORDS {
             return Err(EngineError::Msg(format!(
@@ -288,7 +320,12 @@ pub(crate) fn validate_series(
     // A placeholder in any plan refuses the call before a job exists. Other findings are warnings.
     let mut plan_warnings: Vec<String> = Vec::new();
     for plan in &series.plans {
-        let name = plan.path.file_name().and_then(|n| n.to_str()).unwrap_or("plan").to_string();
+        let name = plan
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("plan")
+            .to_string();
         let text = std::fs::read_to_string(&plan.path)
             .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", plan.path.display())))?;
         let lint = crate::planlint::lint_plan(&text, &name);
@@ -299,7 +336,9 @@ pub(crate) fn validate_series(
     }
     // An explicit spec path wins. Otherwise a folder holds the spec beside the plans, and a single
     // plan file has no spec to check.
-    let spec = spec_path.map(Path::to_path_buf).unwrap_or_else(|| start.join("spec.md"));
+    let spec = spec_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| start.join("spec.md"));
     let has_spec = spec_path.is_some() || start.is_dir();
     // The text that passes the check is the text every job gets, so the file is read once.
     let mut spec_text: Option<String> = None;
@@ -314,7 +353,11 @@ pub(crate) fn validate_series(
         check_spec(&text, &spec.display().to_string())?;
         spec_text = Some(text);
     }
-    Ok(Validated { series, plan_warnings, spec_text })
+    Ok(Validated {
+        series,
+        plan_warnings,
+        spec_text,
+    })
 }
 
 /// Creates the jobs of a series and returns plan 1's job, which starts at stage build. Every later plan
@@ -344,12 +387,25 @@ pub fn create_job_with_spec(
         return Err(EngineError::Msg("--spec needs --plans".to_string()));
     }
     let Some(start) = plan else {
-        let job = add_job(driver, slug, feature, &factory_core::parse_issues(feature), None, Stage::Build, model)?;
+        let job = add_job(
+            driver,
+            slug,
+            feature,
+            &factory_core::parse_issues(feature),
+            None,
+            Stage::Build,
+            model,
+        )?;
         adopt_draft(driver, slug, &job);
         return Ok(job);
     };
-    let Validated { series, plan_warnings, spec_text } = validate_series(driver, start, spec_path, |root, start| {
-        crate::parse_series_with(root, start, Some(crate::series::MAX_TASKS_PER_PLAN)).map_err(EngineError::from)
+    let Validated {
+        series,
+        plan_warnings,
+        spec_text,
+    } = validate_series(driver, start, spec_path, |root, start| {
+        crate::parse_series_with(root, start, Some(crate::series::MAX_TASKS_PER_PLAN))
+            .map_err(EngineError::from)
     })?;
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
@@ -380,17 +436,41 @@ pub fn create_job_with_spec(
         }
         Ok(())
     };
-    let first = add_job(driver, slug, feature, &issues, Some(pos(0)), Stage::Build, model)?;
+    let first = add_job(
+        driver,
+        slug,
+        feature,
+        &issues,
+        Some(pos(0)),
+        Stage::Build,
+        model,
+    )?;
     copy_spec(&first)?;
     for (index, later) in series.plans.iter().enumerate().skip(1) {
-        let stem = later.path.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
-        let later_job = add_job(driver, &stem, feature, &issues, Some(pos(index)), Stage::Spec, model)?;
+        let stem = later
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("plan")
+            .to_string();
+        let later_job = add_job(
+            driver,
+            &stem,
+            feature,
+            &issues,
+            Some(pos(index)),
+            Stage::Spec,
+            model,
+        )?;
         copy_spec(&later_job)?;
     }
     adopt_draft(driver, slug, &first);
     // The job is made either way. The warning only tells the reader how little the user decided.
     let mut first = first;
-    if spec_text.as_deref().is_some_and(|text| user_decisions(text) == 0) {
+    if spec_text
+        .as_deref()
+        .is_some_and(|text| user_decisions(text) == 0)
+    {
         first = add_warning(driver, slug, first, NO_USER_DECISION);
     }
     for warning in &plan_warnings {
@@ -409,11 +489,16 @@ pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
     result
 }
 
-fn run_job_inner(driver: &Driver, id: &str, guard: &crate::ProjectGuard<'_>) -> Result<RunEnd, EngineError> {
+fn run_job_inner(
+    driver: &Driver,
+    id: &str,
+    guard: &crate::ProjectGuard<'_>,
+) -> Result<RunEnd, EngineError> {
     // Each plan task costs one build call, so the allowance grows with the task count.
     let task_calls = {
         let job = driver.job(id)?;
-        let plan = std::fs::read_to_string(driver.job_dir(&job).join("plan.md")).unwrap_or_default();
+        let plan =
+            std::fs::read_to_string(driver.job_dir(&job).join("plan.md")).unwrap_or_default();
         crate::tasks::parse_tasks(&plan).len()
     };
     let limit = driver.config().fix_rounds as usize * 4 + 12 + task_calls;
@@ -433,7 +518,9 @@ fn run_job_inner(driver: &Driver, id: &str, guard: &crate::ProjectGuard<'_>) -> 
                     park(driver, id, "no plan.md in the job folder")?;
                 } else {
                     let now = now_secs();
-                    driver.store().update_job(id, |j| crate::ports::set_stage_logged(j, Stage::Build, None, false, now))?;
+                    driver.store().update_job(id, |j| {
+                        crate::ports::set_stage_logged(j, Stage::Build, None, false, now)
+                    })?;
                 }
             }
             Stage::Build => {
@@ -476,25 +563,46 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
             return Ok(end);
         }
         let job = driver.job(&current)?;
-        let Some(pos) = job.series.clone() else { return Ok(RunEnd::Merged) };
+        let Some(pos) = job.series.clone() else {
+            return Ok(RunEnd::Merged);
+        };
         let series = parse_series(driver.root(), Path::new(&pos.plan_file))?;
-        let Some(next) = series.plans[0].next.clone() else { return Ok(RunEnd::Merged) };
+        let Some(next) = series.plans[0].next.clone() else {
+            return Ok(RunEnd::Merged);
+        };
         // Resume: the next job may already exist from an earlier run.
         let board = driver.store().load()?;
         let next_name = next.to_string_lossy().into_owned();
-        let existing = board
-            .jobs
-            .iter()
-            .find(|j| j.series.as_ref().is_some_and(|s| s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1));
+        let existing = board.jobs.iter().find(|j| {
+            j.series.as_ref().is_some_and(|s| {
+                s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1
+            })
+        });
         current = match existing {
             Some(j) => j.id.clone(),
             None => {
                 // A series made before plans got their jobs up front: create this plan's job now.
-                let stem = next.file_stem().and_then(|s| s.to_str()).unwrap_or("plan").to_string();
-                let next_pos =
-                    SeriesPos { plan_file: next_name, index: pos.index + 1, total: pos.total, id: pos.id.clone() };
-                add_job(driver, &stem, &job.feature, &job.issues, Some(next_pos), Stage::Build, job.model.as_deref())?
-                    .id
+                let stem = next
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("plan")
+                    .to_string();
+                let next_pos = SeriesPos {
+                    plan_file: next_name,
+                    index: pos.index + 1,
+                    total: pos.total,
+                    id: pos.id.clone(),
+                };
+                add_job(
+                    driver,
+                    &stem,
+                    &job.feature,
+                    &job.issues,
+                    Some(next_pos),
+                    Stage::Build,
+                    job.model.as_deref(),
+                )?
+                .id
             }
         };
     }
@@ -514,10 +622,18 @@ mod tests {
         opts.initial_head("main");
         let repo = git2::Repository::init_opts(&root, &opts).expect("init");
         let sig = git2::Signature::now("t", "t@example.com").expect("sig");
-        let tree = repo.find_tree(repo.index().expect("index").write_tree().expect("tree")).expect("find");
-        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).expect("commit");
+        let tree = repo
+            .find_tree(repo.index().expect("index").write_tree().expect("tree"))
+            .expect("find");
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .expect("commit");
         let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::new(Vec::new()));
-        Driver::new(Layout::in_repo(&root), Config::default(), Box::new(move |_| runner.clone())).expect("driver")
+        Driver::new(
+            Layout::in_repo(&root),
+            Config::default(),
+            Box::new(move |_| runner.clone()),
+        )
+        .expect("driver")
     }
 
     #[test]
@@ -527,11 +643,20 @@ mod tests {
         crate::start_draft(&d, "demo", "f", "2026-10-18", 1.0).expect("draft");
         let job = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
         let (_, lines) = factory_telemetry::capture("info", || {
-            adopt_draft_with(&d, "demo", &job, |_, _| Err(EngineError::Msg("no draft named demo".into())));
+            adopt_draft_with(&d, "demo", &job, |_, _| {
+                Err(EngineError::Msg("no draft named demo".into()))
+            });
         });
-        let hit: Vec<_> = lines.iter().filter(|l| l["level"] == "error" && l["step"] == "note_failure").collect();
+        let hit: Vec<_> = lines
+            .iter()
+            .filter(|l| l["level"] == "error" && l["step"] == "note_failure")
+            .collect();
         assert_eq!(hit.len(), 1, "{lines:?}");
-        assert!(hit[0]["msg"].as_str().expect("msg").contains("demo"), "{}", hit[0]);
+        assert!(
+            hit[0]["msg"].as_str().expect("msg").contains("demo"),
+            "{}",
+            hit[0]
+        );
     }
 
     #[test]
@@ -540,12 +665,17 @@ mod tests {
         let d = driver(&tmp);
         crate::start_draft(&d, "demo", "f", "2026-10-18", 1.0).expect("draft");
         let job = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
-        adopt_draft_with(&d, "demo", &job, |_, _| Err(EngineError::Msg("no draft named demo".into())));
+        adopt_draft_with(&d, "demo", &job, |_, _| {
+            Err(EngineError::Msg("no draft named demo".into()))
+        });
         let board = d.store().load().expect("board");
         assert_eq!(board.jobs.len(), 1);
         assert_eq!(board.drafts.len(), 1, "the failed removal leaves the card");
         let ledger = std::fs::read_to_string(d.job_dir(&job).join("progress.md")).expect("ledger");
-        assert!(ledger.contains("Ruling: draft adoption error: no draft named demo"), "{ledger}");
+        assert!(
+            ledger.contains("Ruling: draft adoption error: no draft named demo"),
+            "{ledger}"
+        );
     }
 
     #[test]
@@ -559,7 +689,10 @@ mod tests {
         let real = d.store().load().expect("board").jobs.remove(0);
         let warned = add_warning(&d, "demo", add_warning(&d, "demo", real, "one"), "two");
         assert_eq!(warned.spec_warning.as_deref(), Some("one; two"));
-        assert_eq!(d.job(&warned.id).expect("job").spec_warning.as_deref(), Some("one; two"));
+        assert_eq!(
+            d.job(&warned.id).expect("job").spec_warning.as_deref(),
+            Some("one; two")
+        );
     }
 
     #[test]
@@ -572,6 +705,9 @@ mod tests {
     #[test]
     fn a_spec_without_a_decisions_section_counts_zero() {
         assert_eq!(user_decisions("# S\n\n## Goal\n\n- Decided by: user\n"), 0);
-        assert_eq!(user_decisions("## Decisions\n\nDecided by: user, but not a list item.\n"), 0);
+        assert_eq!(
+            user_decisions("## Decisions\n\nDecided by: user, but not a list item.\n"),
+            0
+        );
     }
 }

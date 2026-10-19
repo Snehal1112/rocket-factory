@@ -14,14 +14,18 @@ const LAST_RESULTS: usize = 10;
 const DEFAULT_DRAFT_STALE_HOURS: u64 = 24;
 
 fn base_of(file: &ProjectFile) -> String {
-    file.base_branch().unwrap_or_else(|| Config::default().base_branch)
+    file.base_branch()
+        .unwrap_or_else(|| Config::default().base_branch)
 }
 
 /// Opens the repo at exactly `path`, like `factory project list` does.
 fn open_repo(path: &std::path::Path, base: &str) -> Result<Repo, String> {
     let repo = Repo::open(path).map_err(|e| format!("not a git repository: {e}"))?;
     if std::fs::canonicalize(repo.root()).ok() != std::fs::canonicalize(path).ok() {
-        return Err(format!("{} is not the top folder of a git repository", path.display()));
+        return Err(format!(
+            "{} is not the top folder of a git repository",
+            path.display()
+        ));
     }
     Ok(repo.with_base_branch(base))
 }
@@ -67,12 +71,22 @@ fn describe(home: &Home, name: &str, file: &ProjectFile, now_secs: f64) -> Value
     };
     if let Ok(resolved) = resolve(home, name, &RepoTip(&repo)) {
         if resolved.config.degraded {
-            let why = resolved.problems.first().cloned().unwrap_or_else(|| "the settings failed closed".to_string());
+            let why = resolved
+                .problems
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "the settings failed closed".to_string());
             set(&mut v, "ready", format!("degraded: {why}"));
         }
     }
-    if let ProjectLeaseStatus::Held { owner, job, .. } = project_lease_status(&layout.state_dir, now_secs) {
-        set(&mut v, "busy", format!("job {job} is running (leased by {owner})"));
+    if let ProjectLeaseStatus::Held { owner, job, .. } =
+        project_lease_status(&layout.state_dir, now_secs)
+    {
+        set(
+            &mut v,
+            "busy",
+            format!("job {job} is running (leased by {owner})"),
+        );
         v["activeJob"] = json!(job);
     }
     v
@@ -128,7 +142,8 @@ pub fn jobs(home: &Home, deps: &ApiDeps, name: &str) -> ApiResponse {
         })
         .collect();
     // An invalid config.toml gives the default threshold instead of failing the read.
-    let stale_hours = factory_core::HomeConfig::load(home).map_or(DEFAULT_DRAFT_STALE_HOURS, |c| c.draft_stale_hours);
+    let stale_hours = factory_core::HomeConfig::load(home)
+        .map_or(DEFAULT_DRAFT_STALE_HOURS, |c| c.draft_stale_hours);
     let now_secs = (deps.now_ms)() as f64 / 1000.0;
     let drafts: Vec<Value> = board
         .drafts
@@ -147,8 +162,16 @@ pub fn jobs(home: &Home, deps: &ApiDeps, name: &str) -> ApiResponse {
             _ => None,
         })
         .collect();
-    let mut results: Vec<_> = records::read_results(home).into_iter().flatten().filter(|r| r.project == name).collect();
-    results.sort_by(|a, b| b.finished_ms.cmp(&a.finished_ms).then_with(|| b.request_id.cmp(&a.request_id)));
+    let mut results: Vec<_> = records::read_results(home)
+        .into_iter()
+        .flatten()
+        .filter(|r| r.project == name)
+        .collect();
+    results.sort_by(|a, b| {
+        b.finished_ms
+            .cmp(&a.finished_ms)
+            .then_with(|| b.request_id.cmp(&a.request_id))
+    });
     let last: Vec<Value> = results
         .into_iter()
         .take(LAST_RESULTS)
@@ -167,7 +190,15 @@ mod tests {
     use crate::api::testutil::*;
 
     fn get(home: &factory_core::Home, path: &str) -> crate::api::http::ApiResponse {
-        route(home, &deps(), "GET", path, "", &headers(Some(TOKEN), "localhost:1"), b"")
+        route(
+            home,
+            &deps(),
+            "GET",
+            path,
+            "",
+            &headers(Some(TOKEN), "localhost:1"),
+            b"",
+        )
     }
 
     #[test]
@@ -186,23 +217,40 @@ mod tests {
         assert_eq!(good["status"], "ready");
         assert_eq!(good["baseBranch"], "trunk");
         assert_eq!(good["preset"], "rust");
-        assert!(good["stateDir"].as_str().expect("state").ends_with("projects/good/state"));
-        assert!(good["jobsDir"].as_str().expect("jobs").ends_with("projects/good/state/jobs"));
+        assert!(good["stateDir"]
+            .as_str()
+            .expect("state")
+            .ends_with("projects/good/state"));
+        assert!(good["jobsDir"]
+            .as_str()
+            .expect("jobs")
+            .ends_with("projects/good/state/jobs"));
         assert!(good["activeJob"].is_null());
     }
 
     #[test]
     fn job_names_are_checked() {
         let (_t, home) = fixture();
-        assert_eq!(get(&home, "/projects/ghost/jobs").body["error"]["code"], "not_found");
-        assert_eq!(get(&home, "/projects/Bad..Name/jobs").body["error"]["code"], "bad_request");
+        assert_eq!(
+            get(&home, "/projects/ghost/jobs").body["error"]["code"],
+            "not_found"
+        );
+        assert_eq!(
+            get(&home, "/projects/Bad..Name/jobs").body["error"]["code"],
+            "bad_request"
+        );
     }
 
     #[test]
     fn jobs_come_from_the_board_queue_and_results() {
         let (_t, home) = fixture();
-        write_board(&home, &format!(r#"{{"jobs":[{}]}}"#, job_json("001", "001-first")));
-        let req = crate::request::Request::new("good", crate::request::Action::Run, "002", false, 5).expect("req");
+        write_board(
+            &home,
+            &format!(r#"{{"jobs":[{}]}}"#, job_json("001", "001-first")),
+        );
+        let req =
+            crate::request::Request::new("good", crate::request::Action::Run, "002", false, 5)
+                .expect("req");
         crate::queue::enqueue(&home, &req).expect("enqueue");
         let done = crate::records::ResultRecord {
             request_id: crate::request::make_id(9, "good", "001"),
@@ -231,7 +279,10 @@ mod tests {
         let (_t, home) = fixture();
         let now = (NOW_MS / 1000) as f64;
         let draft = |slug: &str, age: f64| {
-            format!(r#"{{"slug":"{slug}","feature":"F","stage":"interview","created":"2026-10-18","updated_at":{}}}"#, now - age)
+            format!(
+                r#"{{"slug":"{slug}","feature":"F","stage":"interview","created":"2026-10-18","updated_at":{}}}"#,
+                now - age
+            )
         };
         let board = format!(
             r#"{{"jobs":[{}],"drafts":[{},{},{}]}}"#,
@@ -247,7 +298,12 @@ mod tests {
             assert!(r.body[key].is_array(), "{key}");
         }
         assert_eq!(r.body["jobs"][0]["id"], "001");
-        let stale: Vec<_> = r.body["drafts"].as_array().expect("drafts").iter().map(|d| d["stale"].clone()).collect();
+        let stale: Vec<_> = r.body["drafts"]
+            .as_array()
+            .expect("drafts")
+            .iter()
+            .map(|d| d["stale"].clone())
+            .collect();
         assert_eq!(stale, vec![false, false, true]);
         assert_eq!(r.body["drafts"][0]["slug"], "fresh");
         assert_eq!(r.body["drafts"][0]["stage"], "interview");
@@ -255,11 +311,19 @@ mod tests {
         // The home config sets the threshold.
         std::fs::write(home.config_file(), "draft_stale_hours = 1\n").expect("config");
         let r = get(&home, "/projects/good/jobs");
-        let stale: Vec<_> = r.body["drafts"].as_array().expect("drafts").iter().map(|d| d["stale"].clone()).collect();
+        let stale: Vec<_> = r.body["drafts"]
+            .as_array()
+            .expect("drafts")
+            .iter()
+            .map(|d| d["stale"].clone())
+            .collect();
         assert_eq!(stale, vec![false, true, true]);
         // A board without drafts gives an empty list.
         write_board(&home, r#"{"jobs":[]}"#);
-        assert_eq!(get(&home, "/projects/good/jobs").body["drafts"], serde_json::json!([]));
+        assert_eq!(
+            get(&home, "/projects/good/jobs").body["drafts"],
+            serde_json::json!([])
+        );
     }
 
     #[test]
@@ -286,27 +350,63 @@ mod tests {
              {{\"job\":\"001\",\"input\":50,\"cache_creation\":0,\"output\":0,\"cache_read\":0,\"ts\":{old}}}\n"
         );
         write_usage(&home, "001-first", &text);
-        let r = route(&home, &deps(), "GET", "/usage", "days=2", &headers(Some(TOKEN), "localhost:1"), b"");
+        let r = route(
+            &home,
+            &deps(),
+            "GET",
+            "/usage",
+            "days=2",
+            &headers(Some(TOKEN), "localhost:1"),
+            b"",
+        );
         assert_eq!(r.status, 200, "{}", r.body);
         assert_eq!(r.body["days"], 2);
-        let good = r.body["projects"].as_array().expect("array").iter().find(|p| p["name"] == "good").expect("good");
+        let good = r.body["projects"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .find(|p| p["name"] == "good")
+            .expect("good");
         assert_eq!(good["total"], 207);
-        assert_eq!(good["perDay"][0], serde_json::json!({"day": "2023-11-13", "tokens": 7}));
-        assert_eq!(good["perDay"][1], serde_json::json!({"day": "2023-11-14", "tokens": 200}));
+        assert_eq!(
+            good["perDay"][0],
+            serde_json::json!({"day": "2023-11-13", "tokens": 7})
+        );
+        assert_eq!(
+            good["perDay"][1],
+            serde_json::json!({"day": "2023-11-14", "tokens": 200})
+        );
     }
 
     #[test]
     fn usage_reports_the_daily_budget_only_when_a_limit_is_set() {
         let (_t, home) = fixture();
         let today = NOW_MS / 1000;
-        write_usage(&home, "001-first", &format!("{{\"input\":120,\"ts\":{today}}}\n"));
-        let call = |home: &factory_core::Home| route(home, &deps(), "GET", "/usage", "days=1", &headers(Some(TOKEN), "localhost:1"), b"");
+        write_usage(
+            &home,
+            "001-first",
+            &format!("{{\"input\":120,\"ts\":{today}}}\n"),
+        );
+        let call = |home: &factory_core::Home| {
+            route(
+                home,
+                &deps(),
+                "GET",
+                "/usage",
+                "days=1",
+                &headers(Some(TOKEN), "localhost:1"),
+                b"",
+            )
+        };
         let r = call(&home);
         assert_eq!(r.status, 200);
         assert!(r.body.get("dailyBudget").is_none());
         std::fs::write(home.config_file(), "daily_budget_weighted = 1000\n").expect("config");
         let r = call(&home);
-        assert_eq!(r.body["dailyBudget"], serde_json::json!({"limit": 1000, "used": 120, "resetsAt": "2023-11-15T00:00:00Z"}));
+        assert_eq!(
+            r.body["dailyBudget"],
+            serde_json::json!({"limit": 1000, "used": 120, "resetsAt": "2023-11-15T00:00:00Z"})
+        );
         assert!(r.body["projects"].is_array());
         assert_eq!(r.body["days"], 1);
     }
@@ -315,8 +415,20 @@ mod tests {
     fn bad_days_are_refused() {
         let (_t, home) = fixture();
         for q in ["days=0", "days=91", "days=x"] {
-            let r = route(&home, &deps(), "GET", "/usage", q, &headers(Some(TOKEN), "localhost:1"), b"");
-            assert_eq!((r.status, r.body["error"]["code"].as_str()), (400, Some("bad_request")), "{q}");
+            let r = route(
+                &home,
+                &deps(),
+                "GET",
+                "/usage",
+                q,
+                &headers(Some(TOKEN), "localhost:1"),
+                b"",
+            );
+            assert_eq!(
+                (r.status, r.body["error"]["code"].as_str()),
+                (400, Some("bad_request")),
+                "{q}"
+            );
         }
     }
 }

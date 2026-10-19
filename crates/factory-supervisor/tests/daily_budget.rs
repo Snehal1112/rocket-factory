@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use factory_core::{project, Home};
 use factory_supervisor::request::{Action, Request};
-use factory_supervisor::{queue, ChildPoll, QueueItem, Spawner, SpawnError, Supervisor};
+use factory_supervisor::{queue, ChildPoll, QueueItem, SpawnError, Spawner, Supervisor};
 
 const DAY: u64 = 19_675;
 const DAY_MS: u64 = 86_400_000;
@@ -20,7 +20,9 @@ struct Fake {
 
 impl Spawner for Fake {
     fn spawn(&self, _: &Home, req: &Request, _: &Path, _: &Path) -> Result<u32, SpawnError> {
-        self.spawned.borrow_mut().push((req.project.clone(), req.action));
+        self.spawned
+            .borrow_mut()
+            .push((req.project.clone(), req.action));
         Ok(std::process::id())
     }
 
@@ -45,7 +47,12 @@ fn env(limit: Option<u64>) -> Env {
         std::fs::create_dir_all(&repo).expect("repo");
         project::add(&home, n, &repo, "rust", None, &|_| Ok(())).expect("add");
     }
-    let e = Env { _t: t, home, clock: Rc::new(Cell::new(NOON)), fake: Fake::default() };
+    let e = Env {
+        _t: t,
+        home,
+        clock: Rc::new(Cell::new(NOON)),
+        fake: Fake::default(),
+    };
     e.set_limit(limit);
     e
 }
@@ -53,17 +60,26 @@ fn env(limit: Option<u64>) -> Env {
 impl Env {
     fn supervisor(&self) -> Supervisor {
         let clock = self.clock.clone();
-        Supervisor::new(self.home.clone(), Box::new(self.fake.clone()), Box::new(move || clock.get()))
+        Supervisor::new(
+            self.home.clone(),
+            Box::new(self.fake.clone()),
+            Box::new(move || clock.get()),
+        )
     }
 
     fn set_limit(&self, limit: Option<u64>) {
-        let text = limit.map(|l| format!("daily_budget_weighted = {l}\n")).unwrap_or_default();
+        let text = limit
+            .map(|l| format!("daily_budget_weighted = {l}\n"))
+            .unwrap_or_default();
         std::fs::write(self.home.config_file(), text).expect("config");
     }
 
     fn use_tokens(&self, name: &str, tokens: u64, day: u64) {
         let file = project::get(&self.home, name).expect("project");
-        let dir = project::layout(&self.home, name, &file).expect("layout").jobs_dir.join("001");
+        let dir = project::layout(&self.home, name, &file)
+            .expect("layout")
+            .jobs_dir
+            .join("001");
         std::fs::create_dir_all(&dir).expect("job dir");
         let line = format!("{{\"input\":{tokens},\"ts\":{}}}\n", day * 86_400 + 5);
         let path = dir.join("usage.jsonl");
@@ -82,7 +98,10 @@ impl Env {
             .into_iter()
             .filter_map(|i| match i {
                 QueueItem::Ok(r) => {
-                    let text = std::fs::read_to_string(self.home.queue_dir().join(format!("{}.json", r.id))).expect("read");
+                    let text = std::fs::read_to_string(
+                        self.home.queue_dir().join(format!("{}.json", r.id)),
+                    )
+                    .expect("read");
                     Some((r.id, text))
                 }
                 QueueItem::Bad { .. } => None,

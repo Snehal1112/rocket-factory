@@ -12,14 +12,24 @@ const DEFAULT_TEST_PATHS: &[&str] = &[
     "**/*_test.go",
 ];
 
-const DEFAULT_TEST_MARKERS: &[&str] = &["#[test]", "#[tokio::test]", "#[cfg(test)]", "describe(", "it(", "test(", "func Test"];
+const DEFAULT_TEST_MARKERS: &[&str] = &[
+    "#[test]",
+    "#[tokio::test]",
+    "#[cfg(test)]",
+    "describe(",
+    "it(",
+    "test(",
+    "func Test",
+];
 
 fn matches_any(patterns: &[String], defaults: &[&str], path: &str) -> bool {
     let lower = normalize(path).to_lowercase();
     if patterns.is_empty() {
         defaults.iter().any(|p| glob_match(p, &lower))
     } else {
-        patterns.iter().any(|p| glob_match(&p.to_lowercase(), &lower))
+        patterns
+            .iter()
+            .any(|p| glob_match(&p.to_lowercase(), &lower))
     }
 }
 
@@ -41,18 +51,23 @@ pub fn code_paths_of<S: AsRef<str>>(paths: &[S], config: &Config) -> Vec<String>
 
 /// True when one path is a test path. An empty `test_paths` means the built-in list.
 pub fn has_test_path<S: AsRef<str>>(paths: &[S], config: &Config) -> bool {
-    paths.iter().any(|p| matches_any(&config.test_paths, DEFAULT_TEST_PATHS, p.as_ref()))
+    paths
+        .iter()
+        .any(|p| matches_any(&config.test_paths, DEFAULT_TEST_PATHS, p.as_ref()))
 }
 
 /// True when an added diff line holds a test marker. File headers, removed and context lines are ignored.
 pub fn has_test_marker(diff_text: &str, config: &Config) -> bool {
-    diff_text.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).any(|l| {
-        if config.test_markers.is_empty() {
-            DEFAULT_TEST_MARKERS.iter().any(|m| l.contains(m))
-        } else {
-            config.test_markers.iter().any(|m| l.contains(m.as_str()))
-        }
-    })
+    diff_text
+        .lines()
+        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .any(|l| {
+            if config.test_markers.is_empty() {
+                DEFAULT_TEST_MARKERS.iter().any(|m| l.contains(m))
+            } else {
+                config.test_markers.iter().any(|m| l.contains(m.as_str()))
+            }
+        })
 }
 
 #[cfg(test)]
@@ -72,7 +87,10 @@ mod tests {
     #[test]
     fn a_source_file_is_code_by_default() {
         let paths = ["crates/a/src/lib.rs", "docs/a.md"];
-        assert_eq!(code_paths_of(&paths, &cfg()), vec!["crates/a/src/lib.rs".to_string()]);
+        assert_eq!(
+            code_paths_of(&paths, &cfg()),
+            vec!["crates/a/src/lib.rs".to_string()]
+        );
     }
 
     #[test]
@@ -93,7 +111,10 @@ mod tests {
     #[test]
     fn a_degraded_config_counts_every_path_as_code() {
         let c = Config::fail_closed();
-        assert_eq!(code_paths_of(&["docs/a.md"], &c), vec!["docs/a.md".to_string()]);
+        assert_eq!(
+            code_paths_of(&["docs/a.md"], &c),
+            vec!["docs/a.md".to_string()]
+        );
         assert!(!c.require_tests);
     }
 
@@ -130,7 +151,10 @@ mod tests {
     #[test]
     fn paths_match_ignoring_case_and_a_leading_dot_slash() {
         assert!(has_test_path(&["./Crates/A/Tests/X.rs"], &cfg()));
-        assert_eq!(code_paths_of(&["./Src/A.RS"], &cfg()), vec!["./Src/A.RS".to_string()]);
+        assert_eq!(
+            code_paths_of(&["./Src/A.RS"], &cfg()),
+            vec!["./Src/A.RS".to_string()]
+        );
     }
 
     #[test]
@@ -141,7 +165,10 @@ mod tests {
         assert!(has_test_marker("+func TestThing(t *testing.T) {\n", &cfg()));
         assert!(!has_test_marker("-    #[test]\n", &cfg()), "a removed line");
         assert!(!has_test_marker(" #[test]\n", &cfg()), "a context line");
-        assert!(!has_test_marker("+++ b/tests/it(.rs\n", &cfg()), "a file header");
+        assert!(
+            !has_test_marker("+++ b/tests/it(.rs\n", &cfg()),
+            "a file header"
+        );
     }
 
     #[test]

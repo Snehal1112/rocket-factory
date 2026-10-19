@@ -39,10 +39,14 @@ pub fn decide(input: &SchedulerInput) -> Vec<Decision> {
     let mut out = Vec::new();
     for req in queue {
         match input.project_states.get(&req.project) {
-            None => out.push(Decision::Reject { request: req.clone(), reason: "unknown project".to_string() }),
-            Some(ProjectState::Disabled { reason }) => {
-                out.push(Decision::Reject { request: req.clone(), reason: reason.clone() })
-            }
+            None => out.push(Decision::Reject {
+                request: req.clone(),
+                reason: "unknown project".to_string(),
+            }),
+            Some(ProjectState::Disabled { reason }) => out.push(Decision::Reject {
+                request: req.clone(),
+                reason: reason.clone(),
+            }),
             Some(ProjectState::LeaseHeld { .. }) => {}
             Some(ProjectState::Ready) => {
                 let held = input.daily_exhausted && req.action == Action::Run;
@@ -66,19 +70,34 @@ mod tests {
         Request::new(p, Action::Run, "1", false, ts).expect("request")
     }
 
-    fn input(max: u32, queue: Vec<Request>, running: &[&str], states: &[(&str, ProjectState)]) -> SchedulerInput {
+    fn input(
+        max: u32,
+        queue: Vec<Request>,
+        running: &[&str],
+        states: &[(&str, ProjectState)],
+    ) -> SchedulerInput {
         SchedulerInput {
             max_parallel: max,
             queue,
             running_projects: running.iter().map(|s| s.to_string()).collect(),
-            project_states: states.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+            project_states: states
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
             daily_exhausted: false,
         }
     }
 
     fn ready(names: &[&str]) -> Vec<(&'static str, ProjectState)> {
         let all = ["a", "b", "c"];
-        names.iter().filter_map(|n| all.iter().find(|a| *a == n).map(|a| (*a, ProjectState::Ready))).collect()
+        names
+            .iter()
+            .filter_map(|n| {
+                all.iter()
+                    .find(|a| *a == n)
+                    .map(|a| (*a, ProjectState::Ready))
+            })
+            .collect()
     }
 
     fn started(d: &[Decision]) -> Vec<String> {
@@ -93,7 +112,9 @@ mod tests {
     fn rejected(d: &[Decision]) -> Vec<(String, String)> {
         d.iter()
             .filter_map(|x| match x {
-                Decision::Reject { request, reason } => Some((request.project.clone(), reason.clone())),
+                Decision::Reject { request, reason } => {
+                    Some((request.project.clone(), reason.clone()))
+                }
                 Decision::Start(_) => None,
             })
             .collect()
@@ -101,14 +122,24 @@ mod tests {
 
     #[test]
     fn capacity_limits_the_starts_in_order() {
-        let d = decide(&input(2, vec![req("a", 1), req("b", 2), req("c", 3)], &[], &ready(&["a", "b", "c"])));
+        let d = decide(&input(
+            2,
+            vec![req("a", 1), req("b", 2), req("c", 3)],
+            &[],
+            &ready(&["a", "b", "c"]),
+        ));
         assert_eq!(started(&d), ["a", "b"]);
         assert_eq!(d.len(), 2);
     }
 
     #[test]
     fn one_start_per_project() {
-        let d = decide(&input(3, vec![req("a", 1), req("a", 2)], &[], &ready(&["a"])));
+        let d = decide(&input(
+            3,
+            vec![req("a", 1), req("a", 2)],
+            &[],
+            &ready(&["a"]),
+        ));
         assert_eq!(started(&d), ["a"]);
         assert_eq!(d.len(), 1);
         match &d[0] {
@@ -119,7 +150,12 @@ mod tests {
 
     #[test]
     fn a_running_project_waits_and_others_start() {
-        let d = decide(&input(3, vec![req("a", 1), req("b", 2)], &["a"], &ready(&["a", "b"])));
+        let d = decide(&input(
+            3,
+            vec![req("a", 1), req("b", 2)],
+            &["a"],
+            &ready(&["a", "b"]),
+        ));
         assert_eq!(started(&d), ["b"]);
         assert_eq!(d.len(), 1);
     }
@@ -136,21 +172,37 @@ mod tests {
     #[test]
     fn a_disabled_project_is_rejected_without_using_capacity() {
         let mut states = ready(&["b"]);
-        states.push(("a", ProjectState::Disabled { reason: "broken project.toml".into() }));
+        states.push((
+            "a",
+            ProjectState::Disabled {
+                reason: "broken project.toml".into(),
+            },
+        ));
         let d = decide(&input(1, vec![req("a", 1), req("b", 2)], &[], &states));
-        assert_eq!(rejected(&d), [("a".to_string(), "broken project.toml".to_string())]);
+        assert_eq!(
+            rejected(&d),
+            [("a".to_string(), "broken project.toml".to_string())]
+        );
         assert_eq!(started(&d), ["b"]);
     }
 
     #[test]
     fn an_unknown_project_is_rejected() {
         let d = decide(&input(2, vec![req("c", 1)], &[], &ready(&["a"])));
-        assert_eq!(rejected(&d), [("c".to_string(), "unknown project".to_string())]);
+        assert_eq!(
+            rejected(&d),
+            [("c".to_string(), "unknown project".to_string())]
+        );
     }
 
     #[test]
     fn capacity_never_goes_negative() {
-        let d = decide(&input(1, vec![req("c", 1)], &["a", "b"], &ready(&["a", "b", "c"])));
+        let d = decide(&input(
+            1,
+            vec![req("c", 1)],
+            &["a", "b"],
+            &ready(&["a", "b", "c"]),
+        ));
         assert!(d.is_empty());
         let d = decide(&input(2, vec![req("c", 1)], &["a", "b"], &ready(&["c"])));
         assert!(d.is_empty());
@@ -186,7 +238,12 @@ mod tests {
 
     #[test]
     fn an_exhausted_budget_still_starts_an_approve() {
-        let d = decide(&exhausted(input(2, vec![approve("a", 1)], &[], &ready(&["a"]))));
+        let d = decide(&exhausted(input(
+            2,
+            vec![approve("a", 1)],
+            &[],
+            &ready(&["a"]),
+        )));
         assert_eq!(started(&d), ["a"]);
     }
 
@@ -210,7 +267,12 @@ mod tests {
 
     #[test]
     fn an_exhausted_budget_still_rejects_a_disabled_project() {
-        let states = [("a", ProjectState::Disabled { reason: "broken".into() })];
+        let states = [(
+            "a",
+            ProjectState::Disabled {
+                reason: "broken".into(),
+            },
+        )];
         let d = decide(&exhausted(input(2, vec![req("a", 1)], &[], &states)));
         assert_eq!(rejected(&d), [("a".to_string(), "broken".to_string())]);
     }

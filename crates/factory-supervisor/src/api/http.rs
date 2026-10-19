@@ -24,11 +24,17 @@ impl ApiResponse {
 
 /// An error body: `{"error": {"code", "message"}}`.
 pub fn error_response(status: u16, code: &str, message: &str) -> ApiResponse {
-    ApiResponse { status, body: json!({ "error": { "code": code, "message": message } }) }
+    ApiResponse {
+        status,
+        body: json!({ "error": { "code": code, "message": message } }),
+    }
 }
 
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
 }
 
 /// Only a loopback host name passes, with any port. This stops DNS rebinding from a web page.
@@ -59,10 +65,15 @@ fn unauthorized() -> ApiResponse {
 /// Checks the host, then the token. This runs before any body is read.
 pub fn authorize(home: &Home, headers: &[(String, String)]) -> Result<(), ApiResponse> {
     if !header(headers, "host").is_some_and(host_ok) {
-        return Err(error_response(400, "bad_request", "the Host header must be a loopback address"));
+        return Err(error_response(
+            400,
+            "bad_request",
+            "the Host header must be a loopback address",
+        ));
     }
     // The detail stays out of the body, because the caller is not authenticated yet.
-    let expected = token::read(home).map_err(|_| error_response(500, "failed", "the server cannot check the token"))?;
+    let expected = token::read(home)
+        .map_err(|_| error_response(500, "failed", "the server cannot check the token"))?;
     if token::matches(&expected, bearer(headers)) {
         Ok(())
     } else {
@@ -91,13 +102,19 @@ pub fn route(
         _ => return error_response(404, "not_found", "no such endpoint"),
     };
     if !allowed.contains(&method) {
-        return error_response(405, "method_not_allowed", &format!("allowed here: {}", allowed.join(", ")));
+        return error_response(
+            405,
+            "method_not_allowed",
+            &format!("allowed here: {}", allowed.join(", ")),
+        );
     }
     match (method, segments.as_slice()) {
         (_, ["projects"]) => read::projects(home, deps),
         ("GET", ["projects", name, "jobs"]) => read::jobs(home, deps, name),
         (_, ["projects", name, "jobs"]) => write::create(home, deps, name, body),
-        (_, ["projects", name, "jobs", id, "approve"]) => write::approve(home, deps, name, id, body),
+        (_, ["projects", name, "jobs", id, "approve"]) => {
+            write::approve(home, deps, name, id, body)
+        }
         (_, ["projects", name, "jobs", id, "rework"]) => write::rework(home, deps, name, id, body),
         (_, ["projects", name, "jobs", id, _]) => write::cancel(home, deps, name, id, body),
         _ => usage::report(home, deps, query),
@@ -109,8 +126,22 @@ mod tests {
     use super::*;
     use crate::api::testutil::*;
 
-    fn get(home: &factory_core::Home, path: &str, query: &str, token: Option<&str>, host: &str) -> ApiResponse {
-        route(home, &deps(), "GET", path, query, &headers(token, host), b"")
+    fn get(
+        home: &factory_core::Home,
+        path: &str,
+        query: &str,
+        token: Option<&str>,
+        host: &str,
+    ) -> ApiResponse {
+        route(
+            home,
+            &deps(),
+            "GET",
+            path,
+            query,
+            &headers(token, host),
+            b"",
+        )
     }
 
     #[test]
@@ -126,13 +157,19 @@ mod tests {
             bodies.push(r.body);
         }
         assert!(bodies.windows(2).all(|w| w[0] == w[1]));
-        assert_eq!(get(&home, "/projects", "", Some(TOKEN), "127.0.0.1:8766").status, 200);
+        assert_eq!(
+            get(&home, "/projects", "", Some(TOKEN), "127.0.0.1:8766").status,
+            200
+        );
     }
 
     #[test]
     fn an_empty_bearer_header_is_unauthorized() {
         let (_t, home) = fixture();
-        let h = vec![("Host".to_string(), "localhost:1".to_string()), ("authorization".to_string(), "Bearer ".to_string())];
+        let h = vec![
+            ("Host".to_string(), "localhost:1".to_string()),
+            ("authorization".to_string(), "Bearer ".to_string()),
+        ];
         let r = route(&home, &deps(), "GET", "/projects", "", &h, b"");
         assert_eq!(r.status, 401);
     }
@@ -141,11 +178,23 @@ mod tests {
     fn the_host_must_be_loopback() {
         let (_t, home) = fixture();
         let r = get(&home, "/projects", "", Some(TOKEN), "evil.example");
-        assert_eq!((r.status, r.body["error"]["code"].as_str()), (400, Some("bad_request")));
-        assert_eq!(get(&home, "/projects", "", Some(TOKEN), "127.0.0.1:4242").status, 200);
-        assert_eq!(get(&home, "/projects", "", Some(TOKEN), "localhost:4242").status, 200);
+        assert_eq!(
+            (r.status, r.body["error"]["code"].as_str()),
+            (400, Some("bad_request"))
+        );
+        assert_eq!(
+            get(&home, "/projects", "", Some(TOKEN), "127.0.0.1:4242").status,
+            200
+        );
+        assert_eq!(
+            get(&home, "/projects", "", Some(TOKEN), "localhost:4242").status,
+            200
+        );
         // The host check comes before the token check.
-        assert_eq!(get(&home, "/projects", "", None, "evil.example").status, 400);
+        assert_eq!(
+            get(&home, "/projects", "", None, "evil.example").status,
+            400
+        );
     }
 
     #[test]
@@ -153,8 +202,14 @@ mod tests {
         let (_t, home) = fixture();
         let h = headers(Some(TOKEN), "localhost:1");
         let r = route(&home, &deps(), "DELETE", "/projects", "", &h, b"");
-        assert_eq!((r.status, r.body["error"]["code"].as_str()), (405, Some("method_not_allowed")));
+        assert_eq!(
+            (r.status, r.body["error"]["code"].as_str()),
+            (405, Some("method_not_allowed"))
+        );
         let r = route(&home, &deps(), "GET", "/nope", "", &h, b"");
-        assert_eq!((r.status, r.body["error"]["code"].as_str()), (404, Some("not_found")));
+        assert_eq!(
+            (r.status, r.body["error"]["code"].as_str()),
+            (404, Some("not_found"))
+        );
     }
 }

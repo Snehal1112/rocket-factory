@@ -42,12 +42,23 @@ impl<T: Tracker + ?Sized> Tracker for Arc<T> {
 }
 
 pub(crate) fn view_args(issue: u32) -> Vec<String> {
-    ["issue", "view", &issue.to_string(), "--json", "labels,state"].iter().map(|s| s.to_string()).collect()
+    [
+        "issue",
+        "view",
+        &issue.to_string(),
+        "--json",
+        "labels,state",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 pub(crate) fn create_args(title: &str, body: &str, labels: &[String]) -> Vec<String> {
-    let mut args: Vec<String> =
-        ["issue", "create", "--title", title, "--body", body].iter().map(|s| s.to_string()).collect();
+    let mut args: Vec<String> = ["issue", "create", "--title", title, "--body", body]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     for label in labels {
         args.push("--label".to_string());
         args.push(label.clone());
@@ -56,11 +67,23 @@ pub(crate) fn create_args(title: &str, body: &str, labels: &[String]) -> Vec<Str
 }
 
 pub(crate) fn comment_args(issue: u32, body: &str) -> Vec<String> {
-    ["issue", "comment", &issue.to_string(), "--body", body].iter().map(|s| s.to_string()).collect()
+    ["issue", "comment", &issue.to_string(), "--body", body]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 pub(crate) fn close_args(issue: u32) -> Vec<String> {
-    ["issue", "close", &issue.to_string(), "--reason", "completed"].iter().map(|s| s.to_string()).collect()
+    [
+        "issue",
+        "close",
+        &issue.to_string(),
+        "--reason",
+        "completed",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 /// The issue number at the end of the URL that `gh issue create` prints.
@@ -70,12 +93,19 @@ pub(crate) fn parse_created(output: &str) -> Option<u32> {
 
 /// The label names and whether the issue is closed, from `gh issue view --json labels,state`.
 pub(crate) fn parse_view(json: &str) -> Result<(Vec<String>, bool), String> {
-    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
     let labels = value["labels"]
         .as_array()
-        .map(|list| list.iter().filter_map(|l| l["name"].as_str().map(str::to_string)).collect())
+        .map(|list| {
+            list.iter()
+                .filter_map(|l| l["name"].as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
-    let closed = value["state"].as_str().is_some_and(|s| s.eq_ignore_ascii_case("closed"));
+    let closed = value["state"]
+        .as_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case("closed"));
     Ok((labels, closed))
 }
 
@@ -91,7 +121,10 @@ impl GhTracker {
     }
 
     pub fn with_program(program: &str, dir: &Path) -> GhTracker {
-        GhTracker { program: program.to_string(), dir: dir.to_path_buf() }
+        GhTracker {
+            program: program.to_string(),
+            dir: dir.to_path_buf(),
+        }
     }
 
     /// Runs one call and returns its trimmed standard output. A slow call is killed after the timeout.
@@ -118,7 +151,9 @@ impl GhTracker {
                 Err(e) => return Err(format!("{} {name} failed: {e}", self.program)),
             }
         }
-        let out = child.wait_with_output().map_err(|e| format!("{} {name} failed: {e}", self.program))?;
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("{} {name} failed: {e}", self.program))?;
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr);
             let first = err.lines().next().unwrap_or("no message");
@@ -130,8 +165,17 @@ impl GhTracker {
 
 impl Tracker for GhTracker {
     fn repo_name(&self) -> Result<String, String> {
-        let args: Vec<String> =
-            ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"].iter().map(|s| s.to_string()).collect();
+        let args: Vec<String> = [
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner",
+            "-q",
+            ".nameWithOwner",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let name = self.run(&args)?;
         if name.is_empty() {
             return Err("gh repo view printed no repository name".to_string());
@@ -172,13 +216,19 @@ mod tests {
         let args = create_args(title, body, &["dedup".to_string(), "size-S".to_string()]);
         assert_eq!(
             args,
-            vec!["issue", "create", "--title", title, "--body", body, "--label", "dedup", "--label", "size-S"]
+            vec![
+                "issue", "create", "--title", title, "--body", body, "--label", "dedup", "--label",
+                "size-S"
+            ]
         );
     }
 
     #[test]
     fn created_number_is_read_from_the_url() {
-        assert_eq!(parse_created("https://github.com/o/r/issues/109\n"), Some(109));
+        assert_eq!(
+            parse_created("https://github.com/o/r/issues/109\n"),
+            Some(109)
+        );
         assert_eq!(parse_created("nothing useful"), None);
         assert_eq!(parse_created(""), None);
     }
@@ -186,7 +236,10 @@ mod tests {
     #[test]
     fn view_json_gives_labels_and_state() {
         let json = r#"{"labels":[{"name":"dedup"},{"name":"tracking"}],"state":"OPEN"}"#;
-        assert_eq!(parse_view(json), Ok((vec!["dedup".to_string(), "tracking".to_string()], false)));
+        assert_eq!(
+            parse_view(json),
+            Ok((vec!["dedup".to_string(), "tracking".to_string()], false))
+        );
         let closed = r#"{"labels":[],"state":"CLOSED"}"#;
         assert_eq!(parse_view(closed), Ok((vec![], true)));
         assert!(parse_view("not json").is_err());
@@ -194,14 +247,26 @@ mod tests {
 
     #[test]
     fn comment_and_close_args() {
-        assert_eq!(comment_args(76, "hi"), vec!["issue", "comment", "76", "--body", "hi"]);
-        assert_eq!(close_args(76), vec!["issue", "close", "76", "--reason", "completed"]);
-        assert_eq!(view_args(76), vec!["issue", "view", "76", "--json", "labels,state"]);
+        assert_eq!(
+            comment_args(76, "hi"),
+            vec!["issue", "comment", "76", "--body", "hi"]
+        );
+        assert_eq!(
+            close_args(76),
+            vec!["issue", "close", "76", "--reason", "completed"]
+        );
+        assert_eq!(
+            view_args(76),
+            vec!["issue", "view", "76", "--json", "labels,state"]
+        );
     }
 
     #[test]
     fn a_missing_gh_binary_is_an_error_not_a_panic() {
-        let tracker = GhTracker::with_program("definitely-not-a-real-program-xyz", std::path::Path::new("."));
+        let tracker = GhTracker::with_program(
+            "definitely-not-a-real-program-xyz",
+            std::path::Path::new("."),
+        );
         assert!(tracker.repo_name().is_err());
     }
 }

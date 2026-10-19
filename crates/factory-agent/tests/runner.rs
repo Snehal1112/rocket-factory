@@ -1,9 +1,19 @@
 use std::time::{Duration, Instant};
 
-use factory_agent::{AgentRun, AgentRunner, AgentSpec, Caps, ClaudeRunner, EventSink, FakeRunner, StopReason};
+use factory_agent::{
+    AgentRun, AgentRunner, AgentSpec, Caps, ClaudeRunner, EventSink, FakeRunner, StopReason,
+};
 
 fn runner(sink: EventSink) -> ClaudeRunner {
-    ClaudeRunner::new(env!("CARGO_BIN_EXE_fake-claude"), Caps { agent: true, max_turns: false, append_system_prompt: true }, sink)
+    ClaudeRunner::new(
+        env!("CARGO_BIN_EXE_fake-claude"),
+        Caps {
+            agent: true,
+            max_turns: false,
+            append_system_prompt: true,
+        },
+        sink,
+    )
 }
 
 fn spec(mode: &str, dir: &std::path::Path) -> AgentSpec {
@@ -23,13 +33,21 @@ fn ok_run_collects_session_usage_result_and_events() {
     assert_eq!(run.usage.output_tokens, 60);
     assert_eq!(run.weighted, 60);
     assert_eq!(run.turns, 2);
-    let lines: Vec<serde_json::Value> =
-        std::fs::read_to_string(&log).expect("log").lines().map(|l| serde_json::from_str(l).expect("json")).collect();
-    let names: Vec<&str> = lines.iter().map(|v| v["hook_event_name"].as_str().expect("name")).collect();
+    let lines: Vec<serde_json::Value> = std::fs::read_to_string(&log)
+        .expect("log")
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("json"))
+        .collect();
+    let names: Vec<&str> = lines
+        .iter()
+        .map(|v| v["hook_event_name"].as_str().expect("name"))
+        .collect();
     assert_eq!(names, vec!["SubagentStart", "PostToolUse", "SubagentStop"]);
     assert_eq!(lines[1]["tool_name"], "Bash");
     assert_eq!(lines[1]["tool_target"], "echo hi");
-    assert!(lines.iter().all(|v| v["job_id"] == "001" && v["agent_id"] == "001-builder"));
+    assert!(lines
+        .iter()
+        .all(|v| v["job_id"] == "001" && v["agent_id"] == "001-builder"));
     assert_eq!(lines[2]["tokens"], 60);
 }
 
@@ -41,7 +59,9 @@ fn args_reach_the_child_and_prompt_goes_to_stdin() {
     s.resume = Some("sess-9".into());
     let run = runner(EventSink::null("001")).run(&s);
     assert_eq!(run.stop_reason, StopReason::Done);
-    assert!(run.result_text.starts_with("-p --output-format stream-json --verbose"));
+    assert!(run
+        .result_text
+        .starts_with("-p --output-format stream-json --verbose"));
     assert!(run.result_text.contains("--model sonnet --resume sess-9"));
 }
 
@@ -66,7 +86,11 @@ fn no_result_is_failed() {
 #[test]
 fn missing_program_is_failed_not_a_panic() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let r = ClaudeRunner::new("/nonexistent/claude-binary", Caps::default(), EventSink::null("001"));
+    let r = ClaudeRunner::new(
+        "/nonexistent/claude-binary",
+        Caps::default(),
+        EventSink::null("001"),
+    );
     let run = r.run(&spec("ok", tmp.path()));
     assert_eq!(run.stop_reason, StopReason::Failed);
     assert!(run.error.is_some());
@@ -102,7 +126,11 @@ fn budget_stop_kills_the_child() {
     let start = Instant::now();
     let run = runner(EventSink::null("001")).run(&s);
     assert_eq!(run.stop_reason, StopReason::BudgetStop);
-    assert!(run.weighted >= 5000 && run.weighted < 20000, "weighted {}", run.weighted);
+    assert!(
+        run.weighted >= 5000 && run.weighted < 20000,
+        "weighted {}",
+        run.weighted
+    );
     assert!(start.elapsed() < Duration::from_secs(10));
 }
 
@@ -173,27 +201,44 @@ fn env_is_unset_when_the_spec_does_not_set_it() {
 fn env_report(var: &str, spec_env: &[(&str, &str)], allowed: bool) -> String {
     let tmp = tempfile::tempdir().expect("tmp");
     let mut s = AgentSpec::new("001", "builder", tmp.path(), &format!("env\n{var}"));
-    s.env = spec_env.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect();
-    let run = runner(EventSink::null("001")).with_api_key_allowed(allowed).run(&s);
+    s.env = spec_env
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    let run = runner(EventSink::null("001"))
+        .with_api_key_allowed(allowed)
+        .run(&s);
     assert_eq!(run.stop_reason, StopReason::Done);
     run.result_text
 }
 
 #[test]
 fn api_key_never_reaches_the_child_by_default() {
-    let got = env_report("ANTHROPIC_API_KEY", &[("ANTHROPIC_API_KEY", "sk-test")], false);
+    let got = env_report(
+        "ANTHROPIC_API_KEY",
+        &[("ANTHROPIC_API_KEY", "sk-test")],
+        false,
+    );
     assert_eq!(got, "<unset>");
 }
 
 #[test]
 fn auth_token_never_reaches_the_child_by_default() {
-    let got = env_report("ANTHROPIC_AUTH_TOKEN", &[("ANTHROPIC_AUTH_TOKEN", "tok-test")], false);
+    let got = env_report(
+        "ANTHROPIC_AUTH_TOKEN",
+        &[("ANTHROPIC_AUTH_TOKEN", "tok-test")],
+        false,
+    );
     assert_eq!(got, "<unset>");
 }
 
 #[test]
 fn api_key_reaches_the_child_only_when_allowed_on_purpose() {
-    let got = env_report("ANTHROPIC_API_KEY", &[("ANTHROPIC_API_KEY", "sk-test")], true);
+    let got = env_report(
+        "ANTHROPIC_API_KEY",
+        &[("ANTHROPIC_API_KEY", "sk-test")],
+        true,
+    );
     assert_eq!(got, "sk-test");
 }
 

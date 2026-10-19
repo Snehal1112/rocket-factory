@@ -26,10 +26,12 @@ pub fn redact_field(name: &str, value: Value) -> Value {
 pub fn redact_command(command: &str) -> String {
     command
         .split_whitespace()
-        .map(|word| match word.strip_prefix("--").and_then(|w| w.split_once('=')) {
-            Some((name, _)) if is_sensitive(name) => format!("--{name}={REDACTED}"),
-            _ => word.to_string(),
-        })
+        .map(
+            |word| match word.strip_prefix("--").and_then(|w| w.split_once('=')) {
+                Some((name, _)) if is_sensitive(name) => format!("--{name}={REDACTED}"),
+                _ => word.to_string(),
+            },
+        )
         .collect::<Vec<_>>()
         .join(" ")
 }

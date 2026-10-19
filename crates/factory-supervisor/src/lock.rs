@@ -50,7 +50,11 @@ fn read_pid(file: &mut std::fs::File) -> String {
     let _ = file.seek(std::io::SeekFrom::Start(0));
     let _ = Read::by_ref(file).take(64).read_to_string(&mut text);
     let text = text.trim();
-    if text.is_empty() { "unknown".to_string() } else { text.to_string() }
+    if text.is_empty() {
+        "unknown".to_string()
+    } else {
+        text.to_string()
+    }
 }
 
 impl InstanceLock {
@@ -63,7 +67,8 @@ impl InstanceLock {
         let io = |e: std::io::Error| LockError::Io(e.to_string());
         file.set_len(0).map_err(io)?;
         file.seek(std::io::SeekFrom::Start(0)).map_err(io)?;
-        file.write_all(format!("{}\n", std::process::id()).as_bytes()).map_err(io)?;
+        file.write_all(format!("{}\n", std::process::id()).as_bytes())
+            .map_err(io)?;
         file.flush().map_err(io)?;
         Ok(InstanceLock { _file: file })
     }
@@ -95,7 +100,10 @@ mod tests {
         let first = InstanceLock::acquire(&h).expect("first");
         let err = InstanceLock::acquire(&h).expect_err("second").to_string();
         assert!(err.contains(&std::process::id().to_string()), "{err}");
-        assert_eq!(InstanceLock::running(&h), Some(std::process::id().to_string()));
+        assert_eq!(
+            InstanceLock::running(&h),
+            Some(std::process::id().to_string())
+        );
         drop(first);
         assert_eq!(InstanceLock::running(&h), None);
         InstanceLock::acquire(&h).expect("third");

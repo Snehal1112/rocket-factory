@@ -9,7 +9,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
         _ => Path::new("."),
     };
     std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let tmp = dir.join(format!(".{}.{}.tmp", name, std::process::id()));
     let result = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::create(&tmp)?;

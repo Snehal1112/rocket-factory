@@ -25,7 +25,10 @@ impl Home {
 
     /// `FACTORY_HOME` when set and not empty, else `$HOME/.factory`.
     pub fn from_env() -> Result<Home, CoreError> {
-        from_values(std::env::var("FACTORY_HOME").ok().as_deref(), std::env::var("HOME").ok().as_deref())
+        from_values(
+            std::env::var("FACTORY_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
     }
 
     pub fn presets_dir(&self) -> PathBuf {
@@ -88,7 +91,9 @@ fn from_values(factory_home: Option<&str>, home: Option<&str>) -> Result<Home, C
     }
     match home.filter(|h| !h.is_empty()) {
         Some(h) => Ok(Home::at(PathBuf::from(h).join(".factory"))),
-        None => Err(CoreError::Config("neither FACTORY_HOME nor HOME is set".into())),
+        None => Err(CoreError::Config(
+            "neither FACTORY_HOME nor HOME is set".into(),
+        )),
     }
 }
 
@@ -99,7 +104,10 @@ mod tests {
 
     #[test]
     fn factoryd_log_file_is_in_the_home() {
-        assert_eq!(Home::at(PathBuf::from("/h")).factoryd_log_file(), PathBuf::from("/h/factoryd.log.jsonl"));
+        assert_eq!(
+            Home::at(PathBuf::from("/h")).factoryd_log_file(),
+            PathBuf::from("/h/factoryd.log.jsonl")
+        );
     }
 
     #[test]
@@ -124,9 +132,18 @@ mod tests {
 
     #[test]
     fn values_pick_factory_home_then_home_then_fail() {
-        assert_eq!(from_values(Some("/f"), Some("/u")).expect("ok").dir, PathBuf::from("/f"));
-        assert_eq!(from_values(None, Some("/u")).expect("ok").dir, PathBuf::from("/u/.factory"));
-        assert_eq!(from_values(Some(""), Some("/u")).expect("ok").dir, PathBuf::from("/u/.factory"));
+        assert_eq!(
+            from_values(Some("/f"), Some("/u")).expect("ok").dir,
+            PathBuf::from("/f")
+        );
+        assert_eq!(
+            from_values(None, Some("/u")).expect("ok").dir,
+            PathBuf::from("/u/.factory")
+        );
+        assert_eq!(
+            from_values(Some(""), Some("/u")).expect("ok").dir,
+            PathBuf::from("/u/.factory")
+        );
         assert!(from_values(None, None).is_err());
         assert!(from_values(Some(""), Some("")).is_err());
     }
@@ -137,6 +154,9 @@ mod tests {
             let _guard = EnvVarGuard::set("FACTORY_HOME", "/tmp/some-factory-home");
             Home::from_env()
         };
-        assert_eq!(got.expect("home").dir, PathBuf::from("/tmp/some-factory-home"));
+        assert_eq!(
+            got.expect("home").dir,
+            PathBuf::from("/tmp/some-factory-home")
+        );
     }
 }

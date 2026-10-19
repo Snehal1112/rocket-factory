@@ -16,7 +16,9 @@ fn newest_skills(home: &Path) -> Option<(String, PathBuf)> {
     let cache = home.join(".claude/plugins/cache");
     let mut found: Vec<(String, PathBuf)> = Vec::new();
     for vendor in std::fs::read_dir(cache).ok()?.flatten() {
-        let Ok(versions) = std::fs::read_dir(vendor.path().join("superpowers")) else { continue };
+        let Ok(versions) = std::fs::read_dir(vendor.path().join("superpowers")) else {
+            continue;
+        };
         for version in versions.flatten() {
             let skills = version.path().join("skills");
             if skills.is_dir() {
@@ -45,16 +47,45 @@ fn installed_skills_still_have_what_the_commands_rely_on() {
     if version != SKILLS_TESTED_AGAINST {
         println!("note: the commands were written against superpowers {SKILLS_TESTED_AGAINST}, found {version}");
     }
-    assert!(skills.join("brainstorming/builder-check-prompt.md").is_file(), "builder-check-prompt.md is gone");
+    assert!(
+        skills
+            .join("brainstorming/builder-check-prompt.md")
+            .is_file(),
+        "builder-check-prompt.md is gone"
+    );
     // The command overrides these brainstorming sentences by quoting them, so they must still be there.
-    let brainstorming = read(&skills.join("brainstorming/SKILL.md")).split_whitespace().collect::<Vec<_>>().join(" ");
-    for quoted in ["a single sentence with no list of example answers", "Offer a short menu only when they're stuck", "Options steer."] {
-        assert!(brainstorming.contains(quoted), "brainstorming no longer says: {quoted}");
+    let brainstorming = read(&skills.join("brainstorming/SKILL.md"))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for quoted in [
+        "a single sentence with no list of example answers",
+        "Offer a short menu only when they're stuck",
+        "Options steer.",
+    ] {
+        assert!(
+            brainstorming.contains(quoted),
+            "brainstorming no longer says: {quoted}"
+        );
     }
     let plans = read(&skills.join("writing-plans/SKILL.md"));
-    assert!(plans.contains("Interfaces:"), "writing-plans no longer names Interfaces:");
-    assert!(plans.contains("Review Focus"), "writing-plans no longer names Review Focus");
-    assert!(skills.join("subagent-driven-development/SKILL.md").is_file(), "subagent-driven-development is gone");
+    assert!(
+        plans.contains("Interfaces:"),
+        "writing-plans no longer names Interfaces:"
+    );
+    assert!(
+        plans.contains("Review Focus"),
+        "writing-plans no longer names Review Focus"
+    );
+    assert!(
+        skills
+            .join("subagent-driven-development/SKILL.md")
+            .is_file(),
+        "subagent-driven-development is gone"
+    );
     let prompt = read(&skills.join("subagent-driven-development/implementer-prompt.md"));
-    assert!(prompt.contains("Status"), "implementer-prompt.md no longer asks for a Status");
+    assert!(
+        prompt.contains("Status"),
+        "implementer-prompt.md no longer asks for a Status"
+    );
 }

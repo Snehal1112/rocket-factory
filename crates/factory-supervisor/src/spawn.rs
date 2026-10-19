@@ -54,7 +54,10 @@ pub struct ProcessSpawner {
 
 impl ProcessSpawner {
     pub fn new(bin: PathBuf) -> ProcessSpawner {
-        ProcessSpawner { bin, children: Mutex::new(HashMap::new()) }
+        ProcessSpawner {
+            bin,
+            children: Mutex::new(HashMap::new()),
+        }
     }
 
     /// `FACTORY_BIN`, else a `factory` file next to the running executable.
@@ -63,7 +66,9 @@ impl ProcessSpawner {
             return Ok(ProcessSpawner::new(PathBuf::from(v)));
         }
         let exe = std::env::current_exe().map_err(|e| SpawnError::NoBin(e.to_string()))?;
-        let dir = exe.parent().ok_or_else(|| SpawnError::NoBin("the executable has no folder".to_string()))?;
+        let dir = exe
+            .parent()
+            .ok_or_else(|| SpawnError::NoBin("the executable has no folder".to_string()))?;
         Ok(ProcessSpawner::new(dir.join(BIN_NAME)))
     }
 }
@@ -109,7 +114,10 @@ fn start(cmd: &mut Command) -> std::io::Result<Child> {
 
 #[cfg(not(unix))]
 fn start(_cmd: &mut Command) -> std::io::Result<Child> {
-    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported"))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "unsupported",
+    ))
 }
 
 impl Spawner for ProcessSpawner {
@@ -120,16 +128,27 @@ impl Spawner for ProcessSpawner {
         if !self.bin.is_file() {
             return Err(SpawnError::Missing(self.bin.clone()));
         }
-        let fail = |reason: String| SpawnError::Start { path: self.bin.clone(), reason };
+        let fail = |reason: String| SpawnError::Start {
+            path: self.bin.clone(),
+            reason,
+        };
         // The child runs in the home, so it must exist.
-        std::fs::create_dir_all(&home.dir).map_err(|e| fail(format!("{}: {e}", home.dir.display())))?;
+        std::fs::create_dir_all(&home.dir)
+            .map_err(|e| fail(format!("{}: {e}", home.dir.display())))?;
         for p in [out, err] {
             if let Some(dir) = p.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| fail(format!("{}: {e}", dir.display())))?;
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| fail(format!("{}: {e}", dir.display())))?;
             }
         }
         // create_new never follows a symlink and never truncates: a file already there is an error.
-        let create = |p: &Path| std::fs::OpenOptions::new().write(true).create_new(true).open(p).map_err(|e| fail(format!("{}: {e}", p.display())));
+        let create = |p: &Path| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(p)
+                .map_err(|e| fail(format!("{}: {e}", p.display())))
+        };
         let out_file = create(out)?;
         let err_file = create(err)?;
         let mut cmd = Command::new(&self.bin);
@@ -158,7 +177,9 @@ impl Spawner for ProcessSpawner {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        let Some(child) = guard.get_mut(&pid) else { return ChildPoll::Unknown };
+        let Some(child) = guard.get_mut(&pid) else {
+            return ChildPoll::Unknown;
+        };
         match child.try_wait() {
             Ok(None) => ChildPoll::Running,
             Ok(Some(status)) => {
@@ -197,7 +218,11 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Home, ProcessSpawner) {
         let t = tempfile::tempdir().expect("tempdir");
         let home = Home::at(t.path().join("home"));
-        let bin = write_script(t.path(), "fake-factory", "echo \"$@\"\necho \"home=$FACTORY_HOME\"\necho \"cwd=$(pwd -P)\"\nexit 0");
+        let bin = write_script(
+            t.path(),
+            "fake-factory",
+            "echo \"$@\"\necho \"home=$FACTORY_HOME\"\necho \"cwd=$(pwd -P)\"\nexit 0",
+        );
         (t, home, ProcessSpawner::new(bin))
     }
 
@@ -209,36 +234,63 @@ mod tests {
     fn runs_with_arguments_home_and_its_own_process_group() {
         let (t, home, sp) = setup();
         let (out, err) = (t.path().join("o.txt"), t.path().join("e.txt"));
-        let pid = sp.spawn(&home, &req(Action::Run, false), &out, &err).expect("spawn");
+        let pid = sp
+            .spawn(&home, &req(Action::Run, false), &out, &err)
+            .expect("spawn");
         // `ps -o pgid=` works on Linux and macOS alike.
-        let ps = std::process::Command::new("ps").env("LC_ALL", "C").args(["-o", "pgid=", "-p", &pid.to_string()]).output().expect("ps");
+        let ps = std::process::Command::new("ps")
+            .env("LC_ALL", "C")
+            .args(["-o", "pgid=", "-p", &pid.to_string()])
+            .output()
+            .expect("ps");
         assert!(ps.status.success(), "ps found no pid {pid}");
-        let pgrp: u32 = String::from_utf8_lossy(&ps.stdout).trim().parse().expect("pgid");
+        let pgrp: u32 = String::from_utf8_lossy(&ps.stdout)
+            .trim()
+            .parse()
+            .expect("pgid");
         assert_eq!(pgrp, pid);
         assert_eq!(wait_exit(&sp, pid), ChildPoll::Exited(Some(0)));
         let text = std::fs::read_to_string(&out).expect("out");
         assert!(text.contains("--project p run 7\n"), "{text}");
-        assert!(text.contains(&format!("home={}", home.dir.display())), "{text}");
+        assert!(
+            text.contains(&format!("home={}", home.dir.display())),
+            "{text}"
+        );
         let home_real = home.dir.canonicalize().expect("home path");
-        assert!(text.contains(&format!("cwd={}\n", home_real.display())), "{text}");
+        assert!(
+            text.contains(&format!("cwd={}\n", home_real.display())),
+            "{text}"
+        );
     }
 
     #[test]
     fn series_and_approve_shapes() {
         let (t, home, sp) = setup();
         let (out, err) = (t.path().join("o.txt"), t.path().join("e.txt"));
-        let pid = sp.spawn(&home, &req(Action::Run, true), &out, &err).expect("spawn");
+        let pid = sp
+            .spawn(&home, &req(Action::Run, true), &out, &err)
+            .expect("spawn");
         wait_exit(&sp, pid);
-        assert!(std::fs::read_to_string(&out).expect("out").contains("--project p run 7 --series\n"));
+        assert!(std::fs::read_to_string(&out)
+            .expect("out")
+            .contains("--project p run 7 --series\n"));
         let (out2, err2) = (t.path().join("o2.txt"), t.path().join("e2.txt"));
-        let pid = sp.spawn(&home, &req(Action::Approve, false), &out2, &err2).expect("spawn");
+        let pid = sp
+            .spawn(&home, &req(Action::Approve, false), &out2, &err2)
+            .expect("spawn");
         wait_exit(&sp, pid);
-        assert!(std::fs::read_to_string(&out2).expect("out").contains("--project p approve 7\n"));
+        assert!(std::fs::read_to_string(&out2)
+            .expect("out")
+            .contains("--project p approve 7\n"));
         let (out3, err3) = (t.path().join("o3.txt"), t.path().join("e3.txt"));
-        let skip = req(Action::Approve, false).without_review().expect("approve");
+        let skip = req(Action::Approve, false)
+            .without_review()
+            .expect("approve");
         let pid = sp.spawn(&home, &skip, &out3, &err3).expect("spawn");
         wait_exit(&sp, pid);
-        assert!(std::fs::read_to_string(&out3).expect("out").contains("--project p approve 7 --without-review\n"));
+        assert!(std::fs::read_to_string(&out3)
+            .expect("out")
+            .contains("--project p approve 7 --without-review\n"));
     }
 
     #[test]
@@ -248,7 +300,14 @@ mod tests {
         std::fs::write(&target, "keep").expect("target");
         let out = t.path().join("o.txt");
         std::os::unix::fs::symlink(&target, &out).expect("symlink");
-        let e = sp.spawn(&home, &req(Action::Run, false), &out, &t.path().join("e.txt")).expect_err("refused");
+        let e = sp
+            .spawn(
+                &home,
+                &req(Action::Run, false),
+                &out,
+                &t.path().join("e.txt"),
+            )
+            .expect_err("refused");
         assert!(matches!(e, SpawnError::Start { .. }), "{e}");
         assert_eq!(std::fs::read_to_string(&target).expect("target"), "keep");
     }
@@ -258,7 +317,14 @@ mod tests {
         let t = tempfile::tempdir().expect("tempdir");
         let home = Home::at(t.path().to_path_buf());
         let sp = ProcessSpawner::new(t.path().join("nope"));
-        let e = sp.spawn(&home, &req(Action::Run, false), &t.path().join("o"), &t.path().join("e")).expect_err("missing");
+        let e = sp
+            .spawn(
+                &home,
+                &req(Action::Run, false),
+                &t.path().join("o"),
+                &t.path().join("e"),
+            )
+            .expect_err("missing");
         assert!(e.to_string().contains("nope"), "{e}");
     }
 }

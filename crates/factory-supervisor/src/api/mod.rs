@@ -3,10 +3,10 @@
 pub mod events;
 pub mod http;
 pub mod read;
-pub mod usage;
-pub mod write;
 #[cfg(test)]
 pub(crate) mod testutil;
+pub mod usage;
+pub mod write;
 
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -49,7 +49,12 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 type Spawner = Arc<dyn Fn(&str, Job) -> std::io::Result<()> + Send + Sync>;
 
 fn os_spawner() -> Spawner {
-    Arc::new(|name, job| std::thread::Builder::new().name(name.to_string()).spawn(job).map(|_| ()))
+    Arc::new(|name, job| {
+        std::thread::Builder::new()
+            .name(name.to_string())
+            .spawn(job)
+            .map(|_| ())
+    })
 }
 
 /// A running API server.
@@ -116,7 +121,10 @@ struct Control {
 fn serve_events(home: &Home, query: &str, ctl: &Control, request: tiny_http::Request) {
     if ctl.streams.fetch_add(1, Ordering::SeqCst) >= MAX_STREAMS {
         ctl.streams.fetch_sub(1, Ordering::SeqCst);
-        respond(request, http::error_response(409, "conflict", "too many open event streams"));
+        respond(
+            request,
+            http::error_response(409, "conflict", "too many open event streams"),
+        );
         return;
     }
     let _slot = Slot(ctl.streams.clone());
@@ -143,8 +151,16 @@ fn handle(home: &Home, deps: &ApiDeps, ctl: &Control, mut request: tiny_http::Re
     let method = request.method().as_str().to_string();
     let url = request.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
-    let headers: Vec<(String, String)> =
-        request.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
+    let headers: Vec<(String, String)> = request
+        .headers()
+        .iter()
+        .map(|h| {
+            (
+                h.field.as_str().as_str().to_string(),
+                h.value.as_str().to_string(),
+            )
+        })
+        .collect();
     if let Err(refused) = http::authorize(home, &headers) {
         respond(request, refused);
         return;
@@ -154,8 +170,17 @@ fn handle(home: &Home, deps: &ApiDeps, ctl: &Control, mut request: tiny_http::Re
         return;
     }
     let mut body = Vec::new();
-    if carries_body(&method) && request.as_reader().take(MAX_BODY as u64 + 1).read_to_end(&mut body).is_err() {
-        respond(request, http::error_response(400, "bad_request", "the request body could not be read"));
+    if carries_body(&method)
+        && request
+            .as_reader()
+            .take(MAX_BODY as u64 + 1)
+            .read_to_end(&mut body)
+            .is_err()
+    {
+        respond(
+            request,
+            http::error_response(400, "bad_request", "the request body could not be read"),
+        );
         return;
     }
     let response = http::route(home, deps, &method, path, query, &headers, &body);
@@ -165,7 +190,13 @@ fn handle(home: &Home, deps: &ApiDeps, ctl: &Control, mut request: tiny_http::Re
 impl ApiServer {
     /// Binds `listen` and serves in the background until the handle is stopped.
     pub fn start(home: Home, listen: SocketAddr, deps: ApiDeps) -> Result<ApiHandle, ApiError> {
-        Self::start_with(home, listen, deps, os_spawner(), Arc::new(AtomicUsize::new(0)))
+        Self::start_with(
+            home,
+            listen,
+            deps,
+            os_spawner(),
+            Arc::new(AtomicUsize::new(0)),
+        )
     }
 
     fn start_with(
@@ -175,12 +206,21 @@ impl ApiServer {
         spawner: Spawner,
         active: Arc<AtomicUsize>,
     ) -> Result<ApiHandle, ApiError> {
-        let bind = |reason: String| ApiError::Bind { addr: listen, reason };
+        let bind = |reason: String| ApiError::Bind {
+            addr: listen,
+            reason,
+        };
         let server = tiny_http::Server::http(listen).map_err(|e| bind(e.to_string()))?;
-        let addr = server.server_addr().to_ip().ok_or_else(|| bind("not an IP address".to_string()))?;
+        let addr = server
+            .server_addr()
+            .to_ip()
+            .ok_or_else(|| bind("not an IP address".to_string()))?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
-        let ctl = Control { stop: stop.clone(), streams: Arc::new(AtomicUsize::new(0)) };
+        let ctl = Control {
+            stop: stop.clone(),
+            streams: Arc::new(AtomicUsize::new(0)),
+        };
         let handler_spawner = spawner.clone();
         let acceptor = std::thread::Builder::new()
             .name("factoryd-api-accept".to_string())
@@ -198,8 +238,13 @@ impl ApiServer {
                     }
                     // The request stays reachable here, so a refused thread can still be answered.
                     let cell = Arc::new(Mutex::new(Some(request)));
-                    let (home, deps, slot_active, ctl, job_cell) =
-                        (home.clone(), deps.clone(), active.clone(), ctl.clone(), cell.clone());
+                    let (home, deps, slot_active, ctl, job_cell) = (
+                        home.clone(),
+                        deps.clone(),
+                        active.clone(),
+                        ctl.clone(),
+                        cell.clone(),
+                    );
                     let job: Job = Box::new(move || {
                         let _slot = Slot(slot_active);
                         let taken = job_cell.lock().ok().and_then(|mut c| c.take());
@@ -212,14 +257,25 @@ impl ApiServer {
                         active.fetch_sub(1, Ordering::SeqCst);
                         let taken = cell.lock().ok().and_then(|mut c| c.take());
                         if let Some(request) = taken {
-                            respond(request, http::error_response(503, "unavailable", "the daemon cannot start a thread right now"));
+                            respond(
+                                request,
+                                http::error_response(
+                                    503,
+                                    "unavailable",
+                                    "the daemon cannot start a thread right now",
+                                ),
+                            );
                         }
                         std::thread::sleep(POLL);
                     }
                 }
             })
             .map_err(|e| ApiError::Thread(e.to_string()))?;
-        Ok(ApiHandle { addr, stop, acceptor: Some(acceptor) })
+        Ok(ApiHandle {
+            addr,
+            stop,
+            acceptor: Some(acceptor),
+        })
     }
 }
 
@@ -234,8 +290,15 @@ mod tests {
         write!(s, "GET {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n").expect("write");
         let mut raw = String::new();
         s.read_to_string(&mut raw).expect("read");
-        let status = raw.split_whitespace().nth(1).and_then(|c| c.parse().ok()).expect("status");
-        (status, serde_json::from_str(raw.split("\r\n\r\n").nth(1).unwrap_or("")).expect("json"))
+        let status = raw
+            .split_whitespace()
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .expect("status");
+        (
+            status,
+            serde_json::from_str(raw.split("\r\n\r\n").nth(1).unwrap_or("")).expect("json"),
+        )
     }
 
     #[test]
@@ -247,21 +310,39 @@ mod tests {
             if flag.load(Ordering::SeqCst) {
                 return Err(std::io::Error::from_raw_os_error(11));
             }
-            std::thread::Builder::new().name(name.to_string()).spawn(job).map(|_| ())
+            std::thread::Builder::new()
+                .name(name.to_string())
+                .spawn(job)
+                .map(|_| ())
         });
         let active = Arc::new(AtomicUsize::new(0));
-        let handle =
-            ApiServer::start_with(home, "127.0.0.1:0".parse().expect("addr"), deps(), spawner, active.clone()).expect("start");
+        let handle = ApiServer::start_with(
+            home,
+            "127.0.0.1:0".parse().expect("addr"),
+            deps(),
+            spawner,
+            active.clone(),
+        )
+        .expect("start");
         let (status, body) = get(handle.addr, "/projects");
-        assert_eq!((status, body["error"]["code"].as_str()), (503, Some("unavailable")));
-        assert_eq!(body["error"]["message"], "the daemon cannot start a thread right now");
+        assert_eq!(
+            (status, body["error"]["code"].as_str()),
+            (503, Some("unavailable"))
+        );
+        assert_eq!(
+            body["error"]["message"],
+            "the daemon cannot start a thread right now"
+        );
         assert_eq!(active.load(Ordering::SeqCst), 0);
         refuse.store(false, Ordering::SeqCst);
         assert_eq!(get(handle.addr, "/projects").0, 200);
         // The slot is given back just after the answer is written, so wait for it.
         let began = std::time::Instant::now();
         while active.load(Ordering::SeqCst) != 0 {
-            assert!(began.elapsed() < Duration::from_secs(5), "the handler slot was not given back");
+            assert!(
+                began.elapsed() < Duration::from_secs(5),
+                "the handler slot was not given back"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
         handle.stop();

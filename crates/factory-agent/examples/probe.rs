@@ -57,7 +57,12 @@ fn run(args: &[&str], stdin: Option<&str>, cwd: &Path) -> Result<Out, Box<dyn st
     };
     let stdout = t_out.join().map_err(|_| "stdout thread panicked")?;
     let stderr = t_err.join().map_err(|_| "stderr thread panicked")?;
-    Ok(Out { code, stdout, stderr, timed_out })
+    Ok(Out {
+        code,
+        stdout,
+        stderr,
+        timed_out,
+    })
 }
 
 /// Summarises a stream-json stdout: line types, session ids, message ids and usage places.
@@ -72,7 +77,11 @@ fn summarize(stdout: &str) -> String {
             bad += 1;
             continue;
         };
-        let ty = v.get("type").and_then(|t| t.as_str()).map_or("?", |t| t).to_string();
+        let ty = v
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map_or("?", |t| t)
+            .to_string();
         if let Some(s) = v.get("session_id").and_then(|s| s.as_str()) {
             sessions.insert(s.to_string());
         }
@@ -96,7 +105,12 @@ fn summarize(stdout: &str) -> String {
 
 fn report(title: &str, out: &Out) {
     let err: String = out.stderr.chars().take(300).collect();
-    println!("### {title}\n- exit={:?} timed_out={}\n- stderr={err:?}\n- {}\n", out.code, out.timed_out, summarize(&out.stdout));
+    println!(
+        "### {title}\n- exit={:?} timed_out={}\n- stderr={err:?}\n- {}\n",
+        out.code,
+        out.timed_out,
+        summarize(&out.stdout)
+    );
 }
 
 fn first_session(stdout: &str) -> Option<String> {
@@ -119,32 +133,126 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let help = run(&["--help"], None, cwd)?;
     println!("### claude --help flag presence");
     for flag in [
-        "--print", "--output-format", "--verbose", "--agent", "--resume", "--permission-mode", "--allowedTools",
-        "--model", "--max-turns", "--append-system-prompt", "--session-id", "--max-budget-usd", "--include-partial-messages",
+        "--print",
+        "--output-format",
+        "--verbose",
+        "--agent",
+        "--resume",
+        "--permission-mode",
+        "--allowedTools",
+        "--model",
+        "--max-turns",
+        "--append-system-prompt",
+        "--session-id",
+        "--max-budget-usd",
+        "--include-partial-messages",
     ] {
-        println!("- {flag}: {}", if help.stdout.contains(flag) { "listed" } else { "NOT listed" });
+        println!(
+            "- {flag}: {}",
+            if help.stdout.contains(flag) {
+                "listed"
+            } else {
+                "NOT listed"
+            }
+        );
     }
     println!();
 
     let base = ["-p", "--model", "haiku", "--max-budget-usd", "0.05"];
-    let join = |extra: &[&str]| -> Vec<String> { base.iter().chain(extra.iter()).map(|s| s.to_string()).collect() };
+    let join = |extra: &[&str]| -> Vec<String> {
+        base.iter()
+            .chain(extra.iter())
+            .map(|s| s.to_string())
+            .collect()
+    };
     let call = |extra: &[&str], stdin: &str| -> Result<Out, Box<dyn std::error::Error>> {
         let args = join(extra);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         run(&refs, Some(stdin), cwd)
     };
 
-    report("stream-json without --verbose", &call(&["--output-format", "stream-json"], "Reply with exactly: PONG")?);
-    let verbose = call(&["--output-format", "stream-json", "--verbose"], "Reply with exactly: PONG")?;
+    report(
+        "stream-json without --verbose",
+        &call(
+            &["--output-format", "stream-json"],
+            "Reply with exactly: PONG",
+        )?,
+    );
+    let verbose = call(
+        &["--output-format", "stream-json", "--verbose"],
+        "Reply with exactly: PONG",
+    )?;
     report("stream-json with --verbose (prompt on stdin)", &verbose);
-    report("max-turns 1", &call(&["--output-format", "stream-json", "--verbose", "--max-turns", "1"], "Reply with exactly: PONG")?);
-    report("append-system-prompt", &call(&["--output-format", "stream-json", "--verbose", "--append-system-prompt", "End every reply with ZEBRA."], "Say hi.")?);
-    report("permission-mode acceptEdits and allowedTools", &call(&["--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Bash"], "Run `echo hi` with the Bash tool, then reply DONE.")?);
-    report("agent probe", &call(&["--output-format", "stream-json", "--verbose", "--agent", "probe"], "Say hi.")?);
+    report(
+        "max-turns 1",
+        &call(
+            &[
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--max-turns",
+                "1",
+            ],
+            "Reply with exactly: PONG",
+        )?,
+    );
+    report(
+        "append-system-prompt",
+        &call(
+            &[
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--append-system-prompt",
+                "End every reply with ZEBRA.",
+            ],
+            "Say hi.",
+        )?,
+    );
+    report(
+        "permission-mode acceptEdits and allowedTools",
+        &call(
+            &[
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--permission-mode",
+                "acceptEdits",
+                "--allowedTools",
+                "Read,Bash",
+            ],
+            "Run `echo hi` with the Bash tool, then reply DONE.",
+        )?,
+    );
+    report(
+        "agent probe",
+        &call(
+            &[
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--agent",
+                "probe",
+            ],
+            "Say hi.",
+        )?,
+    );
     if let Some(session) = first_session(&verbose.stdout) {
-        let resumed = call(&["--output-format", "stream-json", "--verbose", "--resume", &session], "What did I ask you to reply with? One word.")?;
+        let resumed = call(
+            &[
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--resume",
+                &session,
+            ],
+            "What did I ask you to reply with? One word.",
+        )?;
         println!("original session id: {session}");
-        report("resume (compare session ids above with the original)", &resumed);
+        report(
+            "resume (compare session ids above with the original)",
+            &resumed,
+        );
     } else {
         println!("### resume\n- skipped: no session id in the verbose stream\n");
     }

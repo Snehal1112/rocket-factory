@@ -2,7 +2,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Seconds since the Unix epoch, the unit of `Job::stage_since`.
 pub fn now_secs() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 /// The UTC date `YYYY-MM-DD` for a count of days since 1970-01-01.

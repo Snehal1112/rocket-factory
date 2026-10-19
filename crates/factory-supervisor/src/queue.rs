@@ -52,11 +52,17 @@ pub fn enqueue(home: &Home, req: &Request) -> Result<(), QueueError> {
 fn claim(path: &Path, bytes: &[u8]) -> Result<(), QueueError> {
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
     let written = (|| -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()
     })();
@@ -71,12 +77,20 @@ fn claim(path: &Path, bytes: &[u8]) -> Result<(), QueueError> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(QueueError::Duplicate(name)),
         // No hard links here: claim the name with create_new instead.
         Err(_) => {
-            let mut f = match std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
+            let mut f = match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
                 Ok(f) => f,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(QueueError::Duplicate(name)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return Err(QueueError::Duplicate(name))
+                }
                 Err(e) => return Err(CoreError::io(path, e).into()),
             };
-            f.write_all(bytes).and_then(|()| f.sync_all()).map_err(|e| CoreError::io(path, e))?;
+            f.write_all(bytes)
+                .and_then(|()| f.sync_all())
+                .map_err(|e| CoreError::io(path, e))?;
             Ok(())
         }
     }
@@ -96,7 +110,9 @@ fn read_item(path: &std::path::Path, stem: &str) -> Result<Request, String> {
 /// One bad file never fails the listing.
 pub fn list(home: &Home) -> Vec<QueueItem> {
     let dir = home.queue_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut good = Vec::new();
     let mut bad = Vec::new();
     for entry in entries.flatten() {
@@ -119,7 +135,10 @@ pub fn list(home: &Home) -> Vec<QueueItem> {
     bad.sort();
     good.into_iter()
         .map(QueueItem::Ok)
-        .chain(bad.into_iter().map(|(file, reason)| QueueItem::Bad { file, reason }))
+        .chain(
+            bad.into_iter()
+                .map(|(file, reason)| QueueItem::Bad { file, reason }),
+        )
         .collect()
 }
 
@@ -129,7 +148,9 @@ pub fn remove(home: &Home, id: &str) -> Result<(), QueueError> {
     let path = path_of(home, id);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(QueueError::Unknown(id.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(QueueError::Unknown(id.to_string()))
+        }
         Err(e) => Err(CoreError::io(&path, e).into()),
     }
 }
@@ -208,7 +229,15 @@ mod tests {
                 QueueItem::Ok(_) => panic!("unexpected good item"),
             })
             .collect();
-        assert_eq!(bad, ["0000000000002-p-1.json", "0000000000009-b-1.json", "junk.json", "notes.txt"]);
+        assert_eq!(
+            bad,
+            [
+                "0000000000002-p-1.json",
+                "0000000000009-b-1.json",
+                "junk.json",
+                "notes.txt"
+            ]
+        );
     }
 
     #[test]
@@ -239,7 +268,9 @@ mod tests {
             let results = [x.join().expect("x"), y.join().expect("y")];
             let wins: Vec<&Request> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
             assert_eq!(wins.len(), 1);
-            assert!(results.iter().any(|r| matches!(r, Err(QueueError::Duplicate(_)))));
+            assert!(results
+                .iter()
+                .any(|r| matches!(r, Err(QueueError::Duplicate(_)))));
             assert_eq!(list(&h), vec![QueueItem::Ok(wins[0].clone())]);
             let leftovers = std::fs::read_dir(h.queue_dir()).expect("list").count();
             assert_eq!(leftovers, 1, "temp files must be gone");
@@ -254,13 +285,20 @@ mod tests {
         enqueue(&h, &good).expect("enqueue");
         let q = h.queue_dir();
         let elsewhere = t.path().join("real.json");
-        std::fs::write(&elsewhere, serde_json::to_string(&req("b", 2)).expect("json")).expect("write");
+        std::fs::write(
+            &elsewhere,
+            serde_json::to_string(&req("b", 2)).expect("json"),
+        )
+        .expect("write");
         std::os::unix::fs::symlink(&elsewhere, q.join("0000000000002-b-1.json")).expect("symlink");
         std::os::unix::fs::symlink("/dev/zero", q.join("zero.json")).expect("symlink");
         std::fs::write(q.join("big.json"), vec![b' '; 20 * 1024]).expect("write");
         std::fs::create_dir(q.join("dir.json")).expect("mkdir");
         let mut expect_bad = 4;
-        match std::process::Command::new("mkfifo").arg(q.join("fifo.json")).status() {
+        match std::process::Command::new("mkfifo")
+            .arg(q.join("fifo.json"))
+            .status()
+        {
             Ok(s) if s.success() => expect_bad += 1,
             _ => eprintln!("mkfifo is missing, the FIFO case is skipped"),
         }
@@ -269,7 +307,9 @@ mod tests {
         std::thread::spawn(move || {
             let _ = tx.send(list(&h2));
         });
-        let items = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("list must return promptly");
+        let items = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("list must return promptly");
         assert_eq!(items[0], QueueItem::Ok(good));
         assert_eq!(items.len(), 1 + expect_bad);
         for i in &items[1..] {

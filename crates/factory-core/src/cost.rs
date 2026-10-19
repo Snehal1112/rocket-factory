@@ -79,14 +79,24 @@ pub struct UsageSummary {
 pub fn usage_summary(text: &str, job: &str) -> UsageSummary {
     let mut s = UsageSummary::default();
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
         if v["job"] != job {
             continue;
         }
         let n = |k: &str| v[k].as_u64().unwrap_or(0);
-        let (input, cc, out, cr) = (n("input"), n("cache_creation"), n("output"), n("cache_read"));
+        let (input, cc, out, cr) = (
+            n("input"),
+            n("cache_creation"),
+            n("output"),
+            n("cache_read"),
+        );
         let weighted = weighted_tokens(input, cc, out, cr);
-        let raw = input.saturating_add(cc).saturating_add(out).saturating_add(cr);
+        let raw = input
+            .saturating_add(cc)
+            .saturating_add(out)
+            .saturating_add(cr);
         s.weighted = s.weighted.saturating_add(weighted);
         s.raw = s.raw.saturating_add(raw);
         s.runs = s.runs.saturating_add(1);
@@ -185,9 +195,17 @@ fn spread(values: &mut [u64]) -> Spread {
 
 fn group_stats(jobs: &[&JobCost]) -> GroupStats {
     let mut all: Vec<u64> = jobs.iter().map(|j| j.weighted).collect();
-    let mut fixed: Vec<u64> = jobs.iter().filter(|j| !j.approx).map(|j| j.weighted).collect();
+    let mut fixed: Vec<u64> = jobs
+        .iter()
+        .filter(|j| !j.approx)
+        .map(|j| j.weighted)
+        .collect();
     let s = spread(&mut all);
-    let corrected = if fixed.is_empty() { None } else { Some(spread(&mut fixed)) };
+    let corrected = if fixed.is_empty() {
+        None
+    } else {
+        Some(spread(&mut fixed))
+    };
     let mut role_totals: BTreeMap<String, u128> = BTreeMap::new();
     let mut total: u128 = 0;
     for j in jobs {
@@ -198,7 +216,16 @@ fn group_stats(jobs: &[&JobCost]) -> GroupStats {
     }
     let roles = role_totals
         .into_iter()
-        .map(|(role, w)| (role, if total == 0 { 0 } else { ((w * 100 + total / 2) / total) as u32 }))
+        .map(|(role, w)| {
+            (
+                role,
+                if total == 0 {
+                    0
+                } else {
+                    ((w * 100 + total / 2) / total) as u32
+                },
+            )
+        })
         .collect();
     GroupStats {
         n: s.n,
@@ -213,13 +240,20 @@ fn group_stats(jobs: &[&JobCost]) -> GroupStats {
 
 /// Statistics per size group over merged jobs with data, plus an `all` entry.
 pub fn stats(jobs: &[JobCost]) -> BTreeMap<String, GroupStats> {
-    let feeding: Vec<&JobCost> = jobs.iter().filter(|j| j.stage == "merged" && j.has_data()).collect();
+    let feeding: Vec<&JobCost> = jobs
+        .iter()
+        .filter(|j| j.stage == "merged" && j.has_data())
+        .collect();
     let mut out = BTreeMap::new();
     if feeding.is_empty() {
         return out;
     }
     for group in SizeGroup::ALL {
-        let members: Vec<&JobCost> = feeding.iter().copied().filter(|j| j.group == Some(group)).collect();
+        let members: Vec<&JobCost> = feeding
+            .iter()
+            .copied()
+            .filter(|j| j.group == Some(group))
+            .collect();
         if !members.is_empty() {
             out.insert(group.as_str().to_string(), group_stats(&members));
         }
@@ -229,13 +263,24 @@ pub fn stats(jobs: &[JobCost]) -> BTreeMap<String, GroupStats> {
 }
 
 /// The estimate for a plan of `plan_bytes` bytes. It uses the plan's group and falls back to all sizes.
-pub fn estimate_for(plan_bytes: u64, stats: &BTreeMap<String, GroupStats>, cfg: &Config) -> Option<Estimate> {
+pub fn estimate_for(
+    plan_bytes: u64,
+    stats: &BTreeMap<String, GroupStats>,
+    cfg: &Config,
+) -> Option<Estimate> {
     let group = group_of(plan_bytes, cfg).as_str();
     let (name, g) = match stats.get(group) {
         Some(g) => (group, g),
         None => ("all", stats.get("all")?),
     };
-    Some(Estimate { group: name.to_string(), median: g.median, low: g.low, high: g.high, n: g.n, n_approx: g.n_approx })
+    Some(Estimate {
+        group: name.to_string(),
+        median: g.median,
+        low: g.low,
+        high: g.high,
+        n: g.n,
+        n_approx: g.n_approx,
+    })
 }
 
 /// The size thresholds the figures were made with.
@@ -257,10 +302,16 @@ pub struct CostsFile {
 impl CostsFile {
     pub fn build(jobs: &[JobCost], cfg: &Config, now: f64) -> CostsFile {
         let groups = stats(jobs);
-        let roles = groups.get("all").map(|g| g.roles.clone()).unwrap_or_default();
+        let roles = groups
+            .get("all")
+            .map(|g| g.roles.clone())
+            .unwrap_or_default();
         CostsFile {
             generated_at: now,
-            thresholds: Thresholds { small_max_bytes: cfg.size_small_max_bytes, medium_max_bytes: cfg.size_medium_max_bytes },
+            thresholds: Thresholds {
+                small_max_bytes: cfg.size_small_max_bytes,
+                medium_max_bytes: cfg.size_medium_max_bytes,
+            },
             groups,
             roles,
         }
@@ -375,8 +426,14 @@ mod tests {
         ];
         let s = stats(&odd);
         let small = &s["small"];
-        assert_eq!((small.n, small.median, small.low, small.high), (3, 200, 100, 300));
-        let even = [job("1", SizeGroup::Medium, "merged", 100, false), job("2", SizeGroup::Medium, "merged", 201, false)];
+        assert_eq!(
+            (small.n, small.median, small.low, small.high),
+            (3, 200, 100, 300)
+        );
+        let even = [
+            job("1", SizeGroup::Medium, "merged", 100, false),
+            job("2", SizeGroup::Medium, "merged", 201, false),
+        ];
         let m = &stats(&even)["medium"];
         assert_eq!((m.n, m.median, m.low, m.high), (2, 150, 100, 201));
     }
@@ -416,7 +473,10 @@ mod tests {
 
     #[test]
     fn role_shares_add_up_to_one_hundred_within_rounding() {
-        let jobs = [job("1", SizeGroup::Small, "merged", 1000, false), job("2", SizeGroup::Small, "merged", 1000, false)];
+        let jobs = [
+            job("1", SizeGroup::Small, "merged", 1000, false),
+            job("2", SizeGroup::Small, "merged", 1000, false),
+        ];
         let roles = &stats(&jobs)["small"].roles;
         assert_eq!(roles["builder"], 70);
         assert_eq!(roles["reviewer"], 30);
@@ -442,20 +502,30 @@ mod tests {
 
     #[test]
     fn the_estimate_uses_the_group_of_the_plan_and_falls_back_to_all() {
-        let jobs = [job("1", SizeGroup::Small, "merged", 200, false), job("2", SizeGroup::Complex, "merged", 400, true)];
+        let jobs = [
+            job("1", SizeGroup::Small, "merged", 200, false),
+            job("2", SizeGroup::Complex, "merged", 400, true),
+        ];
         let s = stats(&jobs);
         let cfg = Config::default();
         let small = estimate_for(5_000, &s, &cfg).expect("small");
-        assert_eq!((small.group.as_str(), small.median, small.n, small.n_approx), ("small", 200, 1, 0));
+        assert_eq!(
+            (small.group.as_str(), small.median, small.n, small.n_approx),
+            ("small", 200, 1, 0)
+        );
         let complex = estimate_for(40_000, &s, &cfg).expect("complex");
         assert_eq!((complex.group.as_str(), complex.n_approx), ("complex", 1));
         // No medium jobs, so the overall figures are used.
         let medium = estimate_for(15_000, &s, &cfg).expect("fallback");
-        assert_eq!((medium.group.as_str(), medium.n, medium.low, medium.high), ("all", 2, 200, 400));
+        assert_eq!(
+            (medium.group.as_str(), medium.n, medium.low, medium.high),
+            ("all", 2, 200, 400)
+        );
     }
 
     #[test]
-    fn the_costs_file_has_groups_roles_and_thresholds_and_writes_atomically() -> Result<(), Box<dyn std::error::Error>> {
+    fn the_costs_file_has_groups_roles_and_thresholds_and_writes_atomically(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let jobs = [job("1", SizeGroup::Small, "merged", 1000, false)];
         let file = CostsFile::build(&jobs, &Config::default(), 42.0);
         assert_eq!(file.thresholds.small_max_bytes, 12_288);

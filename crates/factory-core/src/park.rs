@@ -112,7 +112,12 @@ impl ParkPart {
             }
             (text[start..].to_string(), true)
         };
-        ParkPart { title: title.to_string(), source: source.to_string(), text, truncated }
+        ParkPart {
+            title: title.to_string(),
+            source: source.to_string(),
+            text,
+            truncated,
+        }
     }
 }
 
@@ -129,8 +134,22 @@ pub struct ParkRecord {
 }
 
 impl ParkRecord {
-    pub fn new(kind: ParkKind, reason: &str, id: &str, round: u32, at: u64, parts: Vec<ParkPart>) -> ParkRecord {
-        ParkRecord { kind, reason: reason.to_string(), at, round, next: kind.next(id), parts }
+    pub fn new(
+        kind: ParkKind,
+        reason: &str,
+        id: &str,
+        round: u32,
+        at: u64,
+        parts: Vec<ParkPart>,
+    ) -> ParkRecord {
+        ParkRecord {
+            kind,
+            reason: reason.to_string(),
+            at,
+            round,
+            next: kind.next(id),
+            parts,
+        }
     }
 
     pub fn write(&self, dir: &Path) -> Result<(), CoreError> {
@@ -167,7 +186,10 @@ mod tests {
 
     #[test]
     fn next_commands_carry_the_job_id() {
-        assert_eq!(ParkKind::ChecksFailed.next("012"), vec!["factory rework 012 <note>"]);
+        assert_eq!(
+            ParkKind::ChecksFailed.next("012"),
+            vec!["factory rework 012 <note>"]
+        );
         assert_eq!(
             ParkKind::RiskyDiff.next("012"),
             vec!["factory approve 012", "factory rework 012 <note>"]
@@ -182,22 +204,39 @@ mod tests {
         );
         assert_eq!(
             ParkKind::Other.next("012"),
-            vec!["factory approve 012", "factory rework 012 <note>", "factory cancel 012"]
+            vec![
+                "factory approve 012",
+                "factory rework 012 <note>",
+                "factory cancel 012"
+            ]
         );
     }
 
     #[test]
     fn next_without_a_review_offers_approve_without_review() {
         let wr = "factory approve 012 --without-review (the review has not run)";
-        let want = vec!["factory rework 012 <note>".to_string(), "factory cancel 012".to_string(), wr.to_string()];
+        let want = vec![
+            "factory rework 012 <note>".to_string(),
+            "factory cancel 012".to_string(),
+            wr.to_string(),
+        ];
         for kind in [ParkKind::Other, ParkKind::BudgetStopped] {
             assert_eq!(kind.next_for("012", true), want, "{kind:?}");
         }
         // Parks without an approve option, and parks with a review, stay as they were.
-        for kind in [ParkKind::ChecksFailed, ParkKind::NothingChanged, ParkKind::BuilderStopped, ParkKind::BuilderBlocked] {
+        for kind in [
+            ParkKind::ChecksFailed,
+            ParkKind::NothingChanged,
+            ParkKind::BuilderStopped,
+            ParkKind::BuilderBlocked,
+        ] {
             assert_eq!(kind.next_for("012", true), kind.next("012"), "{kind:?}");
         }
-        for kind in [ParkKind::Other, ParkKind::RiskyDiff, ParkKind::BudgetStopped] {
+        for kind in [
+            ParkKind::Other,
+            ParkKind::RiskyDiff,
+            ParkKind::BudgetStopped,
+        ] {
             assert_eq!(kind.next_for("012", false), kind.next("012"), "{kind:?}");
         }
     }
@@ -213,7 +252,10 @@ mod tests {
         for kind in [ParkKind::NoChecks, ParkKind::NoTests] {
             assert_eq!(
                 kind.next("012"),
-                vec!["factory approve 012".to_string(), "factory rework 012 <note>".to_string()],
+                vec![
+                    "factory approve 012".to_string(),
+                    "factory rework 012 <note>".to_string()
+                ],
                 "{kind:?}"
             );
         }
@@ -222,8 +264,15 @@ mod tests {
     #[test]
     fn a_park_before_the_review_offers_approve_without_review() {
         let next = ParkKind::NoChecks.next_for("012", true);
-        assert!(next.iter().any(|n| n.contains("factory approve 012 --without-review")), "{next:?}");
-        assert!(!next.contains(&"factory approve 012".to_string()), "{next:?}");
+        assert!(
+            next.iter()
+                .any(|n| n.contains("factory approve 012 --without-review")),
+            "{next:?}"
+        );
+        assert!(
+            !next.contains(&"factory approve 012".to_string()),
+            "{next:?}"
+        );
     }
 
     #[test]
@@ -278,7 +327,11 @@ mod tests {
             "012",
             3,
             1_760_000_000,
-            vec![ParkPart::new("Failing checks", "checks.md", "FAIL cargo check")],
+            vec![ParkPart::new(
+                "Failing checks",
+                "checks.md",
+                "FAIL cargo check",
+            )],
         );
         rec.write(dir.path())?;
         let back = ParkRecord::read(dir.path());

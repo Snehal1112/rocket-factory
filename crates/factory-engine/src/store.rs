@@ -31,7 +31,10 @@ pub const DEFAULT_LOCK_WAIT: Duration = Duration::from_secs(15);
 impl BoardStore {
     /// A store over a board file. The lock file sits next to it.
     pub fn new(board_path: &Path, wait: Duration) -> BoardStore {
-        BoardStore { board_path: board_path.to_path_buf(), wait }
+        BoardStore {
+            board_path: board_path.to_path_buf(),
+            wait,
+        }
     }
 
     pub fn wait(&self) -> Duration {
@@ -56,7 +59,10 @@ impl BoardStore {
         }
     }
 
-    pub fn update<R>(&self, f: impl FnOnce(&mut Board) -> Result<R, StoreError>) -> Result<R, StoreError> {
+    pub fn update<R>(
+        &self,
+        f: impl FnOnce(&mut Board) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
         // The guard lives until the board is saved, so read, change and write are one step.
         let _guard = lock_board(&self.board_path.with_extension("json.lock"), self.wait)?;
         let mut board = self.load()?;

@@ -1,11 +1,26 @@
 mod common;
 
 use factory_core::{Job, SizeGroup, Stage};
-use factory_engine::{costs_path, create_job, estimate_for_plan, gather_costs, refresh_costs, run_job, RunEnd};
+use factory_engine::{
+    costs_path, create_job, estimate_for_plan, gather_costs, refresh_costs, run_job, RunEnd,
+};
 
-fn add_finished_job(fx: &common::SeriesFixture, id: &str, plan_text: &str, usage: Option<&str>) -> Job {
-    let mut job = Job::new(id, &format!("2026-10-16-{id}-x"), "x", "2026-10-16", "feature", 1.0);
-    job.set_stage(Stage::Build, None, false, 2.0).expect("build");
+fn add_finished_job(
+    fx: &common::SeriesFixture,
+    id: &str,
+    plan_text: &str,
+    usage: Option<&str>,
+) -> Job {
+    let mut job = Job::new(
+        id,
+        &format!("2026-10-16-{id}-x"),
+        "x",
+        "2026-10-16",
+        "feature",
+        1.0,
+    );
+    job.set_stage(Stage::Build, None, false, 2.0)
+        .expect("build");
     let dir = fx.driver.job_dir(&job);
     std::fs::create_dir_all(&dir).expect("dir");
     std::fs::write(dir.join("plan.md"), plan_text).expect("plan");
@@ -13,7 +28,13 @@ fn add_finished_job(fx: &common::SeriesFixture, id: &str, plan_text: &str, usage
         std::fs::write(dir.join("usage.jsonl"), text).expect("usage");
     }
     let added = job.clone();
-    fx.driver.store().update(|board| { board.jobs.push(added); Ok(()) }).expect("add job");
+    fx.driver
+        .store()
+        .update(|board| {
+            board.jobs.push(added);
+            Ok(())
+        })
+        .expect("add job");
     job
 }
 
@@ -37,8 +58,15 @@ fn gather_costs_builds_one_record_per_job_with_group_tasks_and_usage() {
 fn a_job_without_a_plan_or_usage_is_listed_without_data() {
     let fx = common::SeriesFixture::new("x");
     let mut job = Job::new("102", "2026-10-16-102-x", "x", "2026-10-16", "f", 1.0);
-    job.set_stage(Stage::Build, None, false, 2.0).expect("build");
-    fx.driver.store().update(|board| { board.jobs.push(job); Ok(()) }).expect("add job");
+    job.set_stage(Stage::Build, None, false, 2.0)
+        .expect("build");
+    fx.driver
+        .store()
+        .update(|board| {
+            board.jobs.push(job);
+            Ok(())
+        })
+        .expect("add job");
     let jobs = gather_costs(&fx.driver).expect("gather");
     let j = jobs.iter().find(|j| j.id == "102").expect("job 102");
     assert_eq!(j.group, None);
@@ -103,7 +131,10 @@ fn estimate_for_plan_uses_history_and_is_none_without_it() {
     make_merged(&fx, "101", "# tiny\n", 200);
     make_merged(&fx, "102", "# tiny\n", 400);
     let e = estimate_for_plan(&fx.driver, 100).expect("estimate");
-    assert_eq!((e.group.as_str(), e.median, e.low, e.high, e.n), ("small", 300, 200, 400, 2));
+    assert_eq!(
+        (e.group.as_str(), e.median, e.low, e.high, e.n),
+        ("small", 300, 200, 400, 2)
+    );
     // A complex plan has no complex history, so the overall figures are used.
     let all = estimate_for_plan(&fx.driver, 40_000).expect("fallback");
     assert_eq!((all.group.as_str(), all.n), ("all", 2));
@@ -138,14 +169,26 @@ fn a_merge_refreshes_costs_json_and_a_failed_refresh_does_not_fail_the_merge() {
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "ok", "a feature", Some(&plan), None).expect("create");
     assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
-    let raw = std::fs::read_to_string(costs_path(fx.driver.layout())).expect("costs.json after the merge");
+    let raw = std::fs::read_to_string(costs_path(fx.driver.layout()))
+        .expect("costs.json after the merge");
     assert!(raw.contains("\"groups\""), "{raw}");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("costs.json parses");
-    assert_eq!(value["groups"]["all"]["n"], 1, "the merged job is counted: {raw}");
+    assert_eq!(
+        value["groups"]["all"]["n"], 1,
+        "the merged job is counted: {raw}"
+    );
     let jobs = gather_costs(&fx.driver).expect("gather");
     let merged = jobs.iter().find(|j| j.id == job.id).expect("merged job");
-    assert!(merged.lines.is_some_and(|n| n > 0), "lines: {:?}", merged.lines);
-    assert!(merged.files.is_some_and(|n| n >= 1), "files: {:?}", merged.files);
+    assert!(
+        merged.lines.is_some_and(|n| n > 0),
+        "lines: {:?}",
+        merged.lines
+    );
+    assert!(
+        merged.files.is_some_and(|n| n >= 1),
+        "files: {:?}",
+        merged.files
+    );
 
     // A directory where the file goes makes the write fail.
     let fx2 = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
@@ -158,12 +201,18 @@ fn a_merge_refreshes_costs_json_and_a_failed_refresh_does_not_fail_the_merge() {
 #[test]
 fn the_costs_refresh_after_a_merge_includes_the_kb_run_of_that_job() {
     let kb = tempfile::tempdir().expect("kb dir");
-    let config = factory_core::Config { kb_path: Some(kb.path().to_string_lossy().into_owned()), ..Default::default() };
+    let config = factory_core::Config {
+        kb_path: Some(kb.path().to_string_lossy().into_owned()),
+        ..Default::default()
+    };
     let fx = common::SeriesFixture::with_config("fine\nVERDICT: APPROVE", config);
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "kb", "a feature", Some(&plan), None).expect("create");
     assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
     let raw = std::fs::read_to_string(costs_path(fx.driver.layout())).expect("costs.json");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("parses");
-    assert!(value["roles"].to_string().contains("\"kb\""), "roles must list kb: {raw}");
+    assert!(
+        value["roles"].to_string().contains("\"kb\""),
+        "roles must list kb: {raw}"
+    );
 }

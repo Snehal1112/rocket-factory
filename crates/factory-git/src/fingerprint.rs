@@ -21,7 +21,11 @@ impl Repo {
         tip.hash(&mut hasher);
 
         // The symbolic HEAD name and every ref catch a branch switch, delete or tag.
-        let head_name = self.inner.find_reference("HEAD").ok().and_then(|r| r.symbolic_target().map(str::to_string));
+        let head_name = self
+            .inner
+            .find_reference("HEAD")
+            .ok()
+            .and_then(|r| r.symbolic_target().map(str::to_string));
         head_name.hash(&mut hasher);
         let mut refs: Vec<(String, String)> = Vec::new();
         for reference in self.inner.references()?.flatten() {
@@ -36,11 +40,18 @@ impl Repo {
         refs.hash(&mut hasher);
 
         let mut opts = StatusOptions::new();
-        opts.include_untracked(true).recurse_untracked_dirs(true).include_ignored(false);
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .include_ignored(false);
         let statuses = self.inner.statuses(Some(&mut opts))?;
         let mut entries: Vec<(String, u32)> = statuses
             .iter()
-            .map(|e| (String::from_utf8_lossy(e.path_bytes()).into_owned(), e.status().bits()))
+            .map(|e| {
+                (
+                    String::from_utf8_lossy(e.path_bytes()).into_owned(),
+                    e.status().bits(),
+                )
+            })
             .collect();
         entries.sort();
 
@@ -48,7 +59,9 @@ impl Repo {
             path.hash(&mut hasher);
             flags.hash(&mut hasher);
             let full = self.root.join(path);
-            let Ok(meta) = std::fs::symlink_metadata(&full) else { continue };
+            let Ok(meta) = std::fs::symlink_metadata(&full) else {
+                continue;
+            };
             if meta.file_type().is_symlink() {
                 // Hash the link target, never the file it points at.
                 if let Ok(target) = std::fs::read_link(&full) {
@@ -65,7 +78,10 @@ impl Repo {
                 }
             } else {
                 meta.len().hash(&mut hasher);
-                let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok());
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok());
                 mtime.hash(&mut hasher);
             }
         }

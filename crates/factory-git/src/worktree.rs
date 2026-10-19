@@ -26,7 +26,10 @@ impl JobRef {
     fn validate(&self) -> Result<()> {
         let id_ok = !self.id.is_empty() && self.id.chars().all(|c| c.is_ascii_digit());
         let slug_ok = !self.slug.is_empty()
-            && self.slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            && self
+                .slug
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if id_ok && slug_ok {
             Ok(())
         } else {
@@ -73,7 +76,10 @@ impl Repo {
         let parent = self.worktrees.clone();
         let path = parent.join(&name);
         if path.exists() {
-            return Err(GitError::Refused(format!("{} already exists", path.display())));
+            return Err(GitError::Refused(format!(
+                "{} already exists",
+                path.display()
+            )));
         }
         if self.inner.find_branch(&branch, BranchType::Local).is_ok() {
             return Err(GitError::Refused(format!("branch {branch} already exists")));
@@ -91,7 +97,12 @@ impl Repo {
             let _ = created.delete();
             return Err(e.into());
         }
-        Ok(Worktree { name, path, branch, base: main.id().to_string() })
+        Ok(Worktree {
+            name,
+            path,
+            branch,
+            base: main.id().to_string(),
+        })
     }
 
     /// Prunes every worktree registration whose folder is inside `dir`, with the working folder.
@@ -103,7 +114,9 @@ impl Repo {
         let canon = fs::canonicalize(dir).ok();
         let mut report = PruneReport::default();
         for name in self.inner.worktrees()?.iter().flatten() {
-            let Ok(found) = self.inner.find_worktree(name) else { continue };
+            let Ok(found) = self.inner.find_worktree(name) else {
+                continue;
+            };
             let p = found.path();
             let claims = p.starts_with(dir) || canon.as_ref().is_some_and(|c| p.starts_with(c));
             if !claims {
@@ -135,20 +148,29 @@ impl Repo {
     /// `factory/`, the main checkout, or the branch the main checkout is on.
     pub fn remove_worktree(&self, wt: &Worktree, force: bool) -> Result<()> {
         if wt.branch == self.base || !wt.branch.starts_with("factory/") {
-            return Err(GitError::Refused(format!("{} is not a factory job branch", wt.branch)));
+            return Err(GitError::Refused(format!(
+                "{} is not a factory job branch",
+                wt.branch
+            )));
         }
         if same_dir(&wt.path, &self.root) {
-            return Err(GitError::Refused("the worktree is the main checkout".into()));
+            return Err(GitError::Refused(
+                "the worktree is the main checkout".into(),
+            ));
         }
         let head = self.inner.head()?;
         if head.shorthand() == Some(wt.branch.as_str()) {
-            return Err(GitError::Refused("the main checkout is on the job branch".into()));
+            return Err(GitError::Refused(
+                "the main checkout is on the job branch".into(),
+            ));
         }
         if !force {
             if wt.path.is_dir() {
                 let inside = Repository::open(&wt.path)?;
                 let mut opts = StatusOptions::new();
-                opts.include_untracked(true).recurse_untracked_dirs(true).include_ignored(false);
+                opts.include_untracked(true)
+                    .recurse_untracked_dirs(true)
+                    .include_ignored(false);
                 if !inside.statuses(Some(&mut opts))?.is_empty() {
                     return Err(GitError::Refused(format!(
                         "worktree {} has uncommitted or untracked work",
@@ -181,10 +203,17 @@ impl Repo {
     /// history rewrite, the branch only gains a merge commit. A conflict is
     /// returned as a value and the worktree is left as it was.
     pub fn merge_main_into(&self, wt: &Worktree, message: &str) -> Result<MergeOutcome> {
-        let refuse = |reason: &str| Ok(MergeOutcome::Refused { reason: reason.to_string() });
+        let refuse = |reason: &str| {
+            Ok(MergeOutcome::Refused {
+                reason: reason.to_string(),
+            })
+        };
         let inside = Repository::open(&wt.path)?;
         let head = inside.head()?;
-        if wt.branch == self.base || !head.is_branch() || head.shorthand() != Some(wt.branch.as_str()) {
+        if wt.branch == self.base
+            || !head.is_branch()
+            || head.shorthand() != Some(wt.branch.as_str())
+        {
             return refuse("the worktree is not on the job branch");
         }
         if inside.state() != git2::RepositoryState::Clean {

@@ -5,7 +5,8 @@ use std::path::Path;
 use factory_core::{Job, Stage};
 
 use crate::runloop::{
-    add_job, add_warning, adopt_draft, create_job_with_spec, user_decisions, validate_series, Validated, NO_USER_DECISION,
+    add_job, add_warning, adopt_draft, create_job_with_spec, user_decisions, validate_series,
+    Validated, NO_USER_DECISION,
 };
 use crate::tasks::parse_checkbox_tasks;
 use crate::{combine_plans, parse_series_with, Driver, EngineError, SeriesError};
@@ -38,11 +39,16 @@ pub fn create_one_job(
     accept_over_budget: bool,
 ) -> Result<OneJob, EngineError> {
     // The task cap is lifted, so a plan with no task needs its own message.
-    let Validated { series, plan_warnings, spec_text } = validate_series(driver, plan, spec_path, |root, start| {
+    let Validated {
+        series,
+        plan_warnings,
+        spec_text,
+    } = validate_series(driver, plan, spec_path, |root, start| {
         parse_series_with(root, start, None).map_err(|e| match e {
-            SeriesError::TaskCount { path, found: 0 } => {
-                EngineError::Msg(format!("{}: a plan needs at least one task", path.display()))
-            }
+            SeriesError::TaskCount { path, found: 0 } => EngineError::Msg(format!(
+                "{}: a plan needs at least one task",
+                path.display()
+            )),
             other => EngineError::from(other),
         })
     })?;
@@ -67,7 +73,11 @@ pub fn create_one_job(
         let full = std::fs::canonicalize(&p.path).unwrap_or_else(|_| p.path.clone());
         let name = match full.strip_prefix(&root) {
             Ok(rel) => rel.to_string_lossy().into_owned(),
-            Err(_) => p.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            Err(_) => p
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         };
         texts.push((name, text));
     }
@@ -99,7 +109,10 @@ pub fn create_one_job(
     }
     adopt_draft(driver, slug, &job);
     let mut notes = Vec::new();
-    if spec_text.as_deref().is_some_and(|text| user_decisions(text) == 0) {
+    if spec_text
+        .as_deref()
+        .is_some_and(|text| user_decisions(text) == 0)
+    {
         job = add_warning(driver, slug, job, NO_USER_DECISION);
     }
     for warning in plan_warnings.iter().chain(&combined.warnings) {
@@ -109,7 +122,9 @@ pub fn create_one_job(
         let text = format!("estimated {estimate} weighted tokens, over the budget of {budget}");
         job = add_warning(driver, slug, job, &text);
     } else {
-        notes.push(format!("estimated {estimate} weighted tokens, budget {budget}"));
+        notes.push(format!(
+            "estimated {estimate} weighted tokens, budget {budget}"
+        ));
     }
     Ok(OneJob { job, notes })
 }

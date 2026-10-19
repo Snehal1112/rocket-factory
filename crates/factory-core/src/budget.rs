@@ -37,7 +37,10 @@ mod tests {
 
     #[test]
     fn weighted_never_overflows() {
-        assert_eq!(weighted_tokens(u64::MAX, u64::MAX, u64::MAX, u64::MAX), u64::MAX);
+        assert_eq!(
+            weighted_tokens(u64::MAX, u64::MAX, u64::MAX, u64::MAX),
+            u64::MAX
+        );
     }
 
     #[test]

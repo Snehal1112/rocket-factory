@@ -76,15 +76,32 @@ fn settings_resolve_to_the_old_values() {
 fn risk_paths_and_checks_match_minus_the_factory_folders() {
     let (_t, r) = resolved();
     let (new, old) = (r.config, old());
-    let want: Vec<String> = old.risk_paths.iter().filter(|p| !is_factory_own(p)).cloned().collect();
+    let want: Vec<String> = old
+        .risk_paths
+        .iter()
+        .filter(|p| !is_factory_own(p))
+        .cloned()
+        .collect();
     // The resolver always adds its own `.factory/**` entry. Everything else must match in order.
-    let got: Vec<String> = new.risk_paths.iter().filter(|p| p.as_str() != ".factory/**").cloned().collect();
+    let got: Vec<String> = new
+        .risk_paths
+        .iter()
+        .filter(|p| p.as_str() != ".factory/**")
+        .cloned()
+        .collect();
     assert_eq!(got, want);
-    let want_checks: Vec<&CheckRule> =
-        old.checks.iter().filter(|c| !c.paths.iter().any(|p| is_factory_own(p))).collect();
+    let want_checks: Vec<&CheckRule> = old
+        .checks
+        .iter()
+        .filter(|c| !c.paths.iter().any(|p| is_factory_own(p)))
+        .collect();
     let got_checks: Vec<&CheckRule> = new.checks.iter().collect();
     assert_eq!(got_checks, want_checks);
-    for text in new.risk_paths.iter().chain(new.checks.iter().flat_map(|c| c.paths.iter())) {
+    for text in new
+        .risk_paths
+        .iter()
+        .chain(new.checks.iter().flat_map(|c| c.paths.iter()))
+    {
         assert!(!is_factory_own(text), "factory folder left in: {text}");
     }
 }
@@ -95,19 +112,44 @@ fn rules_are_rockets_own_and_name_no_workspace_command() {
     let c = r.config;
     assert!(c.read_first.len() >= 2, "read_first: {:?}", c.read_first);
     assert!(c.read_first.iter().any(|f| f == "CLAUDE.md"));
-    assert!(c.read_first.iter().any(|f| f.ends_with("rules/00-shortcuts.md")));
-    let all: Vec<&String> =
-        c.builder_rules.iter().chain(&c.check_hints).chain(&c.reviewer_rules).collect();
+    assert!(c
+        .read_first
+        .iter()
+        .any(|f| f.ends_with("rules/00-shortcuts.md")));
+    let all: Vec<&String> = c
+        .builder_rules
+        .iter()
+        .chain(&c.check_hints)
+        .chain(&c.reviewer_rules)
+        .collect();
     for line in &all {
         // Only a command in backticks counts. A rule may say "never use --workspace".
         for cmd in line.split('`').skip(1).step_by(2) {
-            assert!(!cmd.contains("--workspace") && !cmd.contains("--all"), "workspace command in: {line}");
+            assert!(
+                !cmd.contains("--workspace") && !cmd.contains("--all"),
+                "workspace command in: {line}"
+            );
         }
     }
-    let joined = all.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join("\n");
+    let joined = all
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
     for needle in [
-        "shadcn", "lucide-react", "singlelineeditor", "monaco", "zustand", "unwrap", "git2", "camelcase",
-        "yarn tsc --noemit", "yarn check", "yarn test", "cargo check -j4", "cargo test -j4 -p",
+        "shadcn",
+        "lucide-react",
+        "singlelineeditor",
+        "monaco",
+        "zustand",
+        "unwrap",
+        "git2",
+        "camelcase",
+        "yarn tsc --noemit",
+        "yarn check",
+        "yarn test",
+        "cargo check -j4",
+        "cargo test -j4 -p",
     ] {
         assert!(joined.contains(needle), "missing {needle}");
     }
@@ -118,9 +160,16 @@ fn plan_rules_carry_the_two_rocket_rules_and_the_old_config_has_none() {
     let (_t, r) = resolved();
     let rules = &r.config.plan_rules;
     assert_eq!(rules.len(), 2, "{rules:?}");
-    assert!(rules[0].contains("cargo check -j4 -p <crate>") && rules[0].contains("never a bare `cargo check -j4`"), "{rules:?}");
+    assert!(
+        rules[0].contains("cargo check -j4 -p <crate>")
+            && rules[0].contains("never a bare `cargo check -j4`"),
+        "{rules:?}"
+    );
     assert!(rules[0].contains("stalls the builder"), "{rules:?}");
-    assert!(rules[1].contains("docs/superpowers/specs/opencollection-spec-reference.md"), "{rules:?}");
+    assert!(
+        rules[1].contains("docs/superpowers/specs/opencollection-spec-reference.md"),
+        "{rules:?}"
+    );
     assert!(!OLD_CONFIG.contains("plan_rules"));
 }
 
@@ -135,8 +184,17 @@ fn the_src_tauri_rule_runs_the_tests() {
     };
     let (_t, r) = resolved();
     for cmds in [commands(&r.config), commands(&old())] {
-        assert!(cmds.contains(&"cargo check -j4 -p rocket".to_string()), "{cmds:?}");
-        assert!(cmds.contains(&"cargo test -j4 -p rocket".to_string()), "{cmds:?}");
-        assert!(!cmds.contains(&"cargo check -j4".to_string()), "a bare workspace check: {cmds:?}");
+        assert!(
+            cmds.contains(&"cargo check -j4 -p rocket".to_string()),
+            "{cmds:?}"
+        );
+        assert!(
+            cmds.contains(&"cargo test -j4 -p rocket".to_string()),
+            "{cmds:?}"
+        );
+        assert!(
+            !cmds.contains(&"cargo check -j4".to_string()),
+            "a bare workspace check: {cmds:?}"
+        );
     }
 }

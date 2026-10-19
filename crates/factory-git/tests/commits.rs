@@ -7,7 +7,10 @@ use git2::Repository;
 fn job_worktree(fx: &Fixture) -> (Repo, Worktree) {
     let repo = fx.repo();
     let wt = repo
-        .create_worktree(&JobRef { id: "001".into(), slug: "demo".into() })
+        .create_worktree(&JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+        })
         .expect("create worktree");
     (repo, wt)
 }
@@ -21,7 +24,11 @@ fn commits_above_lists_commits_oldest_first_with_their_files() {
     let fx = Fixture::new();
     let (repo, wt) = job_worktree(&fx);
     commit_files(&inside(&wt), &[("a.txt", "a\n")], "feat(x): add a");
-    commit_files(&inside(&wt), &[("b.txt", "b\n"), ("c.txt", "c\n")], "feat(x): add b and c");
+    commit_files(
+        &inside(&wt),
+        &[("b.txt", "b\n"), ("c.txt", "c\n")],
+        "feat(x): add b and c",
+    );
     let tip = repo.tip(&wt.branch).expect("tip");
 
     let commits = repo.commits_above(&wt.base, &tip).expect("commits");
@@ -37,7 +44,10 @@ fn commits_above_lists_commits_oldest_first_with_their_files() {
 fn commits_above_is_empty_when_floor_equals_tip() {
     let fx = Fixture::new();
     let (repo, wt) = job_worktree(&fx);
-    assert!(repo.commits_above(&wt.base, &wt.base).expect("commits").is_empty());
+    assert!(repo
+        .commits_above(&wt.base, &wt.base)
+        .expect("commits")
+        .is_empty());
 }
 
 #[test]
@@ -47,12 +57,20 @@ fn commit_staged_commits_the_index_and_returns_the_new_tip() {
     std::fs::write(wt.path.join("new.txt"), "new\n").expect("write");
     repo.stage_all(&wt).expect("stage");
 
-    let sha = repo.commit_staged(&wt, "chore: add new\n\nbody line").expect("commit");
+    let sha = repo
+        .commit_staged(&wt, "chore: add new\n\nbody line")
+        .expect("commit");
     assert_eq!(sha, repo.tip(&wt.branch).expect("tip"));
     let commits = repo.commits_above(&wt.base, &sha).expect("commits");
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0].files, vec!["new.txt"]);
-    let message = inside(&wt).head().expect("head").peel_to_commit().expect("commit").message().map(str::to_string);
+    let message = inside(&wt)
+        .head()
+        .expect("head")
+        .peel_to_commit()
+        .expect("commit")
+        .message()
+        .map(str::to_string);
     assert_eq!(message.as_deref(), Some("chore: add new\n\nbody line"));
     assert!(repo.worktree_is_clean(&wt).expect("clean"));
 }
@@ -62,7 +80,10 @@ fn commit_staged_with_nothing_staged_is_refused() {
     let fx = Fixture::new();
     let (repo, wt) = job_worktree(&fx);
     let before = repo.tip(&wt.branch).expect("tip");
-    assert!(matches!(repo.commit_staged(&wt, "chore: nothing"), Err(GitError::Refused(_))));
+    assert!(matches!(
+        repo.commit_staged(&wt, "chore: nothing"),
+        Err(GitError::Refused(_))
+    ));
     assert_eq!(repo.tip(&wt.branch).expect("tip"), before);
 }
 
@@ -91,9 +112,20 @@ fn commits_above_lists_the_rewritten_commit_after_an_amend() {
     let old_tip = repo.tip(&wt.branch).expect("tip");
 
     let inner = inside(&wt);
-    let head = inner.head().expect("head").peel_to_commit().expect("commit");
-    head.amend(Some("HEAD"), None, None, None, Some("feat(x): add b, reworded"), None)
-        .expect("amend");
+    let head = inner
+        .head()
+        .expect("head")
+        .peel_to_commit()
+        .expect("commit");
+    head.amend(
+        Some("HEAD"),
+        None,
+        None,
+        None,
+        Some("feat(x): add b, reworded"),
+        None,
+    )
+    .expect("amend");
     let new_tip = repo.tip(&wt.branch).expect("tip");
     assert_ne!(new_tip, old_tip);
 
@@ -108,7 +140,11 @@ fn commits_above_lists_the_rewritten_commit_after_an_amend() {
 fn commits_above_carries_the_full_message() {
     let fx = Fixture::new();
     let (repo, wt) = job_worktree(&fx);
-    commit_files(&inside(&wt), &[("a.txt", "a\n")], "feat(x): add a\n\nWhy a exists.");
+    commit_files(
+        &inside(&wt),
+        &[("a.txt", "a\n")],
+        "feat(x): add a\n\nWhy a exists.",
+    );
     let tip = repo.tip(&wt.branch).expect("tip");
     let commits = repo.commits_above(&wt.base, &tip).expect("commits");
     assert_eq!(commits[0].subject, "feat(x): add a");

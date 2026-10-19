@@ -27,24 +27,34 @@ pub struct HomeConfig {
 
 impl Default for HomeConfig {
     fn default() -> Self {
-        HomeConfig { max_parallel: DEFAULT_MAX_PARALLEL, listen: DEFAULT_LISTEN.to_string(), daily_budget_weighted: None, draft_stale_hours: DEFAULT_DRAFT_STALE_HOURS }
+        HomeConfig {
+            max_parallel: DEFAULT_MAX_PARALLEL,
+            listen: DEFAULT_LISTEN.to_string(),
+            daily_budget_weighted: None,
+            draft_stale_hours: DEFAULT_DRAFT_STALE_HOURS,
+        }
     }
 }
 
 impl HomeConfig {
     /// Parses and validates the text of a config file.
     pub fn parse(text: &str) -> Result<HomeConfig, CoreError> {
-        let cfg: HomeConfig = toml::from_str(text).map_err(|e| CoreError::Config(format!("bad home config: {e}")))?;
+        let cfg: HomeConfig =
+            toml::from_str(text).map_err(|e| CoreError::Config(format!("bad home config: {e}")))?;
         if !(1..=MAX_PARALLEL_CAP).contains(&cfg.max_parallel) {
             return Err(CoreError::Config(format!(
                 "bad home config: max_parallel must be 1 to {MAX_PARALLEL_CAP}"
             )));
         }
         if cfg.daily_budget_weighted == Some(0) {
-            return Err(CoreError::Config("bad home config: daily_budget_weighted must be greater than 0".to_string()));
+            return Err(CoreError::Config(
+                "bad home config: daily_budget_weighted must be greater than 0".to_string(),
+            ));
         }
         if cfg.draft_stale_hours == 0 {
-            return Err(CoreError::Config("bad home config: draft_stale_hours must be greater than 0".to_string()));
+            return Err(CoreError::Config(
+                "bad home config: draft_stale_hours must be greater than 0".to_string(),
+            ));
         }
         match cfg.listen.parse::<SocketAddr>() {
             Ok(addr) if addr.ip().is_loopback() => {}
@@ -93,7 +103,12 @@ mod tests {
 
     #[test]
     fn max_parallel_parses() {
-        assert_eq!(load_text(Some("max_parallel = 4\n")).expect("ok").max_parallel, 4);
+        assert_eq!(
+            load_text(Some("max_parallel = 4\n"))
+                .expect("ok")
+                .max_parallel,
+            4
+        );
     }
 
     #[test]
@@ -107,7 +122,12 @@ mod tests {
     #[test]
     fn listen_defaults_and_accepts_loopback_only() {
         assert_eq!(load_text(None).expect("ok").listen, "127.0.0.1:8766");
-        assert_eq!(load_text(Some("listen = \"127.0.0.1:0\"\n")).expect("ok").listen, "127.0.0.1:0");
+        assert_eq!(
+            load_text(Some("listen = \"127.0.0.1:0\"\n"))
+                .expect("ok")
+                .listen,
+            "127.0.0.1:0"
+        );
         assert!(load_text(Some("listen = \"0.0.0.0:8766\"\n")).is_err());
         assert!(load_text(Some("listen = \"192.168.1.5:80\"\n")).is_err());
         assert!(load_text(Some("listen = \"nonsense\"\n")).is_err());
@@ -117,13 +137,21 @@ mod tests {
     fn daily_budget_parses_and_defaults_to_none() {
         assert_eq!(load_text(None).expect("ok").daily_budget_weighted, None);
         assert_eq!(load_text(Some("")).expect("ok").daily_budget_weighted, None);
-        assert_eq!(load_text(Some("daily_budget_weighted = 5000000\n")).expect("ok").daily_budget_weighted, Some(5_000_000));
+        assert_eq!(
+            load_text(Some("daily_budget_weighted = 5000000\n"))
+                .expect("ok")
+                .daily_budget_weighted,
+            Some(5_000_000)
+        );
     }
 
     #[test]
     fn a_bad_daily_budget_is_an_error() {
         for bad in ["0", "-1", "\"x\"", "1.5", "true"] {
-            assert!(load_text(Some(&format!("daily_budget_weighted = {bad}\n"))).is_err(), "{bad}");
+            assert!(
+                load_text(Some(&format!("daily_budget_weighted = {bad}\n"))).is_err(),
+                "{bad}"
+            );
         }
     }
 
@@ -131,15 +159,28 @@ mod tests {
     fn draft_stale_hours_defaults_to_24_and_rejects_zero() {
         assert_eq!(load_text(None).expect("ok").draft_stale_hours, 24);
         assert_eq!(load_text(Some("")).expect("ok").draft_stale_hours, 24);
-        assert_eq!(load_text(Some("draft_stale_hours = 6\n")).expect("ok").draft_stale_hours, 6);
+        assert_eq!(
+            load_text(Some("draft_stale_hours = 6\n"))
+                .expect("ok")
+                .draft_stale_hours,
+            6
+        );
         for bad in ["0", "-1", "\"x\"", "1.5"] {
-            assert!(load_text(Some(&format!("draft_stale_hours = {bad}\n"))).is_err(), "{bad}");
+            assert!(
+                load_text(Some(&format!("draft_stale_hours = {bad}\n"))).is_err(),
+                "{bad}"
+            );
         }
     }
 
     #[test]
     fn the_cap_is_64() {
-        assert_eq!(load_text(Some("max_parallel = 64\n")).expect("ok").max_parallel, 64);
+        assert_eq!(
+            load_text(Some("max_parallel = 64\n"))
+                .expect("ok")
+                .max_parallel,
+            64
+        );
         assert!(load_text(Some("max_parallel = 65\n")).is_err());
     }
 

@@ -186,44 +186,79 @@ mod tests {
 
     #[test]
     fn spec_without_plans_is_a_usage_error() {
-        let err = Cli::try_parse_from(["factory", "new", "s", "f", "--spec", "x.md"]).expect_err("needs --plans");
+        let err = Cli::try_parse_from(["factory", "new", "s", "f", "--spec", "x.md"])
+            .expect_err("needs --plans");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
     fn one_job_needs_plans() {
-        let err = Cli::try_parse_from(["factory", "new", "s", "f", "--one-job"]).expect_err("needs --plans");
+        let err = Cli::try_parse_from(["factory", "new", "s", "f", "--one-job"])
+            .expect_err("needs --plans");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
     fn accept_over_budget_needs_one_job() {
-        let err = Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--accept-over-budget"])
-            .expect_err("needs --one-job");
+        let err = Cli::try_parse_from([
+            "factory",
+            "new",
+            "s",
+            "f",
+            "--plans",
+            "p",
+            "--accept-over-budget",
+        ])
+        .expect_err("needs --one-job");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
     fn one_job_flags_parse() {
-        let cli = Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--one-job", "--accept-over-budget"])
-            .expect("parse");
-        assert!(matches!(cli.command, Command::New { one_job: true, accept_over_budget: true, .. }));
+        let cli = Cli::try_parse_from([
+            "factory",
+            "new",
+            "s",
+            "f",
+            "--plans",
+            "p",
+            "--one-job",
+            "--accept-over-budget",
+        ])
+        .expect("parse");
+        assert!(matches!(
+            cli.command,
+            Command::New {
+                one_job: true,
+                accept_over_budget: true,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn spec_subcommands_parse() {
-        let cli = Cli::try_parse_from(["factory", "spec", "start", "demo", "a feature"]).expect("start");
-        assert!(matches!(cli.command, Command::Spec { cmd: SpecCmd::Start { ref slug, ref feature } } if slug == "demo" && feature == "a feature"));
-        let cli = Cli::try_parse_from(["factory", "spec", "stage", "demo", "writing-spec"]).expect("stage");
-        assert!(matches!(cli.command, Command::Spec { cmd: SpecCmd::Stage { ref slug, ref stage } } if slug == "demo" && stage == "writing-spec"));
+        let cli =
+            Cli::try_parse_from(["factory", "spec", "start", "demo", "a feature"]).expect("start");
+        assert!(
+            matches!(cli.command, Command::Spec { cmd: SpecCmd::Start { ref slug, ref feature } } if slug == "demo" && feature == "a feature")
+        );
+        let cli = Cli::try_parse_from(["factory", "spec", "stage", "demo", "writing-spec"])
+            .expect("stage");
+        assert!(
+            matches!(cli.command, Command::Spec { cmd: SpecCmd::Stage { ref slug, ref stage } } if slug == "demo" && stage == "writing-spec")
+        );
         let cli = Cli::try_parse_from(["factory", "spec", "resume", "demo"]).expect("resume");
-        assert!(matches!(cli.command, Command::Spec { cmd: SpecCmd::Resume { ref slug } } if slug == "demo"));
+        assert!(
+            matches!(cli.command, Command::Spec { cmd: SpecCmd::Resume { ref slug } } if slug == "demo")
+        );
         assert!(Cli::try_parse_from(["factory", "spec", "start", "demo"]).is_err());
     }
 
     #[test]
     fn project_conflicts_with_root() {
-        let err = Cli::try_parse_from(["factory", "--project", "p", "--root", "/x", "status"]).expect_err("conflict");
+        let err = Cli::try_parse_from(["factory", "--project", "p", "--root", "/x", "status"])
+            .expect_err("conflict");
         assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
         let cli = Cli::try_parse_from(["factory", "--project", "p", "status"]).expect("parses");
         assert_eq!(cli.project.as_deref(), Some("p"));
@@ -231,12 +266,16 @@ mod tests {
 
     #[test]
     fn spec_with_plans_parses() {
-        Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--spec", "x.md"]).expect("parses");
+        Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--spec", "x.md"])
+            .expect("parses");
     }
 
     #[test]
     fn log_parses_flags() {
-        let cli = Cli::try_parse_from(["factory", "log", "--job", "003", "--level", "warn", "--tail", "5"]).expect("parses");
+        let cli = Cli::try_parse_from([
+            "factory", "log", "--job", "003", "--level", "warn", "--tail", "5",
+        ])
+        .expect("parses");
         assert!(matches!(
             cli.command,
             Command::Log { job: Some(ref j), level: Some(ref l), tail: 5 } if j == "003" && l == "warn"
@@ -246,7 +285,14 @@ mod tests {
     #[test]
     fn log_tail_defaults_to_100() {
         let cli = Cli::try_parse_from(["factory", "log"]).expect("parses");
-        assert!(matches!(cli.command, Command::Log { job: None, level: None, tail: 100 }));
+        assert!(matches!(
+            cli.command,
+            Command::Log {
+                job: None,
+                level: None,
+                tail: 100
+            }
+        ));
     }
 
     #[test]
@@ -254,7 +300,10 @@ mod tests {
         let cli = Cli::try_parse_from(["factory", "tickets", "012", "--dry-run"]).expect("parses");
         assert!(matches!(cli.command, Command::Tickets { ref id, dry_run: true } if id == "012"));
         let cli = Cli::try_parse_from(["factory", "tickets", "012"]).expect("parses");
-        assert!(matches!(cli.command, Command::Tickets { dry_run: false, .. }));
+        assert!(matches!(
+            cli.command,
+            Command::Tickets { dry_run: false, .. }
+        ));
     }
 
     #[test]

@@ -7,7 +7,10 @@ use git2::Repository;
 fn job_worktree(fx: &Fixture) -> (Repo, Worktree) {
     let repo = fx.repo();
     let wt = repo
-        .create_worktree(&JobRef { id: "001".into(), slug: "demo".into() })
+        .create_worktree(&JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+        })
         .expect("create worktree");
     (repo, wt)
 }
@@ -79,7 +82,12 @@ fn head_is_on_the_job_branch_until_it_is_detached() {
     let (repo, wt) = job_worktree(&fx);
     assert!(repo.head_is_on_branch(&wt).expect("on branch"));
     let inside = inside(&wt);
-    let oid = inside.head().expect("head").peel_to_commit().expect("commit").id();
+    let oid = inside
+        .head()
+        .expect("head")
+        .peel_to_commit()
+        .expect("commit")
+        .id();
     inside.set_head_detached(oid).expect("detach");
     assert!(!repo.head_is_on_branch(&wt).expect("detached"));
     assert_eq!(repo.head_sha(&wt).expect("sha"), oid.to_string());

@@ -7,14 +7,19 @@ use git2::Oid;
 const BASE: &str = "v-4.0.0";
 
 fn job() -> JobRef {
-    JobRef { id: "001".into(), slug: "x".into() }
+    JobRef {
+        id: "001".into(),
+        slug: "x".into(),
+    }
 }
 
 /// A repo on `v-4.0.0` with a `main` branch that sits on a different commit.
 fn two_branch_fixture() -> Fixture {
     let fx = Fixture::on_branch(BASE);
     let git = fx.git();
-    let tip = git.find_commit(Oid::from_str(&fx.branch_tip(BASE)).expect("oid")).expect("c");
+    let tip = git
+        .find_commit(Oid::from_str(&fx.branch_tip(BASE)).expect("oid"))
+        .expect("c");
     git.branch("main", &tip, false).expect("branch main");
     commit_to_branch(&git, "main", &[("main.txt", "m\n")], "main work");
     fx
@@ -35,13 +40,20 @@ fn merge_moves_the_base_branch_only() {
     let fx = two_branch_fixture();
     let main_before = fx.branch_tip("main");
     let git = fx.git();
-    let base_tip = git.find_commit(Oid::from_str(&fx.branch_tip(BASE)).expect("oid")).expect("c");
-    git.branch("factory/001-x", &base_tip, false).expect("branch");
+    let base_tip = git
+        .find_commit(Oid::from_str(&fx.branch_tip(BASE)).expect("oid"))
+        .expect("c");
+    git.branch("factory/001-x", &base_tip, false)
+        .expect("branch");
     let head = commit_to_branch(&git, "factory/001-x", &[("job.txt", "j\n")], "job work");
     let base_before = fx.branch_tip(BASE);
     let repo = fx.repo().with_base_branch(BASE);
     let merge_sha = match repo
-        .merge_no_ff("factory/001-x", &head.to_string(), "chore(factory): merge job 001 x")
+        .merge_no_ff(
+            "factory/001-x",
+            &head.to_string(),
+            "chore(factory): merge job 001 x",
+        )
         .expect("merge")
     {
         MergeOutcome::Merged { merge_sha } => merge_sha,
@@ -55,7 +67,12 @@ fn merge_moves_the_base_branch_only() {
 #[test]
 fn state_checks_use_the_base_branch() {
     let fx = two_branch_fixture();
-    match fx.repo().with_base_branch(BASE).preflight_main().expect("preflight") {
+    match fx
+        .repo()
+        .with_base_branch(BASE)
+        .preflight_main()
+        .expect("preflight")
+    {
         Preflight::Ready { main_sha } => assert_eq!(main_sha, fx.branch_tip(BASE)),
         other => panic!("expected Ready, got {other:?}"),
     }

@@ -29,7 +29,11 @@ fn lookup(pid: u32) -> (ProcState, Option<u64>) {
     let mut sys = System::new();
     // Each pid only once: sysinfo drops a pid that is listed twice.
     let pids = if pid == me { vec![pid] } else { vec![pid, me] };
-    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&pids), true, ProcessRefreshKind::nothing());
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&pids),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
     // A lookup that cannot even see this process is broken, so it says nothing about the pid.
     if sys.process(me).is_none() {
         return TRUSTED;
@@ -37,7 +41,11 @@ fn lookup(pid: u32) -> (ProcState, Option<u64>) {
     match sys.process(pid) {
         None => (ProcState::Gone, None),
         Some(p) => {
-            let state = if p.status() == ProcessStatus::Zombie { ProcState::Zombie } else { ProcState::Running };
+            let state = if p.status() == ProcessStatus::Zombie {
+                ProcState::Zombie
+            } else {
+                ProcState::Running
+            };
             // sysinfo reports whole seconds. 0 means it does not know.
             let start = p.start_time();
             (state, (start > 0).then(|| start.saturating_mul(1000)))
@@ -72,11 +80,20 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     fn sleeper() -> Child {
-        Command::new("sleep").arg("60").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("sleep")
+        Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sleep")
     }
 
     fn now_ms() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 
     /// Waits until the pid no longer runs, and fails after a while.
@@ -150,6 +167,9 @@ mod tests {
         c.kill().expect("kill");
         c.wait().expect("wait");
         // Whole seconds, so the start may read up to a second before `before`.
-        assert!(start + 2_000 >= before && start <= after + 2_000, "start {start}, window {before}..{after}");
+        assert!(
+            start + 2_000 >= before && start <= after + 2_000,
+            "start {start}, window {before}..{after}"
+        );
     }
 }

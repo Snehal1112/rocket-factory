@@ -39,11 +39,20 @@ impl External {
             commit_context_file: home.join("commit-context.md"),
         };
         std::fs::create_dir_all(&home).expect("home");
-        std::fs::write(&layout.config_file, "base_branch = \"v-4.0.0\"\nrisk_paths = [\"src-tauri/**\"]\n").expect("config");
+        std::fs::write(
+            &layout.config_file,
+            "base_branch = \"v-4.0.0\"\nrisk_paths = [\"src-tauri/**\"]\n",
+        )
+        .expect("config");
         std::fs::write(&layout.commit_context_file, "TEST CONTEXT\n").expect("context");
         let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::new());
         let ctx = CliCtx::with_layout(layout.clone(), runner, "tester");
-        External { tmp, repo, layout, ctx }
+        External {
+            tmp,
+            repo,
+            layout,
+            ctx,
+        }
     }
 
     fn run(&self, args: &[&str]) -> Result<String, factory_cli::CliError> {
@@ -54,7 +63,12 @@ impl External {
 
     fn tip(&self, branch: &str) -> String {
         let git = Repository::open(&self.repo).expect("open");
-        let id = git.revparse_single(branch).expect("branch").peel_to_commit().expect("commit").id();
+        let id = git
+            .revparse_single(branch)
+            .expect("branch")
+            .peel_to_commit()
+            .expect("commit")
+            .id();
         id.to_string()
     }
 }
@@ -66,16 +80,39 @@ fn a_job_merges_into_a_non_main_base_with_state_kept_outside_the_repo() {
     std::fs::create_dir_all(&plan_dir).expect("plans");
     let plan = plan_dir.join("plan-01-hello.md");
     std::fs::write(&plan, "# Plan\n\n### Task 1: t\n\nNext plan: none\n").expect("plan");
-    fx.run(&["new", "hello", "say hello", "--plans", plan.to_str().expect("utf8")]).expect("new");
+    fx.run(&[
+        "new",
+        "hello",
+        "say hello",
+        "--plans",
+        plan.to_str().expect("utf8"),
+    ])
+    .expect("new");
     let base_before = fx.tip("v-4.0.0");
     let main_before = fx.tip("main");
     assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
     assert_ne!(fx.tip("v-4.0.0"), base_before, "the base branch advanced");
-    assert_eq!(fx.tip("main"), main_before, "the other branch main is untouched");
-    assert!(fx.layout.board_file().exists(), "board kept in the state folder");
-    assert!(fx.layout.worktrees_dir.join("factory-001-hello").exists(), "worktree kept in the worktrees folder");
-    assert!(!fx.repo.join(".superpowers").exists(), "nothing written to .superpowers in the repo");
-    assert!(!fx.repo.join(".claude").exists(), "nothing written to .claude in the repo");
+    assert_eq!(
+        fx.tip("main"),
+        main_before,
+        "the other branch main is untouched"
+    );
+    assert!(
+        fx.layout.board_file().exists(),
+        "board kept in the state folder"
+    );
+    assert!(
+        fx.layout.worktrees_dir.join("factory-001-hello").exists(),
+        "worktree kept in the worktrees folder"
+    );
+    assert!(
+        !fx.repo.join(".superpowers").exists(),
+        "nothing written to .superpowers in the repo"
+    );
+    assert!(
+        !fx.repo.join(".claude").exists(),
+        "nothing written to .claude in the repo"
+    );
     fx.run(&["cleanup", "1"]).expect("cleanup");
     assert!(!fx.layout.worktrees_dir.join("factory-001-hello").exists());
 }

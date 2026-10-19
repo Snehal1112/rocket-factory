@@ -3,7 +3,11 @@
 use std::collections::BTreeMap;
 
 /// Job 001 measured baseline from the spec: raw tokens, weighted tokens and orchestrator share.
-pub const BASELINE: Baseline = Baseline { raw: 12_750_000, weighted: 2_170_000, orchestrator_percent: 53.6 };
+pub const BASELINE: Baseline = Baseline {
+    raw: 12_750_000,
+    weighted: 2_170_000,
+    orchestrator_percent: 53.6,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Baseline {
@@ -52,7 +56,10 @@ pub fn weighted(r: &UsageRecord) -> u64 {
 }
 
 fn raw(r: &UsageRecord) -> u64 {
-    r.input.saturating_add(r.cache_creation).saturating_add(r.output).saturating_add(r.cache_read)
+    r.input
+        .saturating_add(r.cache_creation)
+        .saturating_add(r.output)
+        .saturating_add(r.cache_read)
 }
 
 pub fn aggregate(records: &[UsageRecord]) -> TokenReport {
@@ -72,7 +79,10 @@ pub fn aggregate(records: &[UsageRecord]) -> TokenReport {
 pub fn render(job: &str, report: &TokenReport) -> String {
     let mut out = format!("tokens for job {job}\n");
     for (role, t) in &report.by_role {
-        out.push_str(&format!("  {role:<10} runs {:<3} raw {:<10} weighted {}\n", t.runs, t.raw, t.weighted));
+        out.push_str(&format!(
+            "  {role:<10} runs {:<3} raw {:<10} weighted {}\n",
+            t.runs, t.raw, t.weighted
+        ));
     }
     out.push_str(&format!(
         "  total      runs {:<3} raw {} weighted {}\n",
@@ -121,7 +131,9 @@ pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Vec<UsageRecord>, 
     };
     let mut out = Vec::new();
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
         if v["job"] != job {
             continue;
         }
@@ -152,12 +164,24 @@ mod tests {
     use super::*;
 
     fn rec(role: &str, input: u64, cc: u64, out: u64, cr: u64) -> UsageRecord {
-        UsageRecord { job: "001".into(), role: role.into(), input, cache_creation: cc, output: out, cache_read: cr, usage_v: 2, ..Default::default() }
+        UsageRecord {
+            job: "001".into(),
+            role: role.into(),
+            input,
+            cache_creation: cc,
+            output: out,
+            cache_read: cr,
+            usage_v: 2,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn old_lines_are_flagged_as_under_counted() {
-        let old = UsageRecord { usage_v: 0, ..rec("builder", 1, 1, 1, 1) };
+        let old = UsageRecord {
+            usage_v: 0,
+            ..rec("builder", 1, 1, 1, 1)
+        };
         assert!(under_counted(&[rec("reviewer", 1, 1, 1, 1), old]));
         assert!(!under_counted(&[rec("reviewer", 1, 1, 1, 1)]));
         assert!(!under_counted(&[]));
@@ -191,7 +215,14 @@ mod tests {
 
     #[test]
     fn detail_lists_one_row_per_run_with_its_weighted_cost() {
-        let r = UsageRecord { turns: 9, resumed: true, round: 2, tasks_done: Some(1), stop: "done".into(), ..rec("builder", 100, 200, 300, 1_000) };
+        let r = UsageRecord {
+            turns: 9,
+            resumed: true,
+            round: 2,
+            tasks_done: Some(1),
+            stop: "done".into(),
+            ..rec("builder", 100, 200, 300, 1_000)
+        };
         let text = render_detail(&[r, rec("reviewer", 1, 0, 0, 0)]);
         assert!(text.contains("builder"), "{text}");
         assert!(text.contains("resumed"), "{text}");
@@ -213,7 +244,11 @@ mod tests {
 
     #[test]
     fn aggregate_groups_by_role_and_sums_totals() {
-        let report = aggregate(&[rec("builder", 10, 0, 10, 0), rec("builder", 5, 0, 5, 0), rec("reviewer", 1, 1, 1, 10)]);
+        let report = aggregate(&[
+            rec("builder", 10, 0, 10, 0),
+            rec("builder", 5, 0, 5, 0),
+            rec("reviewer", 1, 1, 1, 10),
+        ]);
         assert_eq!(report.by_role["builder"].runs, 2);
         assert_eq!(report.by_role["builder"].raw, 30);
         assert_eq!(report.by_role["reviewer"].raw, 13);
@@ -245,7 +280,10 @@ mod tests {
         assert!(text.contains("job 001"));
         assert!(text.contains("builder"));
         assert!(text.contains("raw 217000"));
-        assert!(text.contains("10.0% of job 001 baseline weighted"), "{text}");
+        assert!(
+            text.contains("10.0% of job 001 baseline weighted"),
+            "{text}"
+        );
     }
 
     #[test]

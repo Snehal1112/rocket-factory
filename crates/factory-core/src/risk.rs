@@ -96,7 +96,10 @@ mod tests {
         assert!(glob_match("crates/*/**", "crates/rocket-http/src/lib.rs"));
         assert!(!glob_match("crates/*/**", "crates/lonely"));
         assert!(glob_match("tools/factory/**", "tools/factory/Cargo.toml"));
-        assert!(!glob_match("tools/factory/**", "tools/factory-server/Cargo.toml"));
+        assert!(!glob_match(
+            "tools/factory/**",
+            "tools/factory-server/Cargo.toml"
+        ));
         assert!(glob_match("src/**/*.tsx", "src/a/b/C.tsx"));
         assert!(!glob_match("src/*.tsx", "src/a/C.tsx"));
         assert!(glob_match("a?c", "abc"));
@@ -104,16 +107,34 @@ mod tests {
 
     #[test]
     fn doc_only_normal_and_risky() {
-        assert_eq!(class(&["README.md", "docs/a.txt", ".claude/software-factory.md"]), DiffClass::DocOnly);
-        assert_eq!(class(&["crates/rocket-http/src/executor.rs"]), DiffClass::Normal);
-        assert_eq!(class(&["src/components/Foo.tsx", "docs/a.md"]), DiffClass::Normal);
+        assert_eq!(
+            class(&["README.md", "docs/a.txt", ".claude/software-factory.md"]),
+            DiffClass::DocOnly
+        );
+        assert_eq!(
+            class(&["crates/rocket-http/src/executor.rs"]),
+            DiffClass::Normal
+        );
+        assert_eq!(
+            class(&["src/components/Foo.tsx", "docs/a.md"]),
+            DiffClass::Normal
+        );
         assert_eq!(class(&["src-tauri/src/lib.rs"]), DiffClass::Risky);
         assert_eq!(class(&["docs/a.md", "package.json"]), DiffClass::Risky);
-        assert_eq!(class(&["tools/factory/crates/factory-core/Cargo.toml"]), DiffClass::Risky);
+        assert_eq!(
+            class(&["tools/factory/crates/factory-core/Cargo.toml"]),
+            DiffClass::Risky
+        );
         assert_eq!(class(&[".claude/settings.json"]), DiffClass::Risky);
-        assert_eq!(class(&[".claude/harness/hooks/no-unwrap.py"]), DiffClass::Risky);
+        assert_eq!(
+            class(&[".claude/harness/hooks/no-unwrap.py"]),
+            DiffClass::Risky
+        );
         assert_eq!(class(&["src/lib/auth-utils.ts"]), DiffClass::Risky);
-        assert_eq!(class(&["crates/rocket-infra/src/fs_collection.rs"]), DiffClass::Risky);
+        assert_eq!(
+            class(&["crates/rocket-infra/src/fs_collection.rs"]),
+            DiffClass::Risky
+        );
     }
 
     #[test]

@@ -40,7 +40,9 @@ impl Repo {
             } else {
                 Some(commit.parent(0)?.tree()?)
             };
-            let diff = self.inner.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+            let diff = self
+                .inner
+                .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
             commits.push(CommitInfo {
                 sha: commit.id().to_string(),
                 subject: commit.summary().unwrap_or("").to_string(),

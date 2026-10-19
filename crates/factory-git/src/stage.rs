@@ -6,7 +6,9 @@ use git2::{ErrorCode, IndexAddOption, Repository, Status, StatusOptions};
 /// Options that see untracked files (but not ignored ones), like `git status`.
 fn status_options() -> StatusOptions {
     let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true).include_ignored(false);
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(false);
     opts
 }
 
@@ -46,7 +48,10 @@ impl Repo {
         index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
         index.update_all(["*"], None)?;
         index.write()?;
-        Ok(staged_entries(&inside)?.into_iter().map(|(_, path)| path).collect())
+        Ok(staged_entries(&inside)?
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect())
     }
 
     /// True when the worktree has no staged, unstaged or untracked (not ignored)
@@ -63,7 +68,9 @@ impl Repo {
         let inside = Repository::open(&wt.path)?;
         let on_branch = match inside.head() {
             Ok(head) => head.is_branch() && head.shorthand() == Some(wt.branch.as_str()),
-            Err(e) if e.code() == ErrorCode::UnbornBranch || e.code() == ErrorCode::NotFound => false,
+            Err(e) if e.code() == ErrorCode::UnbornBranch || e.code() == ErrorCode::NotFound => {
+                false
+            }
             Err(e) => return Err(e.into()),
         };
         Ok(on_branch)

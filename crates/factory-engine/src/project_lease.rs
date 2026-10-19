@@ -30,7 +30,11 @@ pub enum ProjectLeaseError {
         "project is busy: job {job} is running (leased by {owner} for another {secs_left} seconds). \
          If the process that held it is gone, `factory cancel {job} --force` clears it, or delete the project.lease file in the state folder"
     )]
-    Held { owner: String, job: String, secs_left: u64 },
+    Held {
+        owner: String,
+        job: String,
+        secs_left: u64,
+    },
     #[error("project lease lock: {0}")]
     Lock(#[from] StoreError),
     #[error("project lease io: {0}")]
@@ -41,8 +45,15 @@ pub enum ProjectLeaseError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectLeaseStatus {
     Free,
-    Held { owner: String, job: String, secs_left: u64 },
-    Stale { owner: String, job: String },
+    Held {
+        owner: String,
+        job: String,
+        secs_left: u64,
+    },
+    Stale {
+        owner: String,
+        job: String,
+    },
     Unreadable(String),
 }
 
@@ -75,7 +86,9 @@ fn lock_path(state_dir: &Path) -> PathBuf {
 /// The lease in the file. None means no file. A file that cannot be read or parsed is an error text.
 fn read_lease(path: &Path) -> Result<Option<ProjectLease>, String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str::<ProjectLease>(&text).map(Some).map_err(|e| format!("not valid lease JSON: {e}")),
+        Ok(text) => serde_json::from_str::<ProjectLease>(&text)
+            .map(Some)
+            .map_err(|e| format!("not valid lease JSON: {e}")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.to_string()),
     }
@@ -95,21 +108,40 @@ pub fn acquire_project_lease(
     let take = match read_lease(&path) {
         Ok(None) => LeaseTake::Fresh,
         Ok(Some(l)) if l.owner == owner => LeaseTake::Renewed,
-        Ok(Some(l)) if l.expires <= now || owner_is_dead(&l.owner) => LeaseTake::TookOverStale { owner: l.owner, job: l.job },
+        Ok(Some(l)) if l.expires <= now || owner_is_dead(&l.owner) => LeaseTake::TookOverStale {
+            owner: l.owner,
+            job: l.job,
+        },
         Ok(Some(l)) => {
-            return Err(ProjectLeaseError::Held { owner: l.owner, job: l.job, secs_left: (l.expires - now) as u64 });
+            return Err(ProjectLeaseError::Held {
+                owner: l.owner,
+                job: l.job,
+                secs_left: (l.expires - now) as u64,
+            });
         }
         // A corrupt file must never block the project for good.
-        Err(_) => LeaseTake::TookOverStale { owner: "unknown".into(), job: "unknown".into() },
+        Err(_) => LeaseTake::TookOverStale {
+            owner: "unknown".into(),
+            job: "unknown".into(),
+        },
     };
-    let lease = ProjectLease { owner: owner.to_string(), job: job.to_string(), expires: now + ttl };
-    let bytes = serde_json::to_vec_pretty(&lease).map_err(|e| ProjectLeaseError::Io(e.to_string()))?;
+    let lease = ProjectLease {
+        owner: owner.to_string(),
+        job: job.to_string(),
+        expires: now + ttl,
+    };
+    let bytes =
+        serde_json::to_vec_pretty(&lease).map_err(|e| ProjectLeaseError::Io(e.to_string()))?;
     write_atomic(&path, &bytes).map_err(|e| ProjectLeaseError::Io(e.to_string()))?;
     Ok(take)
 }
 
 /// Removes the lease when it is ours, expired or corrupt. A live lease of another owner is left alone.
-pub fn release_project_lease(state_dir: &Path, owner: &str, wait: Duration) -> Result<(), ProjectLeaseError> {
+pub fn release_project_lease(
+    state_dir: &Path,
+    owner: &str,
+    wait: Duration,
+) -> Result<(), ProjectLeaseError> {
     let _lock = lock_board(&lock_path(state_dir), wait)?;
     let path = lease_path(state_dir);
     let removable = match read_lease(&path) {
@@ -134,7 +166,11 @@ fn remove_lease_file(path: &Path) -> Result<(), ProjectLeaseError> {
 
 /// Removes the lease when it belongs to `job`, whoever the owner is. Used when a job is cancelled with
 /// force, because the process that held the lease may be gone. Returns true when a lease was removed.
-pub fn force_release_project_lease(state_dir: &Path, job: &str, wait: Duration) -> Result<bool, ProjectLeaseError> {
+pub fn force_release_project_lease(
+    state_dir: &Path,
+    job: &str,
+    wait: Duration,
+) -> Result<bool, ProjectLeaseError> {
     let _lock = lock_board(&lock_path(state_dir), wait)?;
     let path = lease_path(state_dir);
     match read_lease(&path) {
@@ -150,10 +186,15 @@ pub fn force_release_project_lease(state_dir: &Path, job: &str, wait: Duration) 
 pub fn project_lease_status(state_dir: &Path, now: f64) -> ProjectLeaseStatus {
     match read_lease(&lease_path(state_dir)) {
         Ok(None) => ProjectLeaseStatus::Free,
-        Ok(Some(l)) if l.expires > now && !owner_is_dead(&l.owner) => {
-            ProjectLeaseStatus::Held { owner: l.owner, job: l.job, secs_left: (l.expires - now) as u64 }
-        }
-        Ok(Some(l)) => ProjectLeaseStatus::Stale { owner: l.owner, job: l.job },
+        Ok(Some(l)) if l.expires > now && !owner_is_dead(&l.owner) => ProjectLeaseStatus::Held {
+            owner: l.owner,
+            job: l.job,
+            secs_left: (l.expires - now) as u64,
+        },
+        Ok(Some(l)) => ProjectLeaseStatus::Stale {
+            owner: l.owner,
+            job: l.job,
+        },
         Err(reason) => ProjectLeaseStatus::Unreadable(reason),
     }
 }

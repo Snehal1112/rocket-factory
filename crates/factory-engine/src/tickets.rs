@@ -49,27 +49,48 @@ impl Marker {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Marker::default()),
             Err(e) => return Err(e.into()),
         };
-        let v: Value = serde_json::from_str(&text)
-            .map_err(|e| EngineError::Msg(format!("{} is not valid JSON, fix or remove it: {e}", path.display())))?;
+        let v: Value = serde_json::from_str(&text).map_err(|e| {
+            EngineError::Msg(format!(
+                "{} is not valid JSON, fix or remove it: {e}",
+                path.display()
+            ))
+        })?;
         let numbers = |key: &str| -> Vec<u32> {
             v[key]
                 .as_array()
-                .map(|list| list.iter().filter_map(|n| n.as_u64().and_then(|n| u32::try_from(n).ok())).collect())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|n| n.as_u64().and_then(|n| u32::try_from(n).ok()))
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         let created = v["created"]
             .as_array()
             .map(|list| {
                 list.iter()
-                    .filter_map(|c| Some((c["title"].as_str()?.to_string(), u32::try_from(c["number"].as_u64()?).ok()?)))
+                    .filter_map(|c| {
+                        Some((
+                            c["title"].as_str()?.to_string(),
+                            u32::try_from(c["number"].as_u64()?).ok()?,
+                        ))
+                    })
                     .collect()
             })
             .unwrap_or_default();
-        Ok(Marker { created, commented: numbers("commented"), closed: numbers("closed") })
+        Ok(Marker {
+            created,
+            commented: numbers("commented"),
+            closed: numbers("closed"),
+        })
     }
 
     fn save(&self, path: &Path) -> Result<(), EngineError> {
-        let created: Vec<Value> = self.created.iter().map(|(t, n)| json!({ "title": t, "number": n })).collect();
+        let created: Vec<Value> = self
+            .created
+            .iter()
+            .map(|(t, n)| json!({ "title": t, "number": n }))
+            .collect();
         let v = json!({ "created": created, "commented": self.commented, "closed": self.closed });
         let text = serde_json::to_string_pretty(&v).map_err(|e| EngineError::Msg(e.to_string()))?;
         write_atomic(path, text.as_bytes())?;
@@ -78,12 +99,20 @@ impl Marker {
 }
 
 fn list(numbers: &[u32]) -> String {
-    numbers.iter().map(|n| format!("#{n}")).collect::<Vec<_>>().join(", ")
+    numbers
+        .iter()
+        .map(|n| format!("#{n}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Files the follow-ups of a merged job, comments on its parent tickets and closes them.
 /// With `dry_run` it makes only read calls and writes nothing. A `gh` failure is reported, never raised.
-pub fn tickets_step(driver: &Driver, id: &str, dry_run: bool) -> Result<TicketsReport, EngineError> {
+pub fn tickets_step(
+    driver: &Driver,
+    id: &str,
+    dry_run: bool,
+) -> Result<TicketsReport, EngineError> {
     let job = driver.job(id)?;
     let mut report = TicketsReport::default();
     if job.stage != Stage::Merged {
@@ -91,7 +120,10 @@ pub fn tickets_step(driver: &Driver, id: &str, dry_run: bool) -> Result<TicketsR
     }
     if let Some(pos) = &job.series {
         if pos.index < pos.total {
-            return Ok(report.skip(format!("plan {} of {} is not the last plan of the series", pos.index, pos.total)));
+            return Ok(report.skip(format!(
+                "plan {} of {} is not the last plan of the series",
+                pos.index, pos.total
+            )));
         }
     }
     let refs = parse_issue_refs(&job.feature);
@@ -109,7 +141,10 @@ pub fn tickets_step(driver: &Driver, id: &str, dry_run: bool) -> Result<TicketsR
     for r in &refs {
         if let Some(other) = &r.repo {
             if !other.eq_ignore_ascii_case(&repo) {
-                return Ok(report.skip(format!("issue #{} belongs to {other}, this repository is {repo}", r.number)));
+                return Ok(report.skip(format!(
+                    "issue #{} belongs to {other}, this repository is {repo}",
+                    r.number
+                )));
             }
         }
     }
@@ -145,7 +180,11 @@ pub fn tickets_step(driver: &Driver, id: &str, dry_run: bool) -> Result<TicketsR
             continue;
         }
         if dry_run {
-            report.lines.push(format!("would create: {} [{}]", item.title, labels.join(", ")));
+            report.lines.push(format!(
+                "would create: {} [{}]",
+                item.title,
+                labels.join(", ")
+            ));
             continue;
         }
         let body = format!(
@@ -159,7 +198,9 @@ pub fn tickets_step(driver: &Driver, id: &str, dry_run: bool) -> Result<TicketsR
             Ok(number) => {
                 marker.created.push((item.title.clone(), number));
                 marker.save(&marker_path)?;
-                report.lines.push(format!("created #{number}: {}", item.title));
+                report
+                    .lines
+                    .push(format!("created #{number}: {}", item.title));
             }
             Err(e) => {
                 report.fail(format!("create `{}`: {e}", item.title));
@@ -170,21 +211,44 @@ pub fn tickets_step(driver: &Driver, id: &str, dry_run: bool) -> Result<TicketsR
 
     let filed: Vec<u32> = items
         .iter()
-        .filter_map(|item| marker.created.iter().find(|(title, _)| *title == item.title).map(|(_, n)| *n))
+        .filter_map(|item| {
+            marker
+                .created
+                .iter()
+                .find(|(title, _)| *title == item.title)
+                .map(|(_, n)| *n)
+        })
         .collect();
     let base = driver.repo().base_branch().to_string();
     let main_tip = driver.repo().tip(&base).unwrap_or_default();
     let short = short_sha(&main_tip).to_string();
-    let pushed = driver.repo().is_ancestor(&main_tip, &format!("origin/{base}")).unwrap_or(false);
-    let note = if pushed { "" } else { " (not yet pushed to origin)" };
+    let pushed = driver
+        .repo()
+        .is_ancestor(&main_tip, &format!("origin/{base}"))
+        .unwrap_or(false);
+    let note = if pushed {
+        ""
+    } else {
+        " (not yet pushed to origin)"
+    };
     let remaining = if items.is_empty() {
         "No remaining work was listed in the spec.".to_string()
     } else if filed.len() == items.len() {
         format!("Remaining work is filed as {}.", list(&filed))
     } else {
-        format!("Remaining work: {}.", items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>().join("; "))
+        format!(
+            "Remaining work: {}.",
+            items
+                .iter()
+                .map(|i| i.title.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
     };
-    let comment = format!("Job {} ({}) is merged, {base} is at {short}{note}.\n\n{remaining}", job.id, job.slug);
+    let comment = format!(
+        "Job {} ({}) is merged, {base} is at {short}{note}.\n\n{remaining}",
+        job.id, job.slug
+    );
 
     for parent in &parents {
         if !marker.commented.contains(parent) {

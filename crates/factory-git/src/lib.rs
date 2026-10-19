@@ -10,8 +10,8 @@ mod repo;
 mod report;
 mod reset;
 mod stage;
-mod tip;
 mod state;
+mod tip;
 mod worktree;
 
 pub use commits::CommitInfo;

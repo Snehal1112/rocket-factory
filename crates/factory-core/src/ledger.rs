@@ -78,7 +78,8 @@ impl Ledger {
             .append(true)
             .open(&self.path)
             .map_err(|e| CoreError::io(&self.path, e))?;
-        file.write_all(text.as_bytes()).map_err(|e| CoreError::io(&self.path, e))
+        file.write_all(text.as_bytes())
+            .map_err(|e| CoreError::io(&self.path, e))
     }
 }
 
@@ -87,7 +88,11 @@ fn parse_task_line(line: &str) -> Option<(u32, TaskState)> {
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     let n: u32 = digits.parse().ok()?;
     let after = rest[digits.len()..].strip_prefix(": ")?;
-    for state in [TaskState::ImplementerDone, TaskState::Dispatched, TaskState::Complete] {
+    for state in [
+        TaskState::ImplementerDone,
+        TaskState::Dispatched,
+        TaskState::Complete,
+    ] {
         if let Some(tail) = after.strip_prefix(state.label()) {
             if tail.is_empty() || tail.starts_with(' ') {
                 return Some((n, state));
@@ -113,7 +118,8 @@ mod tests {
         l.create("# SDD ledger").expect("create");
         l.task(1, TaskState::Dispatched, None).expect("t1");
         l.task(1, TaskState::ImplementerDone, None).expect("t1b");
-        l.task(1, TaskState::Complete, Some("commits a..b")).expect("t1c");
+        l.task(1, TaskState::Complete, Some("commits a..b"))
+            .expect("t1c");
         l.ruling("keep the cap at 4000 lines").expect("ruling");
         let text = std::fs::read_to_string(&l.path).expect("read");
         assert!(text.contains("\nTask 1: dispatched\n"));
@@ -148,7 +154,11 @@ mod tests {
     fn missing_ledger_has_no_tasks_and_loose_lines_are_ignored() {
         let (_dir, l) = ledger();
         assert!(l.tasks().expect("missing ok").is_empty());
-        std::fs::write(&l.path, "Task 3: complete\ntask 4: complete\nTask 5: completed\nTask x: complete\n").expect("w");
+        std::fs::write(
+            &l.path,
+            "Task 3: complete\ntask 4: complete\nTask 5: completed\nTask x: complete\n",
+        )
+        .expect("w");
         assert_eq!(l.tasks().expect("parse"), vec![(3, TaskState::Complete)]);
     }
 }

@@ -2,29 +2,29 @@
 
 mod build;
 mod checks_stage;
-mod combine;
-mod decide;
-mod drafts;
-mod park;
-mod planlint;
-mod ports;
-mod review;
-mod lease;
-mod lock;
-mod project_lease;
-pub mod procinfo;
-mod runloop;
-mod series;
-mod specs;
 mod clock;
+mod combine;
 mod commit;
 mod compat;
 mod costs;
+mod decide;
+mod drafts;
 mod followups;
 mod kb;
+mod lease;
+mod lock;
 mod merge;
-mod one_job;
 mod message;
+mod one_job;
+mod park;
+mod planlint;
+mod ports;
+pub mod procinfo;
+mod project_lease;
+mod review;
+mod runloop;
+mod series;
+mod specs;
 mod store;
 mod sync;
 mod tasks;
@@ -43,39 +43,48 @@ use factory_git::Repo;
 use thiserror::Error;
 
 pub use build::build_stage;
-pub use planlint::{lint_plan, PlanLint};
-pub use combine::{combine_plans, CombinedPlan};
+pub use checks_stage::checks_stage;
 pub use clock::{date_from_days, now_secs, today};
+pub use combine::{combine_plans, CombinedPlan};
 pub use commit::{
-    committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
+    committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef,
+    COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
 };
-pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
+pub use compat::{Driver, ProjectGuard, RunnerFactory, HEARTBEAT_SECS, LEASE_TTL_SECS};
+pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
+pub use decide::{decide, risk_summary, DecideInput, Decision};
 pub use drafts::{find_draft, remove_draft, set_draft_stage, start_draft};
 pub use followups::{follow_ups, FollowUp};
-pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
-pub use compat::{Driver, ProjectGuard, RunnerFactory, HEARTBEAT_SECS, LEASE_TTL_SECS};
-pub use message::{fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS};
-pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
+pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
-pub use project_lease::{
-    acquire_project_lease, force_release_project_lease, owner_pid, process_gone, project_lease_status, release_project_lease, LeaseTake, ProjectLease, ProjectLeaseError, ProjectLeaseStatus,
-};
 pub use lock::{lock_board, BoardLock};
+pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
+pub use message::{
+    fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS,
+};
+pub use one_job::{
+    create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED,
+};
+pub use planlint::{lint_plan, PlanLint};
 pub use ports::set_stage_logged;
+pub use project_lease::{
+    acquire_project_lease, force_release_project_lease, owner_pid, process_gone,
+    project_lease_status, release_project_lease, LeaseTake, ProjectLease, ProjectLeaseError,
+    ProjectLeaseStatus,
+};
+pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
 pub use runloop::{create_job, create_job_with_spec, job_span, run_job, run_series, RunEnd};
-pub use one_job::{create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED};
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
+pub use specs::{ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS};
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
-pub use specs::{ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS};
-pub use tasks::{parse_checkbox_tasks, parse_tasks, plan_outline, plan_title, review_focus, spec_goal, PlanTask};
+pub use tasks::{
+    parse_checkbox_tasks, parse_tasks, plan_outline, plan_title, review_focus, spec_goal, PlanTask,
+};
 pub use tick::tick_plan;
 pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
-pub use tracker::{GhTracker, Tracker};
 pub use tipfiles::RepoTip;
-pub use checks_stage::checks_stage;
-pub use decide::{decide, risk_summary, DecideInput, Decision};
-pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
+pub use tracker::{GhTracker, Tracker};
 
 #[derive(Debug, Error)]
 pub enum EngineError {

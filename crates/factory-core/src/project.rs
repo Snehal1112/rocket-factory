@@ -14,8 +14,13 @@ const PROJECT_FILE: &str = "project.toml";
 pub fn validate_name(name: &str) -> Result<(), CoreError> {
     let ok = !name.is_empty()
         && name.len() <= MAX_NAME
-        && name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if ok {
         Ok(())
     } else {
@@ -59,10 +64,15 @@ pub struct ProjectEntry {
 }
 
 fn read_file(path: &Path) -> Result<ProjectFile, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let file: ProjectFile = toml::from_str(&text).map_err(|e| format!("bad {}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let file: ProjectFile =
+        toml::from_str(&text).map_err(|e| format!("bad {}: {e}", path.display()))?;
     if !file.repo.is_absolute() {
-        return Err(format!("bad {}: repo must be an absolute path", path.display()));
+        return Err(format!(
+            "bad {}: repo must be an absolute path",
+            path.display()
+        ));
     }
     Ok(file)
 }
@@ -87,20 +97,37 @@ pub fn add(
         )));
     }
     if !repo.is_absolute() {
-        return Err(CoreError::Config(format!("repo path {} must be absolute", repo.display())));
+        return Err(CoreError::Config(format!(
+            "repo path {} must be absolute",
+            repo.display()
+        )));
     }
-    let canon = std::fs::canonicalize(repo)
-        .map_err(|e| CoreError::Config(format!("repo path {} is not usable: {e}", repo.display())))?;
+    let canon = std::fs::canonicalize(repo).map_err(|e| {
+        CoreError::Config(format!("repo path {} is not usable: {e}", repo.display()))
+    })?;
     if !canon.is_dir() {
-        return Err(CoreError::Config(format!("repo path {} is not a folder", canon.display())));
+        return Err(CoreError::Config(format!(
+            "repo path {} is not a folder",
+            canon.display()
+        )));
     }
     repo_ok(&canon).map_err(|why| CoreError::Config(format!("{}: {why}", canon.display())))?;
     let mut settings = toml::Table::new();
-    settings.insert("cache_ttl".into(), toml::Value::String(DEFAULT_CACHE_TTL.into()));
+    settings.insert(
+        "cache_ttl".into(),
+        toml::Value::String(DEFAULT_CACHE_TTL.into()),
+    );
     if let Some(b) = base {
-        settings.insert("base_branch".into(), toml::Value::String(valid_base_branch(b)?));
+        settings.insert(
+            "base_branch".into(),
+            toml::Value::String(valid_base_branch(b)?),
+        );
     }
-    let file = ProjectFile { repo: canon.clone(), preset: preset_name.to_string(), settings };
+    let file = ProjectFile {
+        repo: canon.clone(),
+        preset: preset_name.to_string(),
+        settings,
+    };
     let text = toml::to_string(&file).map_err(|e| CoreError::Config(e.to_string()))?;
     let dir = home.project_dir(name);
     let projects = home.projects_dir();
@@ -117,7 +144,11 @@ pub fn add(
         for entry in list(home)? {
             if let Ok(f) = entry.file {
                 if std::fs::canonicalize(&f.repo).is_ok_and(|c| c == canon) {
-                    return Err(CoreError::Config(format!("repo {} is already project {}", canon.display(), entry.name)));
+                    return Err(CoreError::Config(format!(
+                        "repo {} is already project {}",
+                        canon.display(),
+                        entry.name
+                    )));
                 }
             }
         }
@@ -127,7 +158,11 @@ pub fn add(
             std::fs::create_dir(&p).map_err(|e| CoreError::io(&p, e))?;
         }
         let f = dir.join(PROJECT_FILE);
-        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(&f).map_err(|e| CoreError::io(&f, e))?;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&f)
+            .map_err(|e| CoreError::io(&f, e))?;
         std::io::Write::write_all(&mut out, text.as_bytes()).map_err(|e| CoreError::io(&f, e))
     })();
     if let Err(e) = made {
@@ -151,8 +186,13 @@ pub fn list(home: &Home) -> Result<Vec<ProjectEntry>, CoreError> {
         if !path.is_dir() {
             continue;
         }
-        let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
-        out.push(ProjectEntry { file: read_file(&path.join(PROJECT_FILE)), name });
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        out.push(ProjectEntry {
+            file: read_file(&path.join(PROJECT_FILE)),
+            name,
+        });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
@@ -169,7 +209,9 @@ pub fn get(home: &Home, name: &str) -> Result<ProjectFile, CoreError> {
 
 /// The top of the git checkout that holds `path`: the nearest ancestor with a `.git` folder or file.
 fn git_top(path: &Path) -> Option<PathBuf> {
-    path.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf)
+    path.ancestors()
+        .find(|d| d.join(".git").exists())
+        .map(Path::to_path_buf)
 }
 
 /// The main checkout a linked git worktree at `top` belongs to, read from its `.git` file and the
@@ -207,11 +249,21 @@ pub fn find_by_path(home: &Home, path: &Path) -> Result<Option<String>, CoreErro
             }
         }
     }
-    let Some(top) = git_top(&canon) else { return Ok(None) };
-    let mut hits: Vec<&str> = repos.iter().filter(|(_, r)| *r == top).map(|(n, _)| n.as_str()).collect();
+    let Some(top) = git_top(&canon) else {
+        return Ok(None);
+    };
+    let mut hits: Vec<&str> = repos
+        .iter()
+        .filter(|(_, r)| *r == top)
+        .map(|(n, _)| n.as_str())
+        .collect();
     if hits.is_empty() {
         if let Some(main) = worktree_main(&top) {
-            hits = repos.iter().filter(|(_, r)| *r == main).map(|(n, _)| n.as_str()).collect();
+            hits = repos
+                .iter()
+                .filter(|(_, r)| *r == main)
+                .map(|(n, _)| n.as_str())
+                .collect();
         }
     }
     match hits.as_slice() {
@@ -237,7 +289,8 @@ pub fn remove(home: &Home, name: &str) -> Result<(), CoreError> {
 
 /// The layout of a project. The preset name is validated, so no path leaves the home.
 pub fn layout(home: &Home, name: &str, file: &ProjectFile) -> Result<Layout, CoreError> {
-    validate_name(&file.preset).map_err(|_| CoreError::Config(format!("preset name {:?} is not valid", file.preset)))?;
+    validate_name(&file.preset)
+        .map_err(|_| CoreError::Config(format!("preset name {:?} is not valid", file.preset)))?;
     Ok(build_layout(home, name, file, true))
 }
 
@@ -248,7 +301,9 @@ pub(crate) fn build_layout(home: &Home, name: &str, file: &ProjectFile, preset_o
     let commit_context_file = if own.exists() || !preset_ok {
         own
     } else {
-        home.presets_dir().join(&file.preset).join("commit-context.md")
+        home.presets_dir()
+            .join(&file.preset)
+            .join("commit-context.md")
     };
     let state_dir = dir.join("state");
     Layout {
@@ -313,7 +368,10 @@ mod tests {
         assert!(f.repo.is_absolute());
         assert_eq!(f.repo, std::fs::canonicalize(&e.repo).expect("canon"));
         assert_eq!(f.preset, "rust");
-        assert_eq!(f.settings.get("base_branch").and_then(|v| v.as_str()), Some("v-4.0.0"));
+        assert_eq!(
+            f.settings.get("base_branch").and_then(|v| v.as_str()),
+            Some("v-4.0.0")
+        );
     }
 
     #[test]
@@ -322,7 +380,10 @@ mod tests {
         add(&e.home, "rocket", &e.repo, "go", None, &ok).expect("add");
         let f = get(&e.home, "rocket").expect("get");
         assert_eq!(f.settings.len(), 1);
-        assert_eq!(f.settings.get("cache_ttl").and_then(|v| v.as_str()), Some("5m"));
+        assert_eq!(
+            f.settings.get("cache_ttl").and_then(|v| v.as_str()),
+            Some("5m")
+        );
     }
 
     fn assert_refused(e: &Env, r: Result<PathBuf, CoreError>, name: &str) {
@@ -334,13 +395,28 @@ mod tests {
     fn add_refuses_bad_input_and_leaves_nothing_behind() {
         let e = env();
         assert_refused(&e, add(&e.home, "p", &e.repo, "nope", None, &ok), "p");
-        assert_refused(&e, add(&e.home, "p", Path::new("rel/repo"), "rust", None, &ok), "p");
-        assert_refused(&e, add(&e.home, "p", &e.repo.join("missing"), "rust", None, &ok), "p");
+        assert_refused(
+            &e,
+            add(&e.home, "p", Path::new("rel/repo"), "rust", None, &ok),
+            "p",
+        );
+        assert_refused(
+            &e,
+            add(&e.home, "p", &e.repo.join("missing"), "rust", None, &ok),
+            "p",
+        );
         let no = |_: &Path| Err("not a git repo".to_string());
         assert_refused(&e, add(&e.home, "p", &e.repo, "rust", None, &no), "p");
-        assert_refused(&e, add(&e.home, "p", &e.repo, "rust", Some("bad branch"), &ok), "p");
+        assert_refused(
+            &e,
+            add(&e.home, "p", &e.repo, "rust", Some("bad branch"), &ok),
+            "p",
+        );
         assert_refused(&e, add(&e.home, "../p", &e.repo, "rust", None, &ok), "p");
-        assert!(!e.home.dir.exists(), "refusals must not even create the home");
+        assert!(
+            !e.home.dir.exists(),
+            "refusals must not even create the home"
+        );
     }
 
     #[test]
@@ -363,7 +439,11 @@ mod tests {
         add(&e.home, "zeta", &e.repo, "rust", None, &ok).expect("add");
         add(&e.home, "alpha", &other_repo(&e, "r2"), "rust", None, &ok).expect("add");
         add(&e.home, "mid", &other_repo(&e, "r3"), "rust", None, &ok).expect("add");
-        std::fs::write(e.home.project_dir("mid").join("project.toml"), "this is not = = toml").expect("write");
+        std::fs::write(
+            e.home.project_dir("mid").join("project.toml"),
+            "this is not = = toml",
+        )
+        .expect("write");
         let got = list(&e.home).expect("list");
         let names: Vec<&str> = got.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["alpha", "mid", "zeta"]);
@@ -389,11 +469,22 @@ mod tests {
         add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
         let sub = e.repo.join("src/deep");
         std::fs::create_dir_all(&sub).expect("mkdir");
-        assert_eq!(find_by_path(&e.home, &e.repo).expect("root").as_deref(), Some("one"));
-        assert_eq!(find_by_path(&e.home, &sub).expect("sub").as_deref(), Some("one"));
+        assert_eq!(
+            find_by_path(&e.home, &e.repo).expect("root").as_deref(),
+            Some("one")
+        );
+        assert_eq!(
+            find_by_path(&e.home, &sub).expect("sub").as_deref(),
+            Some("one")
+        );
         let link = e._t.path().join("link");
         std::os::unix::fs::symlink(&e.repo, &link).expect("symlink");
-        assert_eq!(find_by_path(&e.home, &link.join("src")).expect("link").as_deref(), Some("one"));
+        assert_eq!(
+            find_by_path(&e.home, &link.join("src"))
+                .expect("link")
+                .as_deref(),
+            Some("one")
+        );
         let out = other_repo(&e, "elsewhere");
         assert_eq!(find_by_path(&e.home, &out).expect("outside"), None);
     }
@@ -405,8 +496,16 @@ mod tests {
         std::fs::create_dir_all(inner.join(".git")).expect("mkdir");
         add(&e.home, "outer", &e.repo, "rust", None, &ok).expect("add");
         add(&e.home, "inner", &inner, "rust", None, &ok).expect("add");
-        assert_eq!(find_by_path(&e.home, &inner).expect("inner").as_deref(), Some("inner"));
-        assert_eq!(find_by_path(&e.home, &e.repo.join("vendor")).expect("outer").as_deref(), Some("outer"));
+        assert_eq!(
+            find_by_path(&e.home, &inner).expect("inner").as_deref(),
+            Some("inner")
+        );
+        assert_eq!(
+            find_by_path(&e.home, &e.repo.join("vendor"))
+                .expect("outer")
+                .as_deref(),
+            Some("outer")
+        );
     }
 
     #[test]
@@ -415,7 +514,12 @@ mod tests {
         add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
         let wt = e._t.path().join("elsewhere-wt");
         fake_worktree(&e.repo, "wt", &wt);
-        assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("one"));
+        assert_eq!(
+            find_by_path(&e.home, &wt.join("src"))
+                .expect("wt")
+                .as_deref(),
+            Some("one")
+        );
     }
 
     #[test]
@@ -427,7 +531,10 @@ mod tests {
         add(&e.home, "broken", &other_repo(&e, "b"), "rust", None, &ok).expect("add");
         std::fs::write(e.home.project_dir("broken").join("project.toml"), "= =").expect("write");
         std::fs::remove_dir_all(&gone).expect("rm");
-        assert_eq!(find_by_path(&e.home, &e.repo).expect("live").as_deref(), Some("live"));
+        assert_eq!(
+            find_by_path(&e.home, &e.repo).expect("live").as_deref(),
+            Some("live")
+        );
         assert!(find_by_path(&e.home, &e.repo.join("missing")).is_err());
     }
 
@@ -437,7 +544,11 @@ mod tests {
         std::fs::write(admin.join("commondir"), "../..\n").expect("commondir");
         std::fs::create_dir_all(at.join("src")).expect("mkdir");
         std::fs::write(at.join(".git"), format!("gitdir: {}\n", admin.display())).expect("gitfile");
-        std::fs::write(admin.join("gitdir"), format!("{}\n", at.join(".git").display())).expect("backlink");
+        std::fs::write(
+            admin.join("gitdir"),
+            format!("{}\n", at.join(".git").display()),
+        )
+        .expect("backlink");
     }
 
     #[test]
@@ -447,8 +558,16 @@ mod tests {
         let wt = e._t.path().join("wt-registered");
         fake_worktree(&e.repo, "wt1", &wt);
         add(&e.home, "wt-project", &wt, "rust", None, &ok).expect("add");
-        assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("wt-project"));
-        assert_eq!(find_by_path(&e.home, &e.repo).expect("main").as_deref(), Some("main-repo"));
+        assert_eq!(
+            find_by_path(&e.home, &wt.join("src"))
+                .expect("wt")
+                .as_deref(),
+            Some("wt-project")
+        );
+        assert_eq!(
+            find_by_path(&e.home, &e.repo).expect("main").as_deref(),
+            Some("main-repo")
+        );
     }
 
     #[test]
@@ -457,14 +576,23 @@ mod tests {
         add(&e.home, "main-repo", &e.repo, "rust", None, &ok).expect("add");
         let wt = e._t.path().join("wt-unregistered");
         fake_worktree(&e.repo, "wt2", &wt);
-        assert_eq!(find_by_path(&e.home, &wt.join("src")).expect("wt").as_deref(), Some("main-repo"));
+        assert_eq!(
+            find_by_path(&e.home, &wt.join("src"))
+                .expect("wt")
+                .as_deref(),
+            Some("main-repo")
+        );
     }
 
     #[test]
     fn find_by_path_does_not_match_a_sibling_with_the_same_name_prefix() {
         let e = env();
         add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
-        let folder = e.repo.file_name().and_then(|f| f.to_str()).expect("folder name");
+        let folder = e
+            .repo
+            .file_name()
+            .and_then(|f| f.to_str())
+            .expect("folder name");
         let sibling = e._t.path().join(format!("{folder}-two"));
         std::fs::create_dir_all(&sibling).expect("mkdir");
         assert_eq!(find_by_path(&e.home, &sibling).expect("sibling"), None);
@@ -477,9 +605,18 @@ mod tests {
         // add() refuses a second name for one repo, so write the second entry by hand.
         let dir = e.home.project_dir("bbb");
         std::fs::create_dir_all(&dir).expect("mkdir");
-        std::fs::copy(e.home.project_dir("aaa").join("project.toml"), dir.join("project.toml")).expect("copy");
-        let err = find_by_path(&e.home, &e.repo).expect_err("ambiguous").to_string();
-        assert!(err.contains("aaa") && err.contains("bbb") && err.contains("ambiguous"), "{err}");
+        std::fs::copy(
+            e.home.project_dir("aaa").join("project.toml"),
+            dir.join("project.toml"),
+        )
+        .expect("copy");
+        let err = find_by_path(&e.home, &e.repo)
+            .expect_err("ambiguous")
+            .to_string();
+        assert!(
+            err.contains("aaa") && err.contains("bbb") && err.contains("ambiguous"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -489,11 +626,20 @@ mod tests {
         let inner = e.repo.join("ignored/clone");
         std::fs::create_dir_all(inner.join(".git")).expect("mkdir");
         std::fs::create_dir_all(inner.join("src")).expect("mkdir");
-        assert_eq!(find_by_path(&e.home, &inner.join("src")).expect("inner"), None);
+        assert_eq!(
+            find_by_path(&e.home, &inner.join("src")).expect("inner"),
+            None
+        );
         let plain = e.repo.join("docs/plain");
         std::fs::create_dir_all(&plain).expect("mkdir");
-        assert_eq!(find_by_path(&e.home, &plain).expect("plain").as_deref(), Some("outer"));
-        assert_eq!(find_by_path(&e.home, &e.repo).expect("repo").as_deref(), Some("outer"));
+        assert_eq!(
+            find_by_path(&e.home, &plain).expect("plain").as_deref(),
+            Some("outer")
+        );
+        assert_eq!(
+            find_by_path(&e.home, &e.repo).expect("repo").as_deref(),
+            Some("outer")
+        );
     }
 
     #[test]
@@ -502,7 +648,11 @@ mod tests {
         add(&e.home, "one", &e.repo, "rust", None, &ok).expect("add");
         let wt = e._t.path().join("stale-wt");
         fake_worktree(&e.repo, "stale", &wt);
-        std::fs::write(e.repo.join(".git/worktrees/stale/gitdir"), "/somewhere/else/.git\n").expect("rewrite");
+        std::fs::write(
+            e.repo.join(".git/worktrees/stale/gitdir"),
+            "/somewhere/else/.git\n",
+        )
+        .expect("rewrite");
         assert_eq!(find_by_path(&e.home, &wt).expect("stale"), None);
     }
 
@@ -533,7 +683,10 @@ mod tests {
         assert_eq!(l.jobs_dir, dir.join("state/jobs"));
         assert_eq!(l.worktrees_dir, dir.join("worktrees"));
         assert_eq!(l.config_file, dir.join("project.toml"));
-        assert_eq!(l.commit_context_file, e.home.presets_dir().join("rust/commit-context.md"));
+        assert_eq!(
+            l.commit_context_file,
+            e.home.presets_dir().join("rust/commit-context.md")
+        );
         std::fs::write(dir.join("commit-context.md"), "mine\n").expect("write");
         let l = layout(&e.home, "p", &f).expect("layout");
         assert_eq!(l.commit_context_file, dir.join("commit-context.md"));
@@ -557,7 +710,10 @@ mod tests {
             let wins: Vec<_> = results.iter().filter(|(r, _)| r.is_ok()).collect();
             assert_eq!(wins.len(), 1, "{results:?}");
             let lost = results.iter().find(|(r, _)| r.is_err()).expect("loser");
-            assert!(lost.0.as_ref().expect_err("err").contains("already exists"), "{lost:?}");
+            assert!(
+                lost.0.as_ref().expect_err("err").contains("already exists"),
+                "{lost:?}"
+            );
             let f = get(&e.home, "same").expect("winner project.toml intact");
             assert_eq!(f.repo, std::fs::canonicalize(&wins[0].1).expect("canon"));
             for sub in ["agents", "state", "worktrees"] {
@@ -575,7 +731,10 @@ mod tests {
         let err = add(&e.home, "p", &e.repo, "rust", None, &ok).expect_err("seed must fail");
         assert!(!err.to_string().contains("already exists"), "{err}");
         assert!(!e.home.project_dir("p").exists(), "our folder is removed");
-        assert!(e.home.project_dir("other").is_dir(), "another project is untouched");
+        assert!(
+            e.home.project_dir("other").is_dir(),
+            "another project is untouched"
+        );
     }
 
     #[test]
@@ -588,9 +747,13 @@ mod tests {
         add(&e.home, "p", &e.repo, "rust", Some("dev"), &ok).expect("add");
         let mut f = get(&e.home, "p").expect("get");
         assert_eq!(f.base_branch().as_deref(), Some("dev"));
-        f.settings.insert("base_branch".into(), toml::Value::String("bad branch".into()));
+        f.settings.insert(
+            "base_branch".into(),
+            toml::Value::String("bad branch".into()),
+        );
         assert_eq!(f.base_branch(), None);
-        f.settings.insert("base_branch".into(), toml::Value::Integer(3));
+        f.settings
+            .insert("base_branch".into(), toml::Value::Integer(3));
         assert_eq!(f.base_branch(), None);
         f.settings.clear();
         assert_eq!(f.base_branch(), None);
@@ -600,11 +763,18 @@ mod tests {
     fn layout_refuses_a_preset_name_that_could_leave_the_home() {
         let e = env();
         for bad in ["../x", "a/b", "..", ""] {
-            let f = ProjectFile { repo: e.repo.clone(), preset: bad.to_string(), settings: toml::Table::new() };
+            let f = ProjectFile {
+                repo: e.repo.clone(),
+                preset: bad.to_string(),
+                settings: toml::Table::new(),
+            };
             assert!(layout(&e.home, "p", &f).is_err(), "{bad:?}");
             let safe = build_layout(&e.home, "p", &f, false);
             assert!(safe.commit_context_file.starts_with(&e.home.dir), "{bad:?}");
-            assert!(!safe.commit_context_file.starts_with(e.home.presets_dir()), "{bad:?}");
+            assert!(
+                !safe.commit_context_file.starts_with(e.home.presets_dir()),
+                "{bad:?}"
+            );
         }
     }
 }

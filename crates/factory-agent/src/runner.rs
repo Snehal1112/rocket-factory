@@ -18,7 +18,10 @@ pub struct FakeRunner {
 
 impl FakeRunner {
     pub fn new(script: Vec<AgentRun>) -> FakeRunner {
-        FakeRunner { script: Mutex::new(script.into()), calls: Mutex::new(Vec::new()) }
+        FakeRunner {
+            script: Mutex::new(script.into()),
+            calls: Mutex::new(Vec::new()),
+        }
     }
 
     /// Every spec the runner was called with, in order.

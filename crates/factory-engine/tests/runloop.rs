@@ -7,7 +7,10 @@ fn run_job_goes_from_build_to_merged_in_one_call() {
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "hello", "say hello", Some(&plan), None).expect("create");
     assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
-    assert_eq!(fx.driver.job(&job.id).expect("job").stage, factory_core::Stage::Merged);
+    assert_eq!(
+        fx.driver.job(&job.id).expect("job").stage,
+        factory_core::Stage::Merged
+    );
 }
 
 #[test]
@@ -19,7 +22,8 @@ fn a_crash_after_the_merge_commit_resumes_without_a_second_merge() {
     assert_eq!(run_job(&fx.driver, &fx.id).expect("run"), RunEnd::Merged);
     assert_eq!(common::main_tip(&fx.main), sha, "no second merge commit");
     let job = fx.driver.job(&fx.id).expect("job");
-    let ledger = std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
     assert!(ledger.contains(&format!("(merge {sha})")));
 }
 
@@ -29,19 +33,39 @@ fn run_series_chains_plans_and_each_job_writes_its_own_job_id_into_events() {
     let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
     fx.plan_file("plan-02-b.md", 1, "none");
     let job = create_job(&fx.driver, "series", "two plans", Some(&a), None).expect("create");
-    assert_eq!(run_series(&fx.driver, &job.id).expect("series"), RunEnd::Merged);
+    assert_eq!(
+        run_series(&fx.driver, &job.id).expect("series"),
+        RunEnd::Merged
+    );
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 2);
-    assert!(board.jobs.iter().all(|j| j.stage == factory_core::Stage::Merged));
-    assert_eq!(board.jobs[1].series.as_ref().map(|s| (s.index, s.total)), Some((2, 2)));
+    assert!(board
+        .jobs
+        .iter()
+        .all(|j| j.stage == factory_core::Stage::Merged));
+    assert_eq!(
+        board.jobs[1].series.as_ref().map(|s| (s.index, s.total)),
+        Some((2, 2))
+    );
     assert_eq!(
         board.jobs[1].series.as_ref().and_then(|s| s.id.clone()),
         board.jobs[0].series.as_ref().and_then(|s| s.id.clone()),
         "one series id"
     );
-    let stages: Vec<_> = board.jobs[1].stage_history.iter().map(|e| e.stage).collect();
-    assert_eq!(stages[..2], [factory_core::Stage::Spec, factory_core::Stage::Build], "parked, then built");
-    assert_ne!(board.jobs[0].base, board.jobs[1].base, "plan 2 builds on top of plan 1's merge");
+    let stages: Vec<_> = board.jobs[1]
+        .stage_history
+        .iter()
+        .map(|e| e.stage)
+        .collect();
+    assert_eq!(
+        stages[..2],
+        [factory_core::Stage::Spec, factory_core::Stage::Build],
+        "parked, then built"
+    );
+    assert_ne!(
+        board.jobs[0].base, board.jobs[1].base,
+        "plan 2 builds on top of plan 1's merge"
+    );
     // The second job must not carry the first job's id.
     let events = std::fs::read_to_string(fx.driver.events_path()).expect("events");
     let mut seen = std::collections::BTreeSet::new();
@@ -49,10 +73,16 @@ fn run_series_chains_plans_and_each_job_writes_its_own_job_id_into_events() {
         let v: serde_json::Value = serde_json::from_str(line).expect("json line");
         let job_id = v["job_id"].as_str().expect("job_id").to_string();
         let agent_id = v["agent_id"].as_str().expect("agent_id");
-        assert!(agent_id.starts_with(&job_id), "{agent_id} under job {job_id}");
+        assert!(
+            agent_id.starts_with(&job_id),
+            "{agent_id} under job {job_id}"
+        );
         seen.insert(job_id);
     }
-    assert_eq!(seen.into_iter().collect::<Vec<_>>(), vec!["001".to_string(), "002".to_string()]);
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        vec!["001".to_string(), "002".to_string()]
+    );
 }
 
 #[test]
@@ -61,38 +91,74 @@ fn run_series_stops_when_a_plan_needs_a_human() {
     let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
     fx.plan_file("plan-02-b.md", 1, "none");
     let job = create_job(&fx.driver, "stuck", "x", Some(&a), None).expect("create");
-    assert!(matches!(run_series(&fx.driver, &job.id).expect("series"), RunEnd::NeedsHuman(_)));
+    assert!(matches!(
+        run_series(&fx.driver, &job.id).expect("series"),
+        RunEnd::NeedsHuman(_)
+    ));
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 2, "plan 2 has its job from the start");
-    assert_eq!(board.jobs[1].stage, factory_core::Stage::Spec, "and it never started");
+    assert_eq!(
+        board.jobs[1].stage,
+        factory_core::Stage::Spec,
+        "and it never started"
+    );
 }
 
 #[test]
 fn a_parked_job_gets_a_park_record_with_evidence() {
     // No fix rounds, so the first changes verdict parks the job.
-    let fx = common::SeriesFixture::with_config("[blocker] src/a.rs wrong\nVERDICT: CHANGES", factory_core::Config { fix_rounds: 0, ..Default::default() });
+    let fx = common::SeriesFixture::with_config(
+        "[blocker] src/a.rs wrong\nVERDICT: CHANGES",
+        factory_core::Config {
+            fix_rounds: 0,
+            ..Default::default()
+        },
+    );
     let a = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "stuck", "x", Some(&a), None).expect("create");
-    assert!(matches!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::NeedsHuman(_)));
+    assert!(matches!(
+        run_job(&fx.driver, &job.id).expect("run"),
+        RunEnd::NeedsHuman(_)
+    ));
     let board_job = fx.driver.job(&job.id).expect("job");
     assert_eq!(board_job.park_kind.as_deref(), Some("changes-remain"));
     assert!(board_job.park_at.unwrap_or(0) > 0);
     let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&board_job)).expect("park.json");
     assert_eq!(rec.kind, factory_core::ParkKind::ChangesRemain);
     assert!(rec.reason.contains("changes remain"), "{}", rec.reason);
-    assert_eq!(rec.next, vec![format!("factory approve {}", job.id), format!("factory rework {} <note>", job.id)]);
-    assert!(rec.parts.iter().any(|p| p.text.contains("[blocker] src/a.rs wrong")), "{:?}", rec.parts);
+    assert_eq!(
+        rec.next,
+        vec![
+            format!("factory approve {}", job.id),
+            format!("factory rework {} <note>", job.id)
+        ]
+    );
+    assert!(
+        rec.parts
+            .iter()
+            .any(|p| p.text.contains("[blocker] src/a.rs wrong")),
+        "{:?}",
+        rec.parts
+    );
 }
 
 #[test]
 fn leaving_needs_human_clears_the_board_park_fields() {
-    let fx = common::SeriesFixture::with_config("[blocker] x\nVERDICT: CHANGES", factory_core::Config { fix_rounds: 0, ..Default::default() });
+    let fx = common::SeriesFixture::with_config(
+        "[blocker] x\nVERDICT: CHANGES",
+        factory_core::Config {
+            fix_rounds: 0,
+            ..Default::default()
+        },
+    );
     let a = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "stuck", "x", Some(&a), None).expect("create");
     let _ = run_job(&fx.driver, &job.id).expect("run");
     fx.driver
         .store()
-        .update_job(&job.id, |j| j.set_stage(factory_core::Stage::Build, None, true, 9.0))
+        .update_job(&job.id, |j| {
+            j.set_stage(factory_core::Stage::Build, None, true, 9.0)
+        })
         .expect("rework");
     let after = fx.driver.job(&job.id).expect("job");
     assert_eq!(after.park_kind, None);
@@ -103,8 +169,13 @@ fn leaving_needs_human_clears_the_board_park_fields() {
 fn create_job_avoids_ids_of_existing_branches() {
     let fx = common::SeriesFixture::new("x");
     let repo = git2::Repository::open(&fx.main).expect("open");
-    let main = repo.revparse_single("main").expect("main").peel_to_commit().expect("commit");
-    repo.branch("factory/004-old", &main, false).expect("branch");
+    let main = repo
+        .revparse_single("main")
+        .expect("main")
+        .peel_to_commit()
+        .expect("commit");
+    repo.branch("factory/004-old", &main, false)
+        .expect("branch");
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "new", "f", Some(&plan), None).expect("create");
     assert_eq!(job.id, "005");
@@ -115,9 +186,15 @@ fn create_job_records_the_configured_budget_and_history() {
     let fx = common::SeriesFixture::new("x");
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "new", "f", Some(&plan), None).expect("create");
-    assert_eq!(job.budget_weighted, Some(fx.driver.config().budget_weighted));
+    assert_eq!(
+        job.budget_weighted,
+        Some(fx.driver.config().budget_weighted)
+    );
     let stages: Vec<_> = job.stage_history.iter().map(|e| e.stage).collect();
-    assert_eq!(stages, vec![factory_core::Stage::Spec, factory_core::Stage::Build]);
+    assert_eq!(
+        stages,
+        vec![factory_core::Stage::Spec, factory_core::Stage::Build]
+    );
 }
 
 #[test]
@@ -133,7 +210,10 @@ fn every_agent_run_appends_a_usage_line_with_its_role() {
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v["role"].as_str().map(str::to_string))
         .collect();
-    assert_eq!(roles, vec!["builder", "committer", "reviewer", "message", "message"]);
+    assert_eq!(
+        roles,
+        vec!["builder", "committer", "reviewer", "message", "message"]
+    );
 }
 
 #[test]
@@ -142,8 +222,12 @@ fn usage_lines_carry_the_run_details() {
     let plan = fx.plan_file("plan-01-a.md", 1, "none");
     let job = create_job(&fx.driver, "hello", "say hello", Some(&plan), None).expect("create");
     assert_eq!(run_job(&fx.driver, &job.id).expect("run"), RunEnd::Merged);
-    let text = std::fs::read_to_string(fx.driver.job_dir(&job).join("usage.jsonl")).expect("usage log");
-    let lines: Vec<serde_json::Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let text =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("usage.jsonl")).expect("usage log");
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
     assert!(!lines.is_empty());
     for v in &lines {
         assert_eq!(v["usage_v"], 2, "{v}");
@@ -167,13 +251,32 @@ fn create_job_parks_later_plans_at_spec_with_one_series_id() {
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 3);
     let stages: Vec<_> = board.jobs.iter().map(|j| j.stage).collect();
-    assert_eq!(stages, vec![factory_core::Stage::Build, factory_core::Stage::Spec, factory_core::Stage::Spec]);
-    let ids: Vec<_> = board.jobs.iter().map(|j| j.series.as_ref().and_then(|s| s.id.clone())).collect();
+    assert_eq!(
+        stages,
+        vec![
+            factory_core::Stage::Build,
+            factory_core::Stage::Spec,
+            factory_core::Stage::Spec
+        ]
+    );
+    let ids: Vec<_> = board
+        .jobs
+        .iter()
+        .map(|j| j.series.as_ref().and_then(|s| s.id.clone()))
+        .collect();
     assert_eq!(ids, vec![Some("S1".to_string()); 3]);
-    let places: Vec<_> = board.jobs.iter().map(|j| j.series.as_ref().map(|s| (s.index, s.total))).collect();
+    let places: Vec<_> = board
+        .jobs
+        .iter()
+        .map(|j| j.series.as_ref().map(|s| (s.index, s.total)))
+        .collect();
     assert_eq!(places, vec![Some((1, 3)), Some((2, 3)), Some((3, 3))]);
     for job in &board.jobs {
-        assert!(fx.driver.job_dir(job).join("plan.md").exists(), "plan.md for job {}", job.id);
+        assert!(
+            fx.driver.job_dir(job).join("plan.md").exists(),
+            "plan.md for job {}",
+            job.id
+        );
     }
     assert_eq!(board.jobs[1].slug, "plan-02-b");
 }
@@ -186,7 +289,11 @@ fn a_second_series_gets_the_next_series_id() {
     create_job(&fx.driver, "one", "f", Some(&a), None).expect("first series");
     create_job(&fx.driver, "two", "f", Some(&a), None).expect("second series");
     let board = fx.driver.store().load().expect("board");
-    let ids: Vec<_> = board.jobs.iter().filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone())).collect();
+    let ids: Vec<_> = board
+        .jobs
+        .iter()
+        .filter_map(|j| j.series.as_ref().and_then(|s| s.id.clone()))
+        .collect();
     assert_eq!(ids, vec!["S1", "S1", "S2", "S2"]);
 }
 
@@ -198,12 +305,23 @@ fn run_series_follows_its_own_series_when_plan_files_are_reused() {
     fx.plan_file("plan-03-c.md", 1, "none");
     create_job(&fx.driver, "one", "f", Some(&a), None).expect("first series");
     create_job(&fx.driver, "two", "f", Some(&a), None).expect("second series");
-    assert_eq!(run_series(&fx.driver, "004").expect("series"), RunEnd::Merged);
+    assert_eq!(
+        run_series(&fx.driver, "004").expect("series"),
+        RunEnd::Merged
+    );
     for id in ["004", "005", "006"] {
-        assert_eq!(fx.driver.job(id).expect("job").stage, factory_core::Stage::Merged, "job {id}");
+        assert_eq!(
+            fx.driver.job(id).expect("job").stage,
+            factory_core::Stage::Merged,
+            "job {id}"
+        );
     }
     for id in ["002", "003"] {
-        assert_eq!(fx.driver.job(id).expect("job").stage, factory_core::Stage::Spec, "job {id}");
+        assert_eq!(
+            fx.driver.job(id).expect("job").stage,
+            factory_core::Stage::Spec,
+            "job {id}"
+        );
     }
 }
 
@@ -214,7 +332,10 @@ fn a_single_plan_gets_no_series_id_and_no_extra_jobs() {
     create_job(&fx.driver, "solo", "f", Some(&a), None).expect("create");
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 1);
-    assert_eq!(board.jobs[0].series.as_ref().and_then(|s| s.id.clone()), None);
+    assert_eq!(
+        board.jobs[0].series.as_ref().and_then(|s| s.id.clone()),
+        None
+    );
 }
 
 #[test]
@@ -269,7 +390,10 @@ fn a_folder_without_a_usable_spec_creates_no_jobs() {
         }
         let err = create_job(&fx.driver, "bad", "f", Some(&folder), None).expect_err("bad spec");
         assert!(err.to_string().contains(fragment), "{spec:?}: {err}");
-        assert!(fx.driver.store().load().expect("board").jobs.is_empty(), "{spec:?}");
+        assert!(
+            fx.driver.store().load().expect("board").jobs.is_empty(),
+            "{spec:?}"
+        );
     }
 }
 
@@ -290,11 +414,20 @@ fn an_old_series_without_an_id_still_gets_its_next_job_after_the_merge() {
             Ok(())
         })
         .expect("rewrite board");
-    assert_eq!(run_series(&fx.driver, &job.id).expect("series"), RunEnd::Merged);
+    assert_eq!(
+        run_series(&fx.driver, &job.id).expect("series"),
+        RunEnd::Merged
+    );
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 2);
-    assert!(board.jobs.iter().all(|j| j.stage == factory_core::Stage::Merged));
-    assert_eq!(board.jobs[1].series.as_ref().and_then(|s| s.id.clone()), None);
+    assert!(board
+        .jobs
+        .iter()
+        .all(|j| j.stage == factory_core::Stage::Merged));
+    assert_eq!(
+        board.jobs[1].series.as_ref().and_then(|s| s.id.clone()),
+        None
+    );
 }
 
 #[test]
@@ -307,12 +440,20 @@ fn a_cancelled_plan_stops_the_series_and_later_plans_stay_at_spec() {
     fx.driver
         .store()
         .update_job("002", |j| {
-            j.set_stage(factory_core::Stage::NeedsHuman, Some("cancelled: test"), false, 1.0)?;
+            j.set_stage(
+                factory_core::Stage::NeedsHuman,
+                Some("cancelled: test"),
+                false,
+                1.0,
+            )?;
             j.cancelled = true;
             Ok(())
         })
         .expect("cancel plan 2");
-    assert!(matches!(run_series(&fx.driver, &job.id).expect("series"), RunEnd::NeedsHuman(_)));
+    assert!(matches!(
+        run_series(&fx.driver, &job.id).expect("series"),
+        RunEnd::NeedsHuman(_)
+    ));
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs[0].stage, factory_core::Stage::Merged);
     assert_eq!(board.jobs[2].stage, factory_core::Stage::Spec);
@@ -324,8 +465,14 @@ fn run_job_moves_a_waiting_plan_to_build_by_itself() {
     let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
     fx.plan_file("plan-02-b.md", 1, "none");
     create_job(&fx.driver, "waiting", "two plans", Some(&a), None).expect("create");
-    assert_eq!(run_job(&fx.driver, "002").expect("run plan 2 alone"), RunEnd::Merged);
-    assert_eq!(fx.driver.job("002").expect("job").stage, factory_core::Stage::Merged);
+    assert_eq!(
+        run_job(&fx.driver, "002").expect("run plan 2 alone"),
+        RunEnd::Merged
+    );
+    assert_eq!(
+        fx.driver.job("002").expect("job").stage,
+        factory_core::Stage::Merged
+    );
 }
 
 #[test]
@@ -384,7 +531,15 @@ fn an_explicit_spec_path_replaces_the_spec_beside_the_plans() {
     // The plans folder has no spec.md. The spec lives elsewhere, like a committed docs file.
     let spec = folder.parent().expect("parent").join("committed-design.md");
     std::fs::write(&spec, GOOD_SPEC).expect("spec");
-    create_job_with_spec(&fx.driver, "explicit", "f", Some(&folder), Some(&spec), None).expect("create");
+    create_job_with_spec(
+        &fx.driver,
+        "explicit",
+        "f",
+        Some(&folder),
+        Some(&spec),
+        None,
+    )
+    .expect("create");
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 2);
     for job in &board.jobs {
@@ -400,7 +555,11 @@ fn an_explicit_spec_path_must_exist_and_pass_the_check() {
     let missing = a.parent().expect("plans folder").join("nowhere.md");
     assert!(create_job_with_spec(&fx.driver, "gone", "f", Some(&a), Some(&missing), None).is_err());
     let thin = a.parent().expect("plans folder").join("thin.md");
-    std::fs::write(&thin, "# Spec\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- ok\n").expect("spec");
+    std::fs::write(
+        &thin,
+        "# Spec\n\n## Goal\n\nDo it.\n\n## Acceptance criteria\n\n- ok\n",
+    )
+    .expect("spec");
     assert!(create_job_with_spec(&fx.driver, "thin", "f", Some(&a), Some(&thin), None).is_err());
     assert!(fx.driver.store().load().expect("board").jobs.is_empty());
 }
@@ -424,7 +583,8 @@ fn a_subheading_or_a_code_comment_does_not_cut_a_section_short() {
     let spec = "# Spec: Demo\n\n## Goal\n\nShip it.\n\n### Why\n\nBuild the demo so that a user can finish the task in one step.\n\n\
                 ## Acceptance criteria\n\n```bash\n# run the suite\ncargo test\n```\n\n- It is done.\n";
     std::fs::write(folder.join("spec.md"), spec).expect("spec");
-    create_job(&fx.driver, "deep", "f", Some(&folder), None).expect("sub-headings and code comments stay in the section");
+    create_job(&fx.driver, "deep", "f", Some(&folder), None)
+        .expect("sub-headings and code comments stay in the section");
 }
 
 #[test]
@@ -434,10 +594,14 @@ fn only_an_exact_level_two_heading_names_a_section() {
         let fx = common::SeriesFixture::new("x");
         let a = fx.plan_file("plan-01-a.md", 1, "none");
         let folder = a.parent().expect("plans folder").to_path_buf();
-        let spec = format!("# Spec: Demo\n\n{heading}\n\n{body}\n\n## Acceptance criteria\n\n- ok\n");
+        let spec =
+            format!("# Spec: Demo\n\n{heading}\n\n{body}\n\n## Acceptance criteria\n\n- ok\n");
         std::fs::write(folder.join("spec.md"), spec).expect("spec");
         let err = create_job(&fx.driver, "bad", "f", Some(&folder), None).expect_err("bad heading");
-        assert!(err.to_string().contains("no `## Goal` section"), "{heading}: {err}");
+        assert!(
+            err.to_string().contains("no `## Goal` section"),
+            "{heading}: {err}"
+        );
     }
 }
 
@@ -450,7 +614,8 @@ fn the_copied_spec_is_the_checked_spec_with_a_crlf_file_too() {
     std::fs::write(folder.join("spec.md"), &crlf).expect("spec");
     create_job(&fx.driver, "crlf", "f", Some(&folder), None).expect("a CRLF spec passes");
     let board = fx.driver.store().load().expect("board");
-    let copy = std::fs::read_to_string(fx.driver.job_dir(&board.jobs[0]).join("spec.md")).expect("copy");
+    let copy =
+        std::fs::read_to_string(fx.driver.job_dir(&board.jobs[0]).join("spec.md")).expect("copy");
     assert_eq!(copy, crlf);
 }
 
@@ -481,11 +646,16 @@ fn a_decoy_copy_in_the_driver_root_does_not_win() {
     let (_b, folder, plan_two) = other_checkout();
     let decoy = fx.main.join("docs/plans");
     std::fs::create_dir_all(&decoy).expect("decoy dir");
-    std::fs::write(decoy.join("plan-02-b.md"), "# Decoy\n\n### Task 1: other\n\nNext plan: none\n").expect("decoy");
+    std::fs::write(
+        decoy.join("plan-02-b.md"),
+        "# Decoy\n\n### Task 1: other\n\nNext plan: none\n",
+    )
+    .expect("decoy");
     create_job(&fx.driver, "decoy", "f", Some(&folder), None).expect("create");
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 2);
-    let copy = std::fs::read_to_string(fx.driver.job_dir(&board.jobs[1]).join("plan.md")).expect("plan.md");
+    let copy = std::fs::read_to_string(fx.driver.job_dir(&board.jobs[1]).join("plan.md"))
+        .expect("plan.md");
     assert_eq!(copy, std::fs::read_to_string(plan_two).expect("b plan"));
 }
 

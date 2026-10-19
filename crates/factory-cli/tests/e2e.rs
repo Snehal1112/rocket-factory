@@ -19,7 +19,23 @@ fn two_plans_go_from_new_to_merged_with_a_failed_check_resumed_once() -> TestRes
     let end = sc.start(&sc.plan_a, true)?;
     assert_eq!(end, "merged", "{end}");
     // Spec decision 4: a red check resumes the builder, the committer commits the fix, and no reviewer run is spent.
-    assert_eq!(sc.runner.roles(), ["builder", "committer", "builder", "committer", "reviewer", "message", "message", "builder", "committer", "reviewer", "message", "message"]);
+    assert_eq!(
+        sc.runner.roles(),
+        [
+            "builder",
+            "committer",
+            "builder",
+            "committer",
+            "reviewer",
+            "message",
+            "message",
+            "builder",
+            "committer",
+            "reviewer",
+            "message",
+            "message"
+        ]
+    );
     // Spec decision 11: plan B starts by itself after plan A merges.
     assert_eq!(sc.merges_on_main()?, 2);
     assert_eq!(sc.stage("001")?, "merged");
@@ -39,19 +55,45 @@ fn a_changes_verdict_runs_one_fix_round_then_merges() -> TestResult {
         ],
     )?;
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
-    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer", "builder", "committer", "reviewer", "message", "message"]);
+    assert_eq!(
+        sc.runner.roles(),
+        [
+            "builder",
+            "committer",
+            "reviewer",
+            "builder",
+            "committer",
+            "reviewer",
+            "message",
+            "message"
+        ]
+    );
     // Spec decision 10: the merge commit has the fixed message.
-    assert!(sc.last_merge_subject()?.starts_with("chore(factory): merge job 001"), "{}", sc.last_merge_subject()?);
+    assert!(
+        sc.last_merge_subject()?
+            .starts_with("chore(factory): merge job 001"),
+        "{}",
+        sc.last_merge_subject()?
+    );
     Ok(())
 }
 
 #[test]
 fn a_risky_diff_waits_for_approve_and_then_merges_the_reviewed_sha() -> TestResult {
-    let sc = Scenario::new("", vec![build(vec![("secrets/token.txt", "x\n")], 1_000), review(APPROVE)])?;
+    let sc = Scenario::new(
+        "",
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(APPROVE),
+        ],
+    )?;
     let before = sc.main_tip()?;
     // Spec decision 6: risky paths park the job, main is untouched.
     let end = sc.start(&sc.plan_b, false)?;
-    assert!(end.starts_with("needs-human") && end.contains("risky"), "{end}");
+    assert!(
+        end.starts_with("needs-human") && end.contains("risky"),
+        "{end}"
+    );
     assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer"]);
     assert_eq!(sc.stage("001")?, "needs-human");
     assert_eq!(sc.main_tip()?, before);
@@ -73,7 +115,10 @@ fn a_moved_main_is_synced_into_the_branch_and_still_merges() -> TestResult {
         "",
         vec![
             build(vec![("b.txt", "b\n")], 1_000),
-            Step::Review { text: APPROVE, before: Some(hook) },
+            Step::Review {
+                text: APPROVE,
+                before: Some(hook),
+            },
             // The review of the sync diff.
             review(APPROVE),
         ],
@@ -93,7 +138,10 @@ fn a_budget_stop_parks_the_job_and_leaves_main_alone() -> TestResult {
     )?;
     let before = sc.main_tip()?;
     let end = sc.start(&sc.plan_b, false)?;
-    assert!(end.starts_with("needs-human") && end.contains("budget"), "{end}");
+    assert!(
+        end.starts_with("needs-human") && end.contains("budget"),
+        "{end}"
+    );
     assert_eq!(sc.stage("001")?, "needs-human");
     assert_eq!(sc.main_tip()?, before);
     Ok(())
@@ -101,7 +149,10 @@ fn a_budget_stop_parks_the_job_and_leaves_main_alone() -> TestResult {
 
 #[test]
 fn tokens_report_shows_roles_and_the_baseline() -> TestResult {
-    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    let sc = Scenario::new(
+        "",
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
     let text = sc.run(&["tokens", "1"])?;
     assert!(text.contains("builder"), "{text}");
@@ -125,15 +176,33 @@ fn a_merge_refreshes_the_kb_and_tokens_list_the_kb_role() -> TestResult {
     let tmp = tempfile::tempdir()?;
     let kb = tmp.path().join("kb");
     std::fs::create_dir_all(&kb)?;
-    let sc = Scenario::new(&format!("kb_path = \"{}\"\n", kb.display()), vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    let sc = Scenario::new(
+        &format!("kb_path = \"{}\"\n", kb.display()),
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
     // The real repo ignores .superpowers, so the usage log written during the run must not look like tampering.
     std::fs::write(sc.root.join(".git/info/exclude"), ".superpowers/\n")?;
     // Spec decision 16: the KB refresh runs after the merge and never changes the result.
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
-    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer", "message", "message", "kb"]);
+    assert_eq!(
+        sc.runner.roles(),
+        [
+            "builder",
+            "committer",
+            "reviewer",
+            "message",
+            "message",
+            "kb"
+        ]
+    );
     assert_eq!(sc.stage("001")?, "merged");
     let job = sc.job("001")?;
-    let ledger = std::fs::read_to_string(sc.root.join(".superpowers/sdd").join(&job.dir).join("progress.md"))?;
+    let ledger = std::fs::read_to_string(
+        sc.root
+            .join(".superpowers/sdd")
+            .join(&job.dir)
+            .join("progress.md"),
+    )?;
     assert!(ledger.contains("kb refreshed, pages: topic.md"), "{ledger}");
     let text = sc.run(&["tokens", "1"])?;
     assert!(text.contains("kb "), "{text}");
@@ -142,7 +211,10 @@ fn a_merge_refreshes_the_kb_and_tokens_list_the_kb_role() -> TestResult {
 
 #[test]
 fn factory_costs_lists_jobs_writes_costs_json_and_new_prints_estimates() -> TestResult {
-    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    let sc = Scenario::new(
+        "",
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
     let plan = sc.plan_a.to_string_lossy().to_string();
     // No history yet, so neither of the two jobs of the series has an estimate.
     let created = sc.run(&["new", "hello", "say hello", "--plans", &plan])?;
@@ -152,7 +224,10 @@ fn factory_costs_lists_jobs_writes_costs_json_and_new_prints_estimates() -> Test
     assert_eq!(end, "merged", "{end}");
 
     let out = sc.run(&["costs"])?;
-    let row = out.lines().find(|l| l.starts_with("001")).expect("job 001 row");
+    let row = out
+        .lines()
+        .find(|l| l.starts_with("001"))
+        .expect("job 001 row");
     assert!(row.contains("merged") && row.contains("small"), "{out}");
     assert!(out.contains("ROLES"), "{out}");
     assert!(out.contains("few jobs"), "{out}");
@@ -169,7 +244,10 @@ fn factory_costs_lists_jobs_writes_costs_json_and_new_prints_estimates() -> Test
 fn with_log<R>(sc: &Scenario, f: impl FnOnce() -> R) -> R {
     use tracing_subscriber::layer::SubscriberExt;
     let path = sc.root.join(".superpowers/factory/log.jsonl");
-    let file = std::sync::Arc::new(factory_telemetry::RotatingFile::new(path, factory_telemetry::LOG_CAP_BYTES));
+    let file = std::sync::Arc::new(factory_telemetry::RotatingFile::new(
+        path,
+        factory_telemetry::LOG_CAP_BYTES,
+    ));
     let layer = factory_telemetry::JsonLayer::new(file, None, factory_telemetry::Scope::Cli);
     tracing::subscriber::with_default(tracing_subscriber::Registry::default().with(layer), f)
 }
@@ -187,7 +265,10 @@ fn one_merged_run(sc: &Scenario) -> TestResult {
 
 #[test]
 fn run_writes_a_log_with_merge_done() -> TestResult {
-    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    let sc = Scenario::new(
+        "",
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
     one_merged_run(&sc)?;
     let lines = log_lines(&sc)?;
     for l in &lines {
@@ -201,9 +282,18 @@ fn run_writes_a_log_with_merge_done() -> TestResult {
         .filter(|l| l["event"] == "stage.change" && l["job_id"] == "001")
         .filter_map(|l| l["to"].as_str().map(str::to_string))
         .collect();
-    let history: Vec<String> = sc.job("001")?.stage_history.iter().skip(1).map(|e| e.stage.to_string()).collect();
+    let history: Vec<String> = sc
+        .job("001")?
+        .stage_history
+        .iter()
+        .skip(1)
+        .map(|e| e.stage.to_string())
+        .collect();
     assert_eq!(changes, history);
-    let done: Vec<&serde_json::Value> = lines.iter().filter(|l| l["event"] == "merge.done").collect();
+    let done: Vec<&serde_json::Value> = lines
+        .iter()
+        .filter(|l| l["event"] == "merge.done")
+        .collect();
     assert_eq!(done.len(), 1, "{done:?}");
     assert_eq!(done[0]["sha"], sc.main_tip()?.as_str());
     Ok(())
@@ -212,7 +302,10 @@ fn run_writes_a_log_with_merge_done() -> TestResult {
 #[test]
 fn run_log_has_no_secret() -> TestResult {
     std::env::set_var("ANTHROPIC_API_KEY", "planted-secret-999");
-    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    let sc = Scenario::new(
+        "",
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
     one_merged_run(&sc)?;
     let text = std::fs::read_to_string(sc.root.join(".superpowers/factory/log.jsonl"))?;
     assert!(!text.contains("planted-secret-999"));
@@ -221,7 +314,10 @@ fn run_log_has_no_secret() -> TestResult {
 
 #[test]
 fn factory_log_command_shows_the_run() -> TestResult {
-    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    let sc = Scenario::new(
+        "",
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
     one_merged_run(&sc)?;
     let out = sc.run(&["log", "--job", "001", "--level", "info"])?;
     assert!(out.lines().any(|l| l.contains("\"merge.done\"")), "{out}");

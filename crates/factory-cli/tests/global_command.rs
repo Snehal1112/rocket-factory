@@ -23,7 +23,11 @@ impl EnvVarGuard {
             Some(v) => std::env::set_var(key, v),
             None => std::env::remove_var(key),
         }
-        EnvVarGuard { key, old, _lock: lock }
+        EnvVarGuard {
+            key,
+            old,
+            _lock: lock,
+        }
     }
 }
 
@@ -45,9 +49,12 @@ fn make_repo(parent: &Path, folder: &str) -> PathBuf {
     std::fs::write(path.join("a.txt"), "a").expect("write");
     let mut index = repo.index().expect("index");
     index.add_path(Path::new("a.txt")).expect("add");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find");
     let sig = Signature::now("t", "t@t").expect("sig");
-    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+        .expect("commit");
     path
 }
 
@@ -78,15 +85,31 @@ fn which_prints_the_name_for_a_repo_a_subfolder_and_a_worktree() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let home = Home::at(tmp.path().join("home"));
     let repo = make_repo(tmp.path(), "demo-repo");
-    project_run(&home, &["add", s(&repo), "--preset", "rust", "--name", "demo"]).expect("add");
-    assert_eq!(project_run(&home, &["which", s(&repo)]).expect("root"), "demo");
+    project_run(
+        &home,
+        &["add", s(&repo), "--preset", "rust", "--name", "demo"],
+    )
+    .expect("add");
+    assert_eq!(
+        project_run(&home, &["which", s(&repo)]).expect("root"),
+        "demo"
+    );
     let sub = repo.join("sub");
     std::fs::create_dir_all(&sub).expect("mkdir");
-    assert_eq!(project_run(&home, &["which", s(&sub)]).expect("sub"), "demo");
+    assert_eq!(
+        project_run(&home, &["which", s(&sub)]).expect("sub"),
+        "demo"
+    );
     // A real linked worktree made by git2, outside the repo.
     let wt = tmp.path().join("linked");
-    Repository::open(&repo).expect("open").worktree("linked", &wt, None).expect("worktree");
-    assert_eq!(project_run(&home, &["which", s(&wt)]).expect("worktree"), "demo");
+    Repository::open(&repo)
+        .expect("open")
+        .worktree("linked", &wt, None)
+        .expect("worktree");
+    assert_eq!(
+        project_run(&home, &["which", s(&wt)]).expect("worktree"),
+        "demo"
+    );
 }
 
 #[test]
@@ -95,7 +118,9 @@ fn which_refuses_an_unregistered_folder_with_the_message() {
     let home = Home::at(tmp.path().join("home"));
     let other = tmp.path().join("other");
     std::fs::create_dir_all(&other).expect("mkdir");
-    let err = project_run(&home, &["which", s(&other)]).expect_err("none").to_string();
+    let err = project_run(&home, &["which", s(&other)])
+        .expect_err("none")
+        .to_string();
     assert!(err.contains("no registered project contains"), "{err}");
     assert!(err.contains(s(&other)), "{err}");
 }
@@ -105,13 +130,23 @@ fn which_fails_with_an_ambiguity_error_for_two_projects_on_one_repo() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let home = Home::at(tmp.path().join("home"));
     let repo = make_repo(tmp.path(), "demo-repo");
-    project_run(&home, &["add", s(&repo), "--preset", "rust", "--name", "first"]).expect("add");
+    project_run(
+        &home,
+        &["add", s(&repo), "--preset", "rust", "--name", "first"],
+    )
+    .expect("add");
     // `project add` refuses a second name for one repo, so copy the project file by hand.
     let second = home.project_dir("second");
     std::fs::create_dir_all(&second).expect("mkdir");
-    std::fs::copy(home.project_dir("first").join("project.toml"), second.join("project.toml")).expect("copy");
+    std::fs::copy(
+        home.project_dir("first").join("project.toml"),
+        second.join("project.toml"),
+    )
+    .expect("copy");
     // main.rs only maps an Err to exit code 1, so the Err from project::run is what is asserted.
-    let err = project_run(&home, &["which", s(&repo)]).expect_err("ambiguous").to_string();
+    let err = project_run(&home, &["which", s(&repo)])
+        .expect_err("ambiguous")
+        .to_string();
     assert!(err.contains("ambiguous"), "{err}");
     assert!(err.contains("first") && err.contains("second"), "{err}");
 }
@@ -122,7 +157,10 @@ fn install_writes_the_embedded_command_and_is_idempotent() {
     let dir = tmp.path().join("cmds");
     let out = install_args(&["--dir", s(&dir)]).expect("install");
     assert!(out.contains(s(&dir.join("factory.md"))), "{out}");
-    assert_eq!(std::fs::read_to_string(dir.join("factory.md")).expect("read"), GLOBAL_COMMAND);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("factory.md")).expect("read"),
+        GLOBAL_COMMAND
+    );
     let again = install_args(&["--dir", s(&dir)]).expect("again");
     assert!(again.contains("already installed"), "{again}");
 }
@@ -134,11 +172,16 @@ fn install_refuses_an_edited_file_unless_forced() {
     install_args(&["--dir", s(&dir)]).expect("install");
     let file = dir.join("factory.md");
     std::fs::write(&file, "my edits").expect("edit");
-    let err = install_args(&["--dir", s(&dir)]).expect_err("refused").to_string();
+    let err = install_args(&["--dir", s(&dir)])
+        .expect_err("refused")
+        .to_string();
     assert!(err.contains(s(&file)), "{err}");
     assert_eq!(std::fs::read_to_string(&file).expect("read"), "my edits");
     install_args(&["--dir", s(&dir), "--force"]).expect("force");
-    assert_eq!(std::fs::read_to_string(&file).expect("read"), GLOBAL_COMMAND);
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        GLOBAL_COMMAND
+    );
 }
 
 #[test]
@@ -149,7 +192,10 @@ fn install_into_an_unwritable_place_fails_and_leaves_nothing() {
     let dir = blocker.join("cmds");
     assert!(install_args(&["--dir", s(&dir)]).is_err());
     assert!(!dir.exists());
-    let names: Vec<_> = std::fs::read_dir(tmp.path()).expect("ls").map(|e| e.expect("e").file_name()).collect();
+    let names: Vec<_> = std::fs::read_dir(tmp.path())
+        .expect("ls")
+        .map(|e| e.expect("e").file_name())
+        .collect();
     assert_eq!(names.len(), 1, "{names:?}");
 }
 
@@ -261,12 +307,27 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
     ] {
         assert!(text.contains(needed), "missing phrase: {needed}");
     }
-    assert!(!text.contains("Everything else in the skill stands"), "the skill's quick paths must stay overridden");
+    assert!(
+        !text.contains("Everything else in the skill stands"),
+        "the skill's quick paths must stay overridden"
+    );
     // The status check comes before `spec start`, and the post-approval commit before writing-plans.
-    let pos = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing phrase: {needle}"));
-    assert!(pos("Run `<factory> --project <name> status`") < pos("<factory> --project <name> spec start <slug>"));
-    assert!(pos("After it, stage the spec path") < pos("<factory> --project <name> spec stage <slug> writing-plans"));
-    assert!(pos("the commit after the spec approval comes first") < pos("Invoke `superpowers:writing-plans`"));
+    let pos = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("missing phrase: {needle}"))
+    };
+    assert!(
+        pos("Run `<factory> --project <name> status`")
+            < pos("<factory> --project <name> spec start <slug>")
+    );
+    assert!(
+        pos("After it, stage the spec path")
+            < pos("<factory> --project <name> spec stage <slug> writing-plans")
+    );
+    assert!(
+        pos("the commit after the spec approval comes first")
+            < pos("Invoke `superpowers:writing-plans`")
+    );
     // The 6.4.1 rules that 7.0.0 removed, and the inline executor.
     for removed in [
         "executing-plans",
@@ -283,10 +344,22 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "## Rejected alternatives",
         "Do not use subagents for the interview",
     ] {
-        assert!(!text.contains(removed), "removed phrase still present: {removed}");
+        assert!(
+            !text.contains(removed),
+            "removed phrase still present: {removed}"
+        );
     }
     let lower = text.to_lowercase();
-    for banned in ["tools/factory", "cargo build", "opencollection", "factory-ctl", "python3", "set-stage", "sendmessage", "rocket"] {
+    for banned in [
+        "tools/factory",
+        "cargo build",
+        "opencollection",
+        "factory-ctl",
+        "python3",
+        "set-stage",
+        "sendmessage",
+        "rocket",
+    ] {
         assert!(!lower.contains(banned), "forbidden phrase: {banned}");
     }
     assert!(text.starts_with("---\n"));

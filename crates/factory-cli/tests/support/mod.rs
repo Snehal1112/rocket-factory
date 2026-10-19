@@ -22,9 +22,15 @@ pub type Hook = Box<dyn Fn(&Path) + Send + Sync>;
 /// One scripted answer for the fake runner.
 pub enum Step {
     /// Builder: write these files in the worktree, commit them, report this many input tokens.
-    Build { files: Vec<(&'static str, &'static str)>, input_tokens: u64 },
+    Build {
+        files: Vec<(&'static str, &'static str)>,
+        input_tokens: u64,
+    },
     /// Reviewer: answer with this text. The last line is the verdict. The hook gets the main checkout.
-    Review { text: &'static str, before: Option<Hook> },
+    Review {
+        text: &'static str,
+        before: Option<Hook>,
+    },
 }
 
 pub fn review(text: &'static str) -> Step {
@@ -32,11 +38,18 @@ pub fn review(text: &'static str) -> Step {
 }
 
 pub fn build(files: Vec<(&'static str, &'static str)>, input_tokens: u64) -> Step {
-    Step::Build { files, input_tokens }
+    Step::Build {
+        files,
+        input_tokens,
+    }
 }
 
 /// Commits several files in a repository and returns the new sha.
-pub fn commit_files(dir: &Path, files: &[(&str, &str)], message: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn commit_files(
+    dir: &Path,
+    files: &[(&str, &str)],
+    message: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let repo = Repository::open(dir)?;
     let mut index = repo.index()?;
     for (name, content) in files {
@@ -60,17 +73,23 @@ pub fn commit_files(dir: &Path, files: &[(&str, &str)], message: &str) -> Result
         Err(_) => vec![],
     };
     let refs: Vec<&git2::Commit> = parents.iter().collect();
-    Ok(repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &refs)?.to_string())
+    Ok(repo
+        .commit(Some("HEAD"), &sig, &sig, message, &tree, &refs)?
+        .to_string())
 }
 
 /// Commits whatever is staged in `dir`, like a committer agent would.
 pub fn commit_index(dir: &Path, message: &str) -> String {
     let repo = Repository::open(dir).expect("open repo");
     let mut index = repo.index().expect("index");
-    let tree = repo.find_tree(index.write_tree().expect("tree")).expect("find tree");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find tree");
     let sig = Signature::now("t", "t@example.com").expect("sig");
     let parent = repo.head().expect("head").peel_to_commit().expect("commit");
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent]).expect("commit").to_string()
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+        .expect("commit")
+        .to_string()
 }
 
 /// Plays the script in order and records the role of every call. It never runs the real `claude`.
@@ -89,22 +108,40 @@ impl ScriptRunner {
 impl AgentRunner for ScriptRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         if let Ok(mut roles) = self.roles.lock() {
-            roles.push(spec.role.clone());        }
+            roles.push(spec.role.clone());
+        }
         if spec.role == "committer" {
             commit_index(&spec.cwd, "feat(test): build step");
-            return AgentRun { session_id: Some("sess-c".to_string()), ..AgentRun::done("done") };
+            return AgentRun {
+                session_id: Some("sess-c".to_string()),
+                ..AgentRun::done("done")
+            };
         }
         // A message run never uses up a script step. Its reply has no message, so the fixed one is used.
         if spec.role == "message" {
-            return AgentRun { session_id: Some("sess-m".to_string()), ..AgentRun::done("done") };
+            return AgentRun {
+                session_id: Some("sess-m".to_string()),
+                ..AgentRun::done("done")
+            };
         }
         // A KB run never uses up a script step. It reports one page changed.
         if spec.role == "kb" {
-            return AgentRun { session_id: Some("sess-k".to_string()), usage: Usage { input_tokens: 50, ..Usage::default() }, weighted: 50, ..AgentRun::done("topic.md") };
+            return AgentRun {
+                session_id: Some("sess-k".to_string()),
+                usage: Usage {
+                    input_tokens: 50,
+                    ..Usage::default()
+                },
+                weighted: 50,
+                ..AgentRun::done("topic.md")
+            };
         }
         let step = self.steps.lock().ok().and_then(|mut s| s.pop_front());
         let (text, input) = match step {
-            Some(Step::Build { files, input_tokens }) if spec.role == "builder" => {
+            Some(Step::Build {
+                files,
+                input_tokens,
+            }) if spec.role == "builder" => {
                 for (name, content) in &files {
                     // An empty content deletes the file, which the driver stages as a deletion.
                     if content.is_empty() {
@@ -126,11 +163,24 @@ impl AgentRunner for ScriptRunner {
                 }
                 (text.to_string(), 100)
             }
-            Some(_) => return AgentRun::failed(&format!("script step does not match the role {}", spec.role)),
+            Some(_) => {
+                return AgentRun::failed(&format!(
+                    "script step does not match the role {}",
+                    spec.role
+                ))
+            }
             None => return AgentRun::failed("script exhausted"),
         };
-        let usage = Usage { input_tokens: input, ..Usage::default() };
-        AgentRun { session_id: Some("sess-1".to_string()), usage, weighted: input, ..AgentRun::done(&text) }
+        let usage = Usage {
+            input_tokens: input,
+            ..Usage::default()
+        };
+        AgentRun {
+            session_id: Some("sess-1".to_string()),
+            usage,
+            weighted: input,
+            ..AgentRun::done(&text)
+        }
     }
 }
 
@@ -146,7 +196,10 @@ pub struct Scenario {
 impl Scenario {
     /// `extra_config` is appended to the config file. The one check fails while `bad.flag` exists,
     /// so a builder can fail it on purpose and a resume can delete the flag.
-    pub fn new(extra_config: &str, steps: Vec<Step>) -> Result<Scenario, Box<dyn std::error::Error>> {
+    pub fn new(
+        extra_config: &str,
+        steps: Vec<Step>,
+    ) -> Result<Scenario, Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path().join("repo");
         std::fs::create_dir_all(&root)?;
@@ -160,13 +213,19 @@ impl Scenario {
             "risk_paths = [\"secrets/**\"]\n{extra_config}\n[[checks]]\npaths = [\"**\"]\ncommands = [\"test ! -f bad.flag\"]\n"
         );
         std::fs::write(root.join(".claude/factory/config.toml"), config)?;
-        std::fs::write(root.join(".claude/factory/commit-context.md"), "TEST CONTEXT\n")?;
+        std::fs::write(
+            root.join(".claude/factory/commit-context.md"),
+            "TEST CONTEXT\n",
+        )?;
         let plans = tmp.path().join("plans");
         std::fs::create_dir_all(&plans)?;
         let plan_b = plans.join("plan-02-b.md");
         let plan_a = plans.join("plan-01-a.md");
         std::fs::write(&plan_b, "# B\n\n### Task 1: b\n\nNext plan: none\n")?;
-        std::fs::write(&plan_a, format!("# A\n\n### Task 1: a\n\nNext plan: {}\n", plan_b.display()))?;
+        std::fs::write(
+            &plan_a,
+            format!("# A\n\n### Task 1: a\n\nNext plan: {}\n", plan_b.display()),
+        )?;
         let runner = Arc::new(ScriptRunner {
             steps: Mutex::new(steps.into()),
             roles: Mutex::new(Vec::new()),
@@ -174,7 +233,14 @@ impl Scenario {
         });
         let dyn_runner: Arc<dyn AgentRunner> = runner.clone();
         let ctx = CliCtx::new(root.clone(), dyn_runner, "tester");
-        Ok(Scenario { tmp, root, plan_a, plan_b, runner, ctx })
+        Ok(Scenario {
+            tmp,
+            root,
+            plan_a,
+            plan_b,
+            runner,
+            ctx,
+        })
     }
 
     pub fn run(&self, args: &[&str]) -> Result<String, CliError> {
@@ -205,7 +271,11 @@ impl Scenario {
 
     pub fn main_tip(&self) -> Result<String, Box<dyn std::error::Error>> {
         let repo = Repository::open(&self.root)?;
-        let id = repo.revparse_single("main")?.peel_to_commit()?.id().to_string();
+        let id = repo
+            .revparse_single("main")?
+            .peel_to_commit()?
+            .id()
+            .to_string();
         Ok(id)
     }
 

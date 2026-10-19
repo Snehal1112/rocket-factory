@@ -16,8 +16,16 @@ fn with_kb() -> Fixture {
 fn a_reply_with_pages_is_refreshed() {
     let fx = with_kb();
     let runner = scripted(vec![reply("auth.md\nhttp.md\n")]);
-    let out = fx.engine(&runner).kb_refresh_step(Some(("001", "demo"))).expect("step");
-    assert_eq!(out, KbOutcome::Refreshed { pages: vec!["auth.md".to_string(), "http.md".to_string()] });
+    let out = fx
+        .engine(&runner)
+        .kb_refresh_step(Some(("001", "demo")))
+        .expect("step");
+    assert_eq!(
+        out,
+        KbOutcome::Refreshed {
+            pages: vec!["auth.md".to_string(), "http.md".to_string()]
+        }
+    );
     let specs = runner.specs_for("kb");
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].add_dirs, vec![fx.config.kb_dir().expect("kb dir")]);
@@ -29,7 +37,10 @@ fn a_reply_with_pages_is_refreshed() {
 fn no_relevant_changes_is_up_to_date() {
     let fx = with_kb();
     let runner = scripted(vec![reply("No relevant changes")]);
-    assert_eq!(fx.engine(&runner).kb_refresh_step(None).expect("step"), KbOutcome::UpToDate);
+    assert_eq!(
+        fx.engine(&runner).kb_refresh_step(None).expect("step"),
+        KbOutcome::UpToDate
+    );
 }
 
 #[test]
@@ -62,7 +73,10 @@ fn a_blocked_reply_fails() {
     let fx = with_kb();
     let runner = scripted(vec![reply("BLOCKED: skill missing")]);
     let out = fx.engine(&runner).kb_refresh_step(None).expect("step");
-    assert!(matches!(&out, KbOutcome::Failed(r) if r.contains("skill missing")), "{out:?}");
+    assert!(
+        matches!(&out, KbOutcome::Failed(r) if r.contains("skill missing")),
+        "{out:?}"
+    );
 }
 
 #[test]
@@ -92,7 +106,10 @@ mod merge_hook {
     use std::sync::Arc;
 
     fn fixture(effects: Vec<Effect>, kb: bool) -> MergeFixture {
-        let config = Config { kb_path: kb.then(|| "kb/rocketapi".to_string()), ..Config::default() };
+        let config = Config {
+            kb_path: kb.then(|| "kb/rocketapi".to_string()),
+            ..Config::default()
+        };
         approved_job_config(Arc::new(scripted(effects)), false, config)
     }
 
@@ -167,7 +184,10 @@ mod merge_hook {
     #[test]
     fn an_unset_kb_path_writes_nothing() {
         let fx = fixture(vec![], false);
-        assert_eq!(fx.driver.kb_refresh(&fx.id, true).expect("line"), "kb_path is not set");
+        assert_eq!(
+            fx.driver.kb_refresh(&fx.id, true).expect("line"),
+            "kb_path is not set"
+        );
         assert!(!fx.ledger().contains("Ruling: kb"));
     }
 
@@ -194,7 +214,10 @@ mod merge_hook {
         let fx = fixture(vec![tamper(), reply("No relevant changes")], true);
         merge(&fx);
         let text = std::fs::read_to_string(fx.driver.layout().kb_stop_file()).expect("marker");
-        assert!(text.contains("the main checkout changed during the KB refresh"), "{text}");
+        assert!(
+            text.contains("the main checkout changed during the KB refresh"),
+            "{text}"
+        );
         let line = fx.driver.kb_refresh(&fx.id, true).expect("manual");
         assert_eq!(line, "kb up to date");
         assert!(!fx.driver.layout().kb_stop_file().exists());

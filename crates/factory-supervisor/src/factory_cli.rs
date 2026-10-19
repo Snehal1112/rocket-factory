@@ -53,7 +53,8 @@ impl ProcessFactoryCli {
 
     /// The binary is found like the spawner finds it: `FACTORY_BIN`, else next to this executable.
     pub fn from_env() -> Result<ProcessFactoryCli, CliSpawnError> {
-        let spawner = ProcessSpawner::from_env().map_err(|e| CliSpawnError::NoBin(e.to_string()))?;
+        let spawner =
+            ProcessSpawner::from_env().map_err(|e| CliSpawnError::NoBin(e.to_string()))?;
         let home = Home::from_env().map_err(|e| CliSpawnError::NoBin(e.to_string()))?;
         Ok(ProcessFactoryCli::new(spawner.bin, home.dir))
     }
@@ -89,10 +90,12 @@ fn drain<R: Read + Send + 'static>(stream: Option<R>, name: &str) -> Drain<R> {
     // The stream moves into the closure, so a refused thread needs the shared cell to get it back.
     let cell = std::sync::Arc::new(std::sync::Mutex::new(stream));
     let theirs = cell.clone();
-    let spawned = std::thread::Builder::new().name(name.to_string()).spawn(move || {
-        let taken = theirs.lock().ok().and_then(|mut s| s.take());
-        read_capped(taken)
-    });
+    let spawned = std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(move || {
+            let taken = theirs.lock().ok().and_then(|mut s| s.take());
+            read_capped(taken)
+        });
     match spawned {
         Ok(t) => Drain::Thread(t),
         Err(_) => Drain::Unstarted(cell.lock().ok().and_then(|mut s| s.take())),
@@ -101,7 +104,10 @@ fn drain<R: Read + Send + 'static>(stream: Option<R>, name: &str) -> Drain<R> {
 
 impl FactoryCli for ProcessFactoryCli {
     fn run(&self, project: &str, args: &[String]) -> Result<CliOutput, CliSpawnError> {
-        let start = |reason: String| CliSpawnError::Start { path: self.bin.clone(), reason };
+        let start = |reason: String| CliSpawnError::Start {
+            path: self.bin.clone(),
+            reason,
+        };
         let mut child = Command::new(&self.bin)
             .arg("--project")
             .arg(project)

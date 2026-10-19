@@ -11,7 +11,14 @@ pub struct PlanLint {
 }
 
 /// The header fields every plan names.
-const HEADER_FIELDS: [&str; 6] = ["Goal", "Architecture", "Tech Stack", "Spec", "Global Constraints", "Review Focus"];
+const HEADER_FIELDS: [&str; 6] = [
+    "Goal",
+    "Architecture",
+    "Tech Stack",
+    "Spec",
+    "Global Constraints",
+    "Review Focus",
+];
 
 /// The executor the plan header must name.
 const EXECUTOR: &str = "superpowers:subagent-driven-development";
@@ -29,7 +36,9 @@ fn names_field(line: &str, field: &str) -> bool {
 
 /// True when the text has the marker outside code fences.
 fn has_outside_fence(text: &str, marker: &str) -> bool {
-    lines_with_fence(text).iter().any(|(l, fenced)| !fenced && l.contains(marker))
+    lines_with_fence(text)
+        .iter()
+        .any(|(l, fenced)| !fenced && l.contains(marker))
 }
 
 /// True for a step line whose title is `Commit`: `### Step N: Commit` or `- [ ] **Step N: Commit**`.
@@ -37,14 +46,24 @@ fn has_outside_fence(text: &str, marker: &str) -> bool {
 fn is_commit_step(line: &str) -> bool {
     let title = if let Some(rest) = line.strip_prefix('#') {
         rest.trim_start_matches('#').trim()
-    } else if let Some(rest) = line.strip_prefix("- [ ] **").or_else(|| line.strip_prefix("- [x] **")) {
+    } else if let Some(rest) = line
+        .strip_prefix("- [ ] **")
+        .or_else(|| line.strip_prefix("- [x] **"))
+    {
         rest.split("**").next().unwrap_or("")
     } else {
         return false;
     };
-    let Some(rest) = title.strip_prefix("Step ") else { return false };
-    let Some((_, name)) = rest.split_once(':') else { return false };
-    name.trim().split(|c: char| !c.is_ascii_alphanumeric()).next() == Some("Commit")
+    let Some(rest) = title.strip_prefix("Step ") else {
+        return false;
+    };
+    let Some((_, name)) = rest.split_once(':') else {
+        return false;
+    };
+    name.trim()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .next()
+        == Some("Commit")
 }
 
 /// Lints a plan. Warning texts never contain `; ` because `factory new` splits on it.
@@ -52,24 +71,31 @@ pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
     let mut lint = PlanLint::default();
     let name = &name.replace("; ", ", ");
     if let Some((line, word)) = find_placeholder(plan) {
-        lint.refuse = Some(format!("{name} line {line} still has `{word}`, finish it or remove it"));
+        lint.refuse = Some(format!(
+            "{name} line {line} still has `{word}`, finish it or remove it"
+        ));
         return lint;
     }
     let header = plan_header(plan);
     let header_lines = lines_with_fence(&header);
     for field in HEADER_FIELDS {
-        if !header_lines.iter().any(|(l, fenced)| !fenced && names_field(l, field)) {
+        if !header_lines
+            .iter()
+            .any(|(l, fenced)| !fenced && names_field(l, field))
+        {
             lint.warnings.push(format!("{name} header has no {field}"));
         }
     }
     if !header.contains(EXECUTOR) {
-        lint.warnings.push(format!("{name} does not name {EXECUTOR} as its executor"));
+        lint.warnings
+            .push(format!("{name} does not name {EXECUTOR} as its executor"));
     }
     for task in parse_tasks(plan) {
         let section = task_section(plan, task.n).unwrap_or_default();
         for marker in ["**Files:**", "**Interfaces:**"] {
             if !has_outside_fence(&section, marker) {
-                lint.warnings.push(format!("{name} task {} has no {marker}", task.n));
+                lint.warnings
+                    .push(format!("{name} task {} has no {marker}", task.n));
             }
         }
     }
@@ -78,7 +104,10 @@ pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
         !fenced && (t.starts_with("git commit") || is_commit_step(t))
     });
     if let Some((line, _)) = commit {
-        lint.warnings.push(format!("{name} has a commit step (`{}`) but the driver commits", line.trim()));
+        lint.warnings.push(format!(
+            "{name} has a commit step (`{}`) but the driver commits",
+            line.trim()
+        ));
     }
     // `factory new` splits the stored warnings on `; `, so no warning may contain it.
     for warning in &mut lint.warnings {
@@ -108,12 +137,16 @@ mod tests {
     fn a_placeholder_outside_code_refuses() {
         let lint = lint_plan("# P\n\nTBD later\n", "plan-01.md");
         let reason = lint.refuse.expect("refusal");
-        assert!(reason.contains("plan-01.md") && reason.contains("TBD"), "{reason}");
+        assert!(
+            reason.contains("plan-01.md") && reason.contains("TBD"),
+            "{reason}"
+        );
     }
 
     #[test]
     fn a_placeholder_in_a_fence_or_backticks_is_fine() {
-        let plan = format!("{GOOD}\n```\nTODO inside a fence\n```\n\nThe word `FIXME` is quoted.\n");
+        let plan =
+            format!("{GOOD}\n```\nTODO inside a fence\n```\n\nThe word `FIXME` is quoted.\n");
         assert_eq!(lint_plan(&plan, "p.md").refuse, None);
     }
 
@@ -124,7 +157,10 @@ mod tests {
 
     #[test]
     fn each_missing_header_field_is_one_warning() {
-        let plan = format!("# P\n\n> executor {EXECUTOR}\n\n**Goal:** g\n\n{}", task(1, true, true));
+        let plan = format!(
+            "# P\n\n> executor {EXECUTOR}\n\n**Goal:** g\n\n{}",
+            task(1, true, true)
+        );
         let lint = lint_plan(&plan, "p.md");
         assert_eq!(lint.warnings.len(), 5, "{:?}", lint.warnings);
         assert!(lint.warnings.iter().any(|w| w.contains("Review Focus")));
@@ -143,7 +179,11 @@ mod tests {
     #[test]
     fn a_task_without_files_or_interfaces_warns() {
         let header = GOOD.split("### Task 1").next().expect("header");
-        let plan = format!("{header}{}{}\nNext plan: none\n", task(1, false, true), task(2, true, false));
+        let plan = format!(
+            "{header}{}{}\nNext plan: none\n",
+            task(1, false, true),
+            task(2, true, false)
+        );
         let lint = lint_plan(&plan, "p.md");
         assert_eq!(lint.warnings.len(), 2, "{:?}", lint.warnings);
         assert!(lint.warnings[0].contains("task 1") && lint.warnings[0].contains("Files"));
@@ -155,7 +195,14 @@ mod tests {
         let plan = format!(
             "{GOOD}\n- [ ] **Step 4: Implement** the `BuilderCommitted` flag.\n\n### Task 3: Commit message parsing\n"
         );
-        assert_eq!(lint_plan(&plan, "p.md").warnings.iter().filter(|w| w.contains("commit step")).count(), 0);
+        assert_eq!(
+            lint_plan(&plan, "p.md")
+                .warnings
+                .iter()
+                .filter(|w| w.contains("commit step"))
+                .count(),
+            0
+        );
         let plan = format!("{GOOD}\n- [ ] **Step 5: Commit**\n");
         assert_eq!(lint_plan(&plan, "p.md").warnings.len(), 1);
     }
@@ -165,9 +212,17 @@ mod tests {
         let plan = format!("{GOOD}\ngit commit -m \"a; b\"\n");
         let lint = lint_plan(&plan, "my; plan.md");
         assert!(!lint.warnings.is_empty());
-        assert!(lint.warnings.iter().all(|w| !w.contains("; ")), "{:?}", lint.warnings);
+        assert!(
+            lint.warnings.iter().all(|w| !w.contains("; ")),
+            "{:?}",
+            lint.warnings
+        );
         let lint = lint_plan("# P\n", "my; plan.md");
-        assert!(lint.warnings.iter().all(|w| !w.contains("; ")), "{:?}", lint.warnings);
+        assert!(
+            lint.warnings.iter().all(|w| !w.contains("; ")),
+            "{:?}",
+            lint.warnings
+        );
     }
 
     #[test]

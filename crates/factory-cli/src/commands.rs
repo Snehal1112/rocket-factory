@@ -3,10 +3,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
-use factory_core::{outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
+use factory_core::{
+    outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage,
+};
 use factory_engine::{
-    costs_path, create_job_with_spec, create_one_job, find_draft, remove_draft, set_draft_stage, start_draft, today, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, run_job, run_series, Driver,
-    MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT,
+    costs_path, create_job_with_spec, create_one_job, find_draft, force_release_project_lease,
+    gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, remove_draft,
+    run_job, run_series, set_draft_stage, start_draft, today, Driver, MergeResult, RepoTip, RunEnd,
+    DEFAULT_LOCK_WAIT,
 };
 
 use crate::cli::{Cli, Command, SpecCmd};
@@ -119,24 +123,37 @@ impl CliCtx {
     ) -> Result<CliCtx, CliError> {
         let file = factory_core::project::get(home, name)?;
         if !file.repo.is_dir() {
-            return Err(CliError::Refused(format!("repo path is missing: {}", file.repo.display())));
+            return Err(CliError::Refused(format!(
+                "repo path is missing: {}",
+                file.repo.display()
+            )));
         }
         let strict = crate::project::base_of_strict(&file);
-        let base = strict.clone().unwrap_or_else(|| crate::project::base_of(&file));
+        let base = strict
+            .clone()
+            .unwrap_or_else(|| crate::project::base_of(&file));
         let repo = crate::project::open_repo(&file.repo, &base).map_err(CliError::Refused)?;
         let resolved = resolve(home, name, &RepoTip(&repo))?;
         let mut blocked = None;
         if resolved.config.degraded {
-            let first = resolved.problems.first().cloned().unwrap_or_else(|| "the settings failed closed".to_string());
+            let first = resolved
+                .problems
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "the settings failed closed".to_string());
             blocked = Some(match resolved.problems.len() {
                 0 | 1 => first,
                 n => format!("{first} (and {} more)", n - 1),
             });
         } else if let Err(e) = factory_checks::validate_config(&resolved.config) {
-            blocked = Some(format!("a check command would be rejected when a job starts: {e}"));
+            blocked = Some(format!(
+                "a check command would be rejected when a job starts: {e}"
+            ));
         }
         if blocked.is_none() && strict.is_none() {
-            blocked = Some(format!("project {name} has no valid base_branch setting in project.toml"));
+            blocked = Some(format!(
+                "project {name} has no valid base_branch setting in project.toml"
+            ));
         }
         let ctx = CliCtx {
             layout: resolved.layout,
@@ -199,9 +216,19 @@ impl CliCtx {
             None => Config::load(&self.layout.config_file),
         };
         let me = self.clone();
-        let driver = Driver::new(self.layout.clone(), config, Box::new(move |id| me.runner_for(id)))?;
-        let driver = driver.with_lock_wait(self.lock_wait).with_lease_owner(&self.owner);
-        let driver = if self.agents.is_empty() { driver } else { driver.with_agent_files(self.agents.clone()) };
+        let driver = Driver::new(
+            self.layout.clone(),
+            config,
+            Box::new(move |id| me.runner_for(id)),
+        )?;
+        let driver = driver
+            .with_lock_wait(self.lock_wait)
+            .with_lease_owner(&self.owner);
+        let driver = if self.agents.is_empty() {
+            driver
+        } else {
+            driver.with_agent_files(self.agents.clone())
+        };
         Ok(match &self.tracker {
             Some(t) => driver.with_tracker(Box::new(t.clone())),
             None => driver,
@@ -231,7 +258,9 @@ pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
         return Err(CliError::Refused("the rework note must be one line".into()));
     }
     if note.chars().count() > 200 {
-        return Err(CliError::Refused("the rework note is longer than 200 characters".into()));
+        return Err(CliError::Refused(
+            "the rework note is longer than 200 characters".into(),
+        ));
     }
     Ok(())
 }
@@ -239,9 +268,26 @@ pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
 /// Runs one command and returns the text to print.
 pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
     match cli.command {
-        Command::New { slug, feature, plans, spec, model, one_job, accept_over_budget } => {
-            new_job(ctx, &slug, &feature, NewArgs { plans, spec, model, one_job, accept_over_budget })
-        }
+        Command::New {
+            slug,
+            feature,
+            plans,
+            spec,
+            model,
+            one_job,
+            accept_over_budget,
+        } => new_job(
+            ctx,
+            &slug,
+            &feature,
+            NewArgs {
+                plans,
+                spec,
+                model,
+                one_job,
+                accept_over_budget,
+            },
+        ),
         Command::Run { id, series } => run(ctx, &norm(&id)?, series),
         Command::Status => {
             let d = ctx.driver()?;
@@ -263,7 +309,10 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             Err(_) => cancel_draft(ctx, &id),
         },
         Command::Spec { cmd } => spec(ctx, cmd),
-        Command::Cleanup { id, discard_commits } => cleanup(ctx, &norm(&id)?, discard_commits),
+        Command::Cleanup {
+            id,
+            discard_commits,
+        } => cleanup(ctx, &norm(&id)?, discard_commits),
         Command::Tokens { id } => tokens(ctx, &norm(&id)?),
         Command::Costs => costs(ctx),
         Command::Project { .. } => Err(CliError::Refused(
@@ -275,7 +324,9 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Install { .. } => Err(CliError::Refused(
             "install needs no repository, run it through install::run".into(),
         )),
-        Command::Log { job, level, tail } => crate::log::run_log(ctx, job.as_deref(), level.as_deref(), tail),
+        Command::Log { job, level, tail } => {
+            crate::log::run_log(ctx, job.as_deref(), level.as_deref(), tail)
+        }
         Command::Tickets { id, dry_run } => tickets(ctx, &norm(&id)?, dry_run),
         Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
@@ -295,17 +346,46 @@ struct NewArgs {
 }
 
 fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<String, CliError> {
-    let NewArgs { plans, spec, model, one_job, accept_over_budget } = args;
+    let NewArgs {
+        plans,
+        spec,
+        model,
+        one_job,
+        accept_over_budget,
+    } = args;
     let d = ctx.driver()?;
     let (job, notes) = match (one_job, plans.as_deref()) {
         (true, Some(plan)) => {
-            let made = create_one_job(&d, slug, feature, plan, spec.as_deref(), model.as_deref(), accept_over_budget)?;
+            let made = create_one_job(
+                &d,
+                slug,
+                feature,
+                plan,
+                spec.as_deref(),
+                model.as_deref(),
+                accept_over_budget,
+            )?;
             (made.job, made.notes)
         }
-        _ => (create_job_with_spec(&d, slug, feature, plans.as_deref(), spec.as_deref(), model.as_deref())?, Vec::new()),
+        _ => (
+            create_job_with_spec(
+                &d,
+                slug,
+                feature,
+                plans.as_deref(),
+                spec.as_deref(),
+                model.as_deref(),
+            )?,
+            Vec::new(),
+        ),
     };
     let board = d.store().load()?;
-    let mut out = format!("created job {} in {}{}", job.id, job.dir, estimate_lines(&board, &job));
+    let mut out = format!(
+        "created job {} in {}{}",
+        job.id,
+        job.dir,
+        estimate_lines(&board, &job)
+    );
     // The created line stays first because factoryd parses it. Notes and warnings follow, one per line.
     for note in &notes {
         out.push_str(&format!("\nnote: {note}"));
@@ -315,7 +395,10 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
     }
     if plans.is_none() {
         let dir = d.job_dir(&job);
-        out.push_str(&format!("\nno plan yet: put plan.md at {}/plan.md before running it", dir.display()));
+        out.push_str(&format!(
+            "\nno plan yet: put plan.md at {}/plan.md before running it",
+            dir.display()
+        ));
     }
     Ok(out)
 }
@@ -324,10 +407,20 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
 fn draft_lines(d: &Driver, draft: &factory_core::Draft) -> String {
     let file = draft.spec_file.clone().unwrap_or_else(|| {
         let full = d.layout().draft_spec_file(&draft.created, &draft.slug);
-        full.strip_prefix(&d.layout().repo).unwrap_or(&full).to_string_lossy().into_owned()
+        full.strip_prefix(&d.layout().repo)
+            .unwrap_or(&full)
+            .to_string_lossy()
+            .into_owned()
     });
-    let state = if d.layout().repo.join(&file).is_file() { "exists" } else { "missing" };
-    format!("draft {}\nstage {}\nfile {file} ({state})", draft.slug, draft.stage)
+    let state = if d.layout().repo.join(&file).is_file() {
+        "exists"
+    } else {
+        "missing"
+    };
+    format!(
+        "draft {}\nstage {}\nfile {file} ({state})",
+        draft.slug, draft.stage
+    )
 }
 
 /// The `spec` commands only touch draft cards, so they never start agents and skip `runnable`.
@@ -337,10 +430,14 @@ fn spec(ctx: &CliCtx, cmd: SpecCmd) -> Result<String, CliError> {
         SpecCmd::Start { slug, feature } => start_draft(&d, &slug, &feature, &today(), now_secs())?,
         SpecCmd::Stage { slug, stage } => {
             set_draft_stage(&d, &slug, &stage, now_secs())?;
-            return Ok(format!("draft {} moved to {stage}", factory_core::slugify(&slug)));
+            return Ok(format!(
+                "draft {} moved to {stage}",
+                factory_core::slugify(&slug)
+            ));
         }
-        SpecCmd::Resume { slug } => find_draft(&d, &slug)?
-            .ok_or_else(|| CliError::Refused(format!("no draft named {}", factory_core::slugify(&slug))))?,
+        SpecCmd::Resume { slug } => find_draft(&d, &slug)?.ok_or_else(|| {
+            CliError::Refused(format!("no draft named {}", factory_core::slugify(&slug)))
+        })?,
     };
     Ok(draft_lines(&d, &draft))
 }
@@ -352,7 +449,10 @@ fn cancel_draft(ctx: &CliCtx, name: &str) -> Result<String, CliError> {
         return Err(CliError::Refused(format!("no job or draft named {name}")));
     }
     let draft = remove_draft(&d, name)?;
-    Ok(format!("draft {} cancelled, its spec file was kept", draft.slug))
+    Ok(format!(
+        "draft {} cancelled, its spec file was kept",
+        draft.slug
+    ))
 }
 
 fn costs(ctx: &CliCtx) -> Result<String, CliError> {
@@ -375,8 +475,15 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     // The driver takes the job lease and its heartbeat renews it until the guard below releases it.
     d.renew_lease(id)?;
     // The job lease is released on every exit path, an error from the run included.
-    let _guard = LeaseGuard { driver: &d, id: id.to_string() };
-    let end = if series { run_series(&d, id)? } else { run_job(&d, id)? };
+    let _guard = LeaseGuard {
+        driver: &d,
+        id: id.to_string(),
+    };
+    let end = if series {
+        run_series(&d, id)?
+    } else {
+        run_job(&d, id)?
+    };
     Ok(match end {
         RunEnd::Merged => outcome_lines::merged_line(None),
         RunEnd::NeedsHuman(reason) => outcome_lines::needs_human_line(&reason),
@@ -410,7 +517,9 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
         )));
     }
     if job.batch_snapshot.is_some() {
-        return Err(CliError::Refused(format!("job {id} has a pending batch commit, use rework to finish it")));
+        return Err(CliError::Refused(format!(
+            "job {id} has a pending batch commit, use rework to finish it"
+        )));
     }
     // A parked job whose review never ran must not merge unseen, unless the user says so.
     if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
@@ -420,9 +529,14 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
     let _project = d.hold_project(id)?;
     // The driver takes the job lease and its heartbeat renews it until the guard below releases it.
     d.renew_lease(id)?;
-    let _guard = LeaseGuard { driver: &d, id: id.to_string() };
+    let _guard = LeaseGuard {
+        driver: &d,
+        id: id.to_string(),
+    };
     let now = now_secs();
-    d.store().update_job(id, |j| factory_engine::set_stage_logged(j, Stage::Approve, None, false, now))?;
+    d.store().update_job(id, |j| {
+        factory_engine::set_stage_logged(j, Stage::Approve, None, false, now)
+    })?;
     let ruling = if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
         "approved by the user without a review"
     } else {
@@ -441,7 +555,10 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.stage != Stage::NeedsHuman {
-        return Err(CliError::Refused(format!("job {id} is in stage {}, rework needs needs-human", job.stage)));
+        return Err(CliError::Refused(format!(
+            "job {id} is in stage {}, rework needs needs-human",
+            job.stage
+        )));
     }
     // The note is stored verbatim. The builder gets exactly this text.
     std::fs::write(d.job_dir(&job).join("rework-note.md"), note)?;
@@ -468,7 +585,9 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
         return Err(CliError::Refused(format!("job {id} is already merged")));
     }
     if lease_is_live(&job, now_secs()) && !force {
-        return Err(CliError::Refused("job has a live lease, use --force to cancel anyway".into()));
+        return Err(CliError::Refused(
+            "job has a live lease, use --force to cancel anyway".into(),
+        ));
     }
     let text = format!("cancelled: {reason}");
     let now = now_secs();
@@ -485,7 +604,11 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
     // The process that held the project lease may be gone, so a forced cancel clears it for this job.
     if force {
         let cleared = force_release_project_lease(&d.layout().state_dir, &job.id, ctx.lock_wait)
-            .map_err(|e| CliError::Refused(format!("cancelled, but the project lease could not be cleared: {e}")))?;
+            .map_err(|e| {
+                CliError::Refused(format!(
+                    "cancelled, but the project lease could not be cleared: {e}"
+                ))
+            })?;
         if cleared {
             out.push_str("\nproject lease released");
         }
@@ -498,7 +621,9 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.stage != Stage::Merged && !job.cancelled {
-        return Err(CliError::Refused("cleanup only works on a merged or cancelled job".into()));
+        return Err(CliError::Refused(
+            "cleanup only works on a merged or cancelled job".into(),
+        ));
     }
     let mut message = cleanup_checkout(ctx, &job, discard)?;
     d.store().update_job(id, |j| {
@@ -524,8 +649,9 @@ fn remove_cancelled_card(ctx: &CliCtx, id: &str) -> Result<Option<String>, CliEr
             return Ok(Some(format!("the project lease is held by job {id}")));
         }
         factory_engine::ProjectLeaseStatus::Stale { job, .. } if job == id => {
-            force_release_project_lease(state_dir, id, ctx.lock_wait)
-                .map_err(|e| CliError::Refused(format!("the project lease could not be cleared: {e}")))?;
+            force_release_project_lease(state_dir, id, ctx.lock_wait).map_err(|e| {
+                CliError::Refused(format!("the project lease could not be cleared: {e}"))
+            })?;
         }
         _ => {}
     }
@@ -544,11 +670,18 @@ fn remove_cancelled_card(ctx: &CliCtx, id: &str) -> Result<Option<String>, CliEr
 }
 
 /// Removes the worktree, the branch and any leftover folder. Returns what was done, in words.
-fn cleanup_checkout(ctx: &CliCtx, job: &factory_core::Job, discard: bool) -> Result<String, CliError> {
+fn cleanup_checkout(
+    ctx: &CliCtx,
+    job: &factory_core::Job,
+    discard: bool,
+) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let id = job.id.as_str();
     let repo = d.repo();
-    let jr = factory_git::JobRef { id: job.id.clone(), slug: job.slug.clone() };
+    let jr = factory_git::JobRef {
+        id: job.id.clone(),
+        slug: job.slug.clone(),
+    };
     let wt = factory_git::Worktree {
         name: jr.dir_name(),
         path: job
@@ -572,9 +705,14 @@ fn cleanup_checkout(ctx: &CliCtx, job: &factory_core::Job, discard: bool) -> Res
     if !branch_exists && (debris || !wt.path.exists()) {
         let message = if debris {
             std::fs::remove_dir_all(&wt.path).map_err(|e| {
-                CliError::Refused(format!("could not remove leftover folder {}: {e}", wt.path.display()))
+                CliError::Refused(format!(
+                    "could not remove leftover folder {}: {e}",
+                    wt.path.display()
+                ))
             })?;
-            format!("removed leftover folder for job {id}; the worktree and branch were already gone")
+            format!(
+                "removed leftover folder for job {id}; the worktree and branch were already gone"
+            )
         } else {
             format!("nothing to remove for job {id}, the worktree and branch are already gone")
         };
@@ -594,7 +732,10 @@ fn cleanup_checkout(ctx: &CliCtx, job: &factory_core::Job, discard: bool) -> Res
     if debris {
         // The unmerged check above has passed, so the leftover folder goes first and remove_worktree then drops the branch.
         std::fs::remove_dir_all(&wt.path).map_err(|e| {
-            CliError::Refused(format!("could not remove leftover folder {}: {e}", wt.path.display()))
+            CliError::Refused(format!(
+                "could not remove leftover folder {}: {e}",
+                wt.path.display()
+            ))
         })?;
     }
     // remove_worktree also deletes the job branch. It refuses a dirty worktree and unmerged commits unless forced.
@@ -607,16 +748,26 @@ fn cleanup_checkout(ctx: &CliCtx, job: &factory_core::Job, discard: bool) -> Res
 fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
-    if let Some(lease) = job.lease.as_ref().filter(|_| lease_is_live(&job, now_secs())) {
+    if let Some(lease) = job
+        .lease
+        .as_ref()
+        .filter(|_| lease_is_live(&job, now_secs()))
+    {
         if lease.owner != ctx.owner {
-            return Err(CliError::Refused(format!("job {id} is leased by {}", lease.owner)));
+            return Err(CliError::Refused(format!(
+                "job {id} is leased by {}",
+                lease.owner
+            )));
         }
     }
     render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run)
 }
 
 /// The text of a tickets report. A failed report is an error, so the exit code is non-zero.
-fn render_tickets(report: factory_engine::TicketsReport, dry_run: bool) -> Result<String, CliError> {
+fn render_tickets(
+    report: factory_engine::TicketsReport,
+    dry_run: bool,
+) -> Result<String, CliError> {
     let body = report.lines.join("\n");
     if report.failed {
         return Err(CliError::Refused(body));
@@ -635,11 +786,20 @@ fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     let _project = d.hold_project(id)?;
     let job = d.job(id)?;
     if job.stage != Stage::Merged {
-        return Err(CliError::Refused(format!("job {id} is not merged, the KB refresh needs a merged job")));
+        return Err(CliError::Refused(format!(
+            "job {id} is not merged, the KB refresh needs a merged job"
+        )));
     }
-    if let Some(lease) = job.lease.as_ref().filter(|_| lease_is_live(&job, now_secs())) {
+    if let Some(lease) = job
+        .lease
+        .as_ref()
+        .filter(|_| lease_is_live(&job, now_secs()))
+    {
         if lease.owner != ctx.owner {
-            return Err(CliError::Refused(format!("job {id} is leased by {}", lease.owner)));
+            return Err(CliError::Refused(format!(
+                "job {id} is leased by {}",
+                lease.owner
+            )));
         }
     }
     Ok(d.kb_refresh(id, true)?)
@@ -651,7 +811,11 @@ fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     let t = job.tokens;
     let weighted = t.weighted();
     let budget = d.config().budget_weighted;
-    let pct = if budget > 0 { weighted * 100 / budget } else { 0 };
+    let pct = if budget > 0 {
+        weighted * 100 / budget
+    } else {
+        0
+    };
     let records = crate::tokens::load_usage(&d.job_dir(&job).join("usage.jsonl"), id)?;
     let report = crate::tokens::render(id, &crate::tokens::aggregate(&records));
     let mut text = format!(
@@ -689,12 +853,20 @@ mod tickets_tests {
     use factory_engine::TicketsReport;
 
     fn report(lines: &[&str], failed: bool, skipped: bool) -> TicketsReport {
-        TicketsReport { lines: lines.iter().map(|s| s.to_string()).collect(), failed, skipped }
+        TicketsReport {
+            lines: lines.iter().map(|s| s.to_string()).collect(),
+            failed,
+            skipped,
+        }
     }
 
     #[test]
     fn a_good_report_prints_its_lines() {
-        let text = render_tickets(report(&["created #201: A", "closed #76"], false, false), false).expect("ok");
+        let text = render_tickets(
+            report(&["created #201: A", "closed #76"], false, false),
+            false,
+        )
+        .expect("ok");
         assert_eq!(text, "created #201: A\nclosed #76");
     }
 
@@ -707,15 +879,29 @@ mod tickets_tests {
 
     #[test]
     fn a_skipped_report_is_not_an_error() {
-        let text = render_tickets(report(&["skipped: job 001 is not merged"], false, true), false).expect("ok");
+        let text = render_tickets(
+            report(&["skipped: job 001 is not merged"], false, true),
+            false,
+        )
+        .expect("ok");
         assert!(text.contains("skipped"));
     }
 
     #[test]
     fn a_failed_report_is_an_error_with_all_lines() {
-        let err = render_tickets(report(&["created #201: A", "failed: comment on #76: boom"], true, false), false)
-            .expect_err("failed");
+        let err = render_tickets(
+            report(
+                &["created #201: A", "failed: comment on #76: boom"],
+                true,
+                false,
+            ),
+            false,
+        )
+        .expect_err("failed");
         let message = err.to_string();
-        assert!(message.contains("created #201: A") && message.contains("comment on #76: boom"), "{message}");
+        assert!(
+            message.contains("created #201: A") && message.contains("comment on #76: boom"),
+            "{message}"
+        );
     }
 }

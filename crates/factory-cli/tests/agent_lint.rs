@@ -70,7 +70,9 @@ fn has_line(text: &str, line: &str) -> bool {
 
 fn check_max_turns(fm: &[(String, String)], label: &str) -> TestResult {
     let raw = fm_get(fm, "maxTurns").ok_or(format!("{label}: maxTurns missing"))?;
-    let turns: u32 = raw.parse().map_err(|_| format!("{label}: maxTurns not a number"))?;
+    let turns: u32 = raw
+        .parse()
+        .map_err(|_| format!("{label}: maxTurns not a number"))?;
     if (1..=400).contains(&turns) {
         Ok(())
     } else {
@@ -81,7 +83,9 @@ fn check_max_turns(fm: &[(String, String)], label: &str) -> TestResult {
 fn check_description(fm: &[(String, String)], label: &str) -> TestResult {
     let desc = fm_get(fm, "description").ok_or(format!("{label}: description missing"))?;
     if desc.is_empty() || desc.contains(": ") {
-        return Err(format!("{label}: description empty or has a colon and space"));
+        return Err(format!(
+            "{label}: description empty or has a colon and space"
+        ));
     }
     Ok(())
 }
@@ -92,7 +96,11 @@ fn only_the_known_factory_agents_remain() -> TestResult {
     let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
     let mut names: Vec<String> = Vec::new();
     for entry in entries {
-        let name = entry.map_err(|e| e.to_string())?.file_name().to_string_lossy().to_string();
+        let name = entry
+            .map_err(|e| e.to_string())?
+            .file_name()
+            .to_string_lossy()
+            .to_string();
         if name.starts_with("factory-") {
             names.push(name);
         }
@@ -312,9 +320,21 @@ fn kb_refresher_body_pins_the_rules() -> TestResult {
     require_all(
         &text,
         "kb refresher",
-        &["kb-refresh", "Workflow", "only files under the KB path", "BLOCKED:", "No relevant changes", "Never write git state", "Never ask the user"],
+        &[
+            "kb-refresh",
+            "Workflow",
+            "only files under the KB path",
+            "BLOCKED:",
+            "No relevant changes",
+            "Never write git state",
+            "Never ask the user",
+        ],
     )?;
-    forbid_all(&text, "kb refresher", &["SendMessage", "--force-with-lease"])
+    forbid_all(
+        &text,
+        "kb refresher",
+        &["SendMessage", "--force-with-lease"],
+    )
 }
 
 const COMMAND: &str = "crates/factory-core/assets/global-command.md";
@@ -405,12 +425,21 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "refuses a plan with `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences",
         ],
     )?;
-    let pos = |needle: &str| text.find(needle).ok_or_else(|| format!("command is missing: {needle}"));
-    if pos("Run `<factory> --project <name> status`")? > pos("<factory> --project <name> spec start <slug>")? {
+    let pos = |needle: &str| {
+        text.find(needle)
+            .ok_or_else(|| format!("command is missing: {needle}"))
+    };
+    if pos("Run `<factory> --project <name> status`")?
+        > pos("<factory> --project <name> spec start <slug>")?
+    {
         return Err("the draft check must come before `spec start`".to_string());
     }
-    if pos("After it, stage the spec path")? > pos("<factory> --project <name> spec stage <slug> writing-plans")? {
-        return Err("the spec commit must come before `spec stage <slug> writing-plans`".to_string());
+    if pos("After it, stage the spec path")?
+        > pos("<factory> --project <name> spec stage <slug> writing-plans")?
+    {
+        return Err(
+            "the spec commit must come before `spec stage <slug> writing-plans`".to_string(),
+        );
     }
     forbid_all(
         &text,
@@ -474,7 +503,15 @@ fn docs_describe_the_new_design() -> TestResult {
     forbid_all(
         &doc,
         "software-factory.md",
-        &["factory-ctl", "factory-approver", "factory-spec-writer", "log-event", "n/a: <reason>", "required coverage list", "one question at a time"],
+        &[
+            "factory-ctl",
+            "factory-approver",
+            "factory-spec-writer",
+            "log-event",
+            "n/a: <reason>",
+            "required coverage list",
+            "one question at a time",
+        ],
     )?;
     let root_doc = read("CLAUDE.md")?;
     require_all(&root_doc, "CLAUDE.md", &["docs/software-factory.md"])?;
@@ -484,19 +521,41 @@ fn docs_describe_the_new_design() -> TestResult {
 #[test]
 fn agent_max_turns_match_the_driver_constants() -> TestResult {
     let files = [
-        (".claude/agents/factory-builder.md", factory_engine::BUILDER_MAX_TURNS),
-        ("crates/factory-core/presets/rust/agents/factory-builder.md", factory_engine::BUILDER_MAX_TURNS),
-        ("crates/factory-core/presets/go/agents/factory-builder.md", factory_engine::BUILDER_MAX_TURNS),
-        (".claude/agents/factory-code-reviewer.md", factory_engine::REVIEWER_MAX_TURNS),
-        ("crates/factory-core/presets/rust/agents/factory-code-reviewer.md", factory_engine::REVIEWER_MAX_TURNS),
-        ("crates/factory-core/presets/go/agents/factory-code-reviewer.md", factory_engine::REVIEWER_MAX_TURNS),
+        (
+            ".claude/agents/factory-builder.md",
+            factory_engine::BUILDER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/rust/agents/factory-builder.md",
+            factory_engine::BUILDER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/go/agents/factory-builder.md",
+            factory_engine::BUILDER_MAX_TURNS,
+        ),
+        (
+            ".claude/agents/factory-code-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
     ];
     for (path, want) in files {
         let fm = frontmatter(&read(path)?)?;
         let raw = fm_get(&fm, "maxTurns").ok_or(format!("{path}: maxTurns missing"))?;
-        let got: u32 = raw.parse().map_err(|_| format!("{path}: maxTurns not a number"))?;
+        let got: u32 = raw
+            .parse()
+            .map_err(|_| format!("{path}: maxTurns not a number"))?;
         if got != want {
-            return Err(format!("{path}: maxTurns is {got}, the driver constant is {want}"));
+            return Err(format!(
+                "{path}: maxTurns is {got}, the driver constant is {want}"
+            ));
         }
     }
     Ok(())
@@ -528,9 +587,15 @@ fn reviewer_files_carry_the_vision_rule_and_declined_to_judge() -> TestResult {
             ],
         )?;
         if !has_line(&text, "VERDICT: APPROVE") || !has_line(&text, "VERDICT: CHANGES") {
-            return Err(format!("{path}: both VERDICT lines must stay on their own line"));
+            return Err(format!(
+                "{path}: both VERDICT lines must stay on their own line"
+            ));
         }
-        require_all(&text, path, &["Your last line, alone, must be exactly one of:"])?;
+        require_all(
+            &text,
+            path,
+            &["Your last line, alone, must be exactly one of:"],
+        )?;
     }
     Ok(())
 }
@@ -544,8 +609,26 @@ const PRESET_BUILDERS: [&str; 2] = [
 fn presets_name_subagent_driven_development_and_not_executing_plans() -> TestResult {
     for path in PRESET_BUILDERS {
         let text = read(path)?;
-        require_all(&text, path, &["superpowers:subagent-driven-development", "Status:", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "Ruling:"])?;
-        forbid_all(&text, path, &["superpowers:executing-plans", "inline fallback", "No handoff lines"])?;
+        require_all(
+            &text,
+            path,
+            &[
+                "superpowers:subagent-driven-development",
+                "Status:",
+                "DONE_WITH_CONCERNS",
+                "NEEDS_CONTEXT",
+                "Ruling:",
+            ],
+        )?;
+        forbid_all(
+            &text,
+            path,
+            &[
+                "superpowers:executing-plans",
+                "inline fallback",
+                "No handoff lines",
+            ],
+        )?;
     }
     Ok(())
 }
@@ -568,7 +651,11 @@ const NOT_CONTROLLER: &str =
 
 #[test]
 fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> TestResult {
-    for path in [".claude/agents/factory-builder.md", PRESET_BUILDERS[0], PRESET_BUILDERS[1]] {
+    for path in [
+        ".claude/agents/factory-builder.md",
+        PRESET_BUILDERS[0],
+        PRESET_BUILDERS[1],
+    ] {
         require_all(
             &read(path)?,
             path,
@@ -578,14 +665,22 @@ fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> Test
                 "only to read or search code",
             ],
         )?;
-        forbid_all(&read(path)?, path, &["as its implementer: one implementer per task"])?;
+        forbid_all(
+            &read(path)?,
+            path,
+            &["as its implementer: one implementer per task"],
+        )?;
     }
     Ok(())
 }
 
 #[test]
 fn builder_files_carry_the_rules_digest() -> TestResult {
-    for path in [".claude/agents/factory-builder.md", PRESET_BUILDERS[0], PRESET_BUILDERS[1]] {
+    for path in [
+        ".claude/agents/factory-builder.md",
+        PRESET_BUILDERS[0],
+        PRESET_BUILDERS[1],
+    ] {
         require_all(
             &read(path)?,
             path,

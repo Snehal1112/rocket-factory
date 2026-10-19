@@ -87,7 +87,10 @@ fn base_branch_and_tickets_are_set() {
 fn every_risk_path_is_listed() {
     let (_t, r) = resolved();
     for glob in RISK {
-        assert!(r.config.risk_paths.iter().any(|p| p == glob), "missing risk path {glob}");
+        assert!(
+            r.config.risk_paths.iter().any(|p| p == glob),
+            "missing risk path {glob}"
+        );
     }
 }
 
@@ -97,7 +100,10 @@ fn checks_have_exactly_the_planned_commands() {
     let checks = &r.config.checks;
     assert_eq!(checks.len(), 3, "{checks:?}");
     let go = rule(checks, &["**/*.go", "go.mod", "go.sum"]);
-    assert_eq!(go.commands, ["go build ./...", "go vet ./...", "go test ./..."]);
+    assert_eq!(
+        go.commands,
+        ["go build ./...", "go vet ./...", "go test ./..."]
+    );
     for dir in ["web", "journeybook"] {
         let glob = format!("{dir}/**");
         let c = rule(checks, &[glob.as_str()]);
@@ -114,7 +120,10 @@ fn checks_have_exactly_the_planned_commands() {
                 assert!(!cmd.contains(bad), "{bad} in {cmd}");
             }
             // With the flag before `run`, bun prints its usage and exits 0, so the check would always pass.
-            assert!(!cmd.starts_with("bun --cwd"), "bun needs `run --cwd <dir>`: {cmd}");
+            assert!(
+                !cmd.starts_with("bun --cwd"),
+                "bun needs `run --cwd <dir>`: {cmd}"
+            );
         }
     }
 }
@@ -123,7 +132,14 @@ fn checks_have_exactly_the_planned_commands() {
 fn read_first_and_rules_name_the_vault_conventions() {
     let (_t, r) = resolved();
     let c = r.config;
-    assert_eq!(c.read_first, ["CLAUDE.md", ".claude/known-bugs.md", ".claude/multi-vault.md"]);
+    assert_eq!(
+        c.read_first,
+        [
+            "CLAUDE.md",
+            ".claude/known-bugs.md",
+            ".claude/multi-vault.md"
+        ]
+    );
     let builder = c.builder_rules.join("\n");
     for needle in ["RequireDataAction", "NewVaultScope", "bun"] {
         assert!(builder.contains(needle), "builder rules miss {needle}");

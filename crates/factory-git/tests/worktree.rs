@@ -5,7 +5,10 @@ use factory_git::{GitError, JobRef, MergeOutcome, Repo, Worktree};
 use git2::Repository;
 
 fn job() -> JobRef {
-    JobRef { id: "001".into(), slug: "demo".into() }
+    JobRef {
+        id: "001".into(),
+        slug: "demo".into(),
+    }
 }
 
 fn wt_repo(wt: &Worktree) -> Repository {
@@ -20,7 +23,11 @@ fn create_worktree_makes_the_branch_and_the_directory() {
     assert_eq!(wt.branch, "factory/001-demo");
     assert_eq!(wt.name, "factory-001-demo");
     assert_eq!(wt.base, fx.main_sha());
-    assert!(wt.path.ends_with(".claude/worktrees/factory-001-demo"), "path: {:?}", wt.path);
+    assert!(
+        wt.path.ends_with(".claude/worktrees/factory-001-demo"),
+        "path: {:?}",
+        wt.path
+    );
     assert!(wt.path.join(".git").exists());
     assert!(wt.path.join("base.txt").is_file());
     assert_eq!(repo.tip("factory/001-demo").expect("tip"), fx.main_sha());
@@ -29,7 +36,10 @@ fn create_worktree_makes_the_branch_and_the_directory() {
     let want = std::fs::canonicalize(&fx.path).expect("canon");
     assert_eq!(std::fs::canonicalize(from_wt.root()).expect("canon"), want);
     // Creating it twice is refused.
-    assert!(matches!(repo.create_worktree(&job()), Err(GitError::Refused(_))));
+    assert!(matches!(
+        repo.create_worktree(&job()),
+        Err(GitError::Refused(_))
+    ));
 }
 
 #[test]
@@ -37,12 +47,27 @@ fn create_worktree_rejects_hostile_slugs_before_touching_the_disk() {
     let fx = Fixture::new();
     let repo = fx.repo();
     for slug in ["../evil", "Bad Slug", "a/b", "", "x\n"] {
-        let bad = JobRef { id: "001".into(), slug: slug.into() };
-        assert!(matches!(repo.create_worktree(&bad), Err(GitError::BadInput(_))), "slug {slug:?}");
+        let bad = JobRef {
+            id: "001".into(),
+            slug: slug.into(),
+        };
+        assert!(
+            matches!(repo.create_worktree(&bad), Err(GitError::BadInput(_))),
+            "slug {slug:?}"
+        );
     }
-    let bad_id = JobRef { id: "1x".into(), slug: "ok".into() };
-    assert!(matches!(repo.create_worktree(&bad_id), Err(GitError::BadInput(_))));
-    assert!(!fx.path.join(".claude").exists(), "nothing may be created for a rejected job");
+    let bad_id = JobRef {
+        id: "1x".into(),
+        slug: "ok".into(),
+    };
+    assert!(matches!(
+        repo.create_worktree(&bad_id),
+        Err(GitError::BadInput(_))
+    ));
+    assert!(
+        !fx.path.join(".claude").exists(),
+        "nothing may be created for a rejected job"
+    );
 }
 
 #[test]
@@ -52,7 +77,10 @@ fn remove_worktree_removes_a_clean_worktree_and_its_branch() {
     let wt = repo.create_worktree(&job()).expect("create");
     repo.remove_worktree(&wt, false).expect("remove");
     assert!(!wt.path.exists());
-    assert!(matches!(repo.tip("factory/001-demo"), Err(GitError::NotFound(_))));
+    assert!(matches!(
+        repo.tip("factory/001-demo"),
+        Err(GitError::NotFound(_))
+    ));
 }
 
 #[test]
@@ -61,7 +89,10 @@ fn remove_worktree_refuses_untracked_work_unless_forced() {
     let repo = fx.repo();
     let wt = repo.create_worktree(&job()).expect("create");
     std::fs::write(wt.path.join("scratch.txt"), "work in progress").expect("write");
-    assert!(matches!(repo.remove_worktree(&wt, false), Err(GitError::Refused(_))));
+    assert!(matches!(
+        repo.remove_worktree(&wt, false),
+        Err(GitError::Refused(_))
+    ));
     assert!(wt.path.join("scratch.txt").is_file());
     assert!(repo.tip("factory/001-demo").is_ok());
     repo.remove_worktree(&wt, true).expect("forced remove");
@@ -74,11 +105,17 @@ fn remove_worktree_refuses_unmerged_commits_unless_forced() {
     let repo = fx.repo();
     let wt = repo.create_worktree(&job()).expect("create");
     commit_files(&wt_repo(&wt), &[("job.txt", "j\n")], "job work");
-    assert!(matches!(repo.remove_worktree(&wt, false), Err(GitError::Refused(_))));
+    assert!(matches!(
+        repo.remove_worktree(&wt, false),
+        Err(GitError::Refused(_))
+    ));
     assert!(wt.path.is_dir());
     assert!(repo.tip("factory/001-demo").is_ok());
     repo.remove_worktree(&wt, true).expect("forced remove");
-    assert!(matches!(repo.tip("factory/001-demo"), Err(GitError::NotFound(_))));
+    assert!(matches!(
+        repo.tip("factory/001-demo"),
+        Err(GitError::NotFound(_))
+    ));
 }
 
 #[test]
@@ -102,14 +139,20 @@ fn remove_worktree_never_touches_main_or_the_main_checkout() {
         branch: "main".into(),
         base: fx.main_sha(),
     };
-    assert!(matches!(repo.remove_worktree(&on_main, true), Err(GitError::Refused(_))));
+    assert!(matches!(
+        repo.remove_worktree(&on_main, true),
+        Err(GitError::Refused(_))
+    ));
     let at_root = Worktree {
         name: "factory-001-demo".into(),
         path: fx.path.clone(),
         branch: "factory/001-demo".into(),
         base: fx.main_sha(),
     };
-    assert!(matches!(repo.remove_worktree(&at_root, true), Err(GitError::Refused(_))));
+    assert!(matches!(
+        repo.remove_worktree(&at_root, true),
+        Err(GitError::Refused(_))
+    ));
     assert!(fx.path.join("base.txt").is_file());
     assert!(repo.tip("main").is_ok());
 }
@@ -128,7 +171,9 @@ fn merge_main_into_adds_a_merge_commit_without_rewriting_history() {
         other => panic!("expected Merged, got {other:?}"),
     };
     let git = fx.git();
-    let commit = git.find_commit(git2::Oid::from_str(&new_head).expect("oid")).expect("commit");
+    let commit = git
+        .find_commit(git2::Oid::from_str(&new_head).expect("oid"))
+        .expect("commit");
     assert_eq!(commit.parent_id(0).expect("p0").to_string(), old_head);
     assert_eq!(commit.parent_id(1).expect("p1").to_string(), main);
     assert_eq!(repo.tip("factory/001-demo").expect("tip"), new_head);
@@ -162,7 +207,10 @@ fn merge_main_into_reports_a_conflict_and_leaves_the_worktree_untouched() {
         other => panic!("expected Conflict, got {other:?}"),
     }
     assert_eq!(repo.tip("factory/001-demo").expect("tip"), old_head);
-    assert_eq!(std::fs::read_to_string(wt.path.join("base.txt")).expect("read"), "job\n");
+    assert_eq!(
+        std::fs::read_to_string(wt.path.join("base.txt")).expect("read"),
+        "job\n"
+    );
 }
 
 #[test]
@@ -173,10 +221,15 @@ fn merge_main_into_refuses_a_worktree_with_tracked_changes() {
     commit_files(&fx.git(), &[("other.txt", "o\n")], "main moves");
     std::fs::write(wt.path.join("base.txt"), "dirty\n").expect("write");
     match repo.merge_main_into(&wt, "sync").expect("sync") {
-        MergeOutcome::Refused { reason } => assert!(reason.contains("tracked changes"), "reason: {reason}"),
+        MergeOutcome::Refused { reason } => {
+            assert!(reason.contains("tracked changes"), "reason: {reason}")
+        }
         other => panic!("expected Refused, got {other:?}"),
     }
-    assert_eq!(std::fs::read_to_string(wt.path.join("base.txt")).expect("read"), "dirty\n");
+    assert_eq!(
+        std::fs::read_to_string(wt.path.join("base.txt")).expect("read"),
+        "dirty\n"
+    );
 }
 
 #[test]
@@ -184,13 +237,28 @@ fn prune_worktrees_under_removes_registrations_in_the_folder_and_keeps_branches(
     let fx = Fixture::new();
     let repo = fx.repo();
     let a = repo.create_worktree(&job()).expect("create a");
-    let b = repo.create_worktree(&JobRef { id: "002".into(), slug: "gone".into() }).expect("create b");
+    let b = repo
+        .create_worktree(&JobRef {
+            id: "002".into(),
+            slug: "gone".into(),
+        })
+        .expect("create b");
     // A stale registration: the folder is gone but the registration is left.
     std::fs::remove_dir_all(&b.path).expect("rm b");
-    repo.create_worktree(&JobRef { id: "003".into(), slug: "third".into() }).expect("create c");
-    let mut pruned = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune").pruned;
+    repo.create_worktree(&JobRef {
+        id: "003".into(),
+        slug: "third".into(),
+    })
+    .expect("create c");
+    let mut pruned = repo
+        .prune_worktrees_under(repo.worktrees_dir())
+        .expect("prune")
+        .pruned;
     pruned.sort();
-    assert_eq!(pruned, ["factory-001-demo", "factory-002-gone", "factory-003-third"]);
+    assert_eq!(
+        pruned,
+        ["factory-001-demo", "factory-002-gone", "factory-003-third"]
+    );
     assert!(!a.path.exists());
     let raw = Repository::open(&fx.path).expect("open");
     assert!(raw.worktrees().expect("worktrees").is_empty());
@@ -206,13 +274,27 @@ fn prune_worktrees_under_leaves_worktrees_elsewhere() {
     let wt = repo.create_worktree(&job()).expect("create");
     let other = fx.path.join("not-the-worktrees-folder");
     std::fs::create_dir_all(&other).expect("mkdir");
-    assert!(repo.prune_worktrees_under(&other).expect("prune").pruned.is_empty());
+    assert!(repo
+        .prune_worktrees_under(&other)
+        .expect("prune")
+        .pruned
+        .is_empty());
     assert!(wt.path.exists());
 }
 
 /// A real worktree whose folder is moved to `elsewhere`, so the test controls where it really is.
-fn moved_outside(fx: &Fixture, repo: &Repo, id: &str, slug: &str) -> (Worktree, std::path::PathBuf) {
-    let wt = repo.create_worktree(&JobRef { id: id.into(), slug: slug.into() }).expect("create");
+fn moved_outside(
+    fx: &Fixture,
+    repo: &Repo,
+    id: &str,
+    slug: &str,
+) -> (Worktree, std::path::PathBuf) {
+    let wt = repo
+        .create_worktree(&JobRef {
+            id: id.into(),
+            slug: slug.into(),
+        })
+        .expect("create");
     let elsewhere = fx.path.join(format!("outside-{id}"));
     std::fs::rename(&wt.path, &elsewhere).expect("move");
     (wt, elsewhere)
@@ -224,12 +306,21 @@ fn prune_skips_a_registered_path_with_a_parent_component() {
     let repo = fx.repo();
     let (wt, elsewhere) = moved_outside(&fx, &repo, "001", "dots");
     // Hand-edit the registration so the path climbs out of the folder by text.
-    let sneaky = repo.worktrees_dir().join("..").join("..").join("outside-001/.git");
+    let sneaky = repo
+        .worktrees_dir()
+        .join("..")
+        .join("..")
+        .join("outside-001/.git");
     let gitdir = fx.path.join(".git/worktrees").join(&wt.name).join("gitdir");
     std::fs::write(&gitdir, format!("{}\n", sneaky.display())).expect("gitdir");
-    let report = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune");
+    let report = repo
+        .prune_worktrees_under(repo.worktrees_dir())
+        .expect("prune");
     assert!(report.pruned.is_empty(), "{report:?}");
-    assert!(elsewhere.join("base.txt").is_file(), "the folder outside must survive");
+    assert!(
+        elsewhere.join("base.txt").is_file(),
+        "the folder outside must survive"
+    );
 }
 
 #[test]
@@ -238,7 +329,9 @@ fn prune_skips_a_path_that_resolves_outside_through_a_symlink() {
     let repo = fx.repo();
     let (wt, elsewhere) = moved_outside(&fx, &repo, "001", "link");
     std::os::unix::fs::symlink(&elsewhere, &wt.path).expect("symlink");
-    let report = repo.prune_worktrees_under(repo.worktrees_dir()).expect("prune");
+    let report = repo
+        .prune_worktrees_under(repo.worktrees_dir())
+        .expect("prune");
     assert!(report.pruned.is_empty(), "{report:?}");
     assert_eq!(report.skipped, std::slice::from_ref(&wt.name));
     assert!(elsewhere.join("base.txt").is_file());
@@ -250,12 +343,21 @@ fn prune_leaves_a_sibling_folder_with_a_shared_prefix() {
     let repo = fx.repo();
     let mine = fx.path.join("projects/p/worktrees");
     let sibling = fx.path.join("projects/p2/worktrees");
-    let theirs = repo.create_worktree(&JobRef { id: "001".into(), slug: "sib".into() }).expect("create");
+    let theirs = repo
+        .create_worktree(&JobRef {
+            id: "001".into(),
+            slug: "sib".into(),
+        })
+        .expect("create");
     std::fs::create_dir_all(&sibling).expect("mkdir");
     let moved = sibling.join(&theirs.name);
     std::fs::create_dir_all(&mine).expect("mkdir");
     std::fs::rename(&theirs.path, &moved).expect("move");
-    let gitdir = fx.path.join(".git/worktrees").join(&theirs.name).join("gitdir");
+    let gitdir = fx
+        .path
+        .join(".git/worktrees")
+        .join(&theirs.name)
+        .join("gitdir");
     std::fs::write(&gitdir, format!("{}\n", moved.join(".git").display())).expect("gitdir");
     let report = repo.prune_worktrees_under(&mine).expect("prune");
     assert_eq!(report, factory_git::PruneReport::default());

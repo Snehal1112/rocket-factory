@@ -27,11 +27,23 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn no_source_names_a_state_path_or_the_main_branch() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut hits = Vec::new();
-    for name in ["factory-engine", "factory-git", "factory-cli", "factory-agent", "factory-checks", "factory-core", "factory-supervisor"] {
+    for name in [
+        "factory-engine",
+        "factory-git",
+        "factory-cli",
+        "factory-agent",
+        "factory-checks",
+        "factory-core",
+        "factory-supervisor",
+    ] {
         let mut files = Vec::new();
         rust_files(&crates.join(name).join("src"), &mut files);
         for file in files {
-            let rel = file.strip_prefix(&crates).expect("under crates").to_string_lossy().replace('\\', "/");
+            let rel = file
+                .strip_prefix(&crates)
+                .expect("under crates")
+                .to_string_lossy()
+                .replace('\\', "/");
             if ALLOWED.contains(&rel.as_str()) {
                 continue;
             }
@@ -43,11 +55,18 @@ fn no_source_names_a_state_path_or_the_main_branch() {
                 if t.starts_with("//") {
                     continue;
                 }
-                if line.contains("\".superpowers") || line.contains("\".claude") || line.contains("\"main\"") {
+                if line.contains("\".superpowers")
+                    || line.contains("\".claude")
+                    || line.contains("\"main\"")
+                {
                     hits.push(format!("{rel}:{}: {}", n + 1, t));
                 }
             }
         }
     }
-    assert!(hits.is_empty(), "hardcoded paths or branch:\n{}", hits.join("\n"));
+    assert!(
+        hits.is_empty(),
+        "hardcoded paths or branch:\n{}",
+        hits.join("\n")
+    );
 }

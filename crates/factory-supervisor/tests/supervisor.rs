@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use factory_core::{project, Home};
 use factory_engine::{acquire_project_lease, release_project_lease};
 use factory_supervisor::request::{Action, Request};
-use factory_supervisor::{pid_alive, queue, records, Outcome, ProcessSpawner, QueueItem, Supervisor, TickReport};
+use factory_supervisor::{
+    pid_alive, queue, records, Outcome, ProcessSpawner, QueueItem, Supervisor, TickReport,
+};
 
 const WAIT: Duration = Duration::from_secs(2);
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -46,12 +48,21 @@ fn env() -> Env {
     std::fs::write(&bin, SCRIPT).expect("script");
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     let home = Home::at(tmp.path().join("home"));
-    Env { _tmp: tmp, home, dir, ts: Cell::new(1) }
+    Env {
+        _tmp: tmp,
+        home,
+        dir,
+        ts: Cell::new(1),
+    }
 }
 
 impl Env {
     fn supervisor(&self, max_parallel: u32) -> Supervisor {
-        let mut s = Supervisor::new(self.home.clone(), Box::new(ProcessSpawner::new(self.dir.join("factory"))), Box::new(|| 1000));
+        let mut s = Supervisor::new(
+            self.home.clone(),
+            Box::new(ProcessSpawner::new(self.dir.join("factory"))),
+            Box::new(|| 1000),
+        );
         s.set_max_parallel(max_parallel);
         s
     }
@@ -68,11 +79,14 @@ impl Env {
     }
 
     fn runs(&self, project: &str, job: &str) -> usize {
-        std::fs::read_to_string(self.dir.join(format!("runs-{project}-{job}"))).map(|t| t.lines().count()).unwrap_or(0)
+        std::fs::read_to_string(self.dir.join(format!("runs-{project}-{job}")))
+            .map(|t| t.lines().count())
+            .unwrap_or(0)
     }
 
     fn enqueue_as(&self, project: &str, job: &str, behavior: &str, action: Action) -> String {
-        std::fs::write(self.dir.join(format!("behavior-{project}-{job}")), behavior).expect("behavior");
+        std::fs::write(self.dir.join(format!("behavior-{project}-{job}")), behavior)
+            .expect("behavior");
         if behavior == "hold" {
             self.hold(project, job);
         }
@@ -92,7 +106,12 @@ impl Env {
     }
 
     fn result(&self, id: &str) -> Outcome {
-        records::read_results(&self.home).into_iter().flatten().find(|r| r.request_id == id).expect("result").outcome
+        records::read_results(&self.home)
+            .into_iter()
+            .flatten()
+            .find(|r| r.request_id == id)
+            .expect("result")
+            .outcome
     }
 
     fn queue_ids(&self) -> Vec<String> {
@@ -106,12 +125,17 @@ impl Env {
     }
 
     fn children(&self) -> Vec<records::ChildRecord> {
-        records::read_children(&self.home).into_iter().flatten().collect()
+        records::read_children(&self.home)
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     fn state_dir(&self, name: &str) -> PathBuf {
         let file = project::get(&self.home, name).expect("project");
-        project::layout(&self.home, name, &file).expect("layout").state_dir
+        project::layout(&self.home, name, &file)
+            .expect("layout")
+            .state_dir
     }
 }
 
@@ -171,8 +195,19 @@ fn needs_human_and_failure_are_classified() {
         assert!(Instant::now() < end, "requests did not finish");
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(e.result(&a), Outcome::NeedsHuman { reason: "risky".into() });
-    assert_eq!(e.result(&b), Outcome::Failed { code: Some(1), stderr_tail: "boom".into() });
+    assert_eq!(
+        e.result(&a),
+        Outcome::NeedsHuman {
+            reason: "risky".into()
+        }
+    );
+    assert_eq!(
+        e.result(&b),
+        Outcome::Failed {
+            code: Some(1),
+            stderr_tail: "boom".into()
+        }
+    );
 }
 
 #[test]
@@ -181,7 +216,10 @@ fn the_parallel_limit_holds_and_a_project_never_runs_twice() {
     for p in ["a", "b", "c"] {
         e.add_project(p);
     }
-    let ids: Vec<String> = ["a", "b", "c"].iter().map(|p| e.enqueue(p, "1", "hold")).collect();
+    let ids: Vec<String> = ["a", "b", "c"]
+        .iter()
+        .map(|p| e.enqueue(p, "1", "hold"))
+        .collect();
     let mut s = e.supervisor(2);
     let r = s.tick().expect("tick");
     assert_eq!(r.started, vec![ids[0].clone(), ids[1].clone()]);
@@ -236,7 +274,11 @@ fn a_project_with_a_missing_repo_is_rejected_and_others_start() {
 fn a_broken_project_file_is_rejected() {
     let e = env();
     e.add_project("broken");
-    std::fs::write(e.home.project_dir("broken").join("project.toml"), "not = [valid").expect("break");
+    std::fs::write(
+        e.home.project_dir("broken").join("project.toml"),
+        "not = [valid",
+    )
+    .expect("break");
     let id = e.enqueue("broken", "1", "merged");
     let mut s = e.supervisor(2);
     let r = s.tick().expect("tick");
@@ -254,7 +296,9 @@ fn a_bad_request_file_is_skipped_and_reported_by_list() {
     let mut s = e.supervisor(2);
     assert_eq!(s.tick().expect("tick").started, vec![id.clone()]);
     tick_until_finished(&mut s, &id);
-    assert!(queue::list(&e.home).iter().any(|i| matches!(i, QueueItem::Bad { file, .. } if file == "garbage.json")));
+    assert!(queue::list(&e.home)
+        .iter()
+        .any(|i| matches!(i, QueueItem::Bad { file, .. } if file == "garbage.json")));
 }
 
 #[test]
@@ -263,7 +307,10 @@ fn a_human_lease_makes_the_request_wait() {
     e.add_project("p");
     let state = e.state_dir("p");
     std::fs::create_dir_all(&state).expect("state dir");
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("time").as_secs_f64();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_secs_f64();
     let owner = format!("driver-{}-1", std::process::id());
     acquire_project_lease(&state, "001", &owner, 100_000.0, now, WAIT).expect("lease");
     let id = e.enqueue("p", "1", "merged");
@@ -306,13 +353,20 @@ fn a_spawn_failure_is_a_failed_result_and_the_loop_continues() {
     let a = e.enqueue("a", "1", "merged");
     let b = e.enqueue("b", "1", "merged");
     let missing: &Path = &e.dir.join("no-such-factory");
-    let mut s = Supervisor::new(e.home.clone(), Box::new(ProcessSpawner::new(missing.to_path_buf())), Box::new(|| 1000));
+    let mut s = Supervisor::new(
+        e.home.clone(),
+        Box::new(ProcessSpawner::new(missing.to_path_buf())),
+        Box::new(|| 1000),
+    );
     let r = s.tick().expect("tick");
     assert!(r.started.is_empty());
     assert_eq!(r.finished.len(), 2);
     for id in [&a, &b] {
         match e.result(id) {
-            Outcome::Failed { code: None, stderr_tail } => assert!(stderr_tail.contains("no-such-factory"), "{stderr_tail}"),
+            Outcome::Failed {
+                code: None,
+                stderr_tail,
+            } => assert!(stderr_tail.contains("no-such-factory"), "{stderr_tail}"),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -346,7 +400,13 @@ fn a_request_with_a_result_is_dropped_and_not_started() {
     let e = env();
     e.add_project("p");
     let id = e.enqueue("p", "1", "merged");
-    let rec = records::ResultRecord { request_id: id.clone(), project: "p".into(), job: "1".into(), outcome: Outcome::Merged, finished_ms: 5 };
+    let rec = records::ResultRecord {
+        request_id: id.clone(),
+        project: "p".into(),
+        job: "1".into(),
+        outcome: Outcome::Merged,
+        finished_ms: 5,
+    };
     records::write_result(&e.home, &rec).expect("result");
     let mut s = e.supervisor(2);
     let r = s.tick().expect("tick");
@@ -445,7 +505,8 @@ fn tick_within(home: Home, bin: PathBuf, secs: u64) -> TickReport {
         let mut s = Supervisor::new(home, Box::new(ProcessSpawner::new(bin)), Box::new(|| 1000));
         let _ = tx.send(s.tick().expect("tick"));
     });
-    rx.recv_timeout(Duration::from_secs(secs)).expect("tick did not return in time")
+    rx.recv_timeout(Duration::from_secs(secs))
+        .expect("tick did not return in time")
 }
 
 #[test]
@@ -464,7 +525,9 @@ fn a_fifo_or_symlink_as_a_log_path_never_blocks() {
         }
         std::fs::remove_file(&child.out).expect("remove out");
         if kind == "fifo" {
-            let made = std::process::Command::new("mkfifo").arg(&child.out).status();
+            let made = std::process::Command::new("mkfifo")
+                .arg(&child.out)
+                .status();
             if !made.map(|st| st.success()).unwrap_or(false) {
                 eprintln!("skipped: mkfifo is not available");
                 continue;
@@ -475,8 +538,13 @@ fn a_fifo_or_symlink_as_a_log_path_never_blocks() {
         let r = tick_within(e.home.clone(), e.dir.join("factory"), 10);
         assert_eq!(r.finished.len(), 1, "{kind}");
         match e.result(&id) {
-            Outcome::Failed { stderr_tail, .. } => assert!(stderr_tail.contains("log not read"), "{kind}: {stderr_tail}"),
-            Outcome::Lost { reason } => assert!(reason.contains("log not read"), "{kind}: {reason}"),
+            Outcome::Failed { stderr_tail, .. } => assert!(
+                stderr_tail.contains("log not read"),
+                "{kind}: {stderr_tail}"
+            ),
+            Outcome::Lost { reason } => {
+                assert!(reason.contains("log not read"), "{kind}: {reason}")
+            }
             other => panic!("{kind}: unexpected {other:?}"),
         }
     }
@@ -525,7 +593,13 @@ fn spawn_ok_with_children_and_queue_both_failing_starts_exactly_once() {
 struct CountingSpawner(std::rc::Rc<Cell<u32>>);
 
 impl factory_supervisor::Spawner for CountingSpawner {
-    fn spawn(&self, _home: &Home, _req: &Request, _out: &Path, _err: &Path) -> Result<u32, factory_supervisor::SpawnError> {
+    fn spawn(
+        &self,
+        _home: &Home,
+        _req: &Request,
+        _out: &Path,
+        _err: &Path,
+    ) -> Result<u32, factory_supervisor::SpawnError> {
         self.0.set(self.0.get() + 1);
         Ok(std::process::id())
     }
@@ -541,9 +615,17 @@ fn the_in_memory_guard_blocks_a_second_start_when_nothing_can_be_written() {
     std::fs::write(e.home.children_dir(), "").expect("block children");
     std::fs::write(e.home.results_dir(), "").expect("block results");
     let count = std::rc::Rc::new(Cell::new(0));
-    let mut s = Supervisor::new(e.home.clone(), Box::new(CountingSpawner(count.clone())), Box::new(|| 1000));
+    let mut s = Supervisor::new(
+        e.home.clone(),
+        Box::new(CountingSpawner(count.clone())),
+        Box::new(|| 1000),
+    );
     let first = s.tick().expect("tick");
-    assert!(first.errors.iter().any(|m| m.contains("blocked in memory")), "{:?}", first.errors);
+    assert!(
+        first.errors.iter().any(|m| m.contains("blocked in memory")),
+        "{:?}",
+        first.errors
+    );
     for _ in 0..5 {
         let r = s.tick().expect("tick");
         assert!(r.started.is_empty());
@@ -568,14 +650,26 @@ fn a_failing_decision_does_not_stop_the_others() {
     }
     struct FailFirst(PathBuf);
     impl factory_supervisor::Spawner for FailFirst {
-        fn spawn(&self, home: &Home, req: &Request, out: &Path, err: &Path) -> Result<u32, factory_supervisor::SpawnError> {
+        fn spawn(
+            &self,
+            home: &Home,
+            req: &Request,
+            out: &Path,
+            err: &Path,
+        ) -> Result<u32, factory_supervisor::SpawnError> {
             if req.project == "a" {
-                return Err(factory_supervisor::SpawnError::Missing(PathBuf::from("a-fails")));
+                return Err(factory_supervisor::SpawnError::Missing(PathBuf::from(
+                    "a-fails",
+                )));
             }
             ProcessSpawner::new(self.0.clone()).spawn(home, req, out, err)
         }
     }
-    let mut s = Supervisor::new(e.home.clone(), Box::new(FailFirst(e.dir.join("factory"))), Box::new(|| 1000));
+    let mut s = Supervisor::new(
+        e.home.clone(),
+        Box::new(FailFirst(e.dir.join("factory"))),
+        Box::new(|| 1000),
+    );
     let r = s.tick().expect("tick");
     assert!(r.errors.iter().any(|m| m.contains(&a)), "{:?}", r.errors);
     assert_eq!(r.started, vec![b]);

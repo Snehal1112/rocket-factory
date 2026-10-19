@@ -39,7 +39,12 @@ impl JobTokens {
 
     /// The number the budget is measured in, see `weighted_tokens`.
     pub fn weighted(&self) -> u64 {
-        crate::budget::weighted_tokens(self.input, self.cache_creation, self.output, self.cache_read)
+        crate::budget::weighted_tokens(
+            self.input,
+            self.cache_creation,
+            self.output,
+            self.cache_read,
+        )
     }
 }
 
@@ -185,7 +190,10 @@ impl Job {
             lease: None,
             cancelled: false,
             cleaned: false,
-            stage_history: vec![StageEntry { stage: Stage::Spec, at: now }],
+            stage_history: vec![StageEntry {
+                stage: Stage::Spec,
+                at: now,
+            }],
             budget_weighted: None,
             issues: Vec::new(),
             task_index: 0,
@@ -225,14 +233,24 @@ impl Job {
     }
 
     /// Moves the job to a stage. The reason is kept only for needs-human. Nothing changes when the move is refused.
-    pub fn set_stage(&mut self, to: Stage, reason: Option<&str>, force: bool, now: f64) -> Result<(), CoreError> {
+    pub fn set_stage(
+        &mut self,
+        to: Stage,
+        reason: Option<&str>,
+        force: bool,
+        now: f64,
+    ) -> Result<(), CoreError> {
         Stage::check_move(self.stage, to, force)?;
         if self.stage != to {
             self.stage = to;
             self.stage_since = now;
             self.stage_history.push(StageEntry { stage: to, at: now });
         }
-        self.reason = if to == Stage::NeedsHuman { reason.map(str::to_string) } else { None };
+        self.reason = if to == Stage::NeedsHuman {
+            reason.map(str::to_string)
+        } else {
+            None
+        };
         if to != Stage::NeedsHuman {
             self.park_kind = None;
             self.park_at = None;
@@ -243,9 +261,10 @@ impl Job {
     /// The base sha is recorded once. Changing it needs `force`.
     pub fn set_base(&mut self, sha: &str, force: bool) -> Result<(), CoreError> {
         match &self.base {
-            Some(have) if have != sha && !force => {
-                Err(CoreError::BaseChange { have: have.clone(), want: sha.to_string() })
-            }
+            Some(have) if have != sha && !force => Err(CoreError::BaseChange {
+                have: have.clone(),
+                want: sha.to_string(),
+            }),
             _ => {
                 self.base = Some(sha.to_string());
                 Ok(())
@@ -296,13 +315,20 @@ impl Board {
 
     pub fn find(&self, id: &str) -> Result<&Job, CoreError> {
         let id = crate::ids::normalize_id(id)?;
-        self.jobs.iter().find(|j| j.id == id).ok_or(CoreError::NoJob(id))
+        self.jobs
+            .iter()
+            .find(|j| j.id == id)
+            .ok_or(CoreError::NoJob(id))
     }
 
     /// Takes a job out of the board and returns it. The job folder is not touched.
     pub fn remove_job(&mut self, id: &str) -> Result<Job, CoreError> {
         let id = crate::ids::normalize_id(id)?;
-        let at = self.jobs.iter().position(|j| j.id == id).ok_or(CoreError::NoJob(id))?;
+        let at = self
+            .jobs
+            .iter()
+            .position(|j| j.id == id)
+            .ok_or(CoreError::NoJob(id))?;
         Ok(self.jobs.remove(at))
     }
 
@@ -321,7 +347,10 @@ impl Board {
 
     pub fn find_mut(&mut self, id: &str) -> Result<&mut Job, CoreError> {
         let id = crate::ids::normalize_id(id)?;
-        self.jobs.iter_mut().find(|j| j.id == id).ok_or(CoreError::NoJob(id))
+        self.jobs
+            .iter_mut()
+            .find(|j| j.id == id)
+            .ok_or(CoreError::NoJob(id))
     }
 }
 
@@ -331,13 +360,24 @@ mod tests {
 
     fn in_series(id: &str, sid: &str, total: u32) -> Job {
         let mut j = Job::new(id, "d", "s", "2026-10-16", "f", 1.0);
-        j.series = Some(SeriesPos { plan_file: "p.md".into(), index: 1, total, id: Some(sid.into()) });
+        j.series = Some(SeriesPos {
+            plan_file: "p.md".into(),
+            index: 1,
+            total,
+            id: Some(sid.into()),
+        });
         j
     }
 
     #[test]
     fn remove_job_takes_one_job_and_reports_a_missing_one() {
-        let mut b = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0), Job::new("002", "d", "s", "c", "f", 1.0)], ..Default::default() };
+        let mut b = Board {
+            jobs: vec![
+                Job::new("001", "d", "s", "c", "f", 1.0),
+                Job::new("002", "d", "s", "c", "f", 1.0),
+            ],
+            ..Default::default()
+        };
         assert_eq!(b.remove_job("1").expect("removed").id, "001");
         assert_eq!(b.jobs.len(), 1);
         assert!(matches!(b.remove_job("1"), Err(CoreError::NoJob(_))));
@@ -345,12 +385,25 @@ mod tests {
 
     #[test]
     fn series_with_siblings_needs_a_series_of_two_and_another_member() {
-        let b = Board { jobs: vec![in_series("001", "S1", 2), in_series("002", "S1", 2), in_series("003", "S2", 2)], ..Default::default() };
+        let b = Board {
+            jobs: vec![
+                in_series("001", "S1", 2),
+                in_series("002", "S1", 2),
+                in_series("003", "S2", 2),
+            ],
+            ..Default::default()
+        };
         assert_eq!(b.series_with_siblings("001"), Some("S1".to_string()));
         assert_eq!(b.series_with_siblings("003"), None);
-        let single = Board { jobs: vec![in_series("001", "S1", 1), in_series("002", "S1", 1)], ..Default::default() };
+        let single = Board {
+            jobs: vec![in_series("001", "S1", 1), in_series("002", "S1", 1)],
+            ..Default::default()
+        };
         assert_eq!(single.series_with_siblings("001"), None);
-        let plain = Board { jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0)], ..Default::default() };
+        let plain = Board {
+            jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0)],
+            ..Default::default()
+        };
         assert_eq!(plain.series_with_siblings("001"), None);
     }
 
@@ -359,18 +412,30 @@ mod tests {
         let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
         let json = serde_json::to_string(&job).expect("json");
         assert!(!json.contains("estimate"), "{json}");
-        job.estimate = Some(crate::cost::Estimate { group: "small".into(), median: 250_000, low: 220_000, high: 310_000, n: 4, n_approx: 4 });
-        let back: Job = serde_json::from_str(&serde_json::to_string(&job).expect("json")).expect("load");
+        job.estimate = Some(crate::cost::Estimate {
+            group: "small".into(),
+            median: 250_000,
+            low: 220_000,
+            high: 310_000,
+            n: 4,
+            n_approx: 4,
+        });
+        let back: Job =
+            serde_json::from_str(&serde_json::to_string(&job).expect("json")).expect("load");
         assert_eq!(back.estimate.as_ref().map(|e| e.median), Some(250_000));
     }
 
     #[test]
     fn series_pos_id_is_optional_and_left_out_when_none() {
-        let old: SeriesPos = serde_json::from_str(r#"{"plan_file":"p.md","index":1,"total":2}"#).expect("old shape");
+        let old: SeriesPos =
+            serde_json::from_str(r#"{"plan_file":"p.md","index":1,"total":2}"#).expect("old shape");
         assert_eq!(old.id, None);
         let text = serde_json::to_string(&old).expect("json");
         assert!(!text.contains("\"id\""), "{text}");
-        let with = SeriesPos { id: Some("S2".into()), ..old };
+        let with = SeriesPos {
+            id: Some("S2".into()),
+            ..old
+        };
         let text = serde_json::to_string(&with).expect("json");
         assert!(text.contains(r#""id":"S2""#), "{text}");
     }
@@ -392,10 +457,12 @@ mod tests {
     #[test]
     fn park_fields_are_set_kept_and_cleared_by_set_stage() {
         let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
-        job.set_stage(Stage::Build, None, false, 2.0).expect("build");
+        job.set_stage(Stage::Build, None, false, 2.0)
+            .expect("build");
         job.park_kind = Some("checks-failed".to_string());
         job.park_at = Some(5);
-        job.set_stage(Stage::NeedsHuman, Some("why"), false, 3.0).expect("park");
+        job.set_stage(Stage::NeedsHuman, Some("why"), false, 3.0)
+            .expect("park");
         assert_eq!(job.park_kind.as_deref(), Some("checks-failed"));
         assert_eq!(job.park_at, Some(5));
         job.set_stage(Stage::Build, None, true, 4.0).expect("back");
@@ -405,13 +472,21 @@ mod tests {
 
     #[test]
     fn batch_snapshot_is_optional_and_omitted_when_unset() {
-        let job = Job::new("001", "2026-10-17-001-demo", "demo", "2026-10-17", "demo", 0.0);
+        let job = Job::new(
+            "001",
+            "2026-10-17-001-demo",
+            "demo",
+            "2026-10-17",
+            "demo",
+            0.0,
+        );
         assert!(job.batch_snapshot.is_none());
         let text = serde_json::to_string(&job).expect("json");
         assert!(!text.contains("batch_snapshot"), "{text}");
         let mut with = job.clone();
         with.batch_snapshot = Some("abc1234".to_string());
-        let back: Job = serde_json::from_str(&serde_json::to_string(&with).expect("json")).expect("parse");
+        let back: Job =
+            serde_json::from_str(&serde_json::to_string(&with).expect("json")).expect("parse");
         assert_eq!(back.batch_snapshot.as_deref(), Some("abc1234"));
     }
 
@@ -419,7 +494,10 @@ mod tests {
     fn an_old_board_without_park_fields_loads_and_new_fields_are_skipped_when_empty() {
         let job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
         let json = serde_json::to_string(&job).expect("json");
-        assert!(!json.contains("park_kind") && !json.contains("park_at"), "{json}");
+        assert!(
+            !json.contains("park_kind") && !json.contains("park_at"),
+            "{json}"
+        );
         let back: Job = serde_json::from_str(&json).expect("load");
         assert_eq!(back.park_kind, None);
     }
@@ -445,39 +523,57 @@ mod tests {
         let j = Job::new("020", "d", "s", "2026-10-17", "f", 1.0);
         let m = j.review_missing_message();
         assert!(m.starts_with("job 020 has no code review yet"), "{m}");
-        assert!(m.contains("use rework") && m.contains("approve --without-review"), "{m}");
+        assert!(
+            m.contains("use rework") && m.contains("approve --without-review"),
+            "{m}"
+        );
     }
 
     #[test]
     fn fix_source_is_optional_and_omitted_when_unset() {
         let mut j = Job::new("001", "d", "s", "2026-10-17", "f", 1.0);
-        assert!(!serde_json::to_string(&j).expect("json").contains("fix_source"));
+        assert!(!serde_json::to_string(&j)
+            .expect("json")
+            .contains("fix_source"));
         j.fix_source = Some("checks".to_string());
-        let back: Job = serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
+        let back: Job =
+            serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
         assert_eq!(back.fix_source.as_deref(), Some("checks"));
     }
 
     fn job() -> Job {
-        Job::new("001", "2026-10-13-001-x", "x", "2026-10-13", "feature", 100.0)
+        Job::new(
+            "001",
+            "2026-10-13-001-x",
+            "x",
+            "2026-10-13",
+            "feature",
+            100.0,
+        )
     }
 
     #[test]
     fn set_stage_updates_since_only_on_change_and_manages_reason() {
         let mut j = job();
-        j.set_stage(Stage::Build, None, false, 200.0).expect("spec to build");
+        j.set_stage(Stage::Build, None, false, 200.0)
+            .expect("spec to build");
         assert_eq!(j.stage_since, 200.0);
-        j.set_stage(Stage::Build, None, false, 300.0).expect("same stage");
+        j.set_stage(Stage::Build, None, false, 300.0)
+            .expect("same stage");
         assert_eq!(j.stage_since, 200.0);
-        j.set_stage(Stage::NeedsHuman, Some("risky diff"), false, 400.0).expect("park");
+        j.set_stage(Stage::NeedsHuman, Some("risky diff"), false, 400.0)
+            .expect("park");
         assert_eq!(j.reason.as_deref(), Some("risky diff"));
-        j.set_stage(Stage::Review, Some("ignored"), false, 500.0).expect("resume");
+        j.set_stage(Stage::Review, Some("ignored"), false, 500.0)
+            .expect("resume");
         assert_eq!(j.reason, None);
     }
 
     #[test]
     fn refused_move_leaves_the_job_untouched() {
         let mut j = job();
-        j.set_stage(Stage::Merged, None, false, 200.0).expect("forward");
+        j.set_stage(Stage::Merged, None, false, 200.0)
+            .expect("forward");
         let before = j.clone();
         assert!(j.set_stage(Stage::Build, None, false, 300.0).is_err());
         assert_eq!(j, before);
@@ -486,25 +582,43 @@ mod tests {
     #[test]
     fn set_stage_appends_history_in_order() {
         let mut j = job();
-        assert_eq!(j.stage_history, vec![StageEntry { stage: Stage::Spec, at: 100.0 }]);
-        j.set_stage(Stage::Build, None, false, 200.0).expect("build");
-        j.set_stage(Stage::Build, None, false, 250.0).expect("same stage");
-        j.set_stage(Stage::Review, None, false, 300.0).expect("review");
+        assert_eq!(
+            j.stage_history,
+            vec![StageEntry {
+                stage: Stage::Spec,
+                at: 100.0
+            }]
+        );
+        j.set_stage(Stage::Build, None, false, 200.0)
+            .expect("build");
+        j.set_stage(Stage::Build, None, false, 250.0)
+            .expect("same stage");
+        j.set_stage(Stage::Review, None, false, 300.0)
+            .expect("review");
         let seen: Vec<(Stage, f64)> = j.stage_history.iter().map(|e| (e.stage, e.at)).collect();
-        assert_eq!(seen, vec![(Stage::Spec, 100.0), (Stage::Build, 200.0), (Stage::Review, 300.0)]);
+        assert_eq!(
+            seen,
+            vec![
+                (Stage::Spec, 100.0),
+                (Stage::Build, 200.0),
+                (Stage::Review, 300.0)
+            ]
+        );
     }
 
     #[test]
     fn refused_move_appends_no_history() {
         let mut j = job();
-        j.set_stage(Stage::Merged, None, false, 200.0).expect("forward");
+        j.set_stage(Stage::Merged, None, false, 200.0)
+            .expect("forward");
         let n = j.stage_history.len();
         assert!(j.set_stage(Stage::Build, None, false, 300.0).is_err());
         assert_eq!(j.stage_history.len(), n);
     }
 
     #[test]
-    fn history_and_budget_are_written_as_the_server_reads_them() -> Result<(), Box<dyn std::error::Error>> {
+    fn history_and_budget_are_written_as_the_server_reads_them(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut j = job();
         j.budget_weighted = Some(3_000_000);
         let v = serde_json::to_value(&j)?;

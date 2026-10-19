@@ -1,5 +1,8 @@
 use factory_checks::{plan_checks, run_checks, write_checks_md, ChecksReport};
-use factory_core::{classify_paths, code_paths_of, has_test_marker, has_test_path, Config, DiffClass, ParkKind, ParkPart, Stage};
+use factory_core::{
+    classify_paths, code_paths_of, has_test_marker, has_test_path, Config, DiffClass, ParkKind,
+    ParkPart, Stage,
+};
 
 use crate::decide::fix_rounds_used;
 use crate::park::part_from_file;
@@ -7,7 +10,11 @@ use crate::park::part_from_file;
 const NO_TESTS_NOTE: &str = "no test file or test marker in a code diff";
 
 /// None unless a code diff ran no check. A risky diff is left to `decide()`.
-pub(crate) fn no_checks_reason(paths: &[String], report_is_empty: bool, config: &Config) -> Option<String> {
+pub(crate) fn no_checks_reason(
+    paths: &[String],
+    report_is_empty: bool,
+    config: &Config,
+) -> Option<String> {
     if !report_is_empty || classify_paths(paths, config) == DiffClass::Risky {
         return None;
     }
@@ -23,7 +30,10 @@ pub(crate) fn no_checks_reason(paths: &[String], report_is_empty: bool, config: 
 fn code_path_list(code: &[String]) -> String {
     let n = code.len();
     let noun = if n == 1 { "path" } else { "paths" };
-    let mut text = format!("{n} changed code {noun}: {}", code.iter().take(5).cloned().collect::<Vec<_>>().join(", "));
+    let mut text = format!(
+        "{n} changed code {noun}: {}",
+        code.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+    );
     if n > 5 {
         text.push_str(&format!(" (+{} more)", n - 5));
     }
@@ -59,40 +69,69 @@ impl Engine<'_> {
     /// Runs the mapped checks over the whole job diff and writes `checks.md`.
     pub(crate) fn run_checks_now(&self) -> Result<ChecksReport, EngineError> {
         let job = self.job()?;
-        let base = job.base.clone().ok_or_else(|| EngineError::Msg("job has no base".into()))?;
-        let head = job.head.clone().ok_or_else(|| EngineError::Msg("job has no head".into()))?;
+        let base = job
+            .base
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no base".into()))?;
+        let head = job
+            .head
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
         let paths = self.repo.changed_paths(&base, &head).map_err(git_err)?;
         let plan = plan_checks(&paths, &self.config);
         let report = run_checks(&self.worktree()?, &plan);
         log_check_results(&report);
-        write_checks_md(&self.job_dir.join("checks.md"), &report).map_err(|e| EngineError::Check(e.to_string()))?;
+        write_checks_md(&self.job_dir.join("checks.md"), &report)
+            .map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(report)
     }
 
     /// The paths changed by the whole job diff.
     pub(crate) fn job_changed_paths(&self) -> Result<Vec<String>, EngineError> {
         let job = self.job()?;
-        let base = job.base.clone().ok_or_else(|| EngineError::Msg("job has no base".into()))?;
-        let head = job.head.clone().ok_or_else(|| EngineError::Msg("job has no head".into()))?;
+        let base = job
+            .base
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no base".into()))?;
+        let head = job
+            .head
+            .clone()
+            .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
         self.repo.changed_paths(&base, &head).map_err(git_err)
     }
 
     /// The no-checks gate: a park kind and reason when a code diff ran no check.
-    pub(crate) fn gate_checks(&self, paths: &[String], report: &ChecksReport) -> Option<(ParkKind, String)> {
-        no_checks_reason(paths, report.results.is_empty(), &self.config).map(|r| (ParkKind::NoChecks, r))
+    pub(crate) fn gate_checks(
+        &self,
+        paths: &[String],
+        report: &ChecksReport,
+    ) -> Option<(ParkKind, String)> {
+        no_checks_reason(paths, report.results.is_empty(), &self.config)
+            .map(|r| (ParkKind::NoChecks, r))
     }
 
     /// Parks a job that a gate stopped, with the checks and the reason as evidence.
-    pub(crate) fn park_gate(&self, kind: ParkKind, reason: String) -> Result<StageOutcome, EngineError> {
+    pub(crate) fn park_gate(
+        &self,
+        kind: ParkKind,
+        reason: String,
+    ) -> Result<StageOutcome, EngineError> {
         self.ruling(&format!("parked, {reason}"))?;
-        let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks").into_iter().collect();
+        let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks")
+            .into_iter()
+            .collect();
         parts.push(ParkPart::new("Why it stopped", "driver", &reason));
         self.park_with(kind, reason, parts)
     }
 
     /// Runs the mapped checks over the diff from `from` to `to` and writes `out` in the job dir. It returns
     /// `None`, and writes nothing, when no check is mapped to the changed paths.
-    pub(crate) fn run_checks_between(&self, from: &str, to: &str, out: &str) -> Result<Option<ChecksReport>, EngineError> {
+    pub(crate) fn run_checks_between(
+        &self,
+        from: &str,
+        to: &str,
+        out: &str,
+    ) -> Result<Option<ChecksReport>, EngineError> {
         let paths = self.repo.changed_paths(from, to).map_err(git_err)?;
         let plan = plan_checks(&paths, &self.config);
         if plan.commands.is_empty() {
@@ -100,24 +139,44 @@ impl Engine<'_> {
         }
         let report = run_checks(&self.worktree()?, &plan);
         log_check_results(&report);
-        write_checks_md(&self.job_dir.join(out), &report).map_err(|e| EngineError::Check(e.to_string()))?;
+        write_checks_md(&self.job_dir.join(out), &report)
+            .map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(Some(report))
     }
 
     /// Starts a fix round with `findings`, or parks the job when the rounds are used up.
-    pub(crate) fn fix_or_park(&self, findings: &str, reason: &str, kind: ParkKind, source: &str) -> Result<StageOutcome, EngineError> {
+    pub(crate) fn fix_or_park(
+        &self,
+        findings: &str,
+        reason: &str,
+        kind: ParkKind,
+        source: &str,
+    ) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;
         let used = fix_rounds_used(job.round);
         if used >= self.config.fix_rounds {
-            let title = if kind == ParkKind::ChecksFailed { "Failing checks" } else { "Reviewer findings" };
+            let title = if kind == ParkKind::ChecksFailed {
+                "Failing checks"
+            } else {
+                "Reviewer findings"
+            };
             let part = ParkPart::new(title, source, findings);
-            return self.park_with(kind, format!("{reason} after {used} fix rounds"), vec![part]);
+            return self.park_with(
+                kind,
+                format!("{reason} after {used} fix rounds"),
+                vec![part],
+            );
         }
         let next = job.round + 1;
-        std::fs::write(self.job_dir.join(format!("changes-r{next}.md")), findings).map_err(io_err)?;
+        std::fs::write(self.job_dir.join(format!("changes-r{next}.md")), findings)
+            .map_err(io_err)?;
         // A fix round moves review back to build. That is a backward move, so it is forced and logged as a ruling.
         // The source tells the builder step what to do when the fix round changes nothing.
-        let fix_source = if kind == ParkKind::ChecksFailed { "checks" } else { "review" };
+        let fix_source = if kind == ParkKind::ChecksFailed {
+            "checks"
+        } else {
+            "review"
+        };
         self.update(|j| {
             j.round = next;
             j.fix_source = Some(fix_source.to_string());
@@ -140,7 +199,10 @@ impl Engine<'_> {
             }
             let job = self.job()?;
             if let (Some(base), Some(head)) = (job.base.clone(), job.head.clone()) {
-                let whole = self.repo.diff_to_files(&base, &head, &self.job_dir).map_err(git_err)?;
+                let whole = self
+                    .repo
+                    .diff_to_files(&base, &head, &self.job_dir)
+                    .map_err(git_err)?;
                 let text = std::fs::read_to_string(&whole.diff).ok();
                 if no_tests_added(&paths, text.as_deref(), &self.config) {
                     if self.config.require_tests {
@@ -154,7 +216,10 @@ impl Engine<'_> {
             return Ok(StageOutcome::Advanced(Stage::Review));
         }
         self.ruling(&format!("checks round {round} fail"))?;
-        let findings = format!("The checks failed. Fix these failures only.\n\n{}", report.failure_text());
+        let findings = format!(
+            "The checks failed. Fix these failures only.\n\n{}",
+            report.failure_text()
+        );
         self.fix_or_park(&findings, "checks failed", ParkKind::ChecksFailed, "checks")
     }
 }
@@ -175,12 +240,16 @@ mod gate_tests {
     fn no_checks_reason_names_five_paths_and_a_count() {
         let all = paths(&["a.rs", "b.rs", "c.rs", "d.rs", "e.rs", "f.rs", "g.rs"]);
         let reason = no_checks_reason(&all, true, &Config::default()).expect("a reason");
-        assert_eq!(reason, "no check ran for 7 changed code paths: a.rs, b.rs, c.rs, d.rs, e.rs (+2 more)");
+        assert_eq!(
+            reason,
+            "no check ran for 7 changed code paths: a.rs, b.rs, c.rs, d.rs, e.rs (+2 more)"
+        );
     }
 
     #[test]
     fn one_path_reads_singular() {
-        let reason = no_checks_reason(&paths(&["a.rs"]), true, &Config::default()).expect("a reason");
+        let reason =
+            no_checks_reason(&paths(&["a.rs"]), true, &Config::default()).expect("a reason");
         assert_eq!(reason, "no check ran for 1 changed code path: a.rs");
     }
 
@@ -191,28 +260,53 @@ mod gate_tests {
 
     #[test]
     fn docs_only_and_empty_path_lists_are_not_gated() {
-        assert!(no_checks_reason(&paths(&["README.md", "docs/a.md"]), true, &Config::default()).is_none());
+        assert!(no_checks_reason(
+            &paths(&["README.md", "docs/a.md"]),
+            true,
+            &Config::default()
+        )
+        .is_none());
         assert!(no_checks_reason(&[], true, &Config::default()).is_none());
     }
 
     #[test]
     fn no_tests_added_is_true_for_a_code_diff_with_neither_path_nor_marker() {
-        assert!(no_tests_added(&paths(&["src/a.rs"]), Some("+fn a() {}\n"), &Config::default()));
+        assert!(no_tests_added(
+            &paths(&["src/a.rs"]),
+            Some("+fn a() {}\n"),
+            &Config::default()
+        ));
     }
 
     #[test]
     fn a_test_path_or_a_marker_or_docs_only_is_not_flagged() {
         let c = Config::default();
-        assert!(!no_tests_added(&paths(&["src/a.rs", "tests/a.rs"]), Some("+x\n"), &c));
-        assert!(!no_tests_added(&paths(&["src/a.rs"]), Some("+#[cfg(test)]\n"), &c));
+        assert!(!no_tests_added(
+            &paths(&["src/a.rs", "tests/a.rs"]),
+            Some("+x\n"),
+            &c
+        ));
+        assert!(!no_tests_added(
+            &paths(&["src/a.rs"]),
+            Some("+#[cfg(test)]\n"),
+            &c
+        ));
         assert!(!no_tests_added(&paths(&["docs/a.md"]), Some("+x\n"), &c));
         assert!(!no_tests_added(&[], Some("+x\n"), &c));
     }
 
     #[test]
     fn an_unreadable_diff_counts_as_no_marker() {
-        assert!(no_tests_added(&paths(&["src/a.rs"]), None, &Config::default()));
-        assert!(!no_tests_added(&paths(&["tests/a.rs", "src/a.rs"]), None, &Config::default()));
+        assert!(no_tests_added(
+            &paths(&["src/a.rs"]),
+            None,
+            &Config::default()
+        ));
+        assert!(!no_tests_added(
+            &paths(&["tests/a.rs", "src/a.rs"]),
+            None,
+            &Config::default()
+        ));
     }
 
     #[test]

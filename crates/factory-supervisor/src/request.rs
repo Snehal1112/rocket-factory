@@ -55,7 +55,9 @@ pub fn validate_id_chars(id: &str) -> Result<(), RequestError> {
     let ok = !id.is_empty()
         && id.len() <= MAX_ID
         && id.chars().next().is_some_and(|c| c.is_ascii_digit())
-        && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if ok {
         Ok(())
     } else {
@@ -72,7 +74,13 @@ pub fn validate_job(job: &str) -> Result<(), RequestError> {
 }
 
 impl Request {
-    pub fn new(project: &str, action: Action, job: &str, series: bool, now_ms: u64) -> Result<Request, RequestError> {
+    pub fn new(
+        project: &str,
+        action: Action,
+        job: &str,
+        series: bool,
+        now_ms: u64,
+    ) -> Result<Request, RequestError> {
         let req = Request {
             id: make_id(now_ms, project, job),
             project: project.to_string(),
@@ -124,39 +132,70 @@ mod tests {
     #[test]
     fn bad_projects_jobs_and_series_are_refused() {
         for p in ["", "A", "../x", "a/b"] {
-            assert!(Request::new(p, Action::Run, "1", false, 1).is_err(), "{p:?}");
+            assert!(
+                Request::new(p, Action::Run, "1", false, 1).is_err(),
+                "{p:?}"
+            );
         }
         for j in ["", "abc", "1/2", "1234567", "-1"] {
-            assert!(Request::new("p", Action::Run, j, false, 1).is_err(), "{j:?}");
+            assert!(
+                Request::new("p", Action::Run, j, false, 1).is_err(),
+                "{j:?}"
+            );
         }
-        assert_eq!(Request::new("p", Action::Approve, "1", true, 1), Err(RequestError::SeriesNotAllowed));
+        assert_eq!(
+            Request::new("p", Action::Approve, "1", true, 1),
+            Err(RequestError::SeriesNotAllowed)
+        );
     }
 
     #[test]
     fn a_hand_made_id_must_match_and_be_path_safe() {
         let good = Request::new("p", Action::Run, "1", false, 1).expect("ok");
-        for id in ["", "x", "a/b", "../x", "0000000000001-p-1/..", "0000000000002-p-1", "0000000000001-p-1.json"] {
-            let r = Request { id: id.to_string(), ..good.clone() };
+        for id in [
+            "",
+            "x",
+            "a/b",
+            "../x",
+            "0000000000001-p-1/..",
+            "0000000000002-p-1",
+            "0000000000001-p-1.json",
+        ] {
+            let r = Request {
+                id: id.to_string(),
+                ..good.clone()
+            };
             assert!(r.validate().is_err(), "{id:?}");
         }
-        let r = Request { id: "a/b".into(), ..good };
+        let r = Request {
+            id: "a/b".into(),
+            ..good
+        };
         assert!(validate_id_chars(&r.id).is_err());
     }
 
-    const GOOD_JSON: &str =
-        r#"{"id":"0000000000001-p-1","project":"p","action":"run","job":"1","series":false,"ts_ms":1}"#;
+    const GOOD_JSON: &str = r#"{"id":"0000000000001-p-1","project":"p","action":"run","job":"1","series":false,"ts_ms":1}"#;
 
     #[test]
     fn without_review_is_optional_approve_only_and_left_out_when_false() {
         // An older request file has no such field.
         let old: Request = serde_json::from_str(GOOD_JSON).expect("parse");
         assert!(!old.without_review);
-        assert!(!serde_json::to_string(&old).expect("json").contains("without_review"));
-        let r = Request::new("p", Action::Approve, "1", false, 1).expect("ok").without_review().expect("approve");
-        let back: Request = serde_json::from_str(&serde_json::to_string(&r).expect("json")).expect("parse");
+        assert!(!serde_json::to_string(&old)
+            .expect("json")
+            .contains("without_review"));
+        let r = Request::new("p", Action::Approve, "1", false, 1)
+            .expect("ok")
+            .without_review()
+            .expect("approve");
+        let back: Request =
+            serde_json::from_str(&serde_json::to_string(&r).expect("json")).expect("parse");
         assert!(back.without_review);
         let run = Request::new("p", Action::Run, "1", false, 1).expect("ok");
-        assert_eq!(run.without_review(), Err(RequestError::WithoutReviewNotAllowed));
+        assert_eq!(
+            run.without_review(),
+            Err(RequestError::WithoutReviewNotAllowed)
+        );
     }
 
     #[test]

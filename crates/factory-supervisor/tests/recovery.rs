@@ -7,9 +7,11 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use factory_core::{project, Home};
-use factory_supervisor::request::{Action, Request};
 use factory_engine::{acquire_project_lease, project_lease_status, ProjectLeaseStatus};
-use factory_supervisor::{pid_alive, queue, records, ChildRecord, Outcome, ProcessSpawner, QueueItem, Supervisor};
+use factory_supervisor::request::{Action, Request};
+use factory_supervisor::{
+    pid_alive, queue, records, ChildRecord, Outcome, ProcessSpawner, QueueItem, Supervisor,
+};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -27,7 +29,10 @@ esac
 "#;
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 struct Env {
@@ -40,7 +45,11 @@ fn env() -> Env {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path().join("scripts");
     std::fs::create_dir_all(&dir).expect("scripts dir");
-    Env { home: Home::at(tmp.path().join("home")), dir, _tmp: tmp }
+    Env {
+        home: Home::at(tmp.path().join("home")),
+        dir,
+        _tmp: tmp,
+    }
 }
 
 impl Env {
@@ -48,7 +57,11 @@ impl Env {
         let bin = self.dir.join("factory");
         std::fs::write(&bin, SCRIPT).expect("script");
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let mut s = Supervisor::new(self.home.clone(), Box::new(ProcessSpawner::new(bin)), Box::new(now_ms));
+        let mut s = Supervisor::new(
+            self.home.clone(),
+            Box::new(ProcessSpawner::new(bin)),
+            Box::new(now_ms),
+        );
         s.set_max_parallel(4);
         s
     }
@@ -61,7 +74,8 @@ impl Env {
 
     /// Queues a request. The script behavior is `merged` or `hold`, and `hold` creates its gate file.
     fn enqueue_with(&self, project: &str, job: &str, behavior: &str) -> Request {
-        std::fs::write(self.dir.join(format!("behavior-{project}-{job}")), behavior).expect("behavior");
+        std::fs::write(self.dir.join(format!("behavior-{project}-{job}")), behavior)
+            .expect("behavior");
         if behavior == "hold" {
             std::fs::write(self.dir.join(format!("gate-{project}-{job}")), "").expect("gate");
         }
@@ -73,7 +87,9 @@ impl Env {
     }
 
     fn runs(&self, project: &str, job: &str) -> usize {
-        std::fs::read_to_string(self.dir.join(format!("runs-{project}-{job}"))).map(|t| t.lines().count()).unwrap_or(0)
+        std::fs::read_to_string(self.dir.join(format!("runs-{project}-{job}")))
+            .map(|t| t.lines().count())
+            .unwrap_or(0)
     }
 
     /// Waits until the script wrote its first start, so a later count of 1 is not a race with its start.
@@ -87,7 +103,9 @@ impl Env {
 
     fn state_dir(&self, name: &str) -> PathBuf {
         let file = project::get(&self.home, name).expect("project");
-        project::layout(&self.home, name, &file).expect("layout").state_dir
+        project::layout(&self.home, name, &file)
+            .expect("layout")
+            .state_dir
     }
 
     fn enqueue(&self, project: &str, job: &str) -> Request {
@@ -97,7 +115,11 @@ impl Env {
     }
 
     fn result(&self, id: &str) -> Option<Outcome> {
-        records::read_results(&self.home).into_iter().flatten().find(|r| r.request_id == id).map(|r| r.outcome)
+        records::read_results(&self.home)
+            .into_iter()
+            .flatten()
+            .find(|r| r.request_id == id)
+            .map(|r| r.outcome)
     }
 
     fn queue_ids(&self) -> Vec<String> {
@@ -114,17 +136,34 @@ impl Env {
     fn child_record(&self, req: &Request, pid: u32, started_ms: u64, out: &str) -> ChildRecord {
         let logs = self.home.logs_dir(&req.project);
         std::fs::create_dir_all(&logs).expect("logs dir");
-        let (o, e) = (logs.join(format!("{}.out", req.id)), logs.join(format!("{}.err", req.id)));
+        let (o, e) = (
+            logs.join(format!("{}.out", req.id)),
+            logs.join(format!("{}.err", req.id)),
+        );
         std::fs::write(&o, out).expect("out");
         std::fs::write(&e, "").expect("err");
-        let rec = ChildRecord { pid, project: req.project.clone(), job: req.job.clone(), request_id: req.id.clone(), started_ms, out: o, err: e };
+        let rec = ChildRecord {
+            pid,
+            project: req.project.clone(),
+            job: req.job.clone(),
+            request_id: req.id.clone(),
+            started_ms,
+            out: o,
+            err: e,
+        };
         records::write_child(&self.home, &rec).expect("child record");
         rec
     }
 }
 
 fn sleeper() -> Child {
-    Command::new("sleep").arg("60").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("sleep")
+    Command::new("sleep")
+        .arg("60")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sleep")
 }
 
 fn wait_dead(pid: u32) {
@@ -147,7 +186,11 @@ fn a_recorded_pid_that_started_far_from_the_record_is_treated_as_gone() {
         let mut s = e.supervisor();
         let report = s.tick().expect("tick");
         assert_eq!(report.finished.len(), 1, "{report:?}");
-        assert!(matches!(e.result(&req.id), Some(Outcome::Lost { .. })), "{:?}", e.result(&req.id));
+        assert!(
+            matches!(e.result(&req.id), Some(Outcome::Lost { .. })),
+            "{:?}",
+            e.result(&req.id)
+        );
         assert!(e.queue_ids().is_empty());
         assert!(records::read_children(&e.home).is_empty());
         // The stranger is left alone.
@@ -175,7 +218,11 @@ fn a_recorded_pid_that_started_when_the_record_says_is_adopted() {
 
 /// A pid that ran and was reaped, so no process has it.
 fn dead_pid() -> u32 {
-    let mut c = Command::new("sh").arg("-c").arg("exit 0").spawn().expect("sh");
+    let mut c = Command::new("sh")
+        .arg("-c")
+        .arg("exit 0")
+        .spawn()
+        .expect("sh");
     let pid = c.id();
     c.wait().expect("wait");
     pid
@@ -195,9 +242,16 @@ fn tick_until_finished(s: &mut Supervisor, id: &str) {
 
 /// The process group of a pid, from `ps` (Linux and macOS both know `-o pgid=`).
 fn pgrp(pid: u32) -> u32 {
-    let out = Command::new("ps").env("LC_ALL", "C").args(["-o", "pgid=", "-p", &pid.to_string()]).output().expect("ps");
+    let out = Command::new("ps")
+        .env("LC_ALL", "C")
+        .args(["-o", "pgid=", "-p", &pid.to_string()])
+        .output()
+        .expect("ps");
     assert!(out.status.success(), "ps found no pid {pid}");
-    String::from_utf8_lossy(&out.stdout).trim().parse().expect("pgid")
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .expect("pgid")
 }
 
 #[test]
@@ -207,12 +261,21 @@ fn a_new_supervisor_adopts_a_running_child_and_finishes_it() {
     let id = e.enqueue_with("p", "1", "hold").id;
     let mut first = e.supervisor();
     assert_eq!(first.tick().expect("tick").started, vec![id.clone()]);
-    let pid = records::read_children(&e.home).into_iter().flatten().next().expect("record").pid;
+    let pid = records::read_children(&e.home)
+        .into_iter()
+        .flatten()
+        .next()
+        .expect("record")
+        .pid;
     // The supervisor stops, the child does not.
     drop(first);
     e.wait_started("p", "1");
     assert!(pid_alive(pid));
-    assert_ne!(pgrp(pid), pgrp(std::process::id()), "the child has its own process group");
+    assert_ne!(
+        pgrp(pid),
+        pgrp(std::process::id()),
+        "the child has its own process group"
+    );
     let mut second = e.supervisor();
     let rec = second.recover().expect("recover");
     assert_eq!(rec.adopted, vec![id.clone()]);
@@ -236,16 +299,30 @@ fn a_child_killed_while_no_supervisor_runs_is_lost_and_never_restarted() {
     let id = e.enqueue_with("p", "1", "hold").id;
     let mut first = e.supervisor();
     first.tick().expect("tick");
-    let pid = records::read_children(&e.home).into_iter().flatten().next().expect("record").pid;
+    let pid = records::read_children(&e.home)
+        .into_iter()
+        .flatten()
+        .next()
+        .expect("record")
+        .pid;
     drop(first);
     // Kill only after the script has started, so the start counter is written.
     e.wait_started("p", "1");
-    assert!(Command::new("kill").arg("-9").arg(pid.to_string()).status().expect("kill").success());
+    assert!(Command::new("kill")
+        .arg("-9")
+        .arg(pid.to_string())
+        .status()
+        .expect("kill")
+        .success());
     wait_dead(pid);
     let mut second = e.supervisor();
     let rec = second.recover().expect("recover");
     assert_eq!(rec.report.finished.len(), 1);
-    assert!(matches!(e.result(&id), Some(Outcome::Lost { .. })), "{:?}", e.result(&id));
+    assert!(
+        matches!(e.result(&id), Some(Outcome::Lost { .. })),
+        "{:?}",
+        e.result(&id)
+    );
     assert!(records::read_children(&e.home).is_empty());
     assert!(e.queue_ids().is_empty());
     // The project is free for a later request, and the lost job did not run again.
@@ -319,7 +396,14 @@ fn a_started_request_without_a_child_record_is_lost_and_not_run_again() {
     let mut s = e.supervisor();
     let rec = s.recover().expect("recover");
     assert_eq!(rec.report.finished.len(), 1);
-    assert!(rec.report.errors.iter().any(|m| m.contains(&id) && m.contains(".err")), "{:?}", rec.report.errors);
+    assert!(
+        rec.report
+            .errors
+            .iter()
+            .any(|m| m.contains(&id) && m.contains(".err")),
+        "{:?}",
+        rec.report.errors
+    );
     assert!(matches!(e.result(&id), Some(Outcome::Lost { .. })));
     assert!(e.queue_ids().is_empty());
     assert!(s.tick().expect("tick").started.is_empty());
@@ -335,7 +419,15 @@ fn a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends() {
     std::fs::create_dir_all(&state).expect("state");
     let owner = format!("driver-{}-1", stranger.id());
     let now = now_ms() as f64 / 1000.0;
-    acquire_project_lease(&state, "001", &owner, 100_000.0, now, Duration::from_secs(2)).expect("lease");
+    acquire_project_lease(
+        &state,
+        "001",
+        &owner,
+        100_000.0,
+        now,
+        Duration::from_secs(2),
+    )
+    .expect("lease");
     let id = e.enqueue_with("p", "1", "merged").id;
     let mut s = e.supervisor();
     let rec = s.recover().expect("recover");
@@ -348,7 +440,10 @@ fn a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends() {
     assert_eq!(e.runs("p", "1"), 0);
     stranger.kill().expect("kill");
     stranger.wait().expect("wait");
-    assert!(matches!(project_lease_status(&state, now), ProjectLeaseStatus::Stale { .. }));
+    assert!(matches!(
+        project_lease_status(&state, now),
+        ProjectLeaseStatus::Stale { .. }
+    ));
     tick_until_finished(&mut s, &id);
     assert_eq!(e.result(&id), Some(Outcome::Merged));
 }
@@ -358,8 +453,13 @@ fn a_second_locked_supervisor_is_refused_until_the_first_is_dropped() {
     let e = env();
     let spawner = || Box::new(ProcessSpawner::new(e.dir.join("factory")));
     let first = Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)).expect("first");
-    let err = Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)).err().expect("refused");
-    assert!(err.to_string().contains(&std::process::id().to_string()), "{err}");
+    let err = Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms))
+        .err()
+        .expect("refused");
+    assert!(
+        err.to_string().contains(&std::process::id().to_string()),
+        "{err}"
+    );
     drop(first);
     assert!(Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)).is_ok());
 }

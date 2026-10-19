@@ -26,7 +26,10 @@ pub fn validate_command(cmd: &str) -> Result<(), CheckError> {
     }
     for flag in ["--workspace", "--all"] {
         if tokens.contains(&flag) {
-            return Err(CheckError::Forbidden { flag, cmd: cmd.to_string() });
+            return Err(CheckError::Forbidden {
+                flag,
+                cmd: cmd.to_string(),
+            });
         }
     }
     let has_j4 = tokens.contains(&"-j4") || tokens.windows(2).any(|w| w[0] == "-j" && w[1] == "4");
@@ -52,7 +55,10 @@ fn crate_of(path: &str) -> Option<String> {
     let mut parts = path.split('/');
     while let Some(part) = parts.next() {
         if part == "crates" {
-            return parts.next().filter(|n| !n.is_empty()).map(|n| n.to_string());
+            return parts
+                .next()
+                .filter(|n| !n.is_empty())
+                .map(|n| n.to_string());
         }
     }
     None
@@ -63,17 +69,17 @@ pub fn plan_checks(changed_paths: &[String], cfg: &Config) -> CheckPlan {
     let mut seen = BTreeSet::new();
     let mut commands = Vec::new();
     for rule in &cfg.checks {
-        let matched: Vec<&String> = changed_paths
-            .iter()
-            .filter(|p| rule.matches(p))
-            .collect();
+        let matched: Vec<&String> = changed_paths.iter().filter(|p| rule.matches(p)).collect();
         if matched.is_empty() {
             continue;
         }
         let crates: BTreeSet<String> = matched.iter().filter_map(|p| crate_of(p)).collect();
         for template in &rule.commands {
             let expanded: Vec<String> = if template.contains("{crate}") {
-                crates.iter().map(|c| template.replace("{crate}", c)).collect()
+                crates
+                    .iter()
+                    .map(|c| template.replace("{crate}", c))
+                    .collect()
             } else {
                 vec![template.clone()]
             };
@@ -85,7 +91,10 @@ pub fn plan_checks(changed_paths: &[String], cfg: &Config) -> CheckPlan {
             }
         }
     }
-    CheckPlan { commands, timeout: DEFAULT_TIMEOUT }
+    CheckPlan {
+        commands,
+        timeout: DEFAULT_TIMEOUT,
+    }
 }
 
 #[cfg(test)]
@@ -101,7 +110,10 @@ mod tests {
                 commands: cmds.iter().map(|s| s.to_string()).collect(),
             })
             .collect();
-        Config { checks, ..Config::default() }
+        Config {
+            checks,
+            ..Config::default()
+        }
     }
 
     fn paths(p: &[&str]) -> Vec<String> {
@@ -110,14 +122,26 @@ mod tests {
 
     #[test]
     fn rejects_cargo_without_j4() {
-        assert!(matches!(validate_command("cargo check"), Err(crate::CheckError::MissingJobs(_))));
-        assert!(matches!(validate_command("cargo test -j 3 -p a"), Err(crate::CheckError::MissingJobs(_))));
+        assert!(matches!(
+            validate_command("cargo check"),
+            Err(crate::CheckError::MissingJobs(_))
+        ));
+        assert!(matches!(
+            validate_command("cargo test -j 3 -p a"),
+            Err(crate::CheckError::MissingJobs(_))
+        ));
     }
 
     #[test]
     fn rejects_workspace_and_all() {
-        assert!(matches!(validate_command("cargo test -j4 --workspace"), Err(crate::CheckError::Forbidden { .. })));
-        assert!(matches!(validate_command("cargo check -j4 --all"), Err(crate::CheckError::Forbidden { .. })));
+        assert!(matches!(
+            validate_command("cargo test -j4 --workspace"),
+            Err(crate::CheckError::Forbidden { .. })
+        ));
+        assert!(matches!(
+            validate_command("cargo check -j4 --all"),
+            Err(crate::CheckError::Forbidden { .. })
+        ));
     }
 
     #[test]
@@ -125,7 +149,10 @@ mod tests {
         assert!(validate_command("cargo check -j4 --all-targets").is_ok());
         assert!(validate_command("cargo test -j 4 -p rocket-http").is_ok());
         assert!(validate_command("yarn tsc --noEmit").is_ok());
-        assert!(matches!(validate_command("  "), Err(crate::CheckError::Empty)));
+        assert!(matches!(
+            validate_command("  "),
+            Err(crate::CheckError::Empty)
+        ));
     }
 
     #[test]
@@ -137,12 +164,20 @@ mod tests {
     #[test]
     fn plan_is_ordered_and_deduplicated() {
         let c = cfg(vec![
-            (&["crates/**"], &["cargo check -j4", "cargo test -j4 -p {crate}"]),
+            (
+                &["crates/**"],
+                &["cargo check -j4", "cargo test -j4 -p {crate}"],
+            ),
             (&["src-tauri/**"], &["cargo check -j4"]),
             (&["src/**"], &["yarn tsc --noEmit"]),
         ]);
         let plan = plan_checks(
-            &paths(&["crates/rocket-http/src/a.rs", "crates/rocket-git/src/b.rs", "src-tauri/src/x.rs", "src/app.ts"]),
+            &paths(&[
+                "crates/rocket-http/src/a.rs",
+                "crates/rocket-git/src/b.rs",
+                "src-tauri/src/x.rs",
+                "src/app.ts",
+            ]),
             &c,
         );
         assert_eq!(
@@ -173,16 +208,28 @@ mod tests {
     }
 
     fn rust_preset() -> Config {
-        let text = factory_core::preset::embedded("rust").expect("rust preset").config;
+        let text = factory_core::preset::embedded("rust")
+            .expect("rust preset")
+            .config;
         Config::parse(text).expect("preset parses")
     }
 
     #[test]
     fn the_rust_preset_checks_a_single_crate_repo() {
         let c = rust_preset();
-        for changed in ["src/x.rs", "tests/t.rs", "benches/b.rs", "examples/e.rs", "build.rs"] {
+        for changed in [
+            "src/x.rs",
+            "tests/t.rs",
+            "benches/b.rs",
+            "examples/e.rs",
+            "build.rs",
+        ] {
             let plan = plan_checks(&paths(&[changed]), &c);
-            assert_eq!(plan.commands, ["cargo check -j4", "cargo test -j4"], "{changed}");
+            assert_eq!(
+                plan.commands,
+                ["cargo check -j4", "cargo test -j4"],
+                "{changed}"
+            );
         }
     }
 
@@ -192,12 +239,26 @@ mod tests {
         let plan = plan_checks(&paths(&["crates/x/src/lib.rs", "crates/y/tests/t.rs"]), &c);
         assert_eq!(
             plan.commands,
-            ["cargo check -j4 -p x", "cargo check -j4 -p y", "cargo test -j4 -p x", "cargo test -j4 -p y"]
+            [
+                "cargo check -j4 -p x",
+                "cargo check -j4 -p y",
+                "cargo test -j4 -p x",
+                "cargo test -j4 -p y"
+            ]
         );
         // The root rule must not match a member's own src folder.
         assert!(!factory_core::glob_match("src/**", "crates/x/src/lib.rs"));
-        for pat in ["src/**", "tests/**", "benches/**", "examples/**", "build.rs"] {
-            assert!(!factory_core::glob_match(pat, "crates/x/src/lib.rs"), "{pat}");
+        for pat in [
+            "src/**",
+            "tests/**",
+            "benches/**",
+            "examples/**",
+            "build.rs",
+        ] {
+            assert!(
+                !factory_core::glob_match(pat, "crates/x/src/lib.rs"),
+                "{pat}"
+            );
             assert!(!factory_core::glob_match(pat, "crates/x/build.rs"), "{pat}");
         }
     }
@@ -208,7 +269,12 @@ mod tests {
         let plan = plan_checks(&paths(&["crates/x/src/lib.rs", "src/main.rs"]), &c);
         assert_eq!(
             plan.commands,
-            ["cargo check -j4 -p x", "cargo test -j4 -p x", "cargo check -j4", "cargo test -j4"]
+            [
+                "cargo check -j4 -p x",
+                "cargo test -j4 -p x",
+                "cargo check -j4",
+                "cargo test -j4"
+            ]
         );
     }
 }

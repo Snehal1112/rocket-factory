@@ -70,6 +70,11 @@ impl Repo {
             let buf = diff.stats()?.to_buf(DiffStatsFormat::FULL, 80)?;
             String::from_utf8_lossy(&buf[..]).into_owned()
         };
-        Ok(StagedReport { status, stat, diff: render_patch(&diff)?, log: recent_log(&inside, log_count)? })
+        Ok(StagedReport {
+            status,
+            stat,
+            diff: render_patch(&diff)?,
+            log: recent_log(&inside, log_count)?,
+        })
     }
 }

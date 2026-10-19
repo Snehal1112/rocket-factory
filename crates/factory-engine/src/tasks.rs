@@ -17,15 +17,27 @@ fn collect_tasks(plan: &str, accept: impl Fn(&str) -> bool) -> Vec<PlanTask> {
         if fenced || !accept(line) {
             continue;
         }
-        let t = line.trim_start_matches("- [ ] ").trim_start_matches("- [x] ").trim_start_matches("### ");
-        let Some(rest) = t.strip_prefix("Task ") else { continue };
+        let t = line
+            .trim_start_matches("- [ ] ")
+            .trim_start_matches("- [x] ")
+            .trim_start_matches("### ");
+        let Some(rest) = t.strip_prefix("Task ") else {
+            continue;
+        };
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        let Ok(n) = digits.parse::<u32>() else { continue };
-        let Some(title) = rest[digits.len()..].strip_prefix(':') else { continue };
+        let Ok(n) = digits.parse::<u32>() else {
+            continue;
+        };
+        let Some(title) = rest[digits.len()..].strip_prefix(':') else {
+            continue;
+        };
         if out.iter().any(|t| t.n == n) {
             continue;
         }
-        out.push(PlanTask { n, title: title.trim().to_string() });
+        out.push(PlanTask {
+            n,
+            title: title.trim().to_string(),
+        });
     }
     out
 }
@@ -69,7 +81,9 @@ pub fn spec_goal(spec: &str) -> String {
 
 /// True for a `### Task N:` heading line.
 fn is_task_heading(line: &str) -> bool {
-    let Some(rest) = line.strip_prefix("### Task ") else { return false };
+    let Some(rest) = line.strip_prefix("### Task ") else {
+        return false;
+    };
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     !digits.is_empty() && rest[digits.len()..].starts_with(':')
 }
@@ -94,8 +108,17 @@ pub(crate) fn lines_with_fence(text: &str) -> Vec<(&str, bool)> {
 /// Headings inside fenced code blocks are ignored.
 pub fn plan_header(plan: &str) -> String {
     let lines = lines_with_fence(plan);
-    let end = lines.iter().position(|(l, fenced)| !fenced && is_task_heading(l)).unwrap_or(lines.len());
-    lines[..end].iter().map(|(l, _)| *l).collect::<Vec<_>>().join("\n").trim().to_string()
+    let end = lines
+        .iter()
+        .position(|(l, fenced)| !fenced && is_task_heading(l))
+        .unwrap_or(lines.len());
+    lines[..end]
+        .iter()
+        .map(|(l, _)| *l)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 /// True for the `## Review Focus` heading line.
@@ -113,7 +136,9 @@ fn ends_section(line: &str) -> bool {
 pub fn review_focus(plan: &str) -> Option<String> {
     let header = plan_header(plan);
     let lines = lines_with_fence(&header);
-    let start = lines.iter().position(|(l, fenced)| !fenced && is_focus_heading(l))?;
+    let start = lines
+        .iter()
+        .position(|(l, fenced)| !fenced && is_focus_heading(l))?;
     let body: Vec<&str> = lines[start + 1..]
         .iter()
         .take_while(|(l, fenced)| *fenced || !ends_section(l))
@@ -147,7 +172,9 @@ pub fn plan_outline(plan: &str) -> String {
     if headings.is_empty() {
         return header;
     }
-    format!("{header}\n\n{}", headings.join("\n")).trim().to_string()
+    format!("{header}\n\n{}", headings.join("\n"))
+        .trim()
+        .to_string()
 }
 
 /// The heading and body of `### Task N:`, up to the next task heading, a `Next plan:` line or the end.
@@ -157,7 +184,10 @@ pub fn task_section(plan: &str, n: u32) -> Option<String> {
     let prefix = format!("{n}:");
     let lines = lines_with_fence(plan);
     let start = lines.iter().position(|(l, fenced)| {
-        !fenced && is_task_heading(l) && l.strip_prefix("### Task ").is_some_and(|r| r.starts_with(&prefix))
+        !fenced
+            && is_task_heading(l)
+            && l.strip_prefix("### Task ")
+                .is_some_and(|r| r.starts_with(&prefix))
     })?;
     let mut out = vec![lines[start].0];
     for (line, fenced) in &lines[start + 1..] {
@@ -173,9 +203,9 @@ pub fn task_section(plan: &str, n: u32) -> Option<String> {
 /// outside a fenced block. `None` when there is no such heading or its body is empty.
 fn goal_section(spec: &str) -> Option<String> {
     let lines = lines_with_fence(spec);
-    let start = lines
-        .iter()
-        .position(|(l, fenced)| !fenced && l.starts_with("## ") && l[3..].trim().eq_ignore_ascii_case("goal"))?;
+    let start = lines.iter().position(|(l, fenced)| {
+        !fenced && l.starts_with("## ") && l[3..].trim().eq_ignore_ascii_case("goal")
+    })?;
     let mut body = Vec::new();
     for (line, fenced) in &lines[start + 1..] {
         if !fenced && (line.starts_with("# ") || line.starts_with("## ")) {
@@ -207,9 +237,9 @@ pub fn spec_excerpt(spec: &str) -> String {
         }
     }
     let lines = lines_with_fence(spec);
-    let start = lines
-        .iter()
-        .position(|(l, fenced)| !fenced && l.starts_with("## ") && l.to_ascii_lowercase().contains("acceptance criteria"));
+    let start = lines.iter().position(|(l, fenced)| {
+        !fenced && l.starts_with("## ") && l.to_ascii_lowercase().contains("acceptance criteria")
+    });
     if let Some(start) = start {
         let mut section = vec![lines[start].0];
         for (line, fenced) in &lines[start + 1..] {
@@ -232,7 +262,16 @@ mod tests {
         let got = parse_tasks("# P\n### Task 1: first\ntext\n### Task 2:  second \n");
         assert_eq!(
             got,
-            vec![PlanTask { n: 1, title: "first".into() }, PlanTask { n: 2, title: "second".into() }]
+            vec![
+                PlanTask {
+                    n: 1,
+                    title: "first".into()
+                },
+                PlanTask {
+                    n: 2,
+                    title: "second".into()
+                }
+            ]
         );
     }
 
@@ -278,15 +317,24 @@ mod tests {
 
     #[test]
     fn spec_goal_prefers_a_goal_line() {
-        assert_eq!(spec_goal("# T\n\nGoal: add the thing\n\nmore"), "add the thing");
+        assert_eq!(
+            spec_goal("# T\n\nGoal: add the thing\n\nmore"),
+            "add the thing"
+        );
         assert_eq!(spec_goal("**Goal:** add it\n"), "add it");
         assert_eq!(spec_goal("- goal: fix it\n"), "fix it");
-        assert_eq!(spec_goal("# T\n\nFirst line.\nGoal: later goal\n"), "later goal");
+        assert_eq!(
+            spec_goal("# T\n\nFirst line.\nGoal: later goal\n"),
+            "later goal"
+        );
     }
 
     #[test]
     fn spec_goal_falls_back_to_the_first_plain_line() {
-        assert_eq!(spec_goal("# Title\n\nFirst paragraph line.\nSecond.\n"), "First paragraph line.");
+        assert_eq!(
+            spec_goal("# Title\n\nFirst paragraph line.\nSecond.\n"),
+            "First paragraph line."
+        );
         assert_eq!(spec_goal(""), "");
         assert_eq!(spec_goal("# Only a heading\n\n"), "");
         assert_eq!(spec_goal("Goal:\nnext line\n"), "Goal:");
@@ -294,7 +342,8 @@ mod tests {
         assert_eq!(spec_goal(&long).chars().count(), 200);
     }
 
-    const PLAN: &str = "# Demo Plan\n\n**Goal:** make it.\n\n## Global Constraints\n\n- Use -j4.\n\n---\n\n\
+    const PLAN: &str =
+        "# Demo Plan\n\n**Goal:** make it.\n\n## Global Constraints\n\n- Use -j4.\n\n---\n\n\
 ### Task 1: first thing\n\nbody one\n\n### Step 2: not a task\n\nstill one\n\n\
 ### Task 2: second thing\n\nbody two\n\nNext plan: none\n";
 
@@ -310,14 +359,21 @@ mod tests {
     fn a_task_section_stops_at_the_next_task_and_keeps_inner_headings() {
         let one = task_section(PLAN, 1).expect("task 1");
         assert!(one.starts_with("### Task 1: first thing"), "{one}");
-        assert!(one.contains("body one") && one.contains("### Step 2: not a task") && one.contains("still one"));
+        assert!(
+            one.contains("body one")
+                && one.contains("### Step 2: not a task")
+                && one.contains("still one")
+        );
         assert!(!one.contains("body two") && !one.contains("Task 2"));
     }
 
     #[test]
     fn the_last_task_section_drops_the_next_plan_pointer() {
         let two = task_section(PLAN, 2).expect("task 2");
-        assert!(two.contains("body two") && !two.contains("Next plan"), "{two}");
+        assert!(
+            two.contains("body two") && !two.contains("Next plan"),
+            "{two}"
+        );
     }
 
     #[test]
@@ -354,22 +410,37 @@ mod tests {
     fn a_single_task_plan_gives_that_task_and_its_header() {
         let plan = "# P\n\nHeader line.\n\n### Task 1: only\n\nonly body\n\nNext plan: later\n";
         assert_eq!(plan_header(plan), "# P\n\nHeader line.");
-        assert_eq!(task_section(plan, 1).expect("task 1"), "### Task 1: only\n\nonly body");
+        assert_eq!(
+            task_section(plan, 1).expect("task 1"),
+            "### Task 1: only\n\nonly body"
+        );
     }
 
     #[test]
     fn windows_line_endings_cut_the_same_sections_without_carriage_returns() {
         let plan = PLAN.replace('\n', "\r\n");
         let one = task_section(&plan, 1).expect("task 1");
-        assert!(one.contains("body one") && !one.contains("body two"), "{one:?}");
+        assert!(
+            one.contains("body one") && !one.contains("body two"),
+            "{one:?}"
+        );
         assert!(!one.contains('\r'), "{one:?}");
         let two = task_section(&plan, 2).expect("task 2");
-        assert!(two.contains("body two") && !two.contains("Next plan"), "{two:?}");
+        assert!(
+            two.contains("body two") && !two.contains("Next plan"),
+            "{two:?}"
+        );
         let header = plan_header(&plan);
-        assert!(header.contains("Use -j4.") && !header.contains("Task 1"), "{header:?}");
+        assert!(
+            header.contains("Use -j4.") && !header.contains("Task 1"),
+            "{header:?}"
+        );
         let spec = "# S\r\n\r\nGoal: crlf goal here.\r\n\r\n## Acceptance criteria\r\n\r\n- ok\r\n\r\n## Testing\r\n\r\nnope\r\n";
         let ex = spec_excerpt(spec);
-        assert!(ex.contains("Goal: crlf goal here.") && ex.contains("- ok") && !ex.contains("nope"), "{ex:?}");
+        assert!(
+            ex.contains("Goal: crlf goal here.") && ex.contains("- ok") && !ex.contains("nope"),
+            "{ex:?}"
+        );
     }
 
     #[test]
@@ -377,17 +448,27 @@ mod tests {
         let plan = "# P\n\n### Task 1: one\n\nbefore\n\n```text\n### Task 9: fake\nNext plan: x\nin fence\n```\n\nafter fence\n\n\
 ### Task 2: two\n\nbody two\n";
         let one = task_section(plan, 1).expect("task 1");
-        assert!(one.contains("### Task 9: fake") && one.contains("Next plan: x"), "{one}");
-        assert!(one.contains("in fence") && one.contains("after fence"), "{one}");
+        assert!(
+            one.contains("### Task 9: fake") && one.contains("Next plan: x"),
+            "{one}"
+        );
+        assert!(
+            one.contains("in fence") && one.contains("after fence"),
+            "{one}"
+        );
         assert!(!one.contains("body two"));
         assert!(task_section(plan, 9).is_none());
     }
 
     #[test]
     fn a_fenced_task_heading_does_not_end_the_header() {
-        let plan = "# P\n\n```text\n### Task 5: fake\n```\n\nmore header\n\n### Task 1: real\n\nbody\n";
+        let plan =
+            "# P\n\n```text\n### Task 5: fake\n```\n\nmore header\n\n### Task 1: real\n\nbody\n";
         let header = plan_header(plan);
-        assert!(header.contains("### Task 5: fake") && header.contains("more header"), "{header}");
+        assert!(
+            header.contains("### Task 5: fake") && header.contains("more header"),
+            "{header}"
+        );
         assert!(!header.contains("Task 1: real"));
     }
 
@@ -411,7 +492,10 @@ mod tests {
     fn a_fenced_h2_does_not_end_the_acceptance_section() {
         let spec = "Goal: g here ok.\n\n## Acceptance criteria\n\n```sh\n## comment\n```\n\n- last item\n\n## Testing\n\nnope\n";
         let ex = spec_excerpt(spec);
-        assert!(ex.contains("## comment") && ex.contains("- last item"), "{ex}");
+        assert!(
+            ex.contains("## comment") && ex.contains("- last item"),
+            "{ex}"
+        );
         assert!(!ex.contains("nope"));
     }
 
@@ -421,7 +505,10 @@ mod tests {
         let ex = spec_excerpt(spec);
         assert!(ex.starts_with("## Goal\n\nCut the cost."), "{ex}");
         assert!(ex.contains("## Not a heading"), "{ex}");
-        assert!(!ex.contains("Follow-up") && !ex.contains("long text"), "{ex}");
+        assert!(
+            !ex.contains("Follow-up") && !ex.contains("long text"),
+            "{ex}"
+        );
     }
 
     #[test]
@@ -432,18 +519,30 @@ mod tests {
 
     #[test]
     fn a_spec_without_acceptance_criteria_gives_the_goal_and_an_empty_spec_gives_nothing() {
-        assert_eq!(spec_excerpt("Goal: only this goal here.\n"), "Goal: only this goal here.");
+        assert_eq!(
+            spec_excerpt("Goal: only this goal here.\n"),
+            "Goal: only this goal here."
+        );
         assert_eq!(spec_excerpt(""), "");
     }
 
     #[test]
     fn review_focus_returns_the_section_body_and_none_when_missing() {
         let plan = "# P\n\nIntro.\n\n## Review Focus\n\nCheck the lease.\nAnd the ledger.\n\n## Other\n\nx\n\n### Task 1: a\n\nbody\n";
-        assert_eq!(review_focus(plan), Some("Check the lease.\nAnd the ledger.".to_string()));
+        assert_eq!(
+            review_focus(plan),
+            Some("Check the lease.\nAnd the ledger.".to_string())
+        );
         assert_eq!(review_focus("# P\n\nIntro.\n\n### Task 1: a\n"), None);
-        assert_eq!(review_focus("# P\n\n## Review Focus\n\n## Other\n\n### Task 1: a\n"), None);
+        assert_eq!(
+            review_focus("# P\n\n## Review Focus\n\n## Other\n\n### Task 1: a\n"),
+            None
+        );
         // A section after the first task heading is not part of the header.
-        assert_eq!(review_focus("# P\n\n### Task 1: a\n\n## Review Focus\n\nlate\n"), None);
+        assert_eq!(
+            review_focus("# P\n\n### Task 1: a\n\n## Review Focus\n\nlate\n"),
+            None
+        );
     }
 
     #[test]
@@ -452,16 +551,31 @@ mod tests {
         assert_eq!(review_focus(plan), None);
         let plan = "# P\n\n## Review Focus\n\n```\n## not a heading\n```\nlast\n\n### Task 1: a\n";
         let focus = review_focus(plan).expect("focus");
-        assert!(focus.contains("## not a heading") && focus.contains("last"), "{focus}");
+        assert!(
+            focus.contains("## not a heading") && focus.contains("last"),
+            "{focus}"
+        );
     }
 
     #[test]
     fn plan_outline_drops_the_focus_and_keeps_task_headings_only() {
         let plan = "# P\n\nIntro.\n\n## Review Focus\n\nCheck the lease.\n\n## Other\n\nkept\n\n### Task 1: a\n\nbody one\n\n### Task 2: b\n\nbody two\n";
         let out = plan_outline(plan);
-        assert!(out.contains("Intro.") && out.contains("## Other") && out.contains("kept"), "{out}");
-        assert!(!out.contains("Review Focus") && !out.contains("Check the lease."), "{out}");
-        assert!(out.contains("### Task 1: a") && out.contains("### Task 2: b"), "{out}");
-        assert!(!out.contains("body one") && !out.contains("body two"), "{out}");
+        assert!(
+            out.contains("Intro.") && out.contains("## Other") && out.contains("kept"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("Review Focus") && !out.contains("Check the lease."),
+            "{out}"
+        );
+        assert!(
+            out.contains("### Task 1: a") && out.contains("### Task 2: b"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("body one") && !out.contains("body two"),
+            "{out}"
+        );
     }
 }

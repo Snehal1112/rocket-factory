@@ -53,11 +53,16 @@ pub(crate) fn commit_merge(
         let mut paths = BTreeSet::new();
         for conflict in index.conflicts()? {
             let conflict = conflict?;
-            for entry in [conflict.our, conflict.their, conflict.ancestor].into_iter().flatten() {
+            for entry in [conflict.our, conflict.their, conflict.ancestor]
+                .into_iter()
+                .flatten()
+            {
                 paths.insert(String::from_utf8_lossy(&entry.path).into_owned());
             }
         }
-        return Ok(MergeOutcome::Conflict { paths: paths.into_iter().collect() });
+        return Ok(MergeOutcome::Conflict {
+            paths: paths.into_iter().collect(),
+        });
     }
     let tree = repo.find_tree(index.write_tree_to(repo)?)?;
     let sig = signature(repo)?;
@@ -90,7 +95,9 @@ pub(crate) fn commit_merge(
         restore(repo, ours);
         return Err(e.into());
     }
-    Ok(MergeOutcome::Merged { merge_sha: new_id.to_string() })
+    Ok(MergeOutcome::Merged {
+        merge_sha: new_id.to_string(),
+    })
 }
 
 impl Repo {
@@ -117,7 +124,9 @@ impl Repo {
         }
         let main = self.branch_commit(&self.base)?;
         if self.is_ancestor(&head_id, &main.id().to_string())? {
-            return Ok(MergeOutcome::Refused { reason: format!("the head is already on {}", self.base) });
+            return Ok(MergeOutcome::Refused {
+                reason: format!("the head is already on {}", self.base),
+            });
         }
         let branch_ref = format!("refs/heads/{}", self.base);
         commit_merge(&self.inner, &branch_ref, &main, &head, message)

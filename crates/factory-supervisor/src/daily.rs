@@ -33,19 +33,33 @@ pub fn status(home: &Home, limit: Option<u64>, now_ms: u64) -> Option<DailyBudge
         let sums = project_usage(home, &entry.name, file);
         used = used.saturating_add(sums.get(&today).copied().unwrap_or(0));
     }
-    Some(DailyBudget { limit, used, resets_at_ms: day.saturating_add(1).saturating_mul(MS_PER_DAY) })
+    Some(DailyBudget {
+        limit,
+        used,
+        resets_at_ms: day.saturating_add(1).saturating_mul(MS_PER_DAY),
+    })
 }
 
 /// An RFC 3339 UTC time like `2026-10-18T00:00:00Z`.
 pub fn rfc3339_utc(ms: u64) -> String {
     let secs = ms / 1000;
     let rem = secs % SECS_PER_DAY;
-    format!("{}T{:02}:{:02}:{:02}Z", civil(secs / SECS_PER_DAY), rem / 3600, rem % 3600 / 60, rem % 60)
+    format!(
+        "{}T{:02}:{:02}:{:02}Z",
+        civil(secs / SECS_PER_DAY),
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 /// The line `factoryd status` prints for a budget.
 pub fn status_line(b: &DailyBudget) -> String {
-    let pct = if b.limit == 0 { 100 } else { u128::from(b.used) * 100 / u128::from(b.limit) };
+    let pct = if b.limit == 0 {
+        100
+    } else {
+        u128::from(b.used) * 100 / u128::from(b.limit)
+    };
     let mut line = format!(
         "daily budget: {} of {} weighted tokens today ({pct}%), resets at {}",
         b.used,
@@ -81,13 +95,19 @@ mod tests {
 
     fn write_usage(home: &Home, name: &str, job: &str, text: &str) {
         let file = project::get(home, name).expect("project");
-        let dir = project::layout(home, name, &file).expect("layout").jobs_dir.join(job);
+        let dir = project::layout(home, name, &file)
+            .expect("layout")
+            .jobs_dir
+            .join(job);
         std::fs::create_dir_all(&dir).expect("job dir");
         std::fs::write(dir.join("usage.jsonl"), text).expect("usage");
     }
 
     fn line(input: u64, cache_read: u64, day: u64) -> String {
-        format!("{{\"input\":{input},\"cache_read\":{cache_read},\"ts\":{}}}\n", day * SECS_PER_DAY + 100)
+        format!(
+            "{{\"input\":{input},\"cache_read\":{cache_read},\"ts\":{}}}\n",
+            day * SECS_PER_DAY + 100
+        )
     }
 
     #[test]
@@ -99,7 +119,12 @@ mod tests {
     #[test]
     fn sums_today_of_every_project_and_job_and_ignores_yesterday() {
         let (_t, home) = home_with(&["a", "b"]);
-        write_usage(&home, "a", "001", &(line(10, 0, DAY) + &line(999, 0, DAY - 1)));
+        write_usage(
+            &home,
+            "a",
+            "001",
+            &(line(10, 0, DAY) + &line(999, 0, DAY - 1)),
+        );
         write_usage(&home, "a", "002", &line(5, 0, DAY));
         write_usage(&home, "b", "001", &line(7, 0, DAY));
         let b = status(&home, Some(100), NOW_MS).expect("some");
@@ -140,9 +165,15 @@ mod tests {
         assert_eq!(at((DAY + 1) * MS_PER_DAY - 1), (DAY + 1) * MS_PER_DAY);
         // 2023-12-31 to 2024-01-01 crosses a month and a year.
         let dec31 = 19_722u64;
-        assert_eq!(rfc3339_utc(at(dec31 * MS_PER_DAY + 5)), "2024-01-01T00:00:00Z");
+        assert_eq!(
+            rfc3339_utc(at(dec31 * MS_PER_DAY + 5)),
+            "2024-01-01T00:00:00Z"
+        );
         // 2000-02-29 is a leap day.
-        assert_eq!(rfc3339_utc(at(11_016 * MS_PER_DAY + 5)), "2000-03-01T00:00:00Z");
+        assert_eq!(
+            rfc3339_utc(at(11_016 * MS_PER_DAY + 5)),
+            "2000-03-01T00:00:00Z"
+        );
         // 2023-02-28 is followed by March 1.
         assert_eq!(rfc3339_utc(at(19_416 * MS_PER_DAY)), "2023-03-01T00:00:00Z");
     }
@@ -155,9 +186,15 @@ mod tests {
 
     #[test]
     fn the_status_line_marks_warning_and_reached() {
-        let b = |used| DailyBudget { limit: 100, used, resets_at_ms: 0 };
+        let b = |used| DailyBudget {
+            limit: 100,
+            used,
+            resets_at_ms: 0,
+        };
         assert!(!status_line(&b(10)).contains("warning"));
-        assert!(status_line(&b(10)).starts_with("daily budget: 10 of 100 weighted tokens today (10%), resets at 1970-01-01T00:00:00Z"));
+        assert!(status_line(&b(10)).starts_with(
+            "daily budget: 10 of 100 weighted tokens today (10%), resets at 1970-01-01T00:00:00Z"
+        ));
         assert!(status_line(&b(80)).ends_with(", warning"));
         assert!(status_line(&b(100)).ends_with("reached: new runs are waiting"));
         assert!(status_line(&b(150)).contains("(150%)"));

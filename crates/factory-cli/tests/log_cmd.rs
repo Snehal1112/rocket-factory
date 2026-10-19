@@ -17,7 +17,11 @@ fn line(level: &str, job: &str, n: u32) -> String {
 
 #[test]
 fn log_prints_a_jobs_lines() {
-    let (a, b, c) = (line("info", "001", 1), line("info", "002", 2), line("info", "001", 3));
+    let (a, b, c) = (
+        line("info", "001", 1),
+        line("info", "002", 2),
+        line("info", "001", 3),
+    );
     let (_t, ctx) = ctx_with_log(Some(&[&a, &b, &c]));
     let out = run_log(&ctx, Some("001"), None, 100).expect("log");
     assert_eq!(out, format!("{a}\n{c}"));
@@ -25,7 +29,11 @@ fn log_prints_a_jobs_lines() {
 
 #[test]
 fn log_level_filter() {
-    let (a, b, c) = (line("info", "001", 1), line("warn", "001", 2), line("error", "001", 3));
+    let (a, b, c) = (
+        line("info", "001", 1),
+        line("warn", "001", 2),
+        line("error", "001", 3),
+    );
     let (_t, ctx) = ctx_with_log(Some(&[&a, &b, &c]));
     let out = run_log(&ctx, None, Some("warn"), 100).expect("log");
     assert_eq!(out, format!("{b}\n{c}"));
@@ -33,10 +41,20 @@ fn log_level_filter() {
 
 #[test]
 fn log_tail_keeps_the_last_n() {
-    let (a, b, c) = (line("info", "001", 1), line("info", "001", 2), line("info", "001", 3));
+    let (a, b, c) = (
+        line("info", "001", 1),
+        line("info", "001", 2),
+        line("info", "001", 3),
+    );
     let (_t, ctx) = ctx_with_log(Some(&[&a, &b, &c]));
-    assert_eq!(run_log(&ctx, None, None, 2).expect("log"), format!("{b}\n{c}"));
-    assert_eq!(run_log(&ctx, None, None, 0).expect("log"), format!("{a}\n{b}\n{c}"));
+    assert_eq!(
+        run_log(&ctx, None, None, 2).expect("log"),
+        format!("{b}\n{c}")
+    );
+    assert_eq!(
+        run_log(&ctx, None, None, 0).expect("log"),
+        format!("{a}\n{b}\n{c}")
+    );
 }
 
 #[test]
