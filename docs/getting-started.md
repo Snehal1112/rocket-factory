@@ -36,7 +36,7 @@ Words used below:
 
 ## 2. What you need first
 
-The factory runs on Linux (macOS partly, see the note at the end). It is built from source with Rust.
+The factory runs on Linux and macOS (see the note at the end). It is built from source with Rust.
 
 | Need | Why | Check |
 |---|---|---|
@@ -429,8 +429,8 @@ nohup factoryd run >> ~/.factory/factoryd.log 2>&1 &
 
 ## 16. Platform notes
 
-- Linux is fully supported.
-- The dead-owner checks for locks and the adoption of running jobs after a `factoryd` restart read `/proc`, so they work on Linux only. On macOS a stale lock can keep a project busy until you remove it or it expires after 30 minutes.
+- Linux and macOS are supported.
+- The dead-owner checks for locks and the adoption of running jobs after a `factoryd` restart use one process library on both systems. They only see processes on this machine.
 - Windows is not supported for `factoryd`.
 
 ## 17. Where to read more

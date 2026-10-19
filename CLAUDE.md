@@ -47,7 +47,7 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 - `README.md` documents the factory home (`$FACTORY_HOME`, else `~/.factory`), presets, `factory --project <name>`, the project lease and `factoryd`. Read it before touching `factory-core` (`home`, `project`, `preset`, `layout`) or `factory-supervisor`.
 - Paths reach the driver only through `Layout`. `factory-cli/tests/no_hardcoded_paths.rs` fails on hardcoded ones.
-- The lease heartbeat and the `/proc` based dead-owner checks are Linux only. Keep that in mind when changing `lease.rs`, `project_lease.rs` or `procinfo.rs`.
+- Process checks (does a pid exist, is it a zombie, when did it start) go through `factory-engine/src/procinfo.rs` only, built on `sysinfo`, for Linux and macOS alike. It refreshes only the pid it asks about. macOS reports an unreaped zombie as gone, Linux as a zombie; neither is alive. Never read `/proc` directly.
 - `factory-agent` ships a `fake-claude` binary that tests use instead of the real `claude`.
 
 ## Carried over from Rocket

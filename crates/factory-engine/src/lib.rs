@@ -12,6 +12,7 @@ mod review;
 mod lease;
 mod lock;
 mod project_lease;
+pub mod procinfo;
 mod runloop;
 mod series;
 mod specs;

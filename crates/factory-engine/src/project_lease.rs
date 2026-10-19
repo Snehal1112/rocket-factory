@@ -54,13 +54,9 @@ pub fn owner_pid(owner: &str) -> Option<u32> {
     pid.parse().ok()
 }
 
-/// True only when `/proc` exists and has no entry for `pid`. This process is never gone.
+/// True only when this machine says no process has `pid`. This process is never gone.
 pub fn process_gone(pid: u32) -> bool {
-    if pid == std::process::id() {
-        return false;
-    }
-    let proc = Path::new("/proc");
-    proc.join("self").exists() && !proc.join(pid.to_string()).exists()
+    pid != std::process::id() && !crate::procinfo::pid_exists(pid)
 }
 
 /// A lease whose owner is a driver process that no longer runs on this machine.

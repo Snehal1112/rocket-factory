@@ -76,6 +76,15 @@ impl Env {
         std::fs::read_to_string(self.dir.join(format!("runs-{project}-{job}"))).map(|t| t.lines().count()).unwrap_or(0)
     }
 
+    /// Waits until the script wrote its first start, so a later count of 1 is not a race with its start.
+    fn wait_started(&self, project: &str, job: &str) {
+        let end = Instant::now() + TIMEOUT;
+        while self.runs(project, job) == 0 {
+            assert!(Instant::now() < end, "the script did not start");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn state_dir(&self, name: &str) -> PathBuf {
         let file = project::get(&self.home, name).expect("project");
         project::layout(&self.home, name, &file).expect("layout").state_dir
@@ -164,7 +173,7 @@ fn a_recorded_pid_that_started_when_the_record_says_is_adopted() {
     wait_dead(child.id());
 }
 
-/// A pid that ran and was reaped, so `/proc` has no entry for it.
+/// A pid that ran and was reaped, so no process has it.
 fn dead_pid() -> u32 {
     let mut c = Command::new("sh").arg("-c").arg("exit 0").spawn().expect("sh");
     let pid = c.id();
@@ -184,10 +193,11 @@ fn tick_until_finished(s: &mut Supervisor, id: &str) {
     }
 }
 
-/// The process group of a pid, from field 5 of its stat line.
-fn pgrp(pid: u32) -> String {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("stat");
-    stat.rsplit_once(')').expect("paren").1.split_whitespace().nth(2).expect("pgrp").to_string()
+/// The process group of a pid, from `ps` (Linux and macOS both know `-o pgid=`).
+fn pgrp(pid: u32) -> u32 {
+    let out = Command::new("ps").env("LC_ALL", "C").args(["-o", "pgid=", "-p", &pid.to_string()]).output().expect("ps");
+    assert!(out.status.success(), "ps found no pid {pid}");
+    String::from_utf8_lossy(&out.stdout).trim().parse().expect("pgid")
 }
 
 #[test]
@@ -200,6 +210,7 @@ fn a_new_supervisor_adopts_a_running_child_and_finishes_it() {
     let pid = records::read_children(&e.home).into_iter().flatten().next().expect("record").pid;
     // The supervisor stops, the child does not.
     drop(first);
+    e.wait_started("p", "1");
     assert!(pid_alive(pid));
     assert_ne!(pgrp(pid), pgrp(std::process::id()), "the child has its own process group");
     let mut second = e.supervisor();
@@ -228,11 +239,7 @@ fn a_child_killed_while_no_supervisor_runs_is_lost_and_never_restarted() {
     let pid = records::read_children(&e.home).into_iter().flatten().next().expect("record").pid;
     drop(first);
     // Kill only after the script has started, so the start counter is written.
-    let end = Instant::now() + TIMEOUT;
-    while e.runs("p", "1") == 0 {
-        assert!(Instant::now() < end, "the script did not start");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    e.wait_started("p", "1");
     assert!(Command::new("kill").arg("-9").arg(pid.to_string()).status().expect("kill").success());
     wait_dead(pid);
     let mut second = e.supervisor();
@@ -288,6 +295,7 @@ fn two_supervisors_on_one_home_never_start_a_request_twice() {
     let mut a = e.supervisor();
     let mut b = e.supervisor();
     assert_eq!(a.tick().expect("tick").started, vec![id.clone()]);
+    e.wait_started("p", "1");
     for _ in 0..3 {
         assert!(b.tick().expect("tick").started.is_empty());
         assert!(a.tick().expect("tick").started.is_empty());

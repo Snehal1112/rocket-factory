@@ -210,9 +210,10 @@ mod tests {
         let (t, home, sp) = setup();
         let (out, err) = (t.path().join("o.txt"), t.path().join("e.txt"));
         let pid = sp.spawn(&home, &req(Action::Run, false), &out, &err).expect("spawn");
-        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("stat");
-        let after = stat.rsplit_once(')').expect("comm").1;
-        let pgrp: u32 = after.split_whitespace().nth(2).expect("pgrp").parse().expect("number");
+        // `ps -o pgid=` works on Linux and macOS alike.
+        let ps = std::process::Command::new("ps").env("LC_ALL", "C").args(["-o", "pgid=", "-p", &pid.to_string()]).output().expect("ps");
+        assert!(ps.status.success(), "ps found no pid {pid}");
+        let pgrp: u32 = String::from_utf8_lossy(&ps.stdout).trim().parse().expect("pgid");
         assert_eq!(pgrp, pid);
         assert_eq!(wait_exit(&sp, pid), ChildPoll::Exited(Some(0)));
         let text = std::fs::read_to_string(&out).expect("out");

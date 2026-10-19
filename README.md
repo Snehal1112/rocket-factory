@@ -246,7 +246,7 @@ folder and renews it while it works. `factory status` starts with `project: free
 `project: busy, job <id> (owner <who>, <n> s left)` while another process holds it. The busy message means that
 process owns the project for about that many more seconds: wait for it, or stop it. A lease of a crashed process
 expires on its own (after up to 30 minutes), and an expired or corrupt lease file is taken over. A lease whose
-owner is a `driver-<pid>-<secs>` process that no longer runs on this machine counts as stale at once (Linux only).
+owner is a `driver-<pid>-<secs>` process that no longer runs on this machine counts as stale at once (Linux and macOS).
 If the process that held it is gone and the lease is still shown as busy, `factory cancel <id> --force` releases
 the lease of that job, or delete `<state folder>/project.lease`. `project remove` refuses while the lease is held,
 `--force` included.
@@ -256,10 +256,9 @@ long agent step does not let them expire. If a renewal finds another owner holdi
 start of its next loop iteration with the busy error. `kb-refresh` takes the project lease like `run` does, so a
 busy project refuses it with the same message.
 
-The dead-owner check reads `/proc` on this machine only. A state folder shared through a container bind mount or a
-network filesystem can show a live owner as gone, so run the drivers of one project from one machine. On a system
-without `/proc` (macOS) a recorded pid always looks alive, so an adopted child (see below) is never settled and
-its project stays blocked until a person removes the child record under `run/children` in the factory home.
+The dead-owner check looks up the pid in this machine's process table, through one library (`sysinfo`) on both
+Linux and macOS. A state folder shared through a container bind mount or a network filesystem can show a live
+owner as gone, so run the drivers of one project from one machine.
 A hung agent that keeps producing output keeps the project locked as long as its driver process lives. Only
 `stall_minutes` covers a silent one.
 
@@ -289,8 +288,8 @@ At most one child runs per project, and the project lease still decides who may 
 
 Stopping `factoryd` never stops jobs: children run in their own process group. A restarted `factoryd` adopts
 them by their recorded pid and finishes them when they end. A pid that started far from the recorded time (more
-than a minute) is treated as a stranger that reused the number, so the child counts as gone. This check reads
-`/proc` and assumes 100 clock ticks per second, so it works on Linux only.
+than a minute) is treated as a stranger that reused the number, so the child counts as gone. The start time
+comes from the same library, to the second. When it is unknown, the recorded pid is trusted.
 
 A request ends as `Lost` when `factoryd` cannot tell how it ended: the child died without a result line, or the
 request was started before a crash but left no child record (its log files exist). A lost job is never restarted

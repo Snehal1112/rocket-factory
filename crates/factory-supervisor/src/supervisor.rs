@@ -6,7 +6,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use factory_core::{project, CoreError, Home, HomeConfig};
-use factory_engine::{owner_pid, process_gone, project_lease_status, ProjectLeaseStatus};
+use factory_engine::procinfo::{process_state, ProcState};
+use factory_engine::{owner_pid, project_lease_status, ProjectLeaseStatus};
 
 use crate::lock::{stop_file, InstanceLock, LockError};
 use crate::queue::{self, QueueItem};
@@ -87,13 +88,7 @@ pub struct Supervisor {
 
 /// True when the pid runs and is not a zombie.
 pub fn pid_alive(pid: u32) -> bool {
-    if process_gone(pid) {
-        return false;
-    }
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().next().map(|s| s != "Z")).unwrap_or(true),
-        Err(_) => true,
-    }
+    pid == std::process::id() || process_state(pid) == ProcState::Running
 }
 
 /// True when the recorded child still runs: the pid is alive and started when the record says.
@@ -408,7 +403,7 @@ impl Supervisor {
             let (ended, code) = match self.spawner.poll(child.pid) {
                 ChildPoll::Running => (false, None),
                 ChildPoll::Exited(code) => (true, Some(code)),
-                // An adopted child is judged by `/proc`. A pid that started far from the record belongs to a stranger.
+                // An adopted child is judged by the process table. A pid that started far from the record belongs to a stranger.
                 ChildPoll::Unknown => (!adopted_alive(&child), None),
             };
             if !ended {
