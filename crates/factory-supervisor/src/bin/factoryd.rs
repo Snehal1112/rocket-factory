@@ -56,6 +56,20 @@ fn now_ms() -> u64 {
 
 fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
     let cfg = HomeConfig::load(&home).map_err(|e| e.to_string())?;
+    let target = factory_telemetry::LogTarget { path: home.factoryd_log_file(), project: None, scope: factory_telemetry::Scope::Factoryd };
+    let env = std::env::var("FACTORY_LOG").ok();
+    let _log = match factory_telemetry::init(target, "info", env.as_deref()) {
+        Ok(guard) => {
+            if let Some(note) = guard.note() {
+                eprintln!("note: FACTORY_LOG ignored: {note}");
+            }
+            Some(guard)
+        }
+        Err(e) => {
+            eprintln!("note: log disabled: {e}");
+            None
+        }
+    };
     let spawner = ProcessSpawner::from_env().map_err(|e| e.to_string())?;
     // The supervisor holds the instance lock for its whole life.
     let mut sup = Supervisor::new_locked(home.clone(), Box::new(spawner), Box::new(now_ms)).map_err(|e| e.to_string())?;
@@ -64,12 +78,7 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
     sup.set_max_parallel(cfg.max_parallel);
     if once {
         let report = sup.tick().map_err(|e| e.to_string())?;
-        for line in factory_supervisor::supervisor::new_lines(&mut std::collections::HashSet::new(), &report) {
-            eprintln!("{line}");
-        }
-        for line in &report.notices {
-            eprintln!("{line}");
-        }
+        factory_supervisor::supervisor::log_report(&report, &mut std::collections::HashSet::new());
         println!("started {}, finished {}, rejected {}", report.started.len(), report.finished.len(), report.rejected.len());
         return Ok(());
     }

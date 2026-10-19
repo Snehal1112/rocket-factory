@@ -196,6 +196,43 @@ pub fn new_lines(prev: &mut HashSet<String>, report: &TickReport) -> Vec<String>
     fresh.into_iter().filter(|l| seen.insert(l.clone())).collect()
 }
 
+/// Logs a tick report. Start, finish and reject are always logged. Errors, bad child records and
+/// orphans are logged once per change, by the same rules as `new_lines`. Notices are logged each time.
+pub fn log_report(report: &TickReport, printed: &mut HashSet<String>) {
+    for id in &report.started {
+        tracing::info!(event = "sup.start", request = id.as_str());
+    }
+    for (id, outcome) in &report.finished {
+        let outcome = format!("{outcome:?}");
+        tracing::info!(event = "sup.finish", request = id.as_str(), outcome = outcome.as_str());
+    }
+    for (id, reason) in &report.rejected {
+        tracing::info!(event = "sup.reject", request = id.as_str(), reason = reason.as_str());
+    }
+    let mut fresh: HashSet<String> = new_lines(printed, report).into_iter().collect();
+    for e in &report.errors {
+        let line = format!("factoryd: {e}");
+        if fresh.remove(&line) {
+            tracing::error!(event = "sup.error", msg = line.as_str());
+        }
+    }
+    for b in &report.bad_children {
+        let line = format!("factoryd: bad child record {b}");
+        if fresh.remove(&line) {
+            tracing::warn!(event = "sup.warn", msg = line.as_str());
+        }
+    }
+    for p in &report.orphans {
+        let line = format!("factoryd: project {p} is busy, its lease belongs to a live process that is not a child of factoryd");
+        if fresh.remove(&line) {
+            tracing::warn!(event = "sup.warn", msg = line.as_str());
+        }
+    }
+    for n in &report.notices {
+        tracing::info!(event = "sup.notice", msg = n.as_str());
+    }
+}
+
 /// The shortest pause between two ticks.
 pub const MIN_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -558,20 +595,11 @@ impl Supervisor {
         let mut printed: HashSet<String> = HashSet::new();
         loop {
             match self.tick() {
-                Ok(report) => {
-                    for line in new_lines(&mut printed, &report) {
-                        eprintln!("{line}");
-                    }
-                    for line in &report.notices {
-                        eprintln!("{line}");
-                    }
-                }
+                Ok(report) => log_report(&report, &mut printed),
                 Err(e) => {
-                    // The same failure prints once, through the same filter as the other lines.
+                    // The same failure is logged once, through the same filter as the other lines.
                     let failed = TickReport { errors: vec![format!("tick failed: {e}")], ..TickReport::default() };
-                    for line in new_lines(&mut printed, &failed) {
-                        eprintln!("{line}");
-                    }
+                    log_report(&failed, &mut printed);
                 }
             }
             if stop() {

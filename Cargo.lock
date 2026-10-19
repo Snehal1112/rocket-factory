@@ -255,6 +255,7 @@ dependencies = [
  "factory-core",
  "factory-engine",
  "factory-git",
+ "factory-telemetry",
  "fs2",
  "git2",
  "serde",
@@ -262,6 +263,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tiny_http",
+ "tracing",
 ]
 
 [[package]]
