@@ -23,6 +23,7 @@ tempfile.workspace = true
 
 [dev-dependencies]
 git2.workspace = true
+tracing-subscriber.workspace = true
 
 [[bin]]
 name = "factory"

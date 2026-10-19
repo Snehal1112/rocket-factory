@@ -61,6 +61,10 @@ runs that rarely resume. `"1h"` does not override a `FORCE_PROMPT_CACHING_5M` ex
 environment. Each `usage.jsonl` line has `cache_creation_1h`, the 1 hour part of `cache_creation`, to check the
 effect.
 
+## Logging
+
+The driver writes a JSON log to `<state_dir>/log.jsonl` and `factoryd` to `<home>/factoryd.log.jsonl`. `factory log [--job <id>] [--level <lvl>] [--tail <n>]` reads it. `log_level` in `project.toml` and `FACTORY_LOG` set the level; see `docs/software-factory.md` (Logging).
+
 ## Ticket hygiene
 
 After the last plan of a job merges, the driver can file the leftover work as new GitHub tickets, comment on the

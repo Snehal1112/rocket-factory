@@ -164,3 +164,66 @@ fn factory_costs_lists_jobs_writes_costs_json_and_new_prints_estimates() -> Test
     assert!(again.contains("(small, 1 job, few jobs"), "{again}");
     Ok(())
 }
+
+/// Runs `f` with a thread-local log writer on the scenario's log file, as `main` installs one.
+fn with_log<R>(sc: &Scenario, f: impl FnOnce() -> R) -> R {
+    use tracing_subscriber::layer::SubscriberExt;
+    let path = sc.root.join(".superpowers/factory/log.jsonl");
+    let file = std::sync::Arc::new(factory_telemetry::RotatingFile::new(path, factory_telemetry::LOG_CAP_BYTES));
+    let layer = factory_telemetry::JsonLayer::new(file, None, factory_telemetry::Scope::Cli);
+    tracing::subscriber::with_default(tracing_subscriber::Registry::default().with(layer), f)
+}
+
+fn log_lines(sc: &Scenario) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    let text = std::fs::read_to_string(sc.root.join(".superpowers/factory/log.jsonl"))?;
+    text.lines().map(|l| Ok(serde_json::from_str(l)?)).collect()
+}
+
+fn one_merged_run(sc: &Scenario) -> TestResult {
+    let end = with_log(sc, || sc.start(&sc.plan_b, false))?;
+    assert_eq!(end, "merged", "{end}");
+    Ok(())
+}
+
+#[test]
+fn run_writes_a_log_with_merge_done() -> TestResult {
+    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    one_merged_run(&sc)?;
+    let lines = log_lines(&sc)?;
+    for l in &lines {
+        for key in ["ts", "level", "scope", "event"] {
+            assert!(l.get(key).is_some(), "missing {key}: {l}");
+        }
+        assert_eq!(l["scope"], "cli");
+    }
+    let changes: Vec<String> = lines
+        .iter()
+        .filter(|l| l["event"] == "stage.change" && l["job_id"] == "001")
+        .filter_map(|l| l["to"].as_str().map(str::to_string))
+        .collect();
+    let history: Vec<String> = sc.job("001")?.stage_history.iter().skip(1).map(|e| e.stage.to_string()).collect();
+    assert_eq!(changes, history);
+    let done: Vec<&serde_json::Value> = lines.iter().filter(|l| l["event"] == "merge.done").collect();
+    assert_eq!(done.len(), 1, "{done:?}");
+    assert_eq!(done[0]["sha"], sc.main_tip()?.as_str());
+    Ok(())
+}
+
+#[test]
+fn run_log_has_no_secret() -> TestResult {
+    std::env::set_var("ANTHROPIC_API_KEY", "planted-secret-999");
+    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    one_merged_run(&sc)?;
+    let text = std::fs::read_to_string(sc.root.join(".superpowers/factory/log.jsonl"))?;
+    assert!(!text.contains("planted-secret-999"));
+    Ok(())
+}
+
+#[test]
+fn factory_log_command_shows_the_run() -> TestResult {
+    let sc = Scenario::new("", vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)])?;
+    one_merged_run(&sc)?;
+    let out = sc.run(&["log", "--job", "001", "--level", "info"])?;
+    assert!(out.lines().any(|l| l.contains("\"merge.done\"")), "{out}");
+    Ok(())
+}

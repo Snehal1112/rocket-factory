@@ -117,6 +117,32 @@ The driver can file the leftover work of a ticket and close the ticket after the
 - A `gh` failure is written to the ledger and printed. It never changes the merge result, and `factory tickets` exits non-zero.
 - Merge footer: `Relates to: #N` when the spec has follow-ups (the ticket is not finished), `Fixes: #N` otherwise. Commit and sync footers stay `Relates to`.
 
+## Logging
+
+The driver and `factoryd` write one JSON line per event, next to `events.jsonl`, the board and the ledger, which are unchanged.
+
+- `<state_dir>/log.jsonl` for the driver (scope `cli`), `<home>/factoryd.log.jsonl` for `factoryd` (scope `factoryd`).
+- The level comes from `log_level` in `project.toml` (default `info`). `FACTORY_LOG` overrides it. An invalid `FACTORY_LOG` prints `note: FACTORY_LOG ignored: <why>`.
+- stderr shows `warn` and above, plus `sup.notice` at `info`. A failure logs an `error` line and still prints a human line.
+- A log failure never changes a stage, a merge or a command. At most one `note: log disabled: <why>` is printed at startup.
+
+| Key | Note |
+|---|---|
+| `ts` | UTC, RFC 3339 with milliseconds |
+| `level` | `error`, `warn`, `info`, `debug`, `trace` |
+| `scope` | `cli` or `factoryd` |
+| `project` | omitted when the checkout is not registered |
+| `job_id`, `stage` | omitted outside a job |
+| `event` | dotted name: `job.created`, `stage.change`, `agent.start`, `agent.end`, `check.run`, `git.op` (debug), `decide`, `merge.done`, `park`, `step.error`, `sup.start`, `sup.finish`, `sup.reject`, `sup.notice`, `sup.warn`, `sup.error` |
+| `msg` | at most 300 characters |
+| other | event fields, such as `from`, `to`, `sha`, `role` |
+
+Rotation: a file over 10 MiB is renamed to `.1`, with `.1` and `.2` moved to `.2` and `.3`; the old `.3` is dropped. Writers append one line at a time, so concurrent processes lose no line.
+
+Redaction: a field whose name contains `token`, `key`, `secret` or `password` (any case) is written as `[redacted]`, except the count `weighted_tokens`. In a check command, the value of a `--name=value` flag with such a name is redacted. Environment variables, prompts and command output are never logged.
+
+`factory log [--job <id>] [--level <lvl>] [--tail <n>]` prints the matching lines of the log and its rotated files, oldest first. `--level` keeps that level and above, `--tail` defaults to 100 (0 means all), and `--project <name>` reads that project's file. A missing file prints `no log yet`.
+
 ## Draft cards
 
 A draft card tracks a spec that is still being written, before any job exists. It lives in the board's `drafts` list.
