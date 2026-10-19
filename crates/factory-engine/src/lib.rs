@@ -66,7 +66,7 @@ pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPla
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
 pub use specs::{ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS};
-pub use tasks::{parse_tasks, plan_outline, plan_title, review_focus, spec_goal, PlanTask};
+pub use tasks::{parse_checkbox_tasks, parse_tasks, plan_outline, plan_title, review_focus, spec_goal, PlanTask};
 pub use tick::tick_plan;
 pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
 pub use tracker::{GhTracker, Tracker};

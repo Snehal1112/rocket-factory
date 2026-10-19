@@ -6,7 +6,7 @@ pub struct PlanTask {
 }
 
 /// Reads `### Task N: title` and `- [ ] Task N: title` lines outside code fences, in order. A repeated number counts once.
-pub(crate) fn parse_checkbox_tasks(plan: &str) -> Vec<PlanTask> {
+pub fn parse_checkbox_tasks(plan: &str) -> Vec<PlanTask> {
     collect_tasks(plan, |_| true)
 }
 

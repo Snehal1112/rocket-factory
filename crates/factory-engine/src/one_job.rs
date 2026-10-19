@@ -7,7 +7,7 @@ use factory_core::{Job, Stage};
 use crate::runloop::{
     add_job, add_warning, adopt_draft, create_job_with_spec, user_decisions, validate_series, Validated, NO_USER_DECISION,
 };
-use crate::tasks::parse_tasks;
+use crate::tasks::parse_checkbox_tasks;
 use crate::{combine_plans, parse_series_with, Driver, EngineError, SeriesError};
 
 /// The fixed weighted cost of the review, checks and merge of one job.
@@ -59,18 +59,20 @@ pub fn create_one_job(
         return Err(EngineError::NeedsConsent { estimate, budget });
     }
     // Repo-relative paths keep machine paths out of the combined plan comment.
+    let root = std::fs::canonicalize(driver.root()).unwrap_or_else(|_| driver.root().to_path_buf());
     let mut texts: Vec<(String, String)> = Vec::new();
     for p in &series.plans {
         let text = std::fs::read_to_string(&p.path)
             .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", p.path.display())))?;
-        let name = match p.path.strip_prefix(driver.root()) {
+        let full = std::fs::canonicalize(&p.path).unwrap_or_else(|_| p.path.clone());
+        let name = match full.strip_prefix(&root) {
             Ok(rel) => rel.to_string_lossy().into_owned(),
             Err(_) => p.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         };
         texts.push((name, text));
     }
     let combined = combine_plans(&texts);
-    let found = parse_tasks(&combined.text).len();
+    let found = parse_checkbox_tasks(&combined.text).len();
     if found != combined.tasks {
         return Err(EngineError::Msg(format!(
             "combining the plans failed: the combined plan has {found} tasks but {} were expected",
