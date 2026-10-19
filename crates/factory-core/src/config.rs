@@ -98,6 +98,8 @@ pub struct Config {
     pub require_tests: bool,
     /// Prompt cache lifetime for every agent run, `5m` or `1h`. `None` leaves the choice to `claude`.
     pub cache_ttl: Option<String>,
+    /// File log level: error, warn, info, debug or trace. `None` means info.
+    pub log_level: Option<String>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
     pub degraded: bool,
@@ -139,12 +141,18 @@ impl Default for Config {
             test_markers: Vec::new(),
             require_tests: false,
             cache_ttl: None,
+            log_level: None,
             degraded: false,
         }
     }
 }
 
 impl Config {
+    /// The file log level, `info` when unset.
+    pub fn log_level_or_default(&self) -> &str {
+        self.log_level.as_deref().unwrap_or("info")
+    }
+
     /// Every path matches `**`, so every diff is risky and nothing auto-merges.
     pub fn fail_closed() -> Config {
         Config { risk_paths: vec!["**".to_string()], code_paths: vec!["**".to_string()], degraded: true, ..Config::default() }
@@ -176,6 +184,9 @@ impl Config {
         }
         if cfg.cache_ttl.as_deref().is_some_and(|t| t != "5m" && t != "1h") {
             return Err(CoreError::Config("cache_ttl must be \"5m\" or \"1h\" when it is set".into()));
+        }
+        if cfg.log_level.as_deref().is_some_and(|l| !["error", "warn", "info", "debug", "trace"].contains(&l)) {
+            return Err(CoreError::Config("log_level must be one of error, warn, info, debug, trace when it is set".into()));
         }
         if let Err(why) = check_branch_name(&cfg.base_branch) {
             return Err(CoreError::Config(format!("base_branch: {why}")));
@@ -286,6 +297,15 @@ mod tests {
         assert!(Config::parse("cache_ttl = \"10m\"").is_err());
         assert!(Config::parse("cache_ttl = \"\"").is_err());
         assert!(Config::parse("cache_ttl = 5").is_err());
+    }
+
+    #[test]
+    fn log_level_unset_by_default_and_takes_only_known_values() {
+        assert_eq!(Config::default().log_level, None);
+        assert_eq!(Config::default().log_level_or_default(), "info");
+        assert_eq!(Config::parse("log_level = \"debug\"").expect("parse").log_level_or_default(), "debug");
+        let err = Config::parse("log_level = \"loud\"").expect_err("bad level");
+        assert!(err.to_string().contains("log_level must be one of error, warn, info, debug, trace"));
     }
 
     #[test]
