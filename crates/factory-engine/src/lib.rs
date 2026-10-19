@@ -61,7 +61,8 @@ pub use project_lease::{
     acquire_project_lease, force_release_project_lease, owner_pid, process_gone, project_lease_status, release_project_lease, LeaseTake, ProjectLease, ProjectLeaseError, ProjectLeaseStatus,
 };
 pub use lock::{lock_board, BoardLock};
-pub use runloop::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
+pub use ports::set_stage_logged;
+pub use runloop::{create_job, create_job_with_spec, job_span, run_job, run_series, RunEnd};
 pub use one_job::{create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED};
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};

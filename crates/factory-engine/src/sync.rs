@@ -41,7 +41,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         j.head = Some(new_head.clone());
         j.syncs += 1;
         // Approve back to review is a backward move, so it is forced and logged as a ruling below.
-        j.set_stage(Stage::Review, None, true, now)
+        crate::ports::set_stage_logged(j, Stage::Review, None, true, now)
     })?;
     driver.ledger(&job).ruling(&format!("head sync {main7} is {new_head}, job back to review"))?;
     // The checks and one reviewer pass run on the sync diff (prev_head..head).

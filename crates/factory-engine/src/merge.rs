@@ -28,9 +28,10 @@ pub fn park(driver: &Driver, id: &str, reason: &str) -> Result<(), EngineError> 
             job.park_kind = Some(ParkKind::Other.as_str().to_string());
             job.park_at = Some(at);
         }
-        job.set_stage(Stage::NeedsHuman, Some(reason), false, now)?;
+        crate::ports::set_stage_logged(job, Stage::NeedsHuman, Some(reason), false, now)?;
         Ok((job.clone(), already))
     })?;
+    crate::ports::log_park(id, reason);
     let (job, already) = job;
     if !already {
         // Writing the record is best effort, the park already happened.
@@ -145,6 +146,6 @@ fn finish_merge(driver: &Driver, id: &str, sha: &str) -> Result<(), EngineError>
         tick_plan(&plan, &driver.ledger(&job), sha)?;
     }
     let now = now_secs();
-    driver.store().update_job(id, |job| job.set_stage(Stage::Merged, None, false, now))?;
+    driver.store().update_job(id, |job| crate::ports::set_stage_logged(job, Stage::Merged, None, false, now))?;
     Ok(())
 }

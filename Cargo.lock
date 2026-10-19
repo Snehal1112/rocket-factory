@@ -225,6 +225,7 @@ dependencies = [
  "factory-checks",
  "factory-core",
  "factory-git",
+ "factory-telemetry",
  "fs2",
  "git2",
  "serde",
@@ -232,6 +233,7 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

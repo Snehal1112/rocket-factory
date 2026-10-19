@@ -561,7 +561,7 @@ impl Engine<'_> {
         self.update(|j| {
             j.prev_head = previous_head;
             j.head = Some(h);
-            j.set_stage(Stage::Review, None, false, now())
+            crate::ports::set_stage_logged(j, Stage::Review, None, false, now())
         })?;
         self.ruling(&format!("head of round {} is {head}", job.round))?;
         Ok(StageOutcome::Advanced(Stage::Review))

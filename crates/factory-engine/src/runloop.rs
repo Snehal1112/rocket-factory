@@ -35,7 +35,7 @@ pub(crate) fn add_job(
         let now = now_secs();
         let mut job = Job::new(&id, &dir, &slug, &date, feature, now);
         if stage != Stage::Spec {
-            job.set_stage(stage, None, false, now)?;
+            crate::ports::set_stage_logged(&mut job, stage, None, false, now)?;
         }
         job.issues = issues.to_vec();
         job.series = series;
@@ -65,7 +65,20 @@ pub(crate) fn add_job(
             }
         }
     }
+    let series_label = job.series.as_ref().and_then(|s| s.id.clone()).unwrap_or_default();
+    tracing::info!(
+        event = "job.created",
+        job_id = job.id.as_str(),
+        slug = job.slug.as_str(),
+        series = series_label.as_str(),
+        msg = format!("job {} created", job.id).as_str()
+    );
     Ok(job)
+}
+
+/// The span that carries the job id on every log line of a run.
+pub fn job_span(job_id: &str) -> tracing::Span {
+    tracing::info_span!("job", job_id)
 }
 
 /// The number of leading `#` of a heading line (`## Goal` is 2), or 0 for any other line.
@@ -390,7 +403,8 @@ pub fn create_job_with_spec(
 pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
     // The guard keeps the project lease renewed for the whole run and is dropped after the job lease is released.
     let guard = driver.hold_project(id)?;
-    let result = run_job_inner(driver, id, &guard);
+    let span = job_span(id);
+    let result = span.in_scope(|| run_job_inner(driver, id, &guard));
     driver.release_lease(id);
     result
 }
@@ -410,6 +424,7 @@ fn run_job_inner(driver: &Driver, id: &str, guard: &crate::ProjectGuard<'_>) -> 
         // A live lease of another driver stops this one here, before any stage work.
         driver.renew_lease(id)?;
         let job = driver.job(id)?;
+        let _stage_span = tracing::info_span!("stage", stage = job.stage.as_str()).entered();
         match job.stage {
             Stage::Merged => return Ok(RunEnd::Merged),
             Stage::NeedsHuman => return Ok(RunEnd::NeedsHuman(job.reason.unwrap_or_default())),
@@ -418,7 +433,7 @@ fn run_job_inner(driver: &Driver, id: &str, guard: &crate::ProjectGuard<'_>) -> 
                     park(driver, id, "no plan.md in the job folder")?;
                 } else {
                     let now = now_secs();
-                    driver.store().update_job(id, |j| j.set_stage(Stage::Build, None, false, now))?;
+                    driver.store().update_job(id, |j| crate::ports::set_stage_logged(j, Stage::Build, None, false, now))?;
                 }
             }
             Stage::Build => {

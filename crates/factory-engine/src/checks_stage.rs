@@ -106,7 +106,7 @@ impl Engine<'_> {
             j.round = next;
             j.fix_source = Some(fix_source.to_string());
             j.reset_reviews();
-            j.set_stage(Stage::Build, None, true, now())
+            crate::ports::set_stage_logged(j, Stage::Build, None, true, now())
         })?;
         self.ruling(&format!("fix round {next}, {reason}"))?;
         Ok(StageOutcome::Advanced(Stage::Build))

@@ -26,6 +26,38 @@ pub(crate) fn short_sha(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
 }
 
+/// Collapses whitespace and newlines so a log field holds one line.
+pub(crate) fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Logs a park as one warning with a one-line reason.
+pub(crate) fn log_park(job_id: &str, reason: &str) {
+    let reason = one_line(reason);
+    tracing::warn!(event = "park", job_id, reason = reason.as_str(), msg = reason.as_str());
+}
+
+/// Moves a job to a stage and logs `stage.change` when the move worked and the stage changed.
+/// A failed move logs nothing and returns the same error.
+pub fn set_stage_logged(job: &mut Job, to: Stage, reason: Option<&str>, force: bool, now: f64) -> Result<(), CoreError> {
+    let from = job.stage;
+    job.set_stage(to, reason, force, now)?;
+    if from != to {
+        let (from, to_name) = (from.as_str(), to.as_str());
+        let reason = reason.map(one_line);
+        tracing::info!(
+            event = "stage.change",
+            job_id = job.id.as_str(),
+            from,
+            to = to_name,
+            reason = reason.as_deref().unwrap_or(""),
+            stage = to_name,
+            msg = format!("stage {from} -> {to_name}").as_str()
+        );
+    }
+    Ok(())
+}
+
 /// A copy of the board fields the stages read.
 #[derive(Debug, Clone)]
 pub(crate) struct JobView {
@@ -74,7 +106,7 @@ impl Engine<'_> {
 
     /// Moves the job to a stage. Only a fix round (review back to build) passes `force`.
     pub(crate) fn set_stage(&self, stage: Stage, reason: Option<&str>, force: bool) -> Result<(), EngineError> {
-        self.update(|j| j.set_stage(stage, reason, force, now()))
+        self.update(|j| set_stage_logged(j, stage, reason, force, now()))
     }
 
     fn ledger_file(&self) -> Ledger {
@@ -95,6 +127,7 @@ impl Engine<'_> {
     /// Parks the job for the human with a reason, and tells the caller.
     pub(crate) fn park(&self, reason: String) -> Result<crate::StageOutcome, EngineError> {
         self.set_stage(Stage::NeedsHuman, Some(&reason), false)?;
+        log_park(&self.job_id, &reason);
         self.ruling(&format!("needs-human, {reason}"))?;
         Ok(crate::StageOutcome::NeedsHuman(reason))
     }
