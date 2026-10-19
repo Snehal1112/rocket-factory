@@ -36,7 +36,7 @@ pub use commitmsg::{
     parse_issues, validate_message, BuilderStatus, IssueRef, MAX_COMMITS_PER_RUN,
     MAX_SUBJECT_CHARS, MESSAGE_BEGIN, MESSAGE_END,
 };
-pub use config::{CheckRule, Config};
+pub use config::{CheckRule, Config, NEVER_ALLOWED_PROGRAMS, READ_ONLY_GIT};
 pub use cost::{
     count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, GroupStats,
     JobCost, SizeGroup, Spread, Thresholds, UsageSummary,
