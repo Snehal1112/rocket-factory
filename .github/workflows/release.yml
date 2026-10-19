@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    outputs:
+      body: ${{ steps.cliff.outputs.content }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: cliff
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each runner builds its own host triple natively, no cross-compilation.
+          # No Windows leg: factoryd is not supported there (docs/getting-started.md).
+          - os: ubuntu-latest
+            os_name: linux
+            arch: amd64
+          - os: macos-latest
+            os_name: darwin
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # scripts/release.sh bumps both manifests before it tags. A tag that does
+      # not match them was not cut by the script, so stop here.
+      - name: Check tag matches the manifests
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          ROOT=$(awk '/^\[workspace\.package\]/{s=1;next} /^\[/{s=0} s&&/^version = /{gsub(/^version = "|"$/,"");print;exit}' Cargo.toml)
+          DASH=$(awk '/^\[package\]/{s=1;next} /^\[/{s=0} s&&/^version = /{gsub(/^version = "|"$/,"");print;exit}' dashboard/Cargo.toml)
+          if [ "v${ROOT}" != "${VERSION}" ] || [ "v${DASH}" != "${VERSION}" ]; then
+            echo "Tag ${VERSION} does not match Cargo.toml (${ROOT}) and dashboard/Cargo.toml (${DASH})."
+            exit 1
+          fi
+
+      - name: Build release binaries
+        run: |
+          cargo build -j4 --release --locked -p factory-cli -p factory-supervisor
+          cargo build -j4 --release --locked --manifest-path dashboard/Cargo.toml
+
+      # One archive per platform with all three binaries, because factoryd finds
+      # its factory child next to its own file.
+      - name: Package (tar.gz)
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          NAME="rocket-factory-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
+          mkdir -p "dist/${NAME}"
+          cp target/release/factory target/release/factoryd dashboard/target/release/factory-server "dist/${NAME}/"
+          cp LICENSE README.md "dist/${NAME}/"
+          ARCHIVE="${NAME}.tar.gz"
+          tar -czf "dist/${ARCHIVE}" -C dist "${NAME}"
+          # Hash from inside dist so the recorded filename has no path prefix,
+          # which lets consumers verify against a bare downloaded archive.
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          else
+            shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocket-factory-${{ matrix.os_name }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build, changelog]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rocket-factory-*
+          path: dist
+          merge-multiple: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install minisign signer
+        run: cargo install tauri-cli --locked
+
+      # Detached minisign signatures over the archives. They prove an archive
+      # came from whoever holds RELEASE_SIGNING_KEY, on top of the sha256 files,
+      # which only catch transit corruption. See docs/releasing.md.
+      - name: Sign release artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.RELEASE_SIGNING_KEY_PASSWORD }}
+        run: |
+          for f in dist/*.tar.gz; do
+            [ -e "$f" ] || continue
+            cargo tauri signer sign "$f"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANGELOG_BODY: ${{ needs.changelog.outputs.body }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          gh release create "${VERSION}" \
+            --draft \
+            --verify-tag \
+            --title "rocket-factory ${VERSION}" \
+            --notes "${CHANGELOG_BODY}" \
+            dist/*.tar.gz dist/*.tar.gz.sha256 dist/*.tar.gz.sig

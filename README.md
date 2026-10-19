@@ -5,6 +5,7 @@ A standalone software factory. A Rust driver builds, checks, reviews and merges 
 - Design: `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`
 - Build plans: `docs/superpowers/plans/2026-10-16-standalone-software-factory/`
 - Contributor rules and commands: `CLAUDE.md`
+- Releasing: `docs/releasing.md` (signed tags with `scripts/release.sh`, CI, signed archives)
 
 Status: extracted and tested. It still behaves like Rocket's in-repo factory. The standalone work is described in the plan index.
 

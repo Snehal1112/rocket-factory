@@ -1,0 +1,63 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+# The repo rules forbid --workspace and --all, so every cargo call names its
+# crates. Keep PKGS in sync with the members in Cargo.toml and with
+# scripts/release.sh, whose CI gate mirrors this file.
+env:
+  CARGO_TERM_COLOR: always
+  PKGS: >-
+    -p factory-core
+    -p factory-git
+    -p factory-agent
+    -p factory-checks
+    -p factory-engine
+    -p factory-cli
+    -p factory-supervisor
+    -p factory-telemetry
+
+jobs:
+  check:
+    name: Driver workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Format check
+        run: |
+          # shellcheck disable=SC2086
+          cargo fmt $PKGS -- --check
+      - name: Clippy
+        run: |
+          # shellcheck disable=SC2086
+          cargo clippy -j4 $PKGS --all-targets -- -D warnings
+      - name: Test
+        run: |
+          # shellcheck disable=SC2086
+          cargo test -j4 $PKGS
+
+  dashboard:
+    name: Dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Format check
+        run: cargo fmt --manifest-path dashboard/Cargo.toml -- --check
+      - name: Clippy
+        run: cargo clippy -j4 --manifest-path dashboard/Cargo.toml --all-targets -- -D warnings
+      - name: Build
+        run: cargo build -j4 --manifest-path dashboard/Cargo.toml
+      - name: Test
+        run: cargo test -j4 --manifest-path dashboard/Cargo.toml
+      - name: JS tests
+        run: node --test dashboard/tests/*.test.js
