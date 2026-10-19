@@ -22,6 +22,7 @@ mod costs;
 mod followups;
 mod kb;
 mod merge;
+mod one_job;
 mod message;
 mod store;
 mod sync;
@@ -60,6 +61,7 @@ pub use project_lease::{
 };
 pub use lock::{lock_board, BoardLock};
 pub use runloop::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
+pub use one_job::{create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED};
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
@@ -87,6 +89,8 @@ pub enum EngineError {
     Io(String),
     #[error("{0}")]
     Msg(String),
+    #[error("needs consent: this job is estimated at {estimate} weighted tokens and the budget is {budget}; raise budget_weighted in project.toml or pass --accept-over-budget")]
+    NeedsConsent { estimate: u64, budget: u64 },
 }
 
 /// What a stage did to the job. The caller chains stages by the new board stage.

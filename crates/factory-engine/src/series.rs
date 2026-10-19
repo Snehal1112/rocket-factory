@@ -68,9 +68,12 @@ fn canon(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
+/// The most tasks one plan of a normal series may hold.
+pub(crate) const MAX_TASKS_PER_PLAN: usize = 3;
+
 /// Validates the `Next plan:` chain from `start` (a plan file, or a folder of `plan-*.md` files).
 pub fn parse_series(root: &Path, start: &Path) -> Result<Series, SeriesError> {
-    parse_series_with(root, start, Some(3))
+    parse_series_with(root, start, Some(MAX_TASKS_PER_PLAN))
 }
 
 /// `max_tasks` of `None` lifts the upper bound on tasks per plan. A plan still needs at least one task.

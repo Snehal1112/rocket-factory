@@ -12,7 +12,7 @@ pub enum RunEnd {
 
 /// Adds one job to the board and makes its folder, ledger and plan copy. A job that runs now starts at
 /// stage build. A plan that waits for its turn starts at stage spec and moves to build when it runs.
-fn add_job(
+pub(crate) fn add_job(
     driver: &Driver,
     slug: &str,
     feature: &str,
@@ -151,7 +151,7 @@ pub(crate) fn is_list_item(line: &str) -> bool {
 }
 
 /// The warning for a spec in which the user answered no decision.
-const NO_USER_DECISION: &str = "no decision in this spec was answered by the user";
+pub(crate) const NO_USER_DECISION: &str = "no decision in this spec was answered by the user";
 
 /// How many list items in the `## Decisions` section say `Decided by: user`. No section gives 0.
 pub(crate) fn user_decisions(spec: &str) -> usize {
@@ -172,7 +172,7 @@ fn note_failure(driver: &Driver, job: &Job, what: &str, slug: &str, err: &Engine
 
 /// Removes the draft card of this slug, if there is one. A failure, such as a draft that a concurrent
 /// cancel removed first, is reported and never changes the result.
-fn adopt_draft(driver: &Driver, slug: &str, job: &Job) {
+pub(crate) fn adopt_draft(driver: &Driver, slug: &str, job: &Job) {
     adopt_draft_with(driver, slug, job, |d, s| crate::remove_draft(d, s).map(|_| ()));
 }
 
@@ -194,7 +194,7 @@ fn adopt_draft_with(
 
 /// Adds a warning to the job. Warnings are joined with `; `, so a later check appends with this
 /// function instead of assigning. A failed write is reported and the returned job still has the warning.
-fn add_warning(driver: &Driver, slug: &str, job: Job, text: &str) -> Job {
+pub(crate) fn add_warning(driver: &Driver, slug: &str, job: Job, text: &str) -> Job {
     let join = |job: &mut Job| {
         job.spec_warning = Some(match job.spec_warning.take() {
             Some(old) => format!("{old}; {text}"),
@@ -244,6 +244,66 @@ fn check_spec(spec: &str, name: &str) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// A series that passed every check that must hold before a job exists.
+pub(crate) struct Validated {
+    pub series: crate::Series,
+    /// Plan lint findings that do not refuse the call.
+    pub plan_warnings: Vec<String>,
+    /// The checked spec text, when there is a spec.
+    pub spec_text: Option<String>,
+}
+
+/// Parses the chain, lints every plan and checks the spec, all before any job exists.
+/// `parse` reads the chain, so the caller picks the cap on tasks per plan and maps its errors.
+pub(crate) fn validate_series(
+    driver: &Driver,
+    start: &Path,
+    spec_path: Option<&Path>,
+    parse: impl Fn(&Path, &Path) -> Result<crate::Series, EngineError>,
+) -> Result<Validated, EngineError> {
+    // Absolute paths keep `Next plan:` lookups and the stored plan files right from any directory.
+    let absolute = |path: &Path| {
+        std::fs::canonicalize(path)
+            .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", path.display())))
+    };
+    let start_buf = absolute(start)?;
+    let start = start_buf.as_path();
+    let spec_buf = spec_path.map(absolute).transpose()?;
+    let spec_path = spec_buf.as_deref();
+    // A broken chain fails here, before any job exists.
+    let series = parse(driver.root(), start)?;
+    // A placeholder in any plan refuses the call before a job exists. Other findings are warnings.
+    let mut plan_warnings: Vec<String> = Vec::new();
+    for plan in &series.plans {
+        let name = plan.path.file_name().and_then(|n| n.to_str()).unwrap_or("plan").to_string();
+        let text = std::fs::read_to_string(&plan.path)
+            .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", plan.path.display())))?;
+        let lint = crate::planlint::lint_plan(&text, &name);
+        if let Some(reason) = lint.refuse {
+            return Err(EngineError::Msg(reason));
+        }
+        plan_warnings.extend(lint.warnings);
+    }
+    // An explicit spec path wins. Otherwise a folder holds the spec beside the plans, and a single
+    // plan file has no spec to check.
+    let spec = spec_path.map(Path::to_path_buf).unwrap_or_else(|| start.join("spec.md"));
+    let has_spec = spec_path.is_some() || start.is_dir();
+    // The text that passes the check is the text every job gets, so the file is read once.
+    let mut spec_text: Option<String> = None;
+    if has_spec {
+        let text = std::fs::read_to_string(&spec).map_err(|_| {
+            if spec_path.is_some() {
+                EngineError::Msg(format!("the spec file {} cannot be read", spec.display()))
+            } else {
+                EngineError::Msg("the plans folder has no spec.md".to_string())
+            }
+        })?;
+        check_spec(&text, &spec.display().to_string())?;
+        spec_text = Some(text);
+    }
+    Ok(Validated { series, plan_warnings, spec_text })
+}
+
 /// Creates the jobs of a series and returns plan 1's job, which starts at stage build. Every later plan
 /// gets its job now too, parked at stage spec, so the board shows the whole series from the start.
 pub fn create_job(
@@ -275,46 +335,10 @@ pub fn create_job_with_spec(
         adopt_draft(driver, slug, &job);
         return Ok(job);
     };
-    // Absolute paths keep `Next plan:` lookups and the stored plan files right from any directory.
-    let absolute = |path: &Path| {
-        std::fs::canonicalize(path)
-            .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", path.display())))
-    };
-    let start_buf = absolute(start)?;
-    let start = start_buf.as_path();
-    let spec_buf = spec_path.map(absolute).transpose()?;
-    let spec_path = spec_buf.as_deref();
-    // A broken chain fails here, before any job exists.
-    let series = parse_series(driver.root(), start)?;
-    // A placeholder in any plan refuses the call before a job exists. Other findings are warnings.
-    let mut plan_warnings: Vec<String> = Vec::new();
-    for plan in &series.plans {
-        let name = plan.path.file_name().and_then(|n| n.to_str()).unwrap_or("plan").to_string();
-        let text = std::fs::read_to_string(&plan.path)
-            .map_err(|e| EngineError::Msg(format!("cannot read {}: {e}", plan.path.display())))?;
-        let lint = crate::planlint::lint_plan(&text, &name);
-        if let Some(reason) = lint.refuse {
-            return Err(EngineError::Msg(reason));
-        }
-        plan_warnings.extend(lint.warnings);
-    }
-    // An explicit spec path wins. Otherwise a folder holds the spec beside the plans, and a single
-    // plan file has no spec to check.
-    let spec = spec_path.map(Path::to_path_buf).unwrap_or_else(|| start.join("spec.md"));
-    let has_spec = spec_path.is_some() || start.is_dir();
-    // The text that passes the check is the text every job gets, so the file is read once.
-    let mut spec_text: Option<String> = None;
-    if has_spec {
-        let text = std::fs::read_to_string(&spec).map_err(|_| {
-            if spec_path.is_some() {
-                EngineError::Msg(format!("the spec file {} cannot be read", spec.display()))
-            } else {
-                EngineError::Msg("the plans folder has no spec.md".to_string())
-            }
-        })?;
-        check_spec(&text, &spec.display().to_string())?;
-        spec_text = Some(text);
-    }
+    let Validated { series, plan_warnings, spec_text } =
+        validate_series(driver, start, spec_path, |root, start| {
+        crate::parse_series_with(root, start, Some(crate::series::MAX_TASKS_PER_PLAN)).map_err(EngineError::from)
+    })?;
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
     let series_id = if total > 1 {
