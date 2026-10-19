@@ -63,6 +63,11 @@ impl Layout {
         self.state_dir.join("events.jsonl")
     }
 
+    /// The structured driver log.
+    pub fn log_file(&self) -> PathBuf {
+        self.state_dir.join("log.jsonl")
+    }
+
     pub fn costs_file(&self) -> PathBuf {
         self.state_dir.join("costs.json")
     }
@@ -90,6 +95,11 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_file_is_in_the_state_dir() {
+        assert_eq!(Layout::in_repo(Path::new("/r")).log_file(), PathBuf::from("/r/.superpowers/factory/log.jsonl"));
+    }
 
     #[test]
     fn draft_spec_file_is_under_the_repo_specs_folder() {

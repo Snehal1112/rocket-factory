@@ -71,6 +71,11 @@ impl Home {
         self.dir.join(LOGS_DIR).join(project)
     }
 
+    /// The structured log of factoryd.
+    pub fn factoryd_log_file(&self) -> PathBuf {
+        self.dir.join("factoryd.log.jsonl")
+    }
+
     /// The folder of one project. The name must already be validated.
     pub fn project_dir(&self, name: &str) -> PathBuf {
         self.projects_dir().join(name)
@@ -91,6 +96,11 @@ fn from_values(factory_home: Option<&str>, home: Option<&str>) -> Result<Home, C
 mod tests {
     use super::*;
     use crate::test_support::EnvVarGuard;
+
+    #[test]
+    fn factoryd_log_file_is_in_the_home() {
+        assert_eq!(Home::at(PathBuf::from("/h")).factoryd_log_file(), PathBuf::from("/h/factoryd.log.jsonl"));
+    }
 
     #[test]
     fn at_gives_the_folders() {
