@@ -335,8 +335,7 @@ pub fn create_job_with_spec(
         adopt_draft(driver, slug, &job);
         return Ok(job);
     };
-    let Validated { series, plan_warnings, spec_text } =
-        validate_series(driver, start, spec_path, |root, start| {
+    let Validated { series, plan_warnings, spec_text } = validate_series(driver, start, spec_path, |root, start| {
         crate::parse_series_with(root, start, Some(crate::series::MAX_TASKS_PER_PLAN)).map_err(EngineError::from)
     })?;
     let total = series.plans.len() as u32;
