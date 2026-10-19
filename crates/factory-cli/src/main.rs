@@ -59,7 +59,12 @@ fn main() {
     match dispatch(cli, &ctx) {
         Ok(text) => println!("{text}"),
         Err(e) => {
-            eprintln!("factory: {e}");
+            // The consent refusal is printed bare so its line starts with `needs consent:`.
+            if matches!(e, factory_cli::CliError::Engine(factory_engine::EngineError::NeedsConsent { .. })) {
+                eprintln!("{e}");
+            } else {
+                eprintln!("factory: {e}");
+            }
             std::process::exit(1);
         }
     }

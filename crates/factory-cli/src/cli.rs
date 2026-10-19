@@ -29,6 +29,12 @@ pub enum Command {
         spec: Option<PathBuf>,
         #[arg(long)]
         model: Option<String>,
+        /// Combine the whole plan chain into one job. It needs --plans.
+        #[arg(long, requires = "plans")]
+        one_job: bool,
+        /// Create the one job even when its estimate is over the budget. It needs --one-job.
+        #[arg(long, requires = "one_job")]
+        accept_over_budget: bool,
     },
     /// Drive a job to merged or needs-human.
     Run {
@@ -170,6 +176,26 @@ mod tests {
     fn spec_without_plans_is_a_usage_error() {
         let err = Cli::try_parse_from(["factory", "new", "s", "f", "--spec", "x.md"]).expect_err("needs --plans");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn one_job_needs_plans() {
+        let err = Cli::try_parse_from(["factory", "new", "s", "f", "--one-job"]).expect_err("needs --plans");
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn accept_over_budget_needs_one_job() {
+        let err = Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--accept-over-budget"])
+            .expect_err("needs --one-job");
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn one_job_flags_parse() {
+        let cli = Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--one-job", "--accept-over-budget"])
+            .expect("parse");
+        assert!(matches!(cli.command, Command::New { one_job: true, accept_over_budget: true, .. }));
     }
 
     #[test]

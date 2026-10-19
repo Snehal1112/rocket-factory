@@ -5,7 +5,7 @@ use std::time::Duration;
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
 use factory_core::{outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage};
 use factory_engine::{
-    costs_path, create_job_with_spec, find_draft, remove_draft, set_draft_stage, start_draft, today, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, run_job, run_series, Driver,
+    costs_path, create_job_with_spec, create_one_job, find_draft, remove_draft, set_draft_stage, start_draft, today, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, run_job, run_series, Driver,
     MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT,
 };
 
@@ -218,7 +218,9 @@ pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
 /// Runs one command and returns the text to print.
 pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
     match cli.command {
-        Command::New { slug, feature, plans, spec, model } => new_job(ctx, &slug, &feature, plans, spec, model),
+        Command::New { slug, feature, plans, spec, model, one_job, accept_over_budget } => {
+            new_job(ctx, &slug, &feature, NewArgs { plans, spec, model, one_job, accept_over_budget })
+        }
         Command::Run { id, series } => run(ctx, &norm(&id)?, series),
         Command::Status => {
             let d = ctx.driver()?;
@@ -261,19 +263,31 @@ fn norm(id: &str) -> Result<String, CliError> {
     Ok(factory_core::normalize_id(id)?)
 }
 
-fn new_job(
-    ctx: &CliCtx,
-    slug: &str,
-    feature: &str,
+/// The plan related arguments of `factory new`.
+struct NewArgs {
     plans: Option<PathBuf>,
     spec: Option<PathBuf>,
     model: Option<String>,
-) -> Result<String, CliError> {
+    one_job: bool,
+    accept_over_budget: bool,
+}
+
+fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<String, CliError> {
+    let NewArgs { plans, spec, model, one_job, accept_over_budget } = args;
     let d = ctx.driver()?;
-    let job = create_job_with_spec(&d, slug, feature, plans.as_deref(), spec.as_deref(), model.as_deref())?;
+    let (job, notes) = match (one_job, plans.as_deref()) {
+        (true, Some(plan)) => {
+            let made = create_one_job(&d, slug, feature, plan, spec.as_deref(), model.as_deref(), accept_over_budget)?;
+            (made.job, made.notes)
+        }
+        _ => (create_job_with_spec(&d, slug, feature, plans.as_deref(), spec.as_deref(), model.as_deref())?, Vec::new()),
+    };
     let board = d.store().load()?;
     let mut out = format!("created job {} in {}{}", job.id, job.dir, estimate_lines(&board, &job));
-    // The created line stays first because factoryd parses it. Each warning gets its own line.
+    // The created line stays first because factoryd parses it. Notes and warnings follow, one per line.
+    for note in &notes {
+        out.push_str(&format!("\nnote: {note}"));
+    }
     for warning in job.spec_warning.iter().flat_map(|w| w.split("; ")) {
         out.push_str(&format!("\nwarning: {warning}"));
     }
