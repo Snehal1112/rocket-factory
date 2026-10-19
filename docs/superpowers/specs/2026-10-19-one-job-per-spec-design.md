@@ -1,5 +1,28 @@
 # One job per spec (opt-in) design
 
+## Goal
+
+Let a user run all the plans of one spec as a single factory job by passing `--one-job` to `factory new`, or the same token to `/factory`, so the per-plan committer, reviewer, merge message, worktree and approval overhead is paid once. Without the flag nothing changes.
+
+## Acceptance criteria
+
+- `factory new <slug> '<feature>' --plans <folder> --spec <file> --one-job` makes exactly one job with no series from a plan folder of several plans.
+- The one job's `plan.md` holds every task of every plan, renumbered 1 to N, with one header, merged Global Constraints and Review Focus, and no `Next plan:` line.
+- Without `--one-job` the same plans still make one job per plan, and a plan of more than 3 tasks is still refused on that path.
+- When the estimate `110000 + 100000 * tasks` passes `budget_weighted`, `factory new --one-job` creates nothing and prints a `needs consent:` line, and `--accept-over-budget` creates the job with a stored warning.
+- `--one-job` needs `--plans`, and `--accept-over-budget` needs `--one-job`.
+- A single plan with `--one-job` goes through the normal path and the output says the flag had no effect.
+- The global `/factory` command accepts `--one-job`, passes it to `new`, and asks the user on `needs consent:` before re-running with `--accept-over-budget`.
+
+## Decisions
+
+- The capability is additive and on demand, chosen with a flag, and the default is unchanged. Decided by: user
+- The flag lives on `factory new` and the `/factory` command supports it. Decided by: user
+- Over the budget the run warns and goes ahead only after the user gives consent. Decided by: user
+- Plans keep at most 3 tasks each and the driver combines them. Decided by: call
+- The flag is named `--one-job` and the consent flag `--accept-over-budget`. Decided by: call
+- The estimate constants, the combined header rules and the single plan behaviour are as described below. Decided by: call
+
 ## Intent
 
 Today `factory new --plans <folder> --spec <file>` makes one job per plan. A spec of 4 plans with 3 tasks each becomes 4 jobs. Every job pays for its own committer, reviewer and merge message agent, its own worktree (a cold cargo build) and its own human approval when a diff is risky.
