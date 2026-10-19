@@ -89,6 +89,12 @@ impl Engine<'_> {
             fix_rounds: self.config.fix_rounds,
         };
         let decision = decide(&input);
+        let choice = match &decision {
+            Decision::AutoMerge => "merge",
+            Decision::FixRound => "fix",
+            Decision::NeedsHuman { .. } => "needs-human",
+        };
+        tracing::info!(event = "decide", choice = choice, round = job.round);
         Ok(ReviewOutcome { verdict, review_path, decision })
     }
 

@@ -87,6 +87,14 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
     }
 }
 
+/// Runs one repository call and logs it as a debug `git.op` event.
+pub(crate) fn git_op<T, E>(op: &str, f: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+    let t = std::time::Instant::now();
+    let r = f();
+    tracing::debug!(event = "git.op", op = op, ok = r.is_ok(), duration_ms = t.elapsed().as_millis() as u64);
+    r
+}
+
 fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
     let repo = driver.repo();
     let main = repo.base_branch().to_string();
@@ -95,7 +103,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         let head = job.head.clone().ok_or_else(|| EngineError::Msg("job has no recorded head".into()))?;
         let base = job.base.clone().ok_or_else(|| EngineError::Msg("job has no recorded base".into()))?;
         // merge_no_ff does not check that main has not moved, so base_state decides first.
-        let check = repo.base_state(&base, &head)?;
+        let check = git_op("base_state", || repo.base_state(&base, &head))?;
         match check.state {
             // A crash after the merge commit but before the board update lands here.
             BaseState::Merged => return Ok(Step::Merged(check.main_sha)),
@@ -105,11 +113,11 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             BaseState::Current | BaseState::MainMoved => {}
         }
         // A branch that was deleted after a hand merge is handled above, so the tip must exist here.
-        let tip = repo.tip(&job.branch)?;
+        let tip = git_op("tip", || repo.tip(&job.branch))?;
         if tip != head {
             return Ok(Step::Park(format!("branch tip {tip} differs from the reviewed head {head}")));
         }
-        if let Preflight::Busy { reason } = repo.preflight_main()? {
+        if let Preflight::Busy { reason } = git_op("preflight_main", || repo.preflight_main())? {
             return Ok(Step::Park(format!("{main} busy: {reason}")));
         }
         if check.state == BaseState::MainMoved {
@@ -120,7 +128,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         }
         let message = driver.commit_message(id, MessageKind::Merge)?;
         // The message run can take a while, so main is checked again before the merge.
-        let again = repo.base_state(&base, &head)?;
+        let again = git_op("base_state", || repo.base_state(&base, &head))?;
         match again.state {
             BaseState::Merged => return Ok(Step::Merged(again.main_sha)),
             BaseState::BaseNotMain => {
@@ -129,7 +137,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             BaseState::MainMoved => continue,
             BaseState::Current => {}
         }
-        return match repo.merge_no_ff(&job.branch, &head, &message)? {
+        return match git_op("merge_no_ff", || repo.merge_no_ff(&job.branch, &head, &message))? {
             MergeOutcome::Merged { merge_sha } => Ok(Step::Merged(merge_sha)),
             MergeOutcome::Conflict { paths } => Ok(Step::Park(format!("merge conflict in {}", paths.join(", ")))),
             MergeOutcome::UpToDate => Ok(Step::Park(format!("nothing to merge, head already in {main}"))),

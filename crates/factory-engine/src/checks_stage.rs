@@ -41,6 +41,20 @@ pub(crate) fn no_tests_added(paths: &[String], diff_text: Option<&str>, config: 
 use crate::ports::{git_err, io_err, now};
 use crate::{Engine, EngineError, StageOutcome};
 
+/// Logs one `check.run` event per command. The command goes through `redact_command`, the output tail is never logged.
+fn log_check_results(report: &ChecksReport) {
+    for r in &report.results {
+        // A passing summary is taken from the command output, so only a failure's exit or timeout note is logged.
+        let summary = if r.passed { "" } else { r.summary.as_str() };
+        tracing::info!(
+            event = "check.run",
+            command = %factory_telemetry::redact_command(&r.command),
+            passed = r.passed,
+            summary = summary
+        );
+    }
+}
+
 impl Engine<'_> {
     /// Runs the mapped checks over the whole job diff and writes `checks.md`.
     pub(crate) fn run_checks_now(&self) -> Result<ChecksReport, EngineError> {
@@ -50,6 +64,7 @@ impl Engine<'_> {
         let paths = self.repo.changed_paths(&base, &head).map_err(git_err)?;
         let plan = plan_checks(&paths, &self.config);
         let report = run_checks(&self.worktree()?, &plan);
+        log_check_results(&report);
         write_checks_md(&self.job_dir.join("checks.md"), &report).map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(report)
     }
@@ -84,6 +99,7 @@ impl Engine<'_> {
             return Ok(None);
         }
         let report = run_checks(&self.worktree()?, &plan);
+        log_check_results(&report);
         write_checks_md(&self.job_dir.join(out), &report).map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(Some(report))
     }

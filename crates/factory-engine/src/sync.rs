@@ -26,7 +26,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         base: job.base.clone().unwrap_or_default(),
     };
     let message = driver.commit_message(id, MessageKind::Sync)?;
-    let new_head = match driver.repo().merge_main_into(&wt, &message)? {
+    let new_head = match crate::merge::git_op("merge_main_into", || driver.repo().merge_main_into(&wt, &message))? {
         MergeOutcome::Conflict { paths } => {
             return Ok(SyncOutcome::Parked(format!("sync conflict in {}", paths.join(", "))));
         }
@@ -34,7 +34,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         MergeOutcome::UpToDate => return Ok(SyncOutcome::Synced),
         MergeOutcome::Merged { merge_sha } => merge_sha,
     };
-    let main7: String = driver.repo().tip(driver.repo().base_branch())?.chars().take(7).collect();
+    let main7: String = crate::merge::git_op("tip", || driver.repo().tip(driver.repo().base_branch()))?.chars().take(7).collect();
     let now = now_secs();
     driver.store().update_job(id, |j| {
         j.prev_head = Some(old_head.clone());

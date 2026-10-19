@@ -141,7 +141,17 @@ impl Engine<'_> {
         if !self.agent_files.is_empty() && spec.cwd.starts_with(self.repo.worktrees_dir()) {
             self.write_agent_files(&spec.cwd)?;
         }
+        tracing::info!(event = "agent.start", role = %spec.role, model = spec.model.as_deref().unwrap_or(""));
+        let started = std::time::Instant::now();
         let run = self.runner.run(&spec);
+        tracing::info!(
+            event = "agent.end",
+            role = %spec.role,
+            model = spec.model.as_deref().unwrap_or(""),
+            stop_reason = ?run.stop_reason,
+            weighted_tokens = run.weighted,
+            duration_ms = started.elapsed().as_millis() as u64
+        );
         let u = run.usage;
         self.update(|j| {
             j.tokens.add(u.input_tokens, u.cache_creation_input_tokens, u.output_tokens, u.cache_read_input_tokens);
