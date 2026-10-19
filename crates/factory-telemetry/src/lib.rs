@@ -1,8 +1,15 @@
 //! Structured logging for the factory driver and factoryd.
 
+pub mod init;
+pub mod layer;
+pub mod read;
 pub mod redact;
 pub mod rotate;
 pub mod time;
+
+pub use init::{capture, init, resolve_filter, Guard, LogTarget};
+pub use layer::{JsonLayer, LineSink, Scope, StderrLayer};
+pub use read::{read_log, LogFilter};
 
 pub use redact::{cap_message, redact_command, redact_field};
 pub use rotate::{RotatingFile, LOG_CAP_BYTES};
