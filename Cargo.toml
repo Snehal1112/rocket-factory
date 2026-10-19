@@ -8,6 +8,7 @@ members = [
     "crates/factory-engine",
     "crates/factory-cli",
     "crates/factory-supervisor",
+    "crates/factory-telemetry",
 ]
 
 [workspace.package]
@@ -25,3 +26,5 @@ git2 = "0.19"
 fs2 = "0.4"
 tempfile = "3"
 tiny_http = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "registry", "fmt", "std"] }
