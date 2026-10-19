@@ -2,6 +2,7 @@
   "permissions": {
     "defaultMode": "acceptEdits",
     "allow": [
+      "Read(//Users/snehaldangroshiya/.factory/projects/rocket-factory/state/jobs/**)",
       "Bash(cargo check *)",
       "Bash(cargo test *)",
       "Bash(cargo build *)",
