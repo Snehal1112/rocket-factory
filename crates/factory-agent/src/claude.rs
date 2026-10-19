@@ -181,13 +181,13 @@ impl ClaudeRunner {
         } else {
             let _ = writer.join();
             let _ = reader.join();
-            err_thread.join().map_or(String::new(), |t| t)
+            err_thread.join().unwrap_or(String::new())
         };
 
         let usage = state.final_usage();
         let weighted = usage.weighted();
         let exit_code = status.code();
-        let result_text = state.result_text.clone().map_or(String::new(), |t| t);
+        let result_text = state.result_text.clone().unwrap_or(String::new());
         let (stop_reason, error) = match stop {
             Some(reason) => (reason, None),
             None if !state.has_result() => {
@@ -198,7 +198,7 @@ impl ClaudeRunner {
                 (StopReason::Failed, Some(msg))
             }
             None if state.result_is_error => {
-                let subtype = state.result_subtype.clone().map_or(String::new(), |s| s);
+                let subtype = state.result_subtype.clone().unwrap_or(String::new());
                 let reason = if subtype.contains("max_turns") {
                     StopReason::TurnLimit
                 } else {
@@ -215,7 +215,7 @@ impl ClaudeRunner {
             spec.used_before.saturating_add(weighted),
         );
         stop_event.last_message = Some(if result_text.is_empty() {
-            error.clone().map_or(String::new(), |e| e)
+            error.clone().unwrap_or(String::new())
         } else {
             result_text.clone()
         });

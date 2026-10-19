@@ -14,7 +14,7 @@ pub struct Usage {
 }
 
 fn field(v: &Value, key: &str) -> u64 {
-    v.get(key).and_then(Value::as_u64).map_or(0, |n| n)
+    v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
 impl Usage {

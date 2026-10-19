@@ -165,7 +165,7 @@ impl StreamState {
             .values()
             .fold(Usage::default(), |acc, u| acc.add(u));
         if sum.is_zero() {
-            return self.result_usage.map_or(sum, |u| u);
+            return self.result_usage.unwrap_or(sum);
         }
         sum
     }
@@ -190,7 +190,7 @@ impl StreamState {
 
     /// Number of unique assistant messages seen so far.
     pub fn turns(&self) -> u32 {
-        u32::try_from(self.usage_by_message.len()).map_or(u32::MAX, |n| n)
+        u32::try_from(self.usage_by_message.len()).unwrap_or(u32::MAX)
     }
 
     pub fn has_result(&self) -> bool {
