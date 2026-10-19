@@ -123,7 +123,10 @@ fn is_terminal(stage: &str) -> bool {
 /// nothing, because its time would only grow.
 pub fn stage_durations(job: &Job, now: f64) -> Vec<StageDuration> {
     let history: Vec<StageEntry> = if job.stage_history.is_empty() {
-        vec![StageEntry { stage: job.stage.clone(), ts: job.stage_since }]
+        vec![StageEntry {
+            stage: job.stage.clone(),
+            ts: job.stage_since,
+        }]
     } else {
         job.stage_history.clone()
     };
@@ -140,7 +143,11 @@ pub fn stage_durations(job: &Job, now: f64) -> Vec<StageDuration> {
                 existing.seconds += seconds;
                 existing.current |= current;
             }
-            None => out.push(StageDuration { stage: entry.stage.clone(), seconds, current }),
+            None => out.push(StageDuration {
+                stage: entry.stage.clone(),
+                seconds,
+                current,
+            }),
         }
     }
     out
@@ -155,7 +162,13 @@ pub fn token_view(job: &Job) -> Option<TokenView> {
     } else {
         (tokens.weighted as f64 / budget as f64).clamp(0.0, 1.0)
     };
-    Some(TokenView { weighted: tokens.weighted, raw: tokens.raw, budget, fraction, live: false })
+    Some(TokenView {
+        weighted: tokens.weighted,
+        raw: tokens.raw,
+        budget,
+        fraction,
+        live: false,
+    })
 }
 
 /// The card bar figures: the board total, or the highest running total from the job's agent events
@@ -167,8 +180,18 @@ pub fn live_token_view(job: &Job, agents: &[AgentState]) -> Option<TokenView> {
         return board;
     }
     let budget = job.budget_weighted.unwrap_or(DEFAULT_BUDGET_WEIGHTED);
-    let fraction = if budget == 0 { 0.0 } else { (live as f64 / budget as f64).clamp(0.0, 1.0) };
-    Some(TokenView { weighted: live, raw: board.map_or(0, |v| v.raw), budget, fraction, live: true })
+    let fraction = if budget == 0 {
+        0.0
+    } else {
+        (live as f64 / budget as f64).clamp(0.0, 1.0)
+    };
+    Some(TokenView {
+        weighted: live,
+        raw: board.map_or(0, |v| v.raw),
+        budget,
+        fraction,
+        live: true,
+    })
 }
 
 fn keep_unassigned(agent: &AgentState, now: f64) -> bool {
@@ -209,7 +232,9 @@ pub fn build_state(
                 paths,
                 &job.dir,
                 &job.stage,
-                job.reviews.values().any(|v| matches!(v.as_str(), "pass" | "changes" | "running")),
+                job.reviews
+                    .values()
+                    .any(|v| matches!(v.as_str(), "pass" | "changes" | "running")),
             ),
             stage_durations: stage_durations(job, now),
             token_view: token_view(job),
@@ -305,17 +330,41 @@ mod tests {
         std::fs::create_dir_all(&dir)?;
         let mut parked = job("001", "needs-human", 0.0);
         parked.park_kind = Some("checks-failed".to_string());
-        let board = Board { jobs: vec![parked.clone()], ..Board::default() };
+        let board = Board {
+            jobs: vec![parked.clone()],
+            ..Board::default()
+        };
         // The kind is on the board but the file is missing.
-        let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(
+            &board,
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::for_root(root.path()),
+        );
         assert!(!view.jobs[0].has_park);
         std::fs::write(dir.join("park.json"), "{}")?;
-        let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(
+            &board,
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::for_root(root.path()),
+        );
         assert!(view.jobs[0].has_park);
         // The file exists but the board has no kind, as for an older job.
         let mut old = parked;
         old.park_kind = None;
-        let view = build_state(&Board { jobs: vec![old], ..Board::default() }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(
+            &Board {
+                jobs: vec![old],
+                ..Board::default()
+            },
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::for_root(root.path()),
+        );
         assert!(!view.jobs[0].has_park);
         Ok(())
     }
@@ -325,10 +374,22 @@ mod tests {
         let root = tempfile::tempdir()?;
         let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("park.json"), r#"{"parts":[{"text":"SECRET-EVIDENCE"}]}"#)?;
+        std::fs::write(
+            dir.join("park.json"),
+            r#"{"parts":[{"text":"SECRET-EVIDENCE"}]}"#,
+        )?;
         let mut parked = job("001", "needs-human", 0.0);
         parked.park_kind = Some("other".to_string());
-        let view = build_state(&Board { jobs: vec![parked], ..Board::default() }, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(
+            &Board {
+                jobs: vec![parked],
+                ..Board::default()
+            },
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::for_root(root.path()),
+        );
         let json = serde_json::to_string(&view)?;
         assert!(json.contains("\"has_park\":true"), "{json}");
         assert!(json.contains("\"park_kind\":\"other\""), "{json}");
@@ -338,11 +399,24 @@ mod tests {
 
     #[test]
     fn the_state_has_no_recent_activity_feed() -> TestResult {
-        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::nowhere());
+        let view = build_state(
+            &Board::default(),
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::nowhere(),
+        );
         let json = serde_json::to_value(&view)?;
         assert!(json.get("recent").is_none(), "the recent feed was removed");
-        assert!(json.get("skipped_lines").is_some(), "the skipped-lines count stays");
-        assert_eq!(json.get("specs").and_then(|v| v.as_array()).map(Vec::len), Some(0), "specs is an empty list");
+        assert!(
+            json.get("skipped_lines").is_some(),
+            "the skipped-lines count stays"
+        );
+        assert_eq!(
+            json.get("specs").and_then(|v| v.as_array()).map(Vec::len),
+            Some(0),
+            "specs is an empty list"
+        );
         Ok(())
     }
 
@@ -360,21 +434,38 @@ mod tests {
         let root = tempfile::tempdir()?;
         let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("spec.md"), "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n")?;
+        std::fs::write(
+            dir.join("spec.md"),
+            "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n",
+        )?;
         let board: Board = serde_json::from_value(serde_json::json!({ "jobs": [
             series_job("001", "build", 1, Some("S1")),
             series_job("002", "spec", 2, Some("S1")),
             series_job("003", "merged", 1, None),
         ]}))?;
-        let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(
+            &board,
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::for_root(root.path()),
+        );
         assert_eq!(view.specs.len(), 1);
         assert_eq!(view.specs[0].series_id, "S1");
         assert_eq!(view.specs[0].title.as_deref(), Some("Demo spec"));
-        let states: Vec<_> = view.specs[0].plans.iter().map(|r| r.state.as_str()).collect();
+        let states: Vec<_> = view.specs[0]
+            .plans
+            .iter()
+            .map(|r| r.state.as_str())
+            .collect();
         assert_eq!(states, vec!["building", "waiting"]);
         let json = serde_json::to_value(&view)?;
         assert_eq!(json["specs"][0]["plans"][1]["job_id"], "002");
-        assert_eq!(json["jobs"].as_array().map(Vec::len), Some(3), "plan jobs stay in jobs[]");
+        assert_eq!(
+            json["jobs"].as_array().map(Vec::len),
+            Some(3),
+            "plan jobs stay in jobs[]"
+        );
         Ok(())
     }
 
@@ -459,7 +550,9 @@ mod tests {
             last_tool_ts: None,
             tool_count: 0,
             last_message: None,
-            cwd: None, job_id: None, tokens_weighted: 0,
+            cwd: None,
+            job_id: None,
+            tokens_weighted: 0,
         };
         assert!(!keep_unassigned(&agent, 200.0));
     }
@@ -476,9 +569,21 @@ mod tests {
     fn a_stale_unassigned_agent_older_than_two_hours_is_dropped() {
         let mut registry = Registry::new();
         start_for(&mut registry, 100.0, "u1", "other", None);
-        let view = build_state(&Board::default(), &registry, 100.0 + 7201.0, None, &Paths::nowhere());
+        let view = build_state(
+            &Board::default(),
+            &registry,
+            100.0 + 7201.0,
+            None,
+            &Paths::nowhere(),
+        );
         assert!(view.unassigned_agents.is_empty());
-        let view = build_state(&Board::default(), &registry, 100.0 + 3000.0, None, &Paths::nowhere());
+        let view = build_state(
+            &Board::default(),
+            &registry,
+            100.0 + 3000.0,
+            None,
+            &Paths::nowhere(),
+        );
         assert_eq!(view.unassigned_agents.len(), 1);
         assert_eq!(view.unassigned_agents[0].status, "stale");
     }
@@ -487,7 +592,13 @@ mod tests {
     fn seconds_in_stage_and_the_board_error_are_reported() {
         let mut board = Board::default();
         board.jobs.push(job("001", "build", 100.0));
-        let view = build_state(&board, &Registry::new(), 160.0, Some("oops".to_string()), &Paths::nowhere());
+        let view = build_state(
+            &board,
+            &Registry::new(),
+            160.0,
+            Some("oops".to_string()),
+            &Paths::nowhere(),
+        );
         assert_eq!(view.jobs[0].seconds_in_stage, 60.0);
         assert_eq!(view.board_error.as_deref(), Some("oops"));
         assert_eq!(view.generated_at, 160.0);
@@ -557,7 +668,10 @@ mod tests {
         let item = &board.jobs[0];
         let series = item.series.as_ref().ok_or("no series")?;
         assert_eq!((series.index, series.total), (2, 4));
-        assert_eq!(item.tokens.as_ref().map(|t| (t.weighted, t.raw)), Some((500, 4000)));
+        assert_eq!(
+            item.tokens.as_ref().map(|t| (t.weighted, t.raw)),
+            Some((500, 4000))
+        );
         assert_eq!(item.budget_weighted, Some(1000));
         Ok(())
     }
@@ -569,33 +683,49 @@ mod tests {
         )?;
         let item = &board.jobs[0];
         assert_eq!(item.series.as_ref().map(|s| s.total), Some(3));
-        assert_eq!(item.tokens.as_ref().map(|t| (t.weighted, t.raw)), Some((700, 1600)));
+        assert_eq!(
+            item.tokens.as_ref().map(|t| (t.weighted, t.raw)),
+            Some((700, 1600))
+        );
         Ok(())
     }
 
     fn entry(stage: &str, ts: f64) -> StageEntry {
-        StageEntry { stage: stage.to_string(), ts }
+        StageEntry {
+            stage: stage.to_string(),
+            ts,
+        }
     }
 
     #[test]
     fn durations_sum_repeated_stages_and_run_the_current_one_to_now() {
         let mut item = job("001", "review", 400.0);
         item.stage_history = vec![
-            entry("spec", 0.0), entry("build", 100.0), entry("review", 300.0),
-            entry("build", 350.0), entry("review", 400.0),
+            entry("spec", 0.0),
+            entry("build", 100.0),
+            entry("review", 300.0),
+            entry("build", 350.0),
+            entry("review", 400.0),
         ];
         let durations = stage_durations(&item, 460.0);
         let get = |name: &str| durations.iter().find(|d| d.stage == name);
         assert_eq!(get("spec").map(|d| d.seconds), Some(100.0));
         assert_eq!(get("build").map(|d| d.seconds), Some(250.0));
-        assert_eq!(get("review").map(|d| (d.seconds, d.current)), Some((110.0, true)));
+        assert_eq!(
+            get("review").map(|d| (d.seconds, d.current)),
+            Some((110.0, true))
+        );
     }
 
     #[test]
     fn merged_and_needs_human_have_no_growing_duration() {
         for last in ["merged", "needs-human"] {
             let mut item = job("001", last, 300.0);
-            item.stage_history = vec![entry("spec", 0.0), entry("build", 100.0), entry(last, 300.0)];
+            item.stage_history = vec![
+                entry("spec", 0.0),
+                entry("build", 100.0),
+                entry(last, 300.0),
+            ];
             let durations = stage_durations(&item, 99_999.0);
             assert!(durations.iter().all(|d| d.stage != last), "{last}");
             assert_eq!(durations.len(), 2);
@@ -608,19 +738,27 @@ mod tests {
         assert_eq!((durations.len(), durations[0].seconds), (1, 60.0));
         let mut item = job("001", "build", 100.0);
         item.stage_history = vec![entry("spec", 200.0), entry("build", 100.0)];
-        assert!(stage_durations(&item, 150.0).iter().all(|d| d.seconds >= 0.0));
+        assert!(stage_durations(&item, 150.0)
+            .iter()
+            .all(|d| d.seconds >= 0.0));
     }
 
     #[test]
     fn the_token_view_has_a_fraction_between_zero_and_one() -> TestResult {
         let mut item = job("001", "build", 1.0);
         assert!(token_view(&item).is_none());
-        item.tokens = Some(Tokens { weighted: 750_000, raw: 5_000_000 });
+        item.tokens = Some(Tokens {
+            weighted: 750_000,
+            raw: 5_000_000,
+        });
         let view = token_view(&item).ok_or("none")?;
         assert_eq!(view.budget, 3_000_000);
         assert_eq!(view.fraction, 0.25);
         item.budget_weighted = Some(500_000);
-        item.tokens = Some(Tokens { weighted: 900_000, raw: 0 });
+        item.tokens = Some(Tokens {
+            weighted: 900_000,
+            raw: 0,
+        });
         assert_eq!(token_view(&item).ok_or("none")?.fraction, 1.0);
         item.budget_weighted = Some(0);
         assert_eq!(token_view(&item).ok_or("none")?.fraction, 0.0);
@@ -654,7 +792,10 @@ mod tests {
     #[test]
     fn a_running_agent_moves_the_bar_ahead_of_the_board() {
         let mut item = job("001", "build", 1.0);
-        item.tokens = Some(Tokens { weighted: 100_000, raw: 800_000 });
+        item.tokens = Some(Tokens {
+            weighted: 100_000,
+            raw: 800_000,
+        });
         let view = live_token_view(&item, &[agent_with(250_000)]).expect("view");
         assert_eq!(view.weighted, 250_000);
         assert_eq!(view.raw, 800_000);
@@ -672,15 +813,25 @@ mod tests {
     #[test]
     fn a_finished_job_keeps_the_board_figure() {
         let mut item = job("001", "merged", 1.0);
-        item.tokens = Some(Tokens { weighted: 300_000, raw: 2_000_000 });
-        let view = live_token_view(&item, &[agent_with(300_000), agent_with(40_000)]).expect("view");
-        assert_eq!((view.weighted, view.raw, view.live), (300_000, 2_000_000, false));
+        item.tokens = Some(Tokens {
+            weighted: 300_000,
+            raw: 2_000_000,
+        });
+        let view =
+            live_token_view(&item, &[agent_with(300_000), agent_with(40_000)]).expect("view");
+        assert_eq!(
+            (view.weighted, view.raw, view.live),
+            (300_000, 2_000_000, false)
+        );
     }
 
     #[test]
     fn the_board_wins_when_every_agent_total_is_lower() {
         let mut item = job("001", "build", 1.0);
-        item.tokens = Some(Tokens { weighted: 90_000, raw: 500_000 });
+        item.tokens = Some(Tokens {
+            weighted: 90_000,
+            raw: 500_000,
+        });
         let view = live_token_view(&item, &[agent_with(20_000)]).expect("view");
         assert_eq!((view.weighted, view.live), (90_000, false));
     }
@@ -709,7 +860,13 @@ mod tests {
         board.jobs.push(job("001", "review", 10.0));
         board.jobs.push(job("002", "review", 10.0));
         let mut registry = Registry::new();
-        start_for(&mut registry, 20.0, "r1", "factory-code-reviewer", Some("002"));
+        start_for(
+            &mut registry,
+            20.0,
+            "r1",
+            "factory-code-reviewer",
+            Some("002"),
+        );
         start_for(&mut registry, 21.0, "r2", "factory-code-reviewer", None);
         start_for(&mut registry, 22.0, "r3", "factory-builder", Some("999"));
         let view = build_state(&board, &registry, 30.0, None, &Paths::nowhere());
@@ -725,7 +882,8 @@ mod tests {
         registry.ingest_line("more garbage");
         let mut board = Board::default();
         board.jobs.push(job("001", "build", 1.0));
-        let json = serde_json::to_value(build_state(&board, &registry, 5.0, None, &Paths::nowhere()))?;
+        let json =
+            serde_json::to_value(build_state(&board, &registry, 5.0, None, &Paths::nowhere()))?;
         assert_eq!(json["skipped_lines"], 2);
         assert!(json["jobs"][0]["stage_durations"].is_array());
         assert!(json["jobs"][0]["token_view"].is_null());
@@ -741,12 +899,24 @@ mod tests {
             dir.join("costs.json"),
             r#"{"generated_at":1.0,"groups":{"small":{"n":1,"n_approx":0,"median":9,"low":9,"high":9,"roles":{},"corrected":null}},"roles":{"builder":100},"jobs":[{"id":"SECRET-JOB"}]}"#,
         )?;
-        let view = build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::for_root(root.path()));
+        let view = build_state(
+            &Board::default(),
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::for_root(root.path()),
+        );
         let json = serde_json::to_string(&view)?;
         assert!(json.contains("\"costs\":{"), "{json}");
         assert!(json.contains("\"median\":9"), "{json}");
         assert!(!json.contains("SECRET-JOB"), "{json}");
-        let none = build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::nowhere());
+        let none = build_state(
+            &Board::default(),
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::nowhere(),
+        );
         assert!(serde_json::to_value(&none)?["costs"].is_null());
         Ok(())
     }
@@ -804,7 +974,8 @@ mod tests {
 
     #[test]
     fn a_draft_is_stale_one_second_past_the_threshold_and_not_at_it() -> TestResult {
-        let board: Board = serde_json::from_value(serde_json::json!({ "drafts": [draft_json("d", 100.0)] }))?;
+        let board: Board =
+            serde_json::from_value(serde_json::json!({ "drafts": [draft_json("d", 100.0)] }))?;
         let at = build_draft_cards(&board.drafts, 100.0 + 86_400.0, DEFAULT_DRAFT_STALE_SECS);
         assert!(!at[0].stale);
         assert_eq!(at[0].seconds_since_update, 86_400.0);
@@ -818,10 +989,23 @@ mod tests {
 
     #[test]
     fn the_state_json_has_a_drafts_array() -> TestResult {
-        let empty = serde_json::to_value(build_state(&Board::default(), &Registry::new(), 10.0, None, &Paths::nowhere()))?;
+        let empty = serde_json::to_value(build_state(
+            &Board::default(),
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::nowhere(),
+        ))?;
         assert_eq!(empty["drafts"].as_array().map(Vec::len), Some(0));
-        let board: Board = serde_json::from_value(serde_json::json!({ "drafts": [draft_json("d", 4.0)] }))?;
-        let json = serde_json::to_value(build_state(&board, &Registry::new(), 10.0, None, &Paths::nowhere()))?;
+        let board: Board =
+            serde_json::from_value(serde_json::json!({ "drafts": [draft_json("d", 4.0)] }))?;
+        let json = serde_json::to_value(build_state(
+            &board,
+            &Registry::new(),
+            10.0,
+            None,
+            &Paths::nowhere(),
+        ))?;
         assert_eq!(json["drafts"][0]["slug"], "d");
         assert_eq!(json["drafts"][0]["stage"], "interview");
         assert_eq!(json["drafts"][0]["seconds_since_update"], 6.0);
@@ -839,7 +1023,10 @@ mod tests {
         let view = build_state(&board, &Registry::new(), 10.0, None, &Paths::nowhere());
         let json = serde_json::to_value(&view)?;
         assert_eq!(json["jobs"][0]["spec_warning"], "no decision");
-        assert!(json["jobs"][1].get("spec_warning").is_none(), "a bad value is dropped");
+        assert!(
+            json["jobs"][1].get("spec_warning").is_none(),
+            "a bad value is dropped"
+        );
         Ok(())
     }
 }

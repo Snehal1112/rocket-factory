@@ -1,4 +1,3 @@
-
 use serde::Serialize;
 
 use crate::paths::Paths;
@@ -179,7 +178,9 @@ pub fn load_plan(paths: &Paths, dir: &str, stage: &str, reviewed: bool) -> Optio
         }
     }
     Some(PlanView {
-        title: plan.as_deref().and_then(|text| first_heading(text, "Plan:")),
+        title: plan
+            .as_deref()
+            .and_then(|text| first_heading(text, "Plan:")),
         goal: spec.as_deref().and_then(goal),
         tasks,
     })
@@ -199,7 +200,10 @@ pub fn load_spec(paths: &Paths, dir: &str) -> Option<SpecInfo> {
     }
     let path = paths.sdd.join(dir).join("spec.md");
     let text = std::fs::read_to_string(path).ok()?;
-    Some(SpecInfo { title: first_heading(&text, "Spec:"), goal: goal(&text) })
+    Some(SpecInfo {
+        title: first_heading(&text, "Spec:"),
+        goal: goal(&text),
+    })
 }
 
 #[cfg(test)]
@@ -237,7 +241,10 @@ mod tests {
         apply_ledger(&mut tasks, "Task 1: dispatched (BASE abc, sonnet)\n");
         assert_eq!(tasks[0].status, "active");
         assert_eq!(tasks[1].status, "pending");
-        apply_ledger(&mut tasks, "Task 1: complete (merge abc)\nTask 2: complete (merge abc)\n");
+        apply_ledger(
+            &mut tasks,
+            "Task 1: complete (merge abc)\nTask 2: complete (merge abc)\n",
+        );
         assert!(tasks.iter().all(|t| t.status == "done"));
     }
 
@@ -276,10 +283,25 @@ mod tests {
         let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("plan.md"), PLAN_V3)?;
-        std::fs::write(dir.join("progress.md"), "Task 1: dispatched (BASE abc, sonnet)\n")?;
-        let in_review = load_plan(&Paths::for_root(root.path()), "2026-10-13-001-x", "review", false).ok_or("no plan")?;
+        std::fs::write(
+            dir.join("progress.md"),
+            "Task 1: dispatched (BASE abc, sonnet)\n",
+        )?;
+        let in_review = load_plan(
+            &Paths::for_root(root.path()),
+            "2026-10-13-001-x",
+            "review",
+            false,
+        )
+        .ok_or("no plan")?;
         assert!(in_review.tasks.iter().all(|t| t.status == "review"));
-        let building = load_plan(&Paths::for_root(root.path()), "2026-10-13-001-x", "build", false).ok_or("no plan")?;
+        let building = load_plan(
+            &Paths::for_root(root.path()),
+            "2026-10-13-001-x",
+            "build",
+            false,
+        )
+        .ok_or("no plan")?;
         assert!(building.tasks.iter().all(|t| t.status == "active"));
         Ok(())
     }
@@ -289,14 +311,29 @@ mod tests {
         let root = tempfile::tempdir()?;
         let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("plan.md"), "### Task 1: a\n\n### Task 2: b\n\n### Task 3: c\n")?;
+        std::fs::write(
+            dir.join("plan.md"),
+            "### Task 1: a\n\n### Task 2: b\n\n### Task 3: c\n",
+        )?;
         let ledger = "Ruling: per-task builders, 3 tasks\nTask 1: dispatched (BASE abc, sonnet)\n\
                       Task 1: implementer done (abc)\nTask 2: dispatched (BASE abc, sonnet)\n";
         std::fs::write(dir.join("progress.md"), ledger)?;
-        let building = load_plan(&Paths::for_root(root.path()), "2026-10-13-001-x", "build", false).ok_or("no plan")?;
+        let building = load_plan(
+            &Paths::for_root(root.path()),
+            "2026-10-13-001-x",
+            "build",
+            false,
+        )
+        .ok_or("no plan")?;
         let states: Vec<&str> = building.tasks.iter().map(|t| t.status.as_str()).collect();
         assert_eq!(states, vec!["review", "active", "pending"]);
-        let in_review = load_plan(&Paths::for_root(root.path()), "2026-10-13-001-x", "review", false).ok_or("no plan")?;
+        let in_review = load_plan(
+            &Paths::for_root(root.path()),
+            "2026-10-13-001-x",
+            "review",
+            false,
+        )
+        .ok_or("no plan")?;
         assert!(in_review.tasks.iter().all(|t| t.status == "review"));
         Ok(())
     }
@@ -335,11 +372,21 @@ mod tests {
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("plan.md"), PLAN)?;
         // While the plan is still being written the tasks wait, whatever the ledger says.
-        let open = load_plan(&Paths::for_root(root.path()), "2026-10-13-001-x", "spec", false)
-            .ok_or("plan should load")?;
+        let open = load_plan(
+            &Paths::for_root(root.path()),
+            "2026-10-13-001-x",
+            "spec",
+            false,
+        )
+        .ok_or("plan should load")?;
         assert_eq!(open.tasks[2].status, "pending");
-        let merged = load_plan(&Paths::for_root(root.path()), "2026-10-13-001-x", "merged", false)
-            .ok_or("plan should load")?;
+        let merged = load_plan(
+            &Paths::for_root(root.path()),
+            "2026-10-13-001-x",
+            "merged",
+            false,
+        )
+        .ok_or("plan should load")?;
         assert!(merged.tasks.iter().all(|task| task.status == "done"));
         Ok(())
     }
@@ -358,7 +405,10 @@ mod tests {
         let root = tempfile::tempdir()?;
         let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("spec.md"), "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n")?;
+        std::fs::write(
+            dir.join("spec.md"),
+            "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n",
+        )?;
         let info = load_spec(&Paths::for_root(root.path()), "2026-10-13-001-x").ok_or("no spec")?;
         assert_eq!(info.title.as_deref(), Some("Demo spec"));
         assert_eq!(info.goal.as_deref(), Some("Show the plans."));

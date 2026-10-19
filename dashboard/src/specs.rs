@@ -47,7 +47,10 @@ pub fn plan_state(job: &Job) -> &'static str {
 pub fn card_stage(rows: &[SpecPlanRow]) -> &'static str {
     if !rows.is_empty() && rows.iter().all(|row| row.state == "merged") {
         "merged"
-    } else if rows.iter().any(|row| row.state == "cancelled" || row.state == "needs-human") {
+    } else if rows
+        .iter()
+        .any(|row| row.state == "cancelled" || row.state == "needs-human")
+    {
         "needs-human"
     } else {
         "spec"
@@ -64,8 +67,12 @@ fn index_of(view: &JobView) -> u32 {
 pub fn build_spec_cards(jobs: &[JobView], paths: &Paths) -> Vec<SpecCard> {
     let mut groups: Vec<(String, Vec<&JobView>)> = Vec::new();
     for view in jobs {
-        let Some(series) = view.job.series.as_ref() else { continue };
-        let Some(id) = series.id.as_ref() else { continue };
+        let Some(series) = view.job.series.as_ref() else {
+            continue;
+        };
+        let Some(id) = series.id.as_ref() else {
+            continue;
+        };
         if series.total < 2 {
             continue;
         }
@@ -119,11 +126,20 @@ mod tests {
     }
 
     fn job(stage: &str, cancelled: bool) -> Job {
-        serde_json::from_value(job_json(stage, serde_json::json!({ "cancelled": cancelled }))).expect("job")
+        serde_json::from_value(job_json(
+            stage,
+            serde_json::json!({ "cancelled": cancelled }),
+        ))
+        .expect("job")
     }
 
     fn row(state: &str) -> SpecPlanRow {
-        SpecPlanRow { job_id: "001".into(), index: 1, title: None, state: state.into() }
+        SpecPlanRow {
+            job_id: "001".into(),
+            index: 1,
+            title: None,
+            state: state.into(),
+        }
     }
 
     #[test]
@@ -141,9 +157,18 @@ mod tests {
     #[test]
     fn the_card_stage_is_merged_when_all_merged_needs_human_when_stuck_and_spec_otherwise() {
         assert_eq!(card_stage(&[row("merged"), row("merged")]), "merged");
-        assert_eq!(card_stage(&[row("merged"), row("building"), row("waiting")]), "spec");
-        assert_eq!(card_stage(&[row("merged"), row("needs-human"), row("waiting")]), "needs-human");
-        assert_eq!(card_stage(&[row("building"), row("cancelled")]), "needs-human");
+        assert_eq!(
+            card_stage(&[row("merged"), row("building"), row("waiting")]),
+            "spec"
+        );
+        assert_eq!(
+            card_stage(&[row("merged"), row("needs-human"), row("waiting")]),
+            "needs-human"
+        );
+        assert_eq!(
+            card_stage(&[row("building"), row("cancelled")]),
+            "needs-human"
+        );
         assert_eq!(card_stage(&[row("waiting"), row("waiting")]), "spec");
     }
 
@@ -158,7 +183,8 @@ mod tests {
     #[test]
     fn bad_series_id_and_cancelled_values_are_dropped_not_fatal() {
         let extra = serde_json::json!({ "series": { "index": 2, "total": 5, "id": 7 }, "cancelled": "yes" });
-        let parsed: Job = serde_json::from_value(job_json("build", extra)).expect("job still parses");
+        let parsed: Job =
+            serde_json::from_value(job_json("build", extra)).expect("job still parses");
         let series = parsed.series.expect("the series stays");
         assert_eq!((series.index, series.total, series.id), (2, 5, None));
         assert_eq!(parsed.cancelled, None);
@@ -166,7 +192,8 @@ mod tests {
 
     #[test]
     fn an_old_job_has_no_series_id_and_no_cancelled_flag() {
-        let extra = serde_json::json!({ "series": { "plan_file": "p.md", "index": 1, "total": 3 } });
+        let extra =
+            serde_json::json!({ "series": { "plan_file": "p.md", "index": 1, "total": 3 } });
         let parsed: Job = serde_json::from_value(job_json("merged", extra)).expect("job");
         assert_eq!(parsed.series.and_then(|s| s.id), None);
         assert_eq!(parsed.cancelled, None);
@@ -177,7 +204,14 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-    fn view(id: &str, stage: &str, index: u32, total: u32, series_id: Option<&str>, title: Option<&str>) -> JobView {
+    fn view(
+        id: &str,
+        stage: &str,
+        index: u32,
+        total: u32,
+        series_id: Option<&str>,
+        title: Option<&str>,
+    ) -> JobView {
         let extra = serde_json::json!({
             "id": id,
             "dir": format!("2026-10-13-{id}-x"),
@@ -187,7 +221,11 @@ mod tests {
             job: serde_json::from_value(job_json(stage, extra)).expect("job"),
             agents: Vec::new(),
             seconds_in_stage: 0.0,
-            plan: title.map(|t| PlanView { title: Some(t.to_string()), goal: None, tasks: Vec::new() }),
+            plan: title.map(|t| PlanView {
+                title: Some(t.to_string()),
+                goal: None,
+                tasks: Vec::new(),
+            }),
             stage_durations: Vec::new(),
             token_view: None,
             has_park: false,
@@ -206,8 +244,19 @@ mod tests {
         let cards = build_spec_cards(&jobs, &Paths::nowhere());
         let ids: Vec<_> = cards.iter().map(|c| c.series_id.as_str()).collect();
         assert_eq!(ids, vec!["S2", "S10"], "groups keep first-appearance order");
-        let rows: Vec<_> = cards[0].plans.iter().map(|r| (r.index, r.state.as_str(), r.title.as_deref())).collect();
-        assert_eq!(rows, vec![(1, "merged", Some("First")), (2, "building", Some("Second")), (3, "waiting", Some("Third"))]);
+        let rows: Vec<_> = cards[0]
+            .plans
+            .iter()
+            .map(|r| (r.index, r.state.as_str(), r.title.as_deref()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (1, "merged", Some("First")),
+                (2, "building", Some("Second")),
+                (3, "waiting", Some("Third"))
+            ]
+        );
         assert_eq!(cards[0].stage, "spec");
         assert_eq!(cards[1].plans.len(), 2);
     }
@@ -226,8 +275,14 @@ mod tests {
         let root = tempfile::tempdir()?;
         let dir = root.path().join(".superpowers/sdd/2026-10-13-001-x");
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("spec.md"), "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n")?;
-        let jobs = vec![view("001", "build", 1, 2, Some("S1"), None), view("002", "spec", 2, 2, Some("S1"), None)];
+        std::fs::write(
+            dir.join("spec.md"),
+            "# Spec: Demo spec\n\n## Goal\n\nShow the plans.\n",
+        )?;
+        let jobs = vec![
+            view("001", "build", 1, 2, Some("S1"), None),
+            view("002", "spec", 2, 2, Some("S1"), None),
+        ];
         let cards = build_spec_cards(&jobs, &Paths::for_root(root.path()));
         assert_eq!(cards[0].title.as_deref(), Some("Demo spec"));
         assert_eq!(cards[0].goal.as_deref(), Some("Show the plans."));
@@ -236,7 +291,10 @@ mod tests {
 
     #[test]
     fn a_series_without_its_plan_one_job_still_gets_a_card_without_a_title() {
-        let jobs = vec![view("002", "build", 2, 3, Some("S1"), None), view("003", "spec", 3, 3, Some("S1"), None)];
+        let jobs = vec![
+            view("002", "build", 2, 3, Some("S1"), None),
+            view("003", "spec", 3, 3, Some("S1"), None),
+        ];
         let cards = build_spec_cards(&jobs, &Paths::nowhere());
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].title, None);

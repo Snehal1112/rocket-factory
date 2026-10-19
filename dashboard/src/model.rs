@@ -40,20 +40,38 @@ impl<'de> Deserialize<'de> for Tokens {
         let value = serde_json::Value::deserialize(d)?;
         let bad = || serde::de::Error::custom("bad tokens value");
         if let Some(n) = value.as_u64() {
-            return Ok(Tokens { weighted: n, raw: 0 });
+            return Ok(Tokens {
+                weighted: n,
+                raw: 0,
+            });
         }
         let map = value.as_object().ok_or_else(bad)?;
         let num = |key: &str| map.get(key).and_then(serde_json::Value::as_u64);
         if let Some(weighted) = num("weighted") {
-            return Ok(Tokens { weighted, raw: num("raw").unwrap_or(0) });
+            return Ok(Tokens {
+                weighted,
+                raw: num("raw").unwrap_or(0),
+            });
         }
-        let (input, creation, output, read) = (num("input"), num("cache_creation"), num("output"), num("cache_read"));
+        let (input, creation, output, read) = (
+            num("input"),
+            num("cache_creation"),
+            num("output"),
+            num("cache_read"),
+        );
         if input.is_none() && creation.is_none() && output.is_none() && read.is_none() {
             return Err(bad());
         }
-        let (input, creation, output, read) =
-            (input.unwrap_or(0), creation.unwrap_or(0), output.unwrap_or(0), read.unwrap_or(0));
-        let raw = input.saturating_add(creation).saturating_add(output).saturating_add(read);
+        let (input, creation, output, read) = (
+            input.unwrap_or(0),
+            creation.unwrap_or(0),
+            output.unwrap_or(0),
+            read.unwrap_or(0),
+        );
+        let raw = input
+            .saturating_add(creation)
+            .saturating_add(output)
+            .saturating_add(read);
         // Same formula as factory-core: cache reads count one tenth.
         let weighted = input
             .saturating_add(creation)
@@ -76,7 +94,11 @@ pub struct StageEntry {
 pub struct Series {
     pub index: u32,
     pub total: u32,
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub id: Option<String>,
     #[serde(default, alias = "plan_file")]
     pub next_plan: serde_json::Value,
@@ -134,19 +156,39 @@ pub struct Job {
     #[serde(default, deserialize_with = "lenient")]
     pub budget_weighted: Option<u64>,
     /// True once the user cancelled the job. The driver writes it, a bad value is dropped.
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub cancelled: Option<bool>,
     /// Why the job is parked, written by the driver. A bad value is dropped.
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub park_kind: Option<String>,
     /// Unix seconds the job parked. A bad value is dropped.
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub park_at: Option<u64>,
     /// The cost estimate made when the job was created. A bad value is dropped.
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub estimate: Option<Estimate>,
     /// A warning the driver wrote when the job was made from a draft. A bad value is dropped.
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub spec_warning: Option<String>,
 }
 
@@ -213,4 +255,3 @@ pub struct AgentState {
     pub job_id: Option<String>,
     pub tokens_weighted: u64,
 }
-

@@ -69,7 +69,10 @@ mod tests {
         assert_eq!(v.groups["small"].median, 280_000);
         assert_eq!(v.roles["reviewer"], 38);
         let json = serde_json::to_string(&v).expect("json");
-        assert!(!json.contains("secret") && !json.contains("\"jobs\"") && !json.contains("extra"), "{json}");
+        assert!(
+            !json.contains("secret") && !json.contains("\"jobs\"") && !json.contains("extra"),
+            "{json}"
+        );
     }
 
     #[test]
@@ -90,6 +93,9 @@ mod tests {
             r#"{"groups":{"small":{"n":3,"n_approx":1,"median":3,"low":1,"high":5,"roles":{},"corrected":{"n":2,"median":4,"low":3,"high":5}}},"roles":{}}"#,
         );
         let v = load_costs(&Paths::for_root(root.path())).expect("costs");
-        assert_eq!(v.groups["small"].corrected.as_ref().map(|c| c.median), Some(4));
+        assert_eq!(
+            v.groups["small"].corrected.as_ref().map(|c| c.median),
+            Some(4)
+        );
     }
 }

@@ -127,12 +127,16 @@ mod tests {
     #[test]
     fn park_path_refuses_anything_that_could_leave_the_folder() {
         for bad in ["", "..", "../x", "a/b", "a\\b", "a/../b", "x\0y", "/abs"] {
-            assert_eq!(park_path(&Paths::for_root(Path::new("/r")), bad), None, "{bad:?}");
+            assert_eq!(
+                park_path(&Paths::for_root(Path::new("/r")), bad),
+                None,
+                "{bad:?}"
+            );
         }
     }
 
     use crate::model::Board;
-use crate::paths::Paths;
+    use crate::paths::Paths;
 
     fn board_with(dir: &str) -> Board {
         let text = format!(
@@ -185,7 +189,10 @@ use crate::paths::Paths;
         ));
         for bad in ["", "1", "../1", "00a", "0000000"] {
             assert!(
-                matches!(load_park(&Paths::for_root(root.path()), &board, bad), ParkReply::NotFound),
+                matches!(
+                    load_park(&Paths::for_root(root.path()), &board, bad),
+                    ParkReply::NotFound
+                ),
                 "{bad:?}"
             );
         }

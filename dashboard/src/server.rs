@@ -42,7 +42,11 @@ pub struct Project {
 
 impl Project {
     pub fn new(paths: Paths) -> Project {
-        Project { paths, registry: Mutex::new(Registry::new()), draft_stale_secs: DEFAULT_DRAFT_STALE_SECS }
+        Project {
+            paths,
+            registry: Mutex::new(Registry::new()),
+            draft_stale_secs: DEFAULT_DRAFT_STALE_SECS,
+        }
     }
 
     pub fn with_draft_stale(mut self, secs: f64) -> Project {
@@ -89,11 +93,21 @@ pub struct App {
 
 impl App {
     pub fn for_root(root: &Path) -> App {
-        App { mode: Mode::Root(Arc::new(Project::new(Paths::for_root(root)))) }
+        App {
+            mode: Mode::Root(Arc::new(Project::new(Paths::for_root(root)))),
+        }
     }
 
     pub fn for_home(dir: PathBuf, api: String) -> App {
-        App { mode: Mode::Home(HomeState { dir, api, timeouts: home_mode::Timeouts::default(), draft_stale_secs: DEFAULT_DRAFT_STALE_SECS, projects: Mutex::new(HashMap::new()) }) }
+        App {
+            mode: Mode::Home(HomeState {
+                dir,
+                api,
+                timeouts: home_mode::Timeouts::default(),
+                draft_stale_secs: DEFAULT_DRAFT_STALE_SECS,
+                projects: Mutex::new(HashMap::new()),
+            }),
+        }
     }
 
     /// Shorter timeouts for tests.
@@ -186,7 +200,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     .parse::<u64>()
                     .ok()
                     .filter(|hours| *hours > 0 && *hours <= u64::MAX / 3600)
-                    .ok_or_else(|| format!("bad --draft-stale-hours {raw:?}, use a whole number above 0"))?;
+                    .ok_or_else(|| {
+                        format!("bad --draft-stale-hours {raw:?}, use a whole number above 0")
+                    })?;
                 draft_stale_secs = (hours * 3600) as f64;
             }
             other => return Err(format!("unknown argument {other:?}")),
@@ -202,7 +218,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     if !home_mode::valid_api_addr(&api) {
         return Err(format!("--api {api:?} must be a loopback host:port"));
     }
-    Ok(Config { root: root.unwrap_or_else(|| PathBuf::from(".")), port, home, api, draft_stale_secs })
+    Ok(Config {
+        root: root.unwrap_or_else(|| PathBuf::from(".")),
+        port,
+        home,
+        api,
+        draft_stale_secs,
+    })
 }
 
 pub fn now_secs() -> f64 {
@@ -238,7 +260,11 @@ fn asset(content_type: &'static str, body: &str) -> Reply {
 
 pub fn json_reply(status: u16, value: &impl serde::Serialize) -> Reply {
     match serde_json::to_vec(value) {
-        Ok(body) => Reply { status, content_type: "application/json", body },
+        Ok(body) => Reply {
+            status,
+            content_type: "application/json",
+            body,
+        },
         Err(_) => text(500, "could not encode the reply"),
     }
 }
@@ -246,7 +272,14 @@ pub fn json_reply(status: u16, value: &impl serde::Serialize) -> Reply {
 /// A request without a body or an Origin, which is all most tests need.
 #[cfg(test)]
 pub fn route(app: &App, method: &str, url: &str, host: Option<&str>, port: u16, now: f64) -> Reply {
-    let request = Request { method, url, host, origin: None, content_type: None, body: &[] };
+    let request = Request {
+        method,
+        url,
+        host,
+        origin: None,
+        content_type: None,
+        body: &[],
+    };
     route_request(app, &request, port, now)
 }
 
@@ -312,7 +345,13 @@ pub fn api_park(paths: &Paths, id: &str) -> Reply {
 pub fn state_reply(project: &Project, now: f64, board_note: Option<String>) -> Reply {
     let (board, board_error) = load_board(&project.paths.board);
     let mut view = match project.registry.lock() {
-        Ok(registry) => build_state(&board, &registry, now, board_error.or(board_note), &project.paths),
+        Ok(registry) => build_state(
+            &board,
+            &registry,
+            now,
+            board_error.or(board_note),
+            &project.paths,
+        ),
         Err(_) => return text(500, "state lock poisoned"),
     };
     view.drafts = build_draft_cards(&board.drafts, now, project.draft_stale_secs);
@@ -320,23 +359,30 @@ pub fn state_reply(project: &Project, now: f64, board_note: Option<String>) -> R
 }
 
 /// Content security policy for every reply.
-pub const CSP: &str = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+pub const CSP: &str =
+    "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 /// Tails the event log in a background thread and feeds the registry. It ends when the project is dropped.
 /// Fails when the OS refuses a new thread, so the caller can answer instead of panicking.
 pub fn spawn_tailer(project: Weak<Project>) -> std::io::Result<()> {
-    let Some(first) = project.upgrade() else { return Ok(()) };
+    let Some(first) = project.upgrade() else {
+        return Ok(());
+    };
     let path = first.paths.events.clone();
     drop(first);
-    std::thread::Builder::new().name("factory-server-tailer".to_string()).spawn(move || {
-        let mut tailer = Tailer::with_window(path, LOG_WINDOW_BYTES);
-        loop {
-            let Some(project) = project.upgrade() else { return };
-            pump(&mut tailer, &project.registry, now_secs());
-            drop(project);
-            std::thread::sleep(POLL_INTERVAL);
-        }
-    })?;
+    std::thread::Builder::new()
+        .name("factory-server-tailer".to_string())
+        .spawn(move || {
+            let mut tailer = Tailer::with_window(path, LOG_WINDOW_BYTES);
+            loop {
+                let Some(project) = project.upgrade() else {
+                    return;
+                };
+                pump(&mut tailer, &project.registry, now_secs());
+                drop(project);
+                std::thread::sleep(POLL_INTERVAL);
+            }
+        })?;
     Ok(())
 }
 
@@ -387,10 +433,7 @@ pub fn serve(server: tiny_http::Server, app: Arc<App>, port: u16) {
         }
         let security: [(&[u8], &[u8]); 3] = [
             (&b"X-Content-Type-Options"[..], &b"nosniff"[..]),
-            (
-                &b"Content-Security-Policy"[..],
-                CSP.as_bytes(),
-            ),
+            (&b"Content-Security-Policy"[..], CSP.as_bytes()),
             (&b"Referrer-Policy"[..], &b"no-referrer"[..]),
         ];
         for (name, value) in security {
@@ -597,7 +640,12 @@ mod tests {
 
     #[test]
     fn the_csp_blocks_base_tags_and_form_posts() {
-        for part in ["default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'"] {
+        for part in [
+            "default-src 'self'",
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+        ] {
             assert!(CSP.contains(part), "missing {part}");
         }
     }
@@ -664,12 +712,21 @@ mod tests {
         let host = Some("127.0.0.1:1");
         let page = route(&app, "GET", "/", host, 1, 5.0);
         let html = String::from_utf8(page.body)?;
-        assert!(html.contains(r#"<dialog id="park-dialog""#), "dialog element");
+        assert!(
+            html.contains(r#"<dialog id="park-dialog""#),
+            "dialog element"
+        );
         assert!(html.contains(r#"id="park-content""#), "content holder");
         let app_js = String::from_utf8(route(&app, "GET", "/app.js", host, 1, 5.0).body)?;
-        assert!(app_js.contains("/park") && app_js.contains("showModal"), "controller");
+        assert!(
+            app_js.contains("/park") && app_js.contains("showModal"),
+            "controller"
+        );
         let css = String::from_utf8(route(&app, "GET", "/dashboard.css", host, 1, 5.0).body)?;
-        assert!(css.contains(".park-dialog") && css.contains(".ln-hit"), "styles");
+        assert!(
+            css.contains(".park-dialog") && css.contains(".ln-hit"),
+            "styles"
+        );
         Ok(())
     }
 
@@ -691,9 +748,15 @@ mod tests {
         let html = String::from_utf8(route(&app, "GET", "/", host, 1, 5.0).body)?;
         assert!(html.contains(r#"id="costs""#), "costs section");
         let app_js = String::from_utf8(route(&app, "GET", "/app.js", host, 1, 5.0).body)?;
-        assert!(app_js.contains("renderCostPanel") && app_js.contains(".role-seg"), "controller");
+        assert!(
+            app_js.contains("renderCostPanel") && app_js.contains(".role-seg"),
+            "controller"
+        );
         let css = String::from_utf8(route(&app, "GET", "/dashboard.css", host, 1, 5.0).body)?;
-        assert!(css.contains(".cost-table") && css.contains(".role-bar") && css.contains(".estimate"), "styles");
+        assert!(
+            css.contains(".cost-table") && css.contains(".role-bar") && css.contains(".estimate"),
+            "styles"
+        );
         Ok(())
     }
 
@@ -702,10 +765,16 @@ mod tests {
         let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
         assert!(parse_args(&args(&["--home", "/h", "--root", "/r"])).is_err());
         assert!(parse_args(&args(&["--root", "/r", "--home", "/h"])).is_err());
-        let config = parse_args(&args(&["--home", "/h", "--api", "127.0.0.1:9000"])).expect("home parses");
+        let config =
+            parse_args(&args(&["--home", "/h", "--api", "127.0.0.1:9000"])).expect("home parses");
         assert_eq!(config.home, Some(PathBuf::from("/h")));
         assert_eq!(config.api, "127.0.0.1:9000");
-        assert_eq!(parse_args(&args(&["--home", "/h"])).expect("default api").api, DEFAULT_API);
+        assert_eq!(
+            parse_args(&args(&["--home", "/h"]))
+                .expect("default api")
+                .api,
+            DEFAULT_API
+        );
         assert!(parse_args(&args(&["--home", "/h", "--api", "example.com:80"])).is_err());
         assert!(parse_args(&args(&["--api", "127.0.0.1:9000"])).is_err());
     }
@@ -714,9 +783,15 @@ mod tests {
     fn root_mode_has_no_project_routes_and_refuses_writes() -> TestResult {
         let (_dir, app) = app_with_board(Some(JOB))?;
         let host = Some("127.0.0.1:1");
-        assert_eq!(route(&app, "GET", "/api/projects", host, 1, 5.0).status, 404);
+        assert_eq!(
+            route(&app, "GET", "/api/projects", host, 1, 5.0).status,
+            404
+        );
         assert_eq!(route(&app, "GET", "/api/usage", host, 1, 5.0).status, 404);
-        assert_eq!(route(&app, "POST", "/api/projects/x/jobs", host, 1, 5.0).status, 405);
+        assert_eq!(
+            route(&app, "POST", "/api/projects/x/jobs", host, 1, 5.0).status,
+            405
+        );
         Ok(())
     }
 
@@ -725,7 +800,15 @@ mod tests {
         let (_dir, app) = app_with_board(None)?;
         let host = Some("127.0.0.1:1");
         let html = String::from_utf8(route(&app, "GET", "/", host, 1, 5.0).body)?;
-        for part in ["/projects.js", r#"id="project-tabs""#, r#"id="banner""#, r#"id="newjob""#, r#"id="nj-series""#, r#"id="act-dialog""#, r#"id="budget""#] {
+        for part in [
+            "/projects.js",
+            r#"id="project-tabs""#,
+            r#"id="banner""#,
+            r#"id="newjob""#,
+            r#"id="nj-series""#,
+            r#"id="act-dialog""#,
+            r#"id="budget""#,
+        ] {
             assert!(html.contains(part), "missing {part}");
         }
         let projects = route(&app, "GET", "/projects.js", host, 1, 5.0);
@@ -739,9 +822,15 @@ mod tests {
         let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
         let none: Vec<String> = Vec::new();
         assert_eq!(parse_args(&none).map(|c| c.draft_stale_secs), Ok(86_400.0));
-        assert_eq!(parse_args(&args(&["--draft-stale-hours", "2"])).map(|c| c.draft_stale_secs), Ok(7_200.0));
+        assert_eq!(
+            parse_args(&args(&["--draft-stale-hours", "2"])).map(|c| c.draft_stale_secs),
+            Ok(7_200.0)
+        );
         for bad in ["0", "-1", "1.5", "abc", "18446744073709551615"] {
-            assert!(parse_args(&args(&["--draft-stale-hours", bad])).is_err(), "{bad}");
+            assert!(
+                parse_args(&args(&["--draft-stale-hours", bad])).is_err(),
+                "{bad}"
+            );
         }
         assert!(parse_args(&args(&["--draft-stale-hours"])).is_err());
     }
@@ -750,13 +839,19 @@ mod tests {
     fn api_state_carries_drafts() -> TestResult {
         let board = r#"{"jobs":[],"drafts":[{"slug":"d","feature":"f","stage":"interview","created":"2026-10-18","updated_at":0.0}]}"#;
         let (_dir, app) = app_with_board(Some(board))?;
-        let json: serde_json::Value = serde_json::from_slice(&route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0).body)?;
+        let json: serde_json::Value = serde_json::from_slice(
+            &route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0).body,
+        )?;
         assert_eq!(json["drafts"][0]["slug"], "d");
         assert_eq!(json["drafts"][0]["stale"], false);
         // The configured threshold reaches the reply.
         let (_dir, app) = app_with_board(Some(board))?;
-        let app = Arc::try_unwrap(app).map_err(|_| "app is shared")?.with_draft_stale(3.0);
-        let json: serde_json::Value = serde_json::from_slice(&route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0).body)?;
+        let app = Arc::try_unwrap(app)
+            .map_err(|_| "app is shared")?
+            .with_draft_stale(3.0);
+        let json: serde_json::Value = serde_json::from_slice(
+            &route(&app, "GET", "/api/state", Some("127.0.0.1:1"), 1, 5.0).body,
+        )?;
         assert_eq!(json["drafts"][0]["stale"], true);
         Ok(())
     }

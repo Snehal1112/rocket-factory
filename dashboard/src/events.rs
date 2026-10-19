@@ -38,7 +38,8 @@ impl Registry {
 
     /// Drops agents idle for a day, then the oldest ones beyond the cap.
     pub fn prune(&mut self, now: f64) {
-        self.agents.retain(|_, agent| now - last_activity(agent) <= PRUNE_AFTER_SECS);
+        self.agents
+            .retain(|_, agent| now - last_activity(agent) <= PRUNE_AFTER_SECS);
         if self.agents.len() <= MAX_AGENTS {
             return;
         }
@@ -534,7 +535,9 @@ mod tests {
     }
 
     fn numbered_lines(count: usize) -> String {
-        (0..count).map(|k| format!("{{\"n\":{}}}\n", 100 + k)).collect()
+        (0..count)
+            .map(|k| format!("{{\"n\":{}}}\n", 100 + k))
+            .collect()
     }
 
     #[test]
@@ -587,7 +590,10 @@ mod tests {
         let path = dir.path().join("events.jsonl");
         let mut tailer = Tailer::new(path.clone());
         tailer.poll();
-        assert!(!tailer.take_rotated(), "a missing file at startup is not rotation");
+        assert!(
+            !tailer.take_rotated(),
+            "a missing file at startup is not rotation"
+        );
         std::fs::write(&path, numbered_lines(10))?;
         tailer.poll();
         assert!(!tailer.take_rotated(), "the first read is not rotation");

@@ -27,7 +27,10 @@ pub struct Timeouts {
 
 impl Default for Timeouts {
     fn default() -> Timeouts {
-        Timeouts { get: API_TIMEOUT, post: WRITE_TIMEOUT }
+        Timeouts {
+            get: API_TIMEOUT,
+            post: WRITE_TIMEOUT,
+        }
     }
 }
 
@@ -58,7 +61,9 @@ pub struct ApiReply {
 
 /// Only loopback hosts are accepted, because the token is sent to this address.
 pub fn valid_api_addr(addr: &str) -> bool {
-    let Some((host, port)) = addr.rsplit_once(':') else { return false };
+    let Some((host, port)) = addr.rsplit_once(':') else {
+        return false;
+    };
     port.parse::<u16>().is_ok() && matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
@@ -68,7 +73,9 @@ pub fn valid_project(name: &str) -> bool {
         && name.len() <= 64
         && name != "."
         && name != ".."
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 /// Job ids are digits only.
@@ -77,7 +84,10 @@ pub fn valid_job_id(id: &str) -> bool {
 }
 
 fn error_reply(status: u16, code: &str, message: &str) -> Reply {
-    json_reply(status, &json!({ "error": { "code": code, "message": message } }))
+    json_reply(
+        status,
+        &json!({ "error": { "code": code, "message": message } }),
+    )
 }
 
 /// Reads the token. A token with whitespace or control characters is refused, so it cannot split a header.
@@ -104,7 +114,10 @@ fn find_header_end(data: &[u8]) -> Option<usize> {
 fn decode_chunked(mut data: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     loop {
-        let line_end = data.windows(2).position(|w| w == b"\r\n").ok_or("bad chunk")?;
+        let line_end = data
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or("bad chunk")?;
         let size_text = std::str::from_utf8(&data[..line_end]).map_err(|_| "bad chunk size")?;
         let size_text = size_text.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size_text, 16).map_err(|_| "bad chunk size")?;
@@ -135,9 +148,13 @@ fn parse_response(raw: &[u8]) -> Result<ApiReply, String> {
     let mut chunked = false;
     let mut length: Option<usize> = None;
     for line in lines {
-        let Some((name, value)) = line.split_once(':') else { continue };
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
         let value = value.trim();
-        if name.eq_ignore_ascii_case("transfer-encoding") && value.to_ascii_lowercase().contains("chunked") {
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            && value.to_ascii_lowercase().contains("chunked")
+        {
             chunked = true;
         } else if name.eq_ignore_ascii_case("content-length") {
             length = value.parse().ok();
@@ -174,25 +191,36 @@ pub fn api_call(
         .map_err(|_| failed("the API address cannot be resolved"))?
         .next()
         .ok_or_else(|| failed("the API address cannot be resolved"))?;
-    let mut stream = TcpStream::connect_timeout(&addr, API_TIMEOUT).map_err(|_| failed("the factory API is not reachable"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, API_TIMEOUT)
+        .map_err(|_| failed("the factory API is not reachable"))?;
     let _ = stream.set_read_timeout(Some(read_timeout));
     let _ = stream.set_write_timeout(Some(API_TIMEOUT));
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: {api}\r\nAuthorization: Bearer {token}\r\nAccept: application/json\r\nConnection: close\r\n"
     );
     if let Some(bytes) = body {
-        head.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n", bytes.len()));
+        head.push_str(&format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            bytes.len()
+        ));
     }
     head.push_str("\r\n");
-    stream.write_all(head.as_bytes()).map_err(|_| failed("the factory API did not take the request"))?;
+    stream
+        .write_all(head.as_bytes())
+        .map_err(|_| failed("the factory API did not take the request"))?;
     if let Some(bytes) = body {
-        stream.write_all(bytes).map_err(|_| failed("the factory API did not take the request"))?;
+        stream
+            .write_all(bytes)
+            .map_err(|_| failed("the factory API did not take the request"))?;
     }
     let mut raw = Vec::new();
     let limit = (MAX_REPLY + HEADER_ROOM + 1) as u64;
     let read = stream.take(limit).read_to_end(&mut raw);
     if let Err(error) = &read {
-        let timed_out = matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut);
+        let timed_out = matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        );
         if timed_out && method != "GET" {
             return Err(CallError::WriteTimedOut);
         }
@@ -234,7 +262,14 @@ fn forward(reply: ApiReply) -> Reply {
     }
     match serde_json::from_slice::<Value>(&reply.body) {
         Ok(value) => json_reply(reply.status, &value),
-        Err(_) => error_reply(502, "api_error", &format!("The factory API answered {} with a body that is not JSON.", reply.status)),
+        Err(_) => error_reply(
+            502,
+            "api_error",
+            &format!(
+                "The factory API answered {} with a body that is not JSON.",
+                reply.status
+            ),
+        ),
     }
 }
 
@@ -251,7 +286,11 @@ fn fetch_projects(home: &HomeState) -> Result<Vec<Value>, Reply> {
     }
     match serde_json::from_slice::<Value>(&reply.body) {
         Ok(Value::Array(list)) => Ok(list),
-        _ => Err(error_reply(502, "api_error", "The factory API project list is not a list.")),
+        _ => Err(error_reply(
+            502,
+            "api_error",
+            "The factory API project list is not a list.",
+        )),
     }
 }
 
@@ -331,11 +370,26 @@ fn check_write(request: &Request) -> Result<(), Reply> {
     let host = request.host.unwrap_or("");
     let expected = format!("http://{host}");
     if request.origin != Some(expected.as_str()) {
-        return Err(error_reply(403, "forbidden", "A write must come from this page (Origin check)."));
+        return Err(error_reply(
+            403,
+            "forbidden",
+            "A write must come from this page (Origin check).",
+        ));
     }
-    let kind = request.content_type.unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let kind = request
+        .content_type
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     if kind != "application/json" {
-        return Err(error_reply(415, "unsupported_media_type", "A write needs Content-Type: application/json."));
+        return Err(error_reply(
+            415,
+            "unsupported_media_type",
+            "A write needs Content-Type: application/json.",
+        ));
     }
     Ok(())
 }
@@ -348,7 +402,14 @@ fn forward_write(home: &HomeState, request: &Request, api_path: &str) -> Reply {
         Ok(token) => token,
         Err(reply) => return reply,
     };
-    match api_call(&home.api, "POST", api_path, &token, Some(request.body), home.timeouts.post) {
+    match api_call(
+        &home.api,
+        "POST",
+        api_path,
+        &token,
+        Some(request.body),
+        home.timeouts.post,
+    ) {
         Ok(reply) => forward(reply),
         Err(error) => call_failed(error),
     }
@@ -377,24 +438,46 @@ pub fn route(home: &HomeState, request: &Request, path: &str, now: f64) -> Optio
     let not_found = || error_reply(404, "not_found", "Not found.");
     let wrong_method = || error_reply(405, "method_not_allowed", "Method not allowed.");
     if rest.is_empty() {
-        return Some(if is_get { api_projects(home) } else { wrong_method() });
+        return Some(if is_get {
+            api_projects(home)
+        } else {
+            wrong_method()
+        });
     }
     let rest = rest.strip_prefix('/')?;
     let parts: Vec<&str> = rest.split('/').collect();
-    let Some(name) = parts.first().copied().filter(|n| valid_project(n)) else { return Some(not_found()) };
+    let Some(name) = parts.first().copied().filter(|n| valid_project(n)) else {
+        return Some(not_found());
+    };
     let reply = match parts.as_slice() {
         [_, "state"] => {
-            if is_get { project_state(home, name, now) } else { wrong_method() }
+            if is_get {
+                project_state(home, name, now)
+            } else {
+                wrong_method()
+            }
         }
         [_, "jobs"] => {
-            if is_post { forward_write(home, request, &format!("/projects/{name}/jobs")) } else { wrong_method() }
+            if is_post {
+                forward_write(home, request, &format!("/projects/{name}/jobs"))
+            } else {
+                wrong_method()
+            }
         }
         [_, "jobs", id, "park"] if valid_job_id(id) => {
-            if is_get { project_park(home, name, id) } else { wrong_method() }
+            if is_get {
+                project_park(home, name, id)
+            } else {
+                wrong_method()
+            }
         }
         [_, "jobs", id, action @ ("approve" | "rework" | "cancel")] if valid_job_id(id) => {
             if is_post {
-                forward_write(home, request, &format!("/projects/{name}/jobs/{id}/{action}"))
+                forward_write(
+                    home,
+                    request,
+                    &format!("/projects/{name}/jobs/{id}/{action}"),
+                )
             } else {
                 wrong_method()
             }
@@ -440,9 +523,18 @@ mod tests {
     }
 
     /// Like `fake_api`, but a GET answers after `get_ms` and a POST after `post_ms`.
-    fn fake_api_delayed(projects: Value, post_status: u16, post_body: &str, get_ms: u64, post_ms: u64) -> Fake {
+    fn fake_api_delayed(
+        projects: Value,
+        post_status: u16,
+        post_body: &str,
+        get_ms: u64,
+        post_ms: u64,
+    ) -> Fake {
         let server = tiny_http::Server::http("127.0.0.1:0").expect("bind fake api");
-        let addr = format!("127.0.0.1:{}", server.server_addr().to_ip().expect("ip").port());
+        let addr = format!(
+            "127.0.0.1:{}",
+            server.server_addr().to_ip().expect("ip").port()
+        );
         let calls: Arc<Mutex<Vec<Call>>> = Arc::new(Mutex::new(Vec::new()));
         let record = Arc::clone(&calls);
         let post_body = post_body.to_string();
@@ -458,7 +550,12 @@ mod tests {
                 let method = request.method().as_str().to_string();
                 let url = request.url().to_string();
                 if let Ok(mut list) = record.lock() {
-                    list.push(Call { method: method.clone(), url: url.clone(), auth: auth.clone(), body });
+                    list.push(Call {
+                        method: method.clone(),
+                        url: url.clone(),
+                        auth: auth.clone(),
+                        body,
+                    });
                 }
                 let authorized = auth.as_deref() == Some(&format!("Bearer {TOKEN}"));
                 let (status, text) = if !authorized {
@@ -490,7 +587,11 @@ mod tests {
 
     const JOB: &str = r#"{"jobs":[{"id":"001","dir":"2026-10-13-001-x","slug":"s","created":"2026-10-13","feature":"f","branch":"b","stage":"spec","round":0,"stage_since":1.0,"reviews":{}}]}"#;
 
-    fn setup_with(token: &str, post_status: u16, post_body: &str) -> Result<Setup, Box<dyn std::error::Error>> {
+    fn setup_with(
+        token: &str,
+        post_status: u16,
+        post_body: &str,
+    ) -> Result<Setup, Box<dyn std::error::Error>> {
         let home = tempfile::tempdir()?;
         std::fs::write(home.path().join("api.token"), format!("{token}\n"))?;
         let repo = tempfile::tempdir()?;
@@ -508,7 +609,12 @@ mod tests {
         ]);
         let fake = fake_api(projects, post_status, post_body);
         let app = App::for_home(home.path().to_path_buf(), fake.addr.clone());
-        Ok(Setup { _home: home, _repo: repo, app, fake })
+        Ok(Setup {
+            _home: home,
+            _repo: repo,
+            app,
+            fake,
+        })
     }
 
     fn setup() -> Result<Setup, Box<dyn std::error::Error>> {
@@ -518,17 +624,45 @@ mod tests {
     const HOST: &str = "127.0.0.1:9";
 
     fn get(app: &App, url: &str) -> crate::server::Reply {
-        let request = Request { method: "GET", url, host: Some(HOST), origin: None, content_type: None, body: &[] };
+        let request = Request {
+            method: "GET",
+            url,
+            host: Some(HOST),
+            origin: None,
+            content_type: None,
+            body: &[],
+        };
         route_request(app, &request, 9, 5.0)
     }
 
-    fn post(app: &App, url: &str, host: Option<&str>, origin: Option<&str>, ctype: Option<&str>, body: &[u8]) -> crate::server::Reply {
-        let request = Request { method: "POST", url, host, origin, content_type: ctype, body };
+    fn post(
+        app: &App,
+        url: &str,
+        host: Option<&str>,
+        origin: Option<&str>,
+        ctype: Option<&str>,
+        body: &[u8],
+    ) -> crate::server::Reply {
+        let request = Request {
+            method: "POST",
+            url,
+            host,
+            origin,
+            content_type: ctype,
+            body,
+        };
         route_request(app, &request, 9, 5.0)
     }
 
     fn good_post(app: &App, url: &str, body: &[u8]) -> crate::server::Reply {
-        post(app, url, Some(HOST), Some("http://127.0.0.1:9"), Some("application/json"), body)
+        post(
+            app,
+            url,
+            Some(HOST),
+            Some("http://127.0.0.1:9"),
+            Some("application/json"),
+            body,
+        )
     }
 
     #[test]
@@ -537,7 +671,12 @@ mod tests {
         let reply = get(&s.app, "/api/projects");
         assert_eq!(reply.status, 200);
         let json: Value = serde_json::from_slice(&reply.body)?;
-        let names: Vec<&str> = json.as_array().ok_or("array")?.iter().filter_map(|p| p["name"].as_str()).collect();
+        let names: Vec<&str> = json
+            .as_array()
+            .ok_or("array")?
+            .iter()
+            .filter_map(|p| p["name"].as_str())
+            .collect();
         assert_eq!(names, vec!["alpha", "zeta"]);
         assert_eq!(json[1]["reason"], "project.toml is broken");
         assert_eq!(json[1]["status"], "disabled");
@@ -591,12 +730,19 @@ mod tests {
             get(&s.app, "/api/projects/alpha/state"),
             get(&s.app, "/"),
             get(&s.app, "/app.js"),
-            good_post(&s.app, "/api/projects/alpha/jobs", br#"{"spec":"/a","plans":"/b"}"#),
+            good_post(
+                &s.app,
+                "/api/projects/alpha/jobs",
+                br#"{"spec":"/a","plans":"/b"}"#,
+            ),
         ];
         let calls = s.fake.calls();
         assert!(!calls.is_empty());
         for call in &calls {
-            assert_eq!(call.auth.as_deref(), Some(format!("Bearer {TOKEN}").as_str()));
+            assert_eq!(
+                call.auth.as_deref(),
+                Some(format!("Bearer {TOKEN}").as_str())
+            );
         }
         for reply in replies {
             assert!(!String::from_utf8_lossy(&reply.body).contains(TOKEN));
@@ -614,9 +760,26 @@ mod tests {
         assert_eq!(json["dailyBudget"]["used"], 42);
         assert!(!String::from_utf8_lossy(&reply.body).contains(TOKEN));
         let calls = s.fake.calls();
-        let call = calls.iter().find(|c| c.url == "/usage?days=14").ok_or("usage call")?;
-        assert_eq!(call.auth.as_deref(), Some(format!("Bearer {TOKEN}").as_str()));
-        assert_eq!(post(&s.app, "/api/usage", Some(HOST), Some("http://127.0.0.1:9"), Some("application/json"), b"{}").status, 405);
+        let call = calls
+            .iter()
+            .find(|c| c.url == "/usage?days=14")
+            .ok_or("usage call")?;
+        assert_eq!(
+            call.auth.as_deref(),
+            Some(format!("Bearer {TOKEN}").as_str())
+        );
+        assert_eq!(
+            post(
+                &s.app,
+                "/api/usage",
+                Some(HOST),
+                Some("http://127.0.0.1:9"),
+                Some("application/json"),
+                b"{}"
+            )
+            .status,
+            405
+        );
         Ok(())
     }
 
@@ -672,18 +835,64 @@ mod tests {
         let json = Some("application/json");
         let refused = [
             post(&s.app, url, Some(HOST), None, json, body),
-            post(&s.app, url, Some(HOST), Some("http://evil.example"), json, body),
-            post(&s.app, url, Some(HOST), Some("http://localhost:9"), json, body),
+            post(
+                &s.app,
+                url,
+                Some(HOST),
+                Some("http://evil.example"),
+                json,
+                body,
+            ),
+            post(
+                &s.app,
+                url,
+                Some(HOST),
+                Some("http://localhost:9"),
+                json,
+                body,
+            ),
             post(&s.app, url, Some(HOST), Some("null"), json, body),
             post(&s.app, url, Some(HOST), good_origin, None, body),
-            post(&s.app, url, Some(HOST), good_origin, Some("text/plain"), body),
-            post(&s.app, url, Some(HOST), good_origin, Some("application/x-www-form-urlencoded"), body),
-            post(&s.app, url, Some("evil.example"), Some("http://evil.example"), json, body),
+            post(
+                &s.app,
+                url,
+                Some(HOST),
+                good_origin,
+                Some("text/plain"),
+                body,
+            ),
+            post(
+                &s.app,
+                url,
+                Some(HOST),
+                good_origin,
+                Some("application/x-www-form-urlencoded"),
+                body,
+            ),
+            post(
+                &s.app,
+                url,
+                Some("evil.example"),
+                Some("http://evil.example"),
+                json,
+                body,
+            ),
             post(&s.app, url, None, good_origin, json, body),
-            post(&s.app, "/api/projects/alpha/jobs/001/approve", Some(HOST), None, json, b""),
+            post(
+                &s.app,
+                "/api/projects/alpha/jobs/001/approve",
+                Some(HOST),
+                None,
+                json,
+                b"",
+            ),
         ];
         for reply in &refused {
-            assert!(reply.status == 403 || reply.status == 415, "status {}", reply.status);
+            assert!(
+                reply.status == 403 || reply.status == 415,
+                "status {}",
+                reply.status
+            );
         }
         assert!(s.fake.calls().is_empty(), "calls: {:?}", s.fake.calls());
         Ok(())
@@ -693,7 +902,14 @@ mod tests {
     fn a_valid_write_is_forwarded_unchanged() -> TestResult {
         let s = setup()?;
         let body = br#"{"spec":"/a/spec.md","plans":"/a/plans","run":true,"series":false}"#;
-        let reply = post(&s.app, "/api/projects/alpha/jobs", Some(HOST), Some("http://127.0.0.1:9"), Some("application/json; charset=utf-8"), body);
+        let reply = post(
+            &s.app,
+            "/api/projects/alpha/jobs",
+            Some(HOST),
+            Some("http://127.0.0.1:9"),
+            Some("application/json; charset=utf-8"),
+            body,
+        );
         assert_eq!(reply.status, 201);
         let json: Value = serde_json::from_slice(&reply.body)?;
         assert_eq!(json["job"], "004");
@@ -713,7 +929,11 @@ mod tests {
 
     #[test]
     fn api_errors_keep_their_code_and_status() -> TestResult {
-        let s = setup_with(TOKEN, 409, r#"{"error":{"code":"project_disabled","message":"nope"}}"#)?;
+        let s = setup_with(
+            TOKEN,
+            409,
+            r#"{"error":{"code":"project_disabled","message":"nope"}}"#,
+        )?;
         let reply = good_post(&s.app, "/api/projects/alpha/jobs", b"{}");
         assert_eq!(reply.status, 409);
         let json: Value = serde_json::from_slice(&reply.body)?;
@@ -724,11 +944,27 @@ mod tests {
     #[test]
     fn writes_only_accept_known_routes_and_methods() -> TestResult {
         let s = setup()?;
-        assert_eq!(good_post(&s.app, "/api/projects/alpha/jobs/abc/approve", b"").status, 404);
-        assert_eq!(good_post(&s.app, "/api/projects/alpha/jobs/001/delete", b"").status, 404);
+        assert_eq!(
+            good_post(&s.app, "/api/projects/alpha/jobs/abc/approve", b"").status,
+            404
+        );
+        assert_eq!(
+            good_post(&s.app, "/api/projects/alpha/jobs/001/delete", b"").status,
+            404
+        );
         assert_eq!(good_post(&s.app, "/api/projects", b"").status, 405);
-        assert_eq!(good_post(&s.app, "/api/projects/alpha/state", b"").status, 405);
-        let put = Request { method: "PUT", url: "/api/projects/alpha/jobs", host: Some(HOST), origin: None, content_type: None, body: &[] };
+        assert_eq!(
+            good_post(&s.app, "/api/projects/alpha/state", b"").status,
+            405
+        );
+        let put = Request {
+            method: "PUT",
+            url: "/api/projects/alpha/jobs",
+            host: Some(HOST),
+            origin: None,
+            content_type: None,
+            body: &[],
+        };
         assert_eq!(route_request(&s.app, &put, 9, 5.0).status, 405);
         assert!(s.fake.calls().is_empty());
         Ok(())
@@ -768,7 +1004,9 @@ mod tests {
         // An oversized chunk size must be an error, never a panic.
         let huge = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\nabc\r\n0\r\n\r\n";
         assert!(parse_response(huge).is_err());
-        assert!(parse_response(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n").is_err());
+        assert!(
+            parse_response(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n").is_err()
+        );
         let short = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}";
         assert!(parse_response(short).is_err());
         Ok(())
@@ -796,7 +1034,10 @@ mod tests {
         let served = Arc::clone(&app);
         std::thread::spawn(move || crate::server::serve(server, served, port));
         let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))?;
-        write!(stream, "GET /api/projects HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")?;
+        write!(
+            stream,
+            "GET /api/projects HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )?;
         let mut out = String::new();
         stream.read_to_string(&mut out)?;
         assert!(out.starts_with("HTTP/1.1 200"), "got: {out}");
@@ -818,11 +1059,22 @@ mod tests {
         Ok(())
     }
 
-    fn slow_app(get_ms: u64, post_ms: u64, timeouts: Timeouts) -> Result<(tempfile::TempDir, App, Fake), Box<dyn std::error::Error>> {
+    fn slow_app(
+        get_ms: u64,
+        post_ms: u64,
+        timeouts: Timeouts,
+    ) -> Result<(tempfile::TempDir, App, Fake), Box<dyn std::error::Error>> {
         let home = tempfile::tempdir()?;
         std::fs::write(home.path().join("api.token"), TOKEN)?;
-        let fake = fake_api_delayed(json!([]), 201, r#"{"job":"004","requestId":null}"#, get_ms, post_ms);
-        let app = App::for_home(home.path().to_path_buf(), fake.addr.clone()).with_timeouts(timeouts);
+        let fake = fake_api_delayed(
+            json!([]),
+            201,
+            r#"{"job":"004","requestId":null}"#,
+            get_ms,
+            post_ms,
+        );
+        let app =
+            App::for_home(home.path().to_path_buf(), fake.addr.clone()).with_timeouts(timeouts);
         Ok((home, app, fake))
     }
 
@@ -830,18 +1082,41 @@ mod tests {
 
     #[test]
     fn a_slow_post_within_the_write_timeout_succeeds() -> TestResult {
-        let (_home, app, _fake) = slow_app(0, 700, Timeouts { get: MS(200), post: MS(3000) })?;
+        let (_home, app, _fake) = slow_app(
+            0,
+            700,
+            Timeouts {
+                get: MS(200),
+                post: MS(3000),
+            },
+        )?;
         let reply = good_post(&app, "/api/projects/alpha/jobs", b"{}");
-        assert_eq!(reply.status, 201, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(
+            reply.status,
+            201,
+            "{}",
+            String::from_utf8_lossy(&reply.body)
+        );
         Ok(())
     }
 
     #[test]
     fn a_slow_get_still_times_out_at_the_short_limit() -> TestResult {
-        let (_home, app, _fake) = slow_app(900, 0, Timeouts { get: MS(200), post: MS(3000) })?;
+        let (_home, app, _fake) = slow_app(
+            900,
+            0,
+            Timeouts {
+                get: MS(200),
+                post: MS(3000),
+            },
+        )?;
         let started = std::time::Instant::now();
         let reply = get(&app, "/api/projects");
-        assert!(started.elapsed() < MS(800), "waited {:?}", started.elapsed());
+        assert!(
+            started.elapsed() < MS(800),
+            "waited {:?}",
+            started.elapsed()
+        );
         assert_eq!(reply.status, 502);
         let json: Value = serde_json::from_slice(&reply.body)?;
         assert_eq!(json["error"]["code"], "api_unreachable");
@@ -850,14 +1125,24 @@ mod tests {
 
     #[test]
     fn a_post_timeout_says_the_write_may_have_completed() -> TestResult {
-        let (_home, app, fake) = slow_app(0, 1200, Timeouts { get: MS(200), post: MS(300) })?;
+        let (_home, app, fake) = slow_app(
+            0,
+            1200,
+            Timeouts {
+                get: MS(200),
+                post: MS(300),
+            },
+        )?;
         let reply = good_post(&app, "/api/projects/alpha/jobs", b"{}");
         assert_eq!(reply.status, 504);
         let json: Value = serde_json::from_slice(&reply.body)?;
         assert_eq!(json["error"]["code"], "api_timeout");
         let message = json["error"]["message"].as_str().ok_or("message")?;
         assert!(message.contains("may still have completed"), "{message}");
-        assert!(message.contains("Check the job list before you try again"), "{message}");
+        assert!(
+            message.contains("Check the job list before you try again"),
+            "{message}"
+        );
         // The request did reach the API exactly once and was not retried.
         assert_eq!(fake.calls().len(), 1);
         Ok(())
@@ -869,7 +1154,10 @@ mod tests {
         let json: Value = serde_json::from_slice(&get(&s.app, "/api/projects").body)?;
         let message = json["error"]["message"].as_str().ok_or("message")?;
         assert!(!message.contains("Restart"), "{message}");
-        assert!(message.contains("--home") && message.contains("--api"), "{message}");
+        assert!(
+            message.contains("--home") && message.contains("--api"),
+            "{message}"
+        );
         Ok(())
     }
 

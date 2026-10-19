@@ -43,7 +43,10 @@ mod tests {
     fn for_root_matches_the_old_hardcoded_joins() {
         let paths = Paths::for_root(Path::new("/r"));
         assert_eq!(paths.board, Path::new("/r/.superpowers/factory/board.json"));
-        assert_eq!(paths.events, Path::new("/r/.superpowers/factory/events.jsonl"));
+        assert_eq!(
+            paths.events,
+            Path::new("/r/.superpowers/factory/events.jsonl")
+        );
         assert_eq!(paths.costs, Path::new("/r/.superpowers/factory/costs.json"));
         assert_eq!(paths.sdd, Path::new("/r/.superpowers/sdd"));
     }
