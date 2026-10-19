@@ -2,6 +2,7 @@
 
 mod build;
 mod checks_stage;
+mod combine;
 mod decide;
 mod drafts;
 mod park;
@@ -41,6 +42,7 @@ use thiserror::Error;
 
 pub use build::build_stage;
 pub use planlint::{lint_plan, PlanLint};
+pub use combine::{combine_plans, CombinedPlan};
 pub use clock::{date_from_days, now_secs, today};
 pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef, COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
