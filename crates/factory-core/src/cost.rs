@@ -219,11 +219,9 @@ fn group_stats(jobs: &[&JobCost]) -> GroupStats {
         .map(|(role, w)| {
             (
                 role,
-                if total == 0 {
-                    0
-                } else {
-                    ((w * 100 + total / 2) / total) as u32
-                },
+                (w * 100 + total / 2)
+                    .checked_div(total)
+                    .map_or(0, |share| share as u32),
             )
         })
         .collect();

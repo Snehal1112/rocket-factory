@@ -635,15 +635,12 @@ impl Supervisor {
             let Some(name) = evidence else { continue };
             let reason = format!("the request was started but no child record exists (found log file {name}), it is not run again");
             report.errors.push(format!("request {}: {reason}", r.id));
-            match self.record_result(&r.id, &r.project, &r.job, Outcome::Lost { reason }) {
-                Ok(outcome) => {
-                    report.finished.push((r.id.clone(), outcome));
-                    if let Err(e) = self.drop_queued(&r.id) {
-                        report.errors.push(format!("drop {}: {e}", r.id));
-                    }
-                }
-                // Without a result the request would start again, so this stops recovery.
-                Err(e) => return Err(e),
+            // Without a result the request would start again, so this stops recovery.
+            let outcome =
+                self.record_result(&r.id, &r.project, &r.job, Outcome::Lost { reason })?;
+            report.finished.push((r.id.clone(), outcome));
+            if let Err(e) = self.drop_queued(&r.id) {
+                report.errors.push(format!("drop {}: {e}", r.id));
             }
         }
         let child_pids: BTreeSet<u32> = running.iter().map(|c| c.pid).collect();

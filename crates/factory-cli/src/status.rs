@@ -134,11 +134,9 @@ fn render_jobs(board: &Board, cfg: &Config) -> String {
             .as_ref()
             .map_or("-".to_string(), |s| format!("{}/{}", s.index, s.total));
         let weighted = job.tokens.weighted();
-        let pct = if cfg.budget_weighted > 0 {
-            weighted * 100 / cfg.budget_weighted
-        } else {
-            0
-        };
+        let pct = (weighted * 100)
+            .checked_div(cfg.budget_weighted)
+            .unwrap_or(0);
         out.push_str(&format!(
             "{:<4} {:<12} {:<6} {:<15} {:<9} {:<7} {}\n",
             job.id,
