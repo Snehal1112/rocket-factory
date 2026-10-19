@@ -101,7 +101,7 @@ Events the code emits (each is one `tracing` call at the named level):
 | `job.created` | info | `runloop.rs` `add_job` | `slug`, `series` |
 | `stage.change` | info | `ports.rs` `set_stage`, plus the direct `Job::set_stage` call sites | `from`, `to`, `reason` |
 | `agent.start`, `agent.end` | info | `ports.rs` `run_agent` | `role`, `model`, `stop_reason`, `weighted_tokens`, `duration_ms` |
-| `check.run` | info | `checks_stage.rs` | `name`, `argv`, `exit_code`, `duration_ms` |
+| `check.run` | info | `checks_stage.rs` | `command`, `passed`, `summary` (one line from `CheckResult`) |
 | `git.op` | debug | the engine, around its git port calls (`factory-git` gets no dependency) | `op`, `ok`, `duration_ms` |
 | `decide` | info | `decide.rs` | `choice` (`merge`, `fix`, `needs-human`), `round` |
 | `merge.done` | info | `merge.rs` | `sha` |
@@ -110,7 +110,7 @@ Events the code emits (each is one `tracing` call at the named level):
 | `sup.start`, `sup.finish`, `sup.reject` | info | `supervisor.rs` | `request`, `project`, `job` |
 | `sup.error` | error | `supervisor.rs`, `factoryd.rs` | `msg` |
 
-A field whose name contains `token`, `key`, `secret` or `password` (case-insensitive substring) is written as `"[redacted]"`. Environment variables, prompts, command output and headers have no event and are never passed as fields. `argv` of a check is logged in full (it comes from the committed config), but the value of any `--name=value` argument whose `name` contains a sensitive word is written as `--name=[redacted]`. A check's environment is not logged. The one exception is the field `weighted_tokens`, a count that the redactor lets through by exact name. Example:
+A field whose name contains `token`, `key`, `secret` or `password` (case-insensitive substring) is written as `"[redacted]"`. Environment variables, prompts, command output and headers have no event and are never passed as fields. The `command` string of a check is logged in full (it comes from the committed config), but in each whitespace-separated word of the form `--name=value` whose `name` contains a sensitive word, the value is written as `[redacted]`. A check's environment is not logged. The one exception is the field `weighted_tokens`, a count that the redactor lets through by exact name. Example:
 
 ```json
 {"ts":"2026-10-19T09:12:03.412Z","level":"info","scope":"cli","project":"free","job_id":"003","stage":"review","event":"stage.change","from":"build","to":"review","msg":"stage build -> review"}
@@ -140,7 +140,7 @@ stderr keeps human output at `warn` and above, plus the factoryd tick lines (`su
 | Rotation rename fails | Counted and ignored, the file keeps growing until the next try |
 | Message longer than 300 characters | Cut to the last 300 characters, as `EventSink` does |
 | Field named `api_token` or `Password` | Written as `[redacted]` |
-| Argv entry `--token=abc` | Logged as `--token=[redacted]`; a secret in a bare positional argument is not caught |
+| Check command word `--token=abc` | Logged as `--token=[redacted]`; a secret in a bare positional argument is not caught |
 | Value is a secret under a harmless field name | Not caught, which is why no event passes environment or output |
 | `factory log --level warn` | Compares the `level` field of each line, not the filter string |
 | `factory log` with a corrupt line | Skipped, the other lines print |
@@ -150,7 +150,7 @@ stderr keeps human output at `warn` and above, plus the factoryd tick lines (`su
 
 ## Testing
 
-- `factory-telemetry` unit tests: `line_has_ts_level_scope_event` , `span_fields_reach_the_line`, `message_is_cut_to_300_chars`, `sensitive_field_names_are_redacted`, `weighted_tokens_is_the_one_field_not_redacted`, `planted_token_never_reaches_the_file`, `argv_value_of_a_sensitive_flag_is_redacted`, `rotation_moves_files_to_1_2_3`, `oldest_file_is_dropped`, `concurrent_writers_lose_no_line` (threads past the cap), `init_twice_returns_already_installed`, `write_error_is_counted_not_returned`, `env_filter_beats_log_level`, `invalid_env_filter_is_ignored`, `read_log_filters_by_job_and_level`, `read_log_tail_and_missing_file`, `read_log_skips_corrupt_line`.
+- `factory-telemetry` unit tests: `line_has_ts_level_scope_event` , `span_fields_reach_the_line`, `message_is_cut_to_300_chars`, `sensitive_field_names_are_redacted`, `weighted_tokens_is_the_one_field_not_redacted`, `planted_token_never_reaches_the_file`, `command_value_of_a_sensitive_flag_is_redacted`, `rotation_moves_files_to_1_2_3`, `oldest_file_is_dropped`, `concurrent_writers_lose_no_line` (threads past the cap), `init_twice_returns_already_installed`, `write_error_is_counted_not_returned`, `env_filter_beats_log_level`, `invalid_env_filter_is_ignored`, `read_log_filters_by_job_and_level`, `read_log_tail_and_missing_file`, `read_log_skips_corrupt_line`.
 - `factory-core`: `log_level_unset_by_default_and_takes_only_known_values` in `config.rs`; `log_file_is_in_the_state_dir` in `layout.rs`; `factoryd_log_file_is_in_the_home` in `home.rs`.
 - `factory-engine` (`tests/runloop.rs`, `tests/merge.rs`): a capturing layer under `tracing::subscriber::with_default` asserts `stage_change_is_logged_with_from_and_to`, `agent_run_logs_start_and_end`, `merge_logs_sha`, `park_logs_a_warning`, `kb_failure_logs_step_error_and_merge_result_is_unchanged`.
 - `factory-supervisor`: `supervisor_logs_start_and_finish` in `tests/recovery.rs` style.
@@ -187,7 +187,7 @@ stderr keeps human output at `warn` and above, plus the factoryd tick lines (`su
 - `log_level` in `project.toml` sets the file level, defaults to `info`, and an unknown value is a config error.
 - `FACTORY_LOG` overrides `log_level`; an invalid value is ignored with a note.
 - The file rotates at 10 MiB into `.1` to `.3`, and concurrent writers lose no line.
-- Fields named `token`, `key`, `secret` or `password` are redacted, check argv values of such flags are redacted, and a planted token never reaches the file.
+- Fields named `token`, `key`, `secret` or `password` are redacted, check command values of such flags are redacted, and a planted token never reaches the file.
 - A log write failure never fails a stage, a merge or a command.
 - `factory log` filters by `--job`, `--level` and `--tail` across the rotated files, and a missing file prints `no log yet`.
 - `events.jsonl`, the board JSON and the ledger are unchanged, and the dashboard still works.
@@ -213,7 +213,7 @@ stderr keeps human output at `warn` and above, plus the factoryd tick lines (`su
 - How are secrets and bulk output kept out? Options: a fixed field set with name-based redaction; log anything then scrub; names and ids only. Chosen: a fixed field set with name-based redaction. Decided by: user
 - How is the log read? Options: a `factory log` command; file only; command plus dashboard and a factoryd route. Chosen: the `factory log` command, with the dashboard and the route as follow-ups. Decided by: user
 - How do several processes rotate one file? Options: rotate under an `fs2` lock; only long-lived owners rotate; no lock. Chosen: rotate under an `fs2` lock with a second size check. Decided by: user
-- Does `check.run` log the full argv? Options: full argv with sensitive `--name=value` values redacted; program name and argument count only; full argv unchanged. Chosen: full argv with sensitive values redacted. Decided by: user
+- Does `check.run` log the full command? Options: full command with sensitive `--name=value` values redacted; program name and argument count only; full command unchanged. Chosen: full command with sensitive values redacted. Decided by: user
 - Does the engine need a port for logging, given `ports.rs`? Options: call `tracing` macros directly; wrap them in a port. Chosen: call the macros directly, because `tracing` is a no-op without a subscriber and tests capture with `with_default`. Decided by: call
 - Where does the code live? Options: a new `factory-telemetry` crate; inside `factory-core`. Chosen: a new crate, because `factory-core` has no I/O dependencies. Decided by: call
 - Which process writes which file? Options: each process writes its own scope's file; factoryd also writes into project files. Chosen: the child `factory` writes the project `log.jsonl`, factoryd writes `factoryd.log.jsonl`, and `init` runs after the config load, so a config-load error goes to plain stderr. Decided by: call
