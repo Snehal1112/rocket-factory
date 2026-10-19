@@ -317,7 +317,7 @@ fn kb_refresher_body_pins_the_rules() -> TestResult {
     forbid_all(&text, "kb refresher", &["SendMessage", "--force-with-lease"])
 }
 
-const COMMAND: &str = ".claude/commands/factory.md";
+const COMMAND: &str = "crates/factory-core/assets/global-command.md";
 
 #[test]
 fn command_is_thin_and_pins_the_shapes() -> TestResult {
@@ -326,16 +326,16 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
         &text,
         "command",
         &[
-            "<factory> new",
-            "<factory> run",
+            "<factory> --project <name> new",
+            "<factory> --project <name> run",
             "--series",
             "--opus",
             "--plans",
-            "<factory> status",
-            "<factory> approve",
-            "<factory> rework",
-            "<factory> cancel",
-            "<factory> cleanup",
+            "<factory> --project <name> status",
+            "<factory> --project <name> approve",
+            "<factory> --project <name> rework",
+            "<factory> --project <name> cancel",
+            "<factory> --project <name> cleanup",
             "exact shape",
             "next button for pagination",
             "status page for jobs",
@@ -349,14 +349,13 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "## Acceptance criteria",
             "explicit approval",
             "Do not write any plan before that approval",
-            "Do not run `<factory> new` before that approval",
+            "Do not run `<factory> --project <name> new` before that approval",
             "no placeholders",
             "Review Focus",
             "Next plan:",
             "Next plan: none",
             "validate",
             "rework needs a note",
-            "cargo build -j4",
             "escape",
             "Never edit the board",
             // The interview and the committed spec and plans.
@@ -364,10 +363,10 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "docs/superpowers/specs/<date>-<slug>-design.md",
             "docs/superpowers/plans/<date>-<slug>/",
             // The 7.0.0 interview and the draft card.
-            "<factory> spec start <slug> '<feature>'",
-            "<factory> spec stage <slug> writing-spec",
-            "<factory> spec stage <slug> writing-plans",
-            "<factory> spec resume <slug>",
+            "<factory> --project <name> spec start <slug> '<feature>'",
+            "<factory> --project <name> spec stage <slug> writing-spec",
+            "<factory> --project <name> spec stage <slug> writing-plans",
+            "<factory> --project <name> spec resume <slug>",
             "`file <repo-relative path>",
             "never only digits",
             "the same slug",
@@ -387,7 +386,6 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "`**Interfaces:**`",
             "plan self-review",
             "at most 6 plans",
-            "cargo commands are per crate",
             "ask for approval again",
             "repo-relative",
             "Keep a visible task list",
@@ -398,9 +396,9 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "because open questions were too hard to answer",
             "Red Flags row \"Options steer\"",
             "Always size it as a project with a written design",
-            "If they still decline, run `<factory> cancel <slug>` to remove the draft card and stop without building anything.",
+            "If they still decline, run `<factory> --project <name> cancel <slug>` to remove the draft card and stop without building anything.",
             "Survey the code and the ticket first",
-            "`<factory> cancel <slug>`",
+            "`<factory> --project <name> cancel <slug>`",
             "When the `file` line says `exists`, read the file and continue from it, never overwrite it.",
             "Only the last series carries `#N` or the issue URL in its feature text",
             "Report every `warning:` line",
@@ -408,10 +406,10 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
         ],
     )?;
     let pos = |needle: &str| text.find(needle).ok_or_else(|| format!("command is missing: {needle}"));
-    if pos("Run `<factory> status`")? > pos("<factory> spec start <slug>")? {
+    if pos("Run `<factory> --project <name> status`")? > pos("<factory> --project <name> spec start <slug>")? {
         return Err("the draft check must come before `spec start`".to_string());
     }
-    if pos("After it, stage the spec path")? > pos("<factory> spec stage <slug> writing-plans")? {
+    if pos("After it, stage the spec path")? > pos("<factory> --project <name> spec stage <slug> writing-plans")? {
         return Err("the spec commit must come before `spec stage <slug> writing-plans`".to_string());
     }
     forbid_all(

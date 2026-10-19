@@ -52,4 +52,4 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 ## Carried over from Rocket
 
-These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), `commands/factory.md` stays as Rocket's copy, while the global command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7). The prose docs `software-factory.md` and `getting-started.md` live in `docs/`.
+These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), the Rocket copy `commands/factory.md` was removed, so the only command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7), and `factory-cli/tests/agent_lint.rs` pins its text. The prose docs `software-factory.md` and `getting-started.md` live in `docs/`.
