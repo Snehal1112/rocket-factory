@@ -159,7 +159,7 @@ Three series run in order, each with its own plans and approval:
 - Only the three builder specs change. Every other role's arguments stay byte-identical.
 - With `builder_permissions = false` the builder's arguments equal today's.
 - Board JSON, the ledger and the events format do not change.
-- The allowlist never grants commit, add, push, reset, rm, curl, sudo or a shell.
+- The allowlist never grants commit, add, push, reset, rm, rmdir, curl, sudo, env, xargs or a shell.
 - A missing or broken config never widens permissions.
 - Only `git` may not be shelled out to; this change shells out to nothing.
 
@@ -168,7 +168,7 @@ Three series run in order, each with its own plans and approval:
 - Builder runs get `--permission-mode acceptEdits`, an allowlist and a deny list for Edit and Write on the job folder, and the job folder as an extra directory.
 - The allowlist is the fixed base plus the programs of `checks` and `check_hints`, plus `builder_allow`.
 - The `rust` preset derives `Bash(cargo:*)` and a Go-style config derives `go`.
-- `git`, `rm`, `curl`, `sudo`, `sh` and `bash` are never derived, and `builder_allow` rejects them.
+- `git`, `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` and `xargs` are never derived, and `builder_allow` rejects them (`git` only when the next word is not `status`, `diff`, `log`, `show` or `rev-parse`).
 - A builder cannot edit the plan, the spec or the ledger, even when a repository setting allows more.
 - `builder_permissions = false` gives today's builder arguments exactly.
 - The reviewer, committer, message and KB arguments are pinned and unchanged.
@@ -196,5 +196,5 @@ Three series run in order, each with its own plans and approval:
 - Should the driver probe the real `claude` before planning? Options: about six haiku calls in a scratch folder; none; a broader sonnet probe. Chosen: about six haiku calls. Decided by: user
 - How are driver-only files protected from Bash writes? Options: before/after content check with restore and park; accept the risk; Bash deny patterns. Chosen: the content check with restore and park. Decided by: user
 - Which commands are in the fixed base? Options: cd, ls, cat, head, tail, wc, grep, find, pwd and read-only git; a shorter list. Chosen: the longer list, because the builder used compound `cd … && …` commands. Decided by: call
-- Which programs are never derived? Options: git, rm, curl, sudo, sh, bash; none. Chosen: those six. Decided by: call
+- Which programs are never derived? Options: git, rm, rmdir, curl, sudo, sh, bash, env, xargs; the shorter list git, rm, curl, sudo, sh, bash; none. Chosen: the nine, because `env`, `xargs` and `sh` can run any other command. Decided by: call
 - Where does the code live? Options: a new `permissions.rs` in the engine; inside `specs.rs`. Chosen: a new file, to keep `specs.rs` focused. Decided by: call
