@@ -110,6 +110,20 @@ after the spec's own warning, and the job still runs.
   ledger as `review model: <name> (<reason>)`.
 - The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
 
+## One job per spec
+
+By default a spec with several plans becomes one job per plan. `factory new ... --plans <dir> --one-job` makes
+one job for the whole spec instead. The driver combines the plans, so they are still written with at most 3 tasks
+each and the chain rules are unchanged. The flag needs `--plans`, and with a single plan it has no effect and
+`new` prints a `note:` line.
+
+- The estimate is `110K + 100K per task` in weighted tokens, compared with `budget_weighted`.
+- Over budget, `new` creates nothing, prints a `needs consent:` line with the estimate and the budget on stderr and
+  exits non-zero. Raise `budget_weighted`, or run the same command again with `--accept-over-budget` (it needs
+  `--one-job`).
+- The `/factory` command passes `--one-job` when the feature starts or ends with that token, and asks the user
+  before it adds `--accept-over-budget`.
+
 ## Layout and base branch
 
 The driver gets every path as a value. `Layout` holds them. `Layout::in_repo` gives the layout Rocket uses today.

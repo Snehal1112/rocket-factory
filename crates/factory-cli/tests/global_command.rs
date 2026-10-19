@@ -234,7 +234,7 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "`approve <digits> --without-review`",
         "<factory> --project <name> approve <id> --without-review",
         "refuses a `needs-human` job whose code review has not run",
-        "argument-hint: \"<feature> [--opus] | status | approve <id> | rework <id> <note> | cancel <id|slug> | cleanup <id> | tickets <id>\"",
+        "argument-hint: \"<feature> [--opus] [--one-job] | status | approve <id> | rework <id> <note> | cancel <id|slug> | cleanup <id> | tickets <id>\"",
         // The overrides of the brainstorming skill.
         "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
         "two or three alternatives",
@@ -291,4 +291,12 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
     }
     assert!(text.starts_with("---\n"));
     assert!(text.contains("\ndescription: "));
+}
+
+#[test]
+fn global_command_describes_one_job_and_consent() {
+    let text = GLOBAL_COMMAND;
+    for needed in ["[--one-job]", "--one-job", "needs consent:", "--accept-over-budget", "at most 3 tasks"] {
+        assert!(text.contains(needed), "missing phrase: {needed}");
+    }
 }

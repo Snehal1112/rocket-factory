@@ -132,6 +132,17 @@ A draft card tracks a spec that is still being written, before any job exists. I
 
 Plan lint: `factory new` lints every plan on the chain before any job exists. A `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences refuses the call and names the plan file and line. Other findings only warn: a missing header field (Goal, Architecture, Tech Stack, Spec, Global Constraints, Review Focus), no `superpowers:subagent-driven-development` executor in the header, a task without `**Files:**` or `**Interfaces:**`, and a commit step. The warnings are appended to the first job's spec warning, after the spec's own warning, and print as `warning: ...` lines after `created job ...`. The job still runs.
 
+## One job per spec
+
+The default is one job per plan. `factory new ... --plans <dir> --one-job` creates one job for the whole spec
+instead, and the driver combines the plans. Plans still hold at most 3 tasks each. The flag needs `--plans`. With a
+single plan it has no effect and `new` prints a `note:` line.
+
+The estimate is `110K + 100K per task` weighted tokens, checked against `budget_weighted`. Over budget, `new`
+creates nothing, prints a `needs consent:` line (estimate and budget) on stderr and exits non-zero. Re-run with
+`--accept-over-budget` (it needs `--one-job`) or raise the budget. The `/factory` command passes `--one-job` for a
+feature that starts or ends with that token and asks the user before accepting the overrun.
+
 ## Checks
 
 The builder runs only per-crate cargo commands (`cargo check -j4 -p <crate>`), never a bare `cargo check -j4`: in a fresh job worktree a workspace-wide check builds the whole app and V8, takes more than ten minutes and stalls the run (seen in job 012). Plans follow the same rule. The driver runs the checks itself, chosen from the changed paths by `config.toml`: `cargo check -j4`, targeted `cargo test -j4 -p <crate>`, `yarn tsc --noEmit`, `yarn check`, `yarn test --run --maxWorkers=50%` (half the workers, so the full suite does not time out under its own load), and the factory crate checks. A failure resumes the builder with trimmed output. The reviewer never sees a red build. Results go to `checks.md`.
