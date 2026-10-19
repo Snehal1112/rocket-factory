@@ -100,6 +100,10 @@ pub struct Config {
     pub cache_ttl: Option<String>,
     /// File log level: error, warn, info, debug or trace. `None` means info.
     pub log_level: Option<String>,
+    /// Give builder runs their own permission mode and tool allowlist. On by default.
+    pub builder_permissions: bool,
+    /// Extra `Bash(...)` allowlist entries for builder runs.
+    pub builder_allow: Vec<String>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
     pub degraded: bool,
@@ -142,6 +146,8 @@ impl Default for Config {
             require_tests: false,
             cache_ttl: None,
             log_level: None,
+            builder_permissions: true,
+            builder_allow: Vec::new(),
             degraded: false,
         }
     }
@@ -229,6 +235,11 @@ impl Config {
         if let Err(why) = check_branch_name(&cfg.base_branch) {
             return Err(CoreError::Config(format!("base_branch: {why}")));
         }
+        for entry in &cfg.builder_allow {
+            if let Err(why) = check_builder_allow(entry) {
+                return Err(CoreError::Config(format!("builder_allow: {why}")));
+            }
+        }
         for (key, lines) in [
             ("read_first", &cfg.read_first),
             ("builder_rules", &cfg.builder_rules),
@@ -286,6 +297,53 @@ fn expand_home(path: &str, home: Option<&str>) -> Option<PathBuf> {
     })
 }
 
+/// Programs that no builder allowlist entry may name, and that are never derived.
+pub const NEVER_ALLOWED_PROGRAMS: [&str; 9] = [
+    "git", "rm", "rmdir", "curl", "sudo", "sh", "bash", "env", "xargs",
+];
+
+/// The only git subcommands a `builder_allow` entry may name.
+pub const READ_ONLY_GIT: [&str; 5] = ["status", "diff", "log", "show", "rev-parse"];
+
+/// One `builder_allow` entry: `Bash(<command>:*)` or `Bash(<command>)`, with a safe program.
+fn check_builder_allow(entry: &str) -> Result<(), String> {
+    if entry.trim().is_empty() {
+        return Err("must not be empty".into());
+    }
+    if entry.contains('\n') || entry.contains('\r') {
+        return Err("must be one line".into());
+    }
+    if entry.chars().count() > 200 {
+        return Err("must be at most 200 characters".into());
+    }
+    let form = "must be Bash(<command>:*) or Bash(<command>)";
+    let inner = entry
+        .strip_prefix("Bash(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .ok_or_else(|| form.to_string())?;
+    let command = inner.strip_suffix(":*").unwrap_or(inner);
+    let mut tokens = Vec::new();
+    let mut words = command.split_whitespace();
+    while let Some(word) = words.next() {
+        if word == "-C" {
+            words.next();
+        } else {
+            tokens.push(word);
+        }
+    }
+    let Some(first) = tokens.first() else {
+        return Err("needs a command".into());
+    };
+    let program = first.rsplit('/').next().unwrap_or(first);
+    if program != "git" && NEVER_ALLOWED_PROGRAMS.contains(&program) {
+        return Err(format!("{program} is never allowed"));
+    }
+    if program == "git" && !tokens.get(1).is_some_and(|w| READ_ONLY_GIT.contains(w)) {
+        return Err("git is allowed only for status, diff, log, show and rev-parse".into());
+    }
+    Ok(())
+}
+
 /// A branch name git accepts, and not one of the factory's own job branches.
 fn check_branch_name(name: &str) -> Result<(), &'static str> {
     if name.trim().is_empty() {
@@ -317,6 +375,76 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn builder_allow_rejects_forbidden_and_malformed_entries() {
+        for entry in [
+            "Bash(git:*)",
+            "Bash(git  commit:*)",
+            "Bash(git -C x commit:*)",
+            "Bash(/bin/rm:*)",
+            "Bash(env sh:*)",
+            "Bash(xargs rm:*)",
+            "Bash(rm:*)",
+            "Bash(rmdir x)",
+            "Bash(curl:*)",
+            "Bash(sudo:*)",
+            "Bash(sh:*)",
+            "Bash(bash -c x)",
+            "Bash()",
+            "Bash(:*)",
+            "",
+            "  ",
+            "make",
+            "Bash(make:*",
+            "Bash(make:*)\nBash(ls:*)",
+        ] {
+            let body = format!("builder_allow = [{entry:?}]\n");
+            let err = Config::parse(&body).expect_err(entry);
+            assert!(err.to_string().contains("builder_allow:"), "{entry}: {err}");
+        }
+        let long = format!("Bash({}:*)", "a".repeat(200));
+        let body = format!("builder_allow = [{long:?}]\n");
+        Config::parse(&body).expect_err("201 or more characters");
+    }
+
+    #[test]
+    fn builder_allow_accepts_a_make_rule() {
+        let rules = [
+            "Bash(make:*)",
+            "Bash(shellcheck:*)",
+            "Bash(git log:*)",
+            "Bash(git -C x log)",
+            "Bash(./scripts/test.sh:*)",
+        ];
+        let body = format!("builder_allow = {rules:?}\n");
+        let cfg = Config::parse(&body).expect("parses");
+        let want: Vec<String> = rules.iter().map(|s| s.to_string()).collect();
+        assert_eq!(cfg.builder_allow, want);
+    }
+
+    #[test]
+    fn a_bad_builder_allow_loads_as_fail_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bad_allow.toml");
+        std::fs::write(&path, "builder_allow = [\"Bash(rm:*)\"]").expect("write");
+        let cfg = Config::load(&path);
+        assert!(cfg.degraded);
+        assert!(cfg.builder_allow.is_empty());
+        assert!(cfg.builder_permissions);
+    }
+
+    #[test]
+    fn never_allowed_and_read_only_lists_are_exact() {
+        assert_eq!(
+            NEVER_ALLOWED_PROGRAMS,
+            ["git", "rm", "rmdir", "curl", "sudo", "sh", "bash", "env", "xargs"]
+        );
+        assert_eq!(
+            READ_ONLY_GIT,
+            ["status", "diff", "log", "show", "rev-parse"]
+        );
+    }
+
+    #[test]
     fn a_config_without_the_new_keys_parses_with_defaults() {
         let cfg = Config::parse("diff_cap_lines = 100\n").expect("parses");
         assert!(
@@ -335,6 +463,24 @@ mod tests {
         assert_eq!(cfg.test_paths, vec!["spec/**".to_string()]);
         assert_eq!(cfg.test_markers, vec!["@Test".to_string()]);
         assert!(cfg.require_tests);
+    }
+
+    #[test]
+    fn builder_permissions_defaults_to_true_and_allow_to_empty() {
+        assert!(Config::default().builder_permissions);
+        assert!(Config::default().builder_allow.is_empty());
+        let cfg = Config::parse("diff_cap_lines = 100\n").expect("parses");
+        assert!(cfg.builder_permissions);
+        assert!(cfg.builder_allow.is_empty());
+        let off = Config::parse("builder_permissions = false\n").expect("parses");
+        assert!(!off.builder_permissions);
+    }
+
+    #[test]
+    fn fail_closed_config_keeps_the_defaults() {
+        let cfg = Config::fail_closed();
+        assert!(cfg.builder_permissions);
+        assert!(cfg.builder_allow.is_empty());
     }
 
     #[test]
