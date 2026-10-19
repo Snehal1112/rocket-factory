@@ -56,6 +56,24 @@ fn main() {
             std::process::exit(2);
         }
     };
+    // The log is installed once the context exists. Reading the log never writes to it.
+    let _log_guard = if matches!(cli.command, Command::Log { .. }) {
+        None
+    } else {
+        let env = std::env::var("FACTORY_LOG").ok();
+        match factory_telemetry::init(ctx.log_target(cli.project.as_deref()), &ctx.log_level(), env.as_deref()) {
+            Ok(guard) => {
+                if let Some(note) = guard.note() {
+                    eprintln!("note: FACTORY_LOG ignored: {note}");
+                }
+                Some(guard)
+            }
+            Err(e) => {
+                eprintln!("note: log disabled: {e}");
+                None
+            }
+        }
+    };
     match dispatch(cli, &ctx) {
         Ok(text) => println!("{text}"),
         Err(e) => {

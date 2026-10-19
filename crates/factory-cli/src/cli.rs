@@ -108,6 +108,18 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Print the structured log, filtered.
+    Log {
+        /// Only the lines of this job.
+        #[arg(long)]
+        job: Option<String>,
+        /// Only lines at this level or above (error, warn, info, debug, trace).
+        #[arg(long)]
+        level: Option<String>,
+        /// Keep the last N lines; 0 means all.
+        #[arg(long, default_value_t = 100)]
+        tail: usize,
+    },
     /// Refresh the knowledge base now, ignoring the stop marker.
     KbRefresh {
         /// The job whose ledger gets the rulings.
@@ -220,6 +232,21 @@ mod tests {
     #[test]
     fn spec_with_plans_parses() {
         Cli::try_parse_from(["factory", "new", "s", "f", "--plans", "p", "--spec", "x.md"]).expect("parses");
+    }
+
+    #[test]
+    fn log_parses_flags() {
+        let cli = Cli::try_parse_from(["factory", "log", "--job", "003", "--level", "warn", "--tail", "5"]).expect("parses");
+        assert!(matches!(
+            cli.command,
+            Command::Log { job: Some(ref j), level: Some(ref l), tail: 5 } if j == "003" && l == "warn"
+        ));
+    }
+
+    #[test]
+    fn log_tail_defaults_to_100() {
+        let cli = Cli::try_parse_from(["factory", "log"]).expect("parses");
+        assert!(matches!(cli.command, Command::Log { job: None, level: None, tail: 100 }));
     }
 
     #[test]

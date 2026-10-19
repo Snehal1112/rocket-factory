@@ -152,6 +152,27 @@ impl CliCtx {
         Ok(ctx)
     }
 
+    /// The file log level: the resolved project level, else the layout config file, else `info`.
+    pub fn log_level(&self) -> String {
+        match &self.config {
+            Some(c) => c.log_level_or_default().to_string(),
+            None => std::fs::read_to_string(&self.layout.config_file)
+                .ok()
+                .and_then(|text| Config::parse(&text).ok())
+                .map(|c| c.log_level_or_default().to_string())
+                .unwrap_or_else(|| "info".to_string()),
+        }
+    }
+
+    /// Where the CLI writes its log.
+    pub fn log_target(&self, project: Option<&str>) -> factory_telemetry::LogTarget {
+        factory_telemetry::LogTarget {
+            path: self.layout.log_file(),
+            project: project.map(str::to_string),
+            scope: factory_telemetry::Scope::Cli,
+        }
+    }
+
     /// Refuses commands that start agents or merge when the project is blocked.
     pub fn runnable(&self) -> Result<(), CliError> {
         match &self.blocked {
@@ -254,6 +275,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Install { .. } => Err(CliError::Refused(
             "install needs no repository, run it through install::run".into(),
         )),
+        Command::Log { job, level, tail } => crate::log::run_log(ctx, job.as_deref(), level.as_deref(), tail),
         Command::Tickets { id, dry_run } => tickets(ctx, &norm(&id)?, dry_run),
         Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
@@ -375,6 +397,7 @@ impl Drop for LeaseGuard<'_> {
 
 fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliError> {
     ctx.runnable()?;
+    let _span = factory_engine::job_span(id).entered();
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.cancelled {
@@ -399,7 +422,7 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
     d.renew_lease(id)?;
     let _guard = LeaseGuard { driver: &d, id: id.to_string() };
     let now = now_secs();
-    d.store().update_job(id, |j| j.set_stage(Stage::Approve, None, false, now))?;
+    d.store().update_job(id, |j| factory_engine::set_stage_logged(j, Stage::Approve, None, false, now))?;
     let ruling = if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
         "approved by the user without a review"
     } else {
@@ -414,6 +437,7 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
 
 fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
     validate_rework_note(note)?;
+    let _span = factory_engine::job_span(id).entered();
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.stage != Stage::NeedsHuman {
@@ -425,7 +449,7 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
     let now = now_secs();
     d.store().update_job(id, |j| {
         // Needs-human back to build is allowed by the stage guard, so no force.
-        j.set_stage(Stage::Build, None, false, now)?;
+        factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
         j.round = 0;
         // The note is the findings now, so a no-change round is not a checks case.
         j.fix_source = None;
@@ -437,6 +461,7 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
 }
 
 fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, CliError> {
+    let _span = factory_engine::job_span(id).entered();
     let d = ctx.driver()?;
     let job = d.job(id)?;
     if job.stage == Stage::Merged {
@@ -448,7 +473,7 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
     let text = format!("cancelled: {reason}");
     let now = now_secs();
     d.store().update_job(id, |j| {
-        j.set_stage(Stage::NeedsHuman, Some(&text), false, now)?;
+        factory_engine::set_stage_logged(j, Stage::NeedsHuman, Some(&text), false, now)?;
         j.cancelled = true;
         j.lease = None;
         Ok(())
