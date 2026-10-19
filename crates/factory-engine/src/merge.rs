@@ -50,28 +50,35 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
     match try_merge(driver, id) {
         Ok(Step::Merged(sha)) => {
             finish_merge(driver, id, &sha)?;
+            tracing::info!(event = "merge.done", sha = %sha);
             // The merge is done, so a failed refresh must not change the result.
-            if let Err(err) = driver.kb_refresh(id, false) {
-                eprintln!("kb refresh error for job {id}: {err}");
+            match driver.kb_refresh(id, false) {
+                Ok(text) if text.starts_with("kb refresh failed") => {
+                    tracing::error!(event = "step.error", step = "kb_refresh", msg = %format!("kb refresh error for job {id}: {text}"));
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::error!(event = "step.error", step = "kb_refresh", msg = %format!("kb refresh error for job {id}: {err}"));
+                }
             }
             // Ticket hygiene is best effort too: a failure is written to the ledger, the job output and the events, and never changes the merge.
             if driver.config().tickets_on_merge {
                 match crate::tickets::tickets_step(driver, id, false) {
                     Ok(report) if report.failed => {
                         let text = report.lines.join("; ");
-                        eprintln!("tickets error for job {id}: {text}");
+                        tracing::error!(event = "step.error", step = "tickets", msg = %format!("tickets error for job {id}: {text}"));
                         crate::tickets::notify_failure(driver, id, &text);
                     }
                     Ok(_) => {}
                     Err(err) => {
-                        eprintln!("tickets error for job {id}: {err}");
+                        tracing::error!(event = "step.error", step = "tickets", msg = %format!("tickets error for job {id}: {err}"));
                         crate::tickets::notify_failure(driver, id, &err.to_string());
                     }
                 }
             }
             // The costs refresh runs last so that it counts the kb run of this job.
             if let Err(err) = crate::costs::refresh_costs(driver) {
-                eprintln!("costs refresh error for job {id}: {err}");
+                tracing::error!(event = "step.error", step = "costs_refresh", msg = %format!("costs refresh error for job {id}: {err}"));
             }
             Ok(MergeResult::Merged(sha))
         }

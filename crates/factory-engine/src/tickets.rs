@@ -245,7 +245,7 @@ fn finish(driver: &Driver, job: &Job, dry_run: bool, report: TicketsReport) -> T
         let text = format!("tickets {state}: {}", report.lines.join("; "));
         let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
         if let Err(e) = driver.ledger(job).ruling(&one_line) {
-            eprintln!("tickets ledger error for job {}: {e}", job.id);
+            tracing::error!(event = "step.error", step = "tickets_ledger", msg = %format!("tickets ledger error for job {}: {e}", job.id));
         }
     }
     report

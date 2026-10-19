@@ -172,6 +172,46 @@ fn decide_logs_the_choice() {
     assert_eq!(decides[0]["round"], 1);
 }
 
+fn error_step<'a>(lines: &'a [Value], step: &str) -> Vec<&'a Value> {
+    lines.iter().filter(|l| l["level"] == "error" && l["step"] == step).collect()
+}
+
+#[test]
+fn merge_logs_sha() {
+    let fx = common::approved_job();
+    let (res, lines) = factory_telemetry::capture("info", || factory_engine::merge_stage(&fx.driver, &fx.id));
+    let sha = match res.expect("merge") {
+        factory_engine::MergeResult::Merged(sha) => sha,
+        other => panic!("expected a merge, got {other:?}"),
+    };
+    let done = events_named(&lines, "merge.done");
+    assert_eq!(done.len(), 1, "{lines:?}");
+    assert_eq!(done[0]["sha"], sha.as_str());
+}
+
+#[test]
+fn kb_failure_logs_step_error_and_merge_result_is_unchanged() {
+    let config = factory_core::Config { kb_path: Some("kb/rocketapi".to_string()), ..factory_core::Config::default() };
+    let fx = common::approved_job_config(std::sync::Arc::new(common::scripted(vec![])), false, config);
+    let (res, lines) = factory_telemetry::capture("info", || factory_engine::merge_stage(&fx.driver, &fx.id));
+    assert!(matches!(res.expect("merge"), factory_engine::MergeResult::Merged(_)));
+    let errs = error_step(&lines, "kb_refresh");
+    assert_eq!(errs.len(), 1, "{lines:?}");
+    assert!(errs[0]["msg"].as_str().expect("msg").starts_with("kb refresh error for job"), "{}", errs[0]);
+}
+
+#[test]
+fn tickets_failure_logs_step_error() {
+    let t = common::FakeTracker::new("o/r");
+    t.fail_on("repo_name");
+    let config = factory_core::Config { tickets_on_merge: true, ..factory_core::Config::default() };
+    let fx = common::with_tracker(common::approved_job_config(common::approving_runner(3), false, config), t);
+    common::set_feature(&fx, "dedup cleanups #76", Some("## Goal\nsomething with enough words to pass the check here\n\n## Acceptance criteria\n- a\n"));
+    let (res, lines) = factory_telemetry::capture("info", || factory_engine::merge_stage(&fx.driver, &fx.id));
+    assert!(matches!(res.expect("merge"), factory_engine::MergeResult::Merged(_)));
+    assert!(!error_step(&lines, "tickets").is_empty(), "{lines:?}");
+}
+
 #[test]
 fn git_ops_log_at_debug_only() {
     let run = |level: &str| {

@@ -176,10 +176,10 @@ pub(crate) fn user_decisions(spec: &str) -> usize {
 /// Notes a failed side step of `new`. The jobs exist already, so a failure must not fail the call.
 /// It goes to stderr and, when the ledger takes it, to a ruling line of the job.
 fn note_failure(driver: &Driver, job: &Job, what: &str, slug: &str, err: &EngineError) {
-    eprintln!("{what} error for {slug}: {err}");
+    tracing::error!(event = "step.error", step = "note_failure", msg = %format!("{what} error for {slug}: {err}"));
     let line = format!("{what} error: {err}").split_whitespace().collect::<Vec<_>>().join(" ");
     if let Err(ledger_err) = Ledger::new(driver.job_dir(job).join("progress.md")).ruling(&line) {
-        eprintln!("{what} ledger note error for {slug}: {ledger_err}");
+        tracing::error!(event = "step.error", step = "note_failure_ledger", msg = %format!("{what} ledger note error for {slug}: {ledger_err}"));
     }
 }
 
@@ -518,6 +518,20 @@ mod tests {
         repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).expect("commit");
         let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::new(Vec::new()));
         Driver::new(Layout::in_repo(&root), Config::default(), Box::new(move |_| runner.clone())).expect("driver")
+    }
+
+    #[test]
+    fn note_failure_logs_step_error_with_the_slug() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        crate::start_draft(&d, "demo", "f", "2026-10-18", 1.0).expect("draft");
+        let job = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
+        let (_, lines) = factory_telemetry::capture("info", || {
+            adopt_draft_with(&d, "demo", &job, |_, _| Err(EngineError::Msg("no draft named demo".into())));
+        });
+        let hit: Vec<_> = lines.iter().filter(|l| l["level"] == "error" && l["step"] == "note_failure").collect();
+        assert_eq!(hit.len(), 1, "{lines:?}");
+        assert!(hit[0]["msg"].as_str().expect("msg").contains("demo"), "{}", hit[0]);
     }
 
     #[test]
