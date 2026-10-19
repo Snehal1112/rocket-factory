@@ -249,6 +249,7 @@ fn with_log<R>(sc: &Scenario, f: impl FnOnce() -> R) -> R {
         factory_telemetry::LOG_CAP_BYTES,
     ));
     let layer = factory_telemetry::JsonLayer::new(file, None, factory_telemetry::Scope::Cli);
+    factory_telemetry::anchor_dispatcher();
     tracing::subscriber::with_default(tracing_subscriber::Registry::default().with(layer), f)
 }
 

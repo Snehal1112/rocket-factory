@@ -2,7 +2,7 @@ use crate::layer::{JsonLayer, LineSink, Scope, StderrLayer};
 use crate::rotate::{RotatingFile, LOG_CAP_BYTES};
 use crate::TelemetryError;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry};
 
@@ -98,8 +98,20 @@ impl LineSink for Memory {
     }
 }
 
+/// A dispatcher that stays alive, so that tracing never has exactly one dispatcher.
+///
+/// With exactly one, tracing caches an event's on or off state from the registering thread's
+/// default. A parallel test thread with no subscriber then switches an event off for everyone.
+static ANCHOR: OnceLock<tracing::Dispatch> = OnceLock::new();
+
+/// Call this before `tracing::subscriber::with_default` in tests that run in parallel.
+pub fn anchor_dispatcher() {
+    ANCHOR.get_or_init(|| tracing::Dispatch::new(Registry::default()));
+}
+
 /// Run `f` under a thread-local JSON layer writing to memory.
 pub fn capture<R>(level: &str, f: impl FnOnce() -> R) -> (R, Vec<serde_json::Value>) {
+    anchor_dispatcher();
     let mem = Arc::new(Memory::default());
     let layer = JsonLayer::new(mem.clone(), None, Scope::Cli).with_filter(filter_for(level));
     let subscriber = Registry::default().with(layer);

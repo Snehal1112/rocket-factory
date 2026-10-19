@@ -7,7 +7,7 @@ pub mod redact;
 pub mod rotate;
 pub mod time;
 
-pub use init::{capture, init, resolve_filter, Guard, LogTarget};
+pub use init::{anchor_dispatcher, capture, init, resolve_filter, Guard, LogTarget};
 pub use layer::{JsonLayer, LineSink, Scope, StderrLayer};
 pub use read::{read_log, LogFilter};
 
