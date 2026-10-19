@@ -135,12 +135,15 @@ Plan lint: `factory new` lints every plan on the chain before any job exists. A 
 ## One job per spec
 
 The default is one job per plan. `factory new ... --plans <dir> --one-job` creates one job for the whole spec
-instead, and the driver combines the plans. Plans still hold at most 3 tasks each. The flag needs `--plans`. With a
+instead, and the driver combines the plans. Plans are still written with at most 3 tasks each, but the driver does not
+enforce that cap on this path. The 6 plan cap and the chain rules (`Next plan:` lines) still apply. The flag needs `--plans`. With a
 single plan it has no effect and `new` prints a `note:` line.
 
 The estimate is `110K + 100K per task` weighted tokens, checked against `budget_weighted`. Over budget, `new`
 creates nothing, prints a `needs consent:` line (estimate and budget) on stderr and exits non-zero. Re-run with
-`--accept-over-budget` (it needs `--one-job`) or raise the budget. The `/factory` command passes `--one-job` for a
+`--accept-over-budget` (it needs `--one-job`) or raise the budget. With `--accept-over-budget` the job is created and
+`new` prints a `warning:` line with the estimate and the budget. At or under budget, `new` prints a `note:` line with
+the same figures. The `/factory` command passes `--one-job` for a
 feature that starts or ends with that token and asks the user before accepting the overrun.
 
 ## Checks

@@ -67,3 +67,30 @@ fn without_the_flag_new_is_unchanged() {
     assert!(out.starts_with("created job 001 in "), "{out}");
     assert!(!out.contains("note: "), "{out}");
 }
+
+#[test]
+fn accept_over_budget_creates_the_job_and_prints_a_budget_warning() {
+    let fx = Fixture::new();
+    let plans = plans_folder(&fx, 4, 3);
+    let args = ["new", "demo", "f", "--plans", plans.to_str().expect("utf8"), "--one-job", "--accept-over-budget"];
+    let out = fx.run(&args).expect("new");
+    let first = out.lines().next().expect("a line");
+    assert!(first.starts_with("created job "), "{out}");
+    assert!(out.lines().skip(1).any(|l| l.starts_with("warning: ") && l.contains("budget")), "{out}");
+}
+
+#[test]
+fn binary_prints_the_consent_line_bare_and_exits_non_zero() {
+    let fx = Fixture::new();
+    let plans = plans_folder(&fx, 4, 3);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_factory"))
+        .arg("--root")
+        .arg(&fx.root)
+        .args(["new", "demo", "f", "--plans", plans.to_str().expect("utf8"), "--one-job"])
+        .output()
+        .expect("run binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.starts_with("needs consent:"), "{stderr}");
+    assert!(!output.status.success());
+    assert!(output.status.code().is_some_and(|c| c != 0));
+}

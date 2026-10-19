@@ -296,7 +296,15 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
 #[test]
 fn global_command_describes_one_job_and_consent() {
     let text = GLOBAL_COMMAND;
-    for needed in ["[--one-job]", "--one-job", "needs consent:", "--accept-over-budget", "at most 3 tasks"] {
+    for needed in [
+        "[--one-job]",
+        "`--one-job` when `--one-job` was given",
+        "needs consent:",
+        "--accept-over-budget",
+        "at most 3 tasks",
+        "Never edit `project.toml` yourself",
+        "re-run the same `new` call with `--accept-over-budget`",
+    ] {
         assert!(text.contains(needed), "missing phrase: {needed}");
     }
 }

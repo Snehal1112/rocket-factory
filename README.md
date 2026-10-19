@@ -113,14 +113,17 @@ after the spec's own warning, and the job still runs.
 ## One job per spec
 
 By default a spec with several plans becomes one job per plan. `factory new ... --plans <dir> --one-job` makes
-one job for the whole spec instead. The driver combines the plans, so they are still written with at most 3 tasks
-each and the chain rules are unchanged. The flag needs `--plans`, and with a single plan it has no effect and
+one job for the whole spec instead. The driver combines the plans. Plans are still written with at most 3 tasks
+each, but the driver does not enforce that cap on this path. The 6 plan cap and the chain rules (`Next plan:` lines)
+still apply. The flag needs `--plans`, and with a single plan it has no effect and
 `new` prints a `note:` line.
 
 - The estimate is `110K + 100K per task` in weighted tokens, compared with `budget_weighted`.
 - Over budget, `new` creates nothing, prints a `needs consent:` line with the estimate and the budget on stderr and
   exits non-zero. Raise `budget_weighted`, or run the same command again with `--accept-over-budget` (it needs
   `--one-job`).
+- At or under budget, `new` prints a `note:` line with the estimate and the budget. With `--accept-over-budget` the
+  job is created, the over-budget estimate is stored as a job warning and `new` prints it as a `warning:` line.
 - The `/factory` command passes `--one-job` when the feature starts or ends with that token, and asks the user
   before it adds `--accept-over-budget`.
 
