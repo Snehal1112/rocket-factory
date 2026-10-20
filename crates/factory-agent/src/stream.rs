@@ -36,6 +36,7 @@ pub struct StreamState {
     seen_tools: BTreeSet<String>,
     result_usage: Option<Usage>,
     first_usage: Option<Usage>,
+    last_usage: Option<Usage>,
 }
 
 fn trim_chars(s: &str, max: usize) -> String {
@@ -107,6 +108,10 @@ impl StreamState {
             };
             if self.first_usage.is_none() {
                 self.first_usage = Some(seen);
+            }
+            // Only main-thread lines count, helper agents carry a parent tool id.
+            if value.get("parent_tool_use_id").is_none_or(Value::is_null) {
+                self.last_usage = Some(merged);
             }
             self.usage_by_message.insert(id.to_string(), merged);
         }
@@ -184,6 +189,15 @@ impl StreamState {
     pub fn start_ctx(&self) -> u64 {
         self.first_usage.map_or(0, |u| {
             u.cache_creation_input_tokens
+                .saturating_add(u.cache_read_input_tokens)
+        })
+    }
+
+    /// Context the run ended with: input, cache creation and cache read of the last main-thread message.
+    pub fn end_ctx(&self) -> u64 {
+        self.last_usage.map_or(0, |u| {
+            u.input_tokens
+                .saturating_add(u.cache_creation_input_tokens)
                 .saturating_add(u.cache_read_input_tokens)
         })
     }

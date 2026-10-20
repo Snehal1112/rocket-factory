@@ -242,7 +242,8 @@ fn cache_ttl_var(ttl: Option<&str>) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Builds one `usage.jsonl` line. `usage_v` 3 marks lines with the first-turn cache fields.
+/// Builds one `usage.jsonl` line. `usage_v` 3 marks lines with the first-turn cache fields,
+/// `usage_v` 4 marks lines with `end_ctx`.
 pub(crate) fn usage_line(
     job_id: &str,
     spec: &AgentSpec,
@@ -271,7 +272,8 @@ pub(crate) fn usage_line(
         "start_ctx": run.start_ctx,
         "start_cc": run.start_cc,
         "start_cr": run.start_cr,
-        "usage_v": 3,
+        "end_ctx": run.end_ctx,
+        "usage_v": 4,
     });
     if spec.role == "builder" {
         if let Some(obj) = line.as_object_mut() {
@@ -299,6 +301,7 @@ mod tests {
             start_ctx: 55,
             start_cc: 40,
             start_cr: 15,
+            end_ctx: 70,
             stop_reason: stop,
             ..AgentRun::done("x")
         }
@@ -331,7 +334,7 @@ mod tests {
         assert_eq!(line["stop"], "done");
         assert_eq!(line["round"], 2);
         assert_eq!(line["start_ctx"], 55);
-        assert_eq!(line["usage_v"], 3);
+        assert_eq!(line["usage_v"], 4);
         assert_eq!(line["tasks_done"], 1);
     }
 
@@ -388,7 +391,7 @@ mod tests {
         assert_eq!(line["stop"], "failed");
         assert_eq!(line["input"], 0);
         assert_eq!(line["output"], 0);
-        assert_eq!(line["usage_v"], 3);
+        assert_eq!(line["usage_v"], 4);
     }
 
     #[test]
@@ -397,7 +400,22 @@ mod tests {
         let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5);
         assert_eq!(line["start_cc"], 40);
         assert_eq!(line["start_cr"], 15);
-        assert_eq!(line["usage_v"], 3);
+        assert_eq!(line["usage_v"], 4);
+    }
+
+    #[test]
+    fn usage_line_carries_end_ctx() {
+        let spec = AgentSpec::new("001", "builder", "/w", "p");
+        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5);
+        assert_eq!(line["end_ctx"], 70);
+        assert_eq!(line["usage_v"], 4);
+    }
+
+    #[test]
+    fn a_failed_run_writes_zero_end_ctx() {
+        let spec = AgentSpec::new("001", "builder", "/w", "p");
+        let line = usage_line("001", &spec, &AgentRun::failed("x"), 1, 0, 1, 0);
+        assert_eq!(line["end_ctx"], 0);
     }
 
     #[test]

@@ -364,6 +364,59 @@ fn feed_lines(lines: &[&str]) -> StreamState {
 const MSG_1: &str = r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[],"usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":1}},"session_id":"s"}"#;
 const MSG_2: &str = r#"{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[],"usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":1100,"output_tokens":2}},"session_id":"s"}"#;
 
+fn msg(id: &str, parent: Option<&str>, input: u64, cc: u64, cr: u64) -> String {
+    let parent = parent.map_or("null".to_string(), |p| format!("\"{p}\""));
+    format!(
+        r#"{{"type":"assistant","parent_tool_use_id":{parent},"message":{{"id":"{id}","role":"assistant","content":[],"usage":{{"input_tokens":{input},"cache_creation_input_tokens":{cc},"cache_read_input_tokens":{cr},"output_tokens":1}}}},"session_id":"s"}}"#
+    )
+}
+
+#[test]
+fn end_ctx_is_the_last_messages_input_creation_and_read() {
+    let state = feed_lines(&[MSG_1, MSG_2]);
+    assert_eq!(state.end_ctx(), 5 + 1100);
+}
+
+#[test]
+fn end_ctx_ignores_helper_agent_messages() {
+    let a = msg("a", None, 1, 100, 1000);
+    let h = msg("h", Some("toolu_1"), 9, 9, 9);
+    let state = feed_lines(&[a.as_str(), h.as_str()]);
+    assert_eq!(state.end_ctx(), 1 + 100 + 1000);
+}
+
+#[test]
+fn end_ctx_uses_the_merged_usage_of_the_last_message() {
+    let a = msg("a", None, 1, 100, 1000);
+    let b = msg("a", None, 1, 100, 1500);
+    let state = feed_lines(&[a.as_str(), b.as_str()]);
+    assert_eq!(state.end_ctx(), 1 + 100 + 1500);
+}
+
+#[test]
+fn end_ctx_is_zero_without_messages() {
+    assert_eq!(StreamState::default().end_ctx(), 0);
+}
+
+#[test]
+fn end_ctx_is_zero_when_only_a_helper_spoke() {
+    let h = msg("h", Some("toolu_1"), 9, 9, 9);
+    let state = feed_lines(&[h.as_str()]);
+    assert_eq!(state.end_ctx(), 0);
+}
+
+#[test]
+fn end_ctx_does_not_overflow() {
+    let m = msg("a", None, 0, u64::MAX, u64::MAX);
+    let state = feed_lines(&[m.as_str()]);
+    assert_eq!(state.end_ctx(), u64::MAX);
+}
+
+#[test]
+fn a_done_run_has_zero_end_ctx() {
+    assert_eq!(factory_agent::AgentRun::done("x").end_ctx, 0);
+}
+
 #[test]
 fn final_usage_takes_the_larger_result_output() {
     let result = r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","usage":{"input_tokens":15,"cache_creation_input_tokens":100,"cache_read_input_tokens":2100,"output_tokens":500}}"#;

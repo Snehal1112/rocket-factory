@@ -243,6 +243,7 @@ impl ClaudeRunner {
             stop_reason,
             turns: state.turns(),
             start_ctx: state.start_ctx(),
+            end_ctx: state.end_ctx(),
             start_cc,
             start_cr,
             exit_code,
