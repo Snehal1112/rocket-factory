@@ -1,10 +1,11 @@
 //! The supervisor loop: finish what ended, then start what the scheduler allows.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Read, Seek};
 use std::path::Path;
 use std::time::Duration;
 
+use factory_core::outcome_lines::BUSY_EXIT_CODE;
 use factory_core::{project, CoreError, Home, HomeConfig};
 use factory_engine::procinfo::{process_state, ProcState};
 use factory_engine::{owner_pid, project_lease_status, ProjectLeaseStatus};
@@ -20,6 +21,8 @@ use crate::spawn::{ChildPoll, Spawner};
 const TAIL_BYTES: u64 = 64 * 1024;
 const TAIL_LINES: usize = 20;
 const LINE_CAP: usize = 500;
+/// How many times a request may find its project busy before it ends as failed.
+const MAX_BUSY_RETRIES: u32 = 20;
 /// The most chars of a stderr tail that go into a result.
 const TAIL_CHARS: usize = 4000;
 const SLICE: Duration = Duration::from_millis(50);
@@ -79,6 +82,9 @@ pub struct Supervisor {
     daily_exhausted: bool,
     /// Requests whose child runs but could not be recorded. They are never started again by this process.
     started_ids: HashSet<String>,
+    /// How often a request's child ended with "project busy" and nothing done. Past `MAX_BUSY_RETRIES`
+    /// the request fails, so a lease that never frees cannot loop forever.
+    busy_retries: HashMap<String, u32>,
     /// True once start-up recovery ran.
     recovered: bool,
     /// Held for the life of the supervisor when it was made by `new_locked`. It must stay the LAST field:
@@ -186,7 +192,9 @@ pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .unwrap_or("");
-    if last == "merged" || last.starts_with("merged ") {
+    // A merge ends with exit code 0. A `merged` line next to another code is not a result.
+    let clean_exit = matches!(code, None | Some(Some(0)));
+    if clean_exit && (last == "merged" || last.starts_with("merged ")) {
         return Outcome::Merged;
     }
     if let Some(rest) = last.strip_prefix("needs-human") {
@@ -301,6 +309,7 @@ impl Supervisor {
             daily_limit: None,
             daily_exhausted: false,
             started_ids: HashSet::new(),
+            busy_retries: HashMap::new(),
             recovered: false,
             _lock: None,
         }
@@ -541,7 +550,7 @@ impl Supervisor {
 
     /// Finishes every child that ended. Returns the children still running and the projects that
     /// are blocked by a child record that cannot be read or finished.
-    fn settle_children(&self, report: &mut TickReport) -> (Vec<ChildRecord>, Vec<String>) {
+    fn settle_children(&mut self, report: &mut TickReport) -> (Vec<ChildRecord>, Vec<String>) {
         let mut running: Vec<ChildRecord> = Vec::new();
         let mut blocked: Vec<String> = Vec::new();
         for child in records::read_children(&self.home) {
@@ -563,6 +572,9 @@ impl Supervisor {
             };
             if !ended {
                 running.push(child);
+                continue;
+            }
+            if code == Some(Some(BUSY_EXIT_CODE)) && self.requeue_busy(&child, report) {
                 continue;
             }
             let (out, out_note) = split_read(read_tail(&child.out));
@@ -587,6 +599,37 @@ impl Supervisor {
             }
         }
         (running, blocked)
+    }
+
+    /// A child that found its project busy did nothing. Its logs and record go, so the request stays
+    /// queued and starts again once the lease is free. Returns false when the request must end instead:
+    /// the retries are used up, or the record could not be cleared.
+    fn requeue_busy(&mut self, child: &ChildRecord, report: &mut TickReport) -> bool {
+        let tries = self
+            .busy_retries
+            .entry(child.request_id.clone())
+            .or_insert(0);
+        *tries += 1;
+        if *tries > MAX_BUSY_RETRIES {
+            return false;
+        }
+        for log in [&child.out, &child.err] {
+            if let Err(e) = std::fs::remove_file(log) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    report.errors.push(format!("remove {}: {e}", log.display()));
+                    return false;
+                }
+            }
+        }
+        match records::remove_child(&self.home, &child.project) {
+            Ok(()) => true,
+            Err(e) => {
+                report
+                    .errors
+                    .push(format!("remove child record of {}: {e}", child.request_id));
+                false
+            }
+        }
     }
 
     /// Projects held by a live driver process that has no child record.
@@ -793,6 +836,14 @@ mod tests {
             classify(&format!("{}\n", parked_line("x")), "", Some(Some(0))),
             Outcome::NeedsHuman { reason: "x".into() }
         );
+        assert!(matches!(
+            classify("merged\n", "", Some(Some(1))),
+            Outcome::Failed { code: Some(1), .. }
+        ));
+        assert!(matches!(
+            classify("merged\n", "", Some(None)),
+            Outcome::Failed { code: None, .. }
+        ));
         assert_eq!(
             classify("x\n", "e1\n\ne2\n", Some(Some(1))),
             Outcome::Failed {

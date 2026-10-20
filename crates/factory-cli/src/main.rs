@@ -92,7 +92,15 @@ fn main() {
             } else {
                 eprintln!("factory: {e}");
             }
-            std::process::exit(1);
+            let busy = matches!(
+                e,
+                factory_cli::CliError::Engine(factory_engine::EngineError::ProjectBusy(_))
+            );
+            std::process::exit(if busy {
+                factory_core::outcome_lines::BUSY_EXIT_CODE
+            } else {
+                1
+            });
         }
     }
 }

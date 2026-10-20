@@ -29,6 +29,13 @@ fn run_is_refused_while_another_driver_holds_the_project() {
     let before = fx.main_tip();
     let e = fx.run(&["run", "1"]).expect_err("busy");
     assert!(e.to_string().contains("project is busy"), "{e}");
+    assert!(
+        matches!(
+            e,
+            factory_cli::CliError::Engine(factory_engine::EngineError::ProjectBusy(_))
+        ),
+        "{e:?}"
+    );
     assert_eq!(fx.main_tip(), before);
     assert!(!fx.worktree_path(1).exists(), "no stage work ran");
     let status = fx.run(&["status"]).expect("status");

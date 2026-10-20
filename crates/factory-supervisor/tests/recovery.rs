@@ -22,6 +22,11 @@ echo x >> "$d/runs-$2-$4"
 b=$(cat "$d/behavior-$2-$4")
 case "$b" in
   merged*) echo "$b" ;;
+  spoof) echo merged; exit 1 ;;
+  busy-once)
+    if [ "$(wc -l < "$d/runs-$2-$4")" -le 1 ]; then exit 75; fi
+    echo merged ;;
+  busy-always) exit 75 ;;
   hold)
     while [ -f "$d/gate-$2-$4" ]; do sleep 0.02; done
     echo merged ;;
@@ -461,5 +466,53 @@ fn a_second_locked_supervisor_is_refused_until_the_first_is_dropped() {
         "{err}"
     );
     drop(first);
-    assert!(Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)).is_ok());
+    // A child of a parallel test can hold a copy of the lock's file for a moment between fork and exec.
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        match Supervisor::new_locked(e.home.clone(), spawner(), Box::new(now_ms)) {
+            Ok(_) => break,
+            Err(err) => {
+                assert!(Instant::now() < end, "still locked: {err}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_merged_line_with_a_failing_exit_code_is_a_failure() {
+    let e = env();
+    e.add_project("p");
+    let mut s = e.supervisor();
+    let id = e.enqueue_with("p", "1", "spoof").id;
+    tick_until_finished(&mut s, &id);
+    assert!(matches!(
+        e.result(&id),
+        Some(Outcome::Failed { code: Some(1), .. })
+    ));
+}
+
+#[test]
+fn a_child_that_found_the_project_busy_is_started_again() {
+    let e = env();
+    e.add_project("p");
+    let mut s = e.supervisor();
+    let id = e.enqueue_with("p", "1", "busy-once").id;
+    tick_until_finished(&mut s, &id);
+    assert_eq!(e.result(&id), Some(Outcome::Merged));
+    assert_eq!(e.runs("p", "1"), 2);
+}
+
+#[test]
+fn a_request_that_always_finds_the_project_busy_fails_after_the_retries() {
+    let e = env();
+    e.add_project("p");
+    let mut s = e.supervisor();
+    let id = e.enqueue_with("p", "1", "busy-always").id;
+    tick_until_finished(&mut s, &id);
+    assert!(matches!(
+        e.result(&id),
+        Some(Outcome::Failed { code: Some(75), .. })
+    ));
+    assert_eq!(e.runs("p", "1"), 21);
 }

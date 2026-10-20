@@ -102,6 +102,9 @@ pub enum EngineError {
     Io(String),
     #[error("{0}")]
     Msg(String),
+    /// The project lease was held when a run or approve started, so nothing was done.
+    #[error("{0}")]
+    ProjectBusy(String),
     #[error("needs consent: this job is estimated at {estimate} weighted tokens and the budget is {budget}; raise budget_weighted in project.toml or pass --accept-over-budget")]
     NeedsConsent { estimate: u64, budget: u64 },
 }

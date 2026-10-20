@@ -105,7 +105,12 @@ mod tests {
             Some(std::process::id().to_string())
         );
         drop(first);
-        assert_eq!(InstanceLock::running(&h), None);
+        // A child of a parallel test can hold a copy of the file for a moment between fork and exec.
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while InstanceLock::running(&h).is_some() {
+            assert!(std::time::Instant::now() < end, "still locked");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         InstanceLock::acquire(&h).expect("third");
     }
 }

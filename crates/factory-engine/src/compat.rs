@@ -43,7 +43,10 @@ impl From<crate::LeaseError> for EngineError {
 
 impl From<crate::ProjectLeaseError> for EngineError {
     fn from(e: crate::ProjectLeaseError) -> Self {
-        EngineError::Msg(e.to_string())
+        match e {
+            crate::ProjectLeaseError::Held { .. } => EngineError::ProjectBusy(e.to_string()),
+            other => EngineError::Msg(other.to_string()),
+        }
     }
 }
 
