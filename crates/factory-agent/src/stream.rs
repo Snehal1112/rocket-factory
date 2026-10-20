@@ -188,6 +188,13 @@ impl StreamState {
         })
     }
 
+    /// Cache creation and cache read of the first message, as a pair.
+    pub fn start_cache(&self) -> (u64, u64) {
+        self.first_usage.map_or((0, 0), |u| {
+            (u.cache_creation_input_tokens, u.cache_read_input_tokens)
+        })
+    }
+
     /// Number of unique assistant messages seen so far.
     pub fn turns(&self) -> u32 {
         u32::try_from(self.usage_by_message.len()).unwrap_or(u32::MAX)
