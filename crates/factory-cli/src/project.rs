@@ -99,10 +99,14 @@ fn add(
         }
     };
     let dir = project::add(home, &name, path, preset, Some(&base), &check)?;
-    Ok(format!(
+    let mut text = format!(
         "added project {name} ({preset}, base {base}) at {}",
         dir.display()
-    ))
+    );
+    if let Err(e) = factory_core::version::stamp(home, factory_core::version::FACTORY_VERSION) {
+        text.push_str(&format!("\nnote: version marker not written: {e}"));
+    }
+    Ok(text)
 }
 
 /// Why a readable project cannot be used, or `None` when its repo opens.
@@ -158,6 +162,7 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     if let Some(why) = disabled_reason(&file) {
         return Ok([
             format!("project: {name}"),
+            format!("version: {}", factory_core::version::FACTORY_VERSION),
             format!("repo: {}", file.repo.display()),
             format!("preset: {}", file.preset),
             format!("base branch: {base}"),
@@ -178,6 +183,7 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     let l = &resolved.layout;
     let mut out = vec![
         format!("project: {name}"),
+        format!("version: {}", factory_core::version::FACTORY_VERSION),
         format!("repo: {}", file.repo.display()),
         format!("preset: {}", file.preset),
         format!("base branch: {base}"),

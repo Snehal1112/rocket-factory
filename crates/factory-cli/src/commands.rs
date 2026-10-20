@@ -265,6 +265,19 @@ pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Stops when the home was last used by a newer factory than this binary.
+pub fn check_home(home: &factory_core::Home) -> Result<(), CliError> {
+    factory_core::version::check(home, factory_core::version::FACTORY_VERSION)?;
+    Ok(())
+}
+
+/// Opens the factory home from the environment and checks its version marker.
+pub fn open_home() -> Result<factory_core::Home, CliError> {
+    let home = factory_core::Home::from_env()?;
+    check_home(&home)?;
+    Ok(home)
+}
+
 /// Runs one command and returns the text to print.
 pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
     match cli.command {

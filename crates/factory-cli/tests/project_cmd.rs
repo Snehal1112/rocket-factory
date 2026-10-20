@@ -454,6 +454,36 @@ fn a_committed_symlink_agent_file_degrades_the_project() {
 }
 
 #[test]
+fn show_prints_the_version_after_the_project_line() {
+    let e = env();
+    add_demo(&e);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "project: demo", "{out}");
+    assert_eq!(
+        lines[1],
+        format!("version: {}", factory_core::version::FACTORY_VERSION),
+        "{out}"
+    );
+}
+
+#[test]
+fn disabled_show_prints_the_version_after_the_project_line() {
+    let e = env();
+    let repo = add_demo(&e);
+    std::fs::remove_dir_all(&repo).expect("rm");
+    let out = run(&e, &["show", "demo"]).expect("show");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "project: demo", "{out}");
+    assert_eq!(
+        lines[1],
+        format!("version: {}", factory_core::version::FACTORY_VERSION),
+        "{out}"
+    );
+    assert!(out.contains("disabled: repo path is missing"), "{out}");
+}
+
+#[test]
 fn show_of_a_project_with_a_missing_repo_is_disabled_like_list() {
     let e = env();
     let repo = add_demo(&e);
@@ -595,4 +625,54 @@ fn remove_is_refused_while_the_project_lease_is_held_even_with_force() {
     .expect("lease");
     run(&e, &["remove", "demo", "--force"]).expect("removed");
     assert!(!e.home.project_dir("demo").exists());
+}
+
+#[test]
+fn add_writes_the_version_marker() {
+    let e = env();
+    add_demo(&e);
+    assert_eq!(
+        factory_core::version::read_marker(&e.home).expect("read"),
+        Some(factory_core::version::FACTORY_VERSION.to_string())
+    );
+}
+
+#[test]
+fn a_refused_add_writes_no_marker() {
+    let e = env();
+    let plain = e.tmp.path().join("plain");
+    std::fs::create_dir_all(&plain).expect("mkdir");
+    run(&e, &["add", s(&plain), "--preset", "rust", "--name", "p"]).expect_err("refused");
+    assert!(!e.home.version_file().exists());
+}
+
+#[test]
+fn add_keeps_a_newer_marker() {
+    let e = env();
+    std::fs::create_dir_all(&e.home.dir).expect("mkdir");
+    std::fs::write(e.home.version_file(), "99.0.0\n").expect("marker");
+    add_demo(&e);
+    assert_eq!(
+        std::fs::read_to_string(e.home.version_file()).expect("read"),
+        "99.0.0\n"
+    );
+}
+
+#[test]
+fn add_succeeds_with_a_note_when_the_marker_cannot_be_written() {
+    let e = env();
+    std::fs::create_dir_all(e.home.version_file()).expect("mkdir");
+    let repo = make_repo(e.tmp.path(), "r1", "main");
+    let out = run(
+        &e,
+        &[
+            "add", s(&repo), "--preset", "rust", "--name", "demo", "--base", "main",
+        ],
+    )
+    .expect("add");
+    assert!(out.contains("added project demo"), "{out}");
+    assert!(out.contains("note: version marker not written:"), "{out}");
+    assert!(run(&e, &["list"])
+        .expect("list")
+        .starts_with("demo rust main"));
 }

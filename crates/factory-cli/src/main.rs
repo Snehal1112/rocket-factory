@@ -4,9 +4,7 @@ use factory_cli::{dispatch, env_lock_wait, env_owner, project, Cli, CliCtx, Comm
 fn main() {
     let cli = Cli::parse();
     if let Command::Project { cmd } = cli.command {
-        let result = factory_core::Home::from_env()
-            .map_err(factory_cli::CliError::from)
-            .and_then(|home| project::run(&home, cmd));
+        let result = factory_cli::open_home().and_then(|home| project::run(&home, cmd));
         match result {
             Ok(text) => println!("{text}"),
             Err(e) => {
@@ -17,9 +15,7 @@ fn main() {
         return;
     }
     if let Command::Presets { cmd } = cli.command {
-        let result = factory_core::Home::from_env()
-            .map_err(factory_cli::CliError::from)
-            .and_then(|home| factory_cli::presets::run(&home, cmd));
+        let result = factory_cli::open_home().and_then(|home| factory_cli::presets::run(&home, cmd));
         match result {
             Ok(text) => println!("{text}"),
             Err(e) => {
@@ -40,15 +36,25 @@ fn main() {
         return;
     }
     let built = match &cli.project {
-        Some(name) => factory_core::Home::from_env()
-            .map_err(factory_cli::CliError::from)
-            .and_then(|home| {
-                let ctx = CliCtx::for_project(&home, name, None, &env_owner(), env_lock_wait())?;
+        Some(name) => {
+            let home = match factory_core::Home::from_env() {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("factory: {e}");
+                    std::process::exit(2);
+                }
+            };
+            if let Err(e) = factory_cli::check_home(&home) {
+                eprintln!("factory: {e}");
+                std::process::exit(1);
+            }
+            CliCtx::for_project(&home, name, None, &env_owner(), env_lock_wait()).map(|ctx| {
                 for n in &ctx.notes {
                     eprintln!("note: {n}");
                 }
-                Ok(ctx)
-            }),
+                ctx
+            })
+        }
         None => CliCtx::from_env(cli.root.clone()),
     };
     let ctx = match built {
