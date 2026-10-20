@@ -874,6 +874,23 @@ fn the_marker_version_matches_the_engine_constant() -> TestResult {
 }
 
 #[test]
+fn docs_describe_the_builder_carry() -> TestResult {
+    for path in ["README.md", "docs/software-factory.md"] {
+        require_all(
+            &read(path)?,
+            path,
+            &[
+                "builder_carry_session",
+                "builder_carry_max_ctx",
+                "continued",
+                "cache_ttl",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn the_committer_and_kb_files_have_no_rules_marker() -> TestResult {
     for path in [
         ".claude/agents/factory-committer.md",
