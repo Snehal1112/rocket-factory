@@ -71,7 +71,8 @@ pub fn process_gone(pid: u32) -> bool {
 }
 
 /// A lease whose owner is a driver process that no longer runs on this machine.
-fn owner_is_dead(owner: &str) -> bool {
+/// True when the owner is a driver process that no longer runs on this machine. Other owners are never dead.
+pub fn lease_owner_dead(owner: &str) -> bool {
     owner_pid(owner).is_some_and(process_gone)
 }
 
@@ -108,7 +109,7 @@ pub fn acquire_project_lease(
     let take = match read_lease(&path) {
         Ok(None) => LeaseTake::Fresh,
         Ok(Some(l)) if l.owner == owner => LeaseTake::Renewed,
-        Ok(Some(l)) if l.expires <= now || owner_is_dead(&l.owner) => LeaseTake::TookOverStale {
+        Ok(Some(l)) if l.expires <= now || lease_owner_dead(&l.owner) => LeaseTake::TookOverStale {
             owner: l.owner,
             job: l.job,
         },
@@ -146,7 +147,7 @@ pub fn release_project_lease(
     let path = lease_path(state_dir);
     let removable = match read_lease(&path) {
         Ok(None) => return Ok(()),
-        Ok(Some(l)) => l.owner == owner || l.expires <= now_secs() || owner_is_dead(&l.owner),
+        Ok(Some(l)) => l.owner == owner || l.expires <= now_secs() || lease_owner_dead(&l.owner),
         Err(_) => true,
     };
     if removable {
@@ -186,7 +187,7 @@ pub fn force_release_project_lease(
 pub fn project_lease_status(state_dir: &Path, now: f64) -> ProjectLeaseStatus {
     match read_lease(&lease_path(state_dir)) {
         Ok(None) => ProjectLeaseStatus::Free,
-        Ok(Some(l)) if l.expires > now && !owner_is_dead(&l.owner) => ProjectLeaseStatus::Held {
+        Ok(Some(l)) if l.expires > now && !lease_owner_dead(&l.owner) => ProjectLeaseStatus::Held {
             owner: l.owner,
             job: l.job,
             secs_left: (l.expires - now) as u64,

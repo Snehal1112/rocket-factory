@@ -439,4 +439,12 @@ fn the_pid_helpers_are_public() {
     assert!(factory_engine::process_gone(4294967000));
     assert_eq!(factory_engine::owner_pid("driver-12-3"), Some(12));
     assert_eq!(factory_engine::owner_pid("tester"), None);
+    assert!(!factory_engine::lease_owner_dead(&format!(
+        "driver-{}-1",
+        std::process::id()
+    )));
+    assert!(!factory_engine::lease_owner_dead("tester"));
+    assert!(!factory_engine::lease_owner_dead("driver-4294967000"));
+    #[cfg(target_os = "linux")]
+    assert!(factory_engine::lease_owner_dead(DEAD_OWNER));
 }
