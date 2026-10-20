@@ -82,10 +82,28 @@ The choice of reviewer model is written to the ledger as `review model: ...`. We
 | `read_first` | string list | `[]` | Files or folders the builder is told to read first. They are plain text in the prompt, relative to the job worktree, and the driver does not check them. Used in the first builder prompt and the per-task builder prompt, not in resume or fix prompts and not for the reviewer. |
 | `builder_rules` | string list | `[]` | Joined into one `Rules:` line in the first builder prompt and the per-task builder prompt. Not in the resume prompt. |
 | `check_hints` | string list | `[]` | Example check commands, shown only in the resumed fix-builder prompt, as `Run the relevant checks (for example ...)`. They do not run anything. |
+| `builder_permissions` | bool | true | Each builder run gets permission mode `acceptEdits`, an allowlist of tools and the job folder as an extra directory, so it never waits on a prompt. `false` restores the old builder arguments. |
+| `builder_allow` | string list | `[]` | Extra allow rules such as `Bash(make:*)`, added after the derived ones. Rules for the programs in `git`, `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` and `xargs` are refused, as are shell operators; with a bad entry the whole config fails closed. |
 | `reviewer_rules` | string list | `[]` | Joined into one line in the reviewer prompt, before the review checks. The prompt only, nothing enforces them. |
 | `plan_rules` | string list | `[]` | Rules for plans. Only the global `/factory` command reads them, through `factory project show`. The driver never puts them in a prompt, and the plan lint does not check them. |
 
 For all five string lists, every entry must be one non-empty line, with no newline.
+
+### Builder permissions
+
+With `builder_permissions = true`, the builder's allowlist is built in this order:
+
+- A fixed base: the tools `Read`, `Grep`, `Glob`, `Skill` and `Agent`, the programs `cd`, `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `find` and `pwd`, and `git status`, `git diff`, `git log` and `git show`.
+- The programs of the `[[checks]]` commands and of `check_hints`, each as `Bash(<program>:*)`. The `rust` preset gives `Bash(cargo:*)`. Programs in `git`, `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` and `xargs` are never derived.
+- The `builder_allow` entries, last.
+
+Each `builder_allow` entry is `Bash(<program>:*)` or `Bash(<program>)`, one line, at most 200 characters, with no shell operators (`&&`, `||`, `;`, `|`, `>`, `<`, a backtick or `$(`). `git` is accepted only before `status`, `diff`, `log`, `show` or `rev-parse`.
+
+```toml
+builder_allow = ["Bash(make:*)"]
+```
+
+The builder also gets deny rules for `Edit` and `Write` on the job folder, so it cannot change the plan, the spec or the ledger.
 
 ### Merge and tickets
 

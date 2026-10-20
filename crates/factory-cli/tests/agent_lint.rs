@@ -519,6 +519,62 @@ fn docs_describe_the_new_design() -> TestResult {
 }
 
 #[test]
+fn reference_documents_the_builder_permission_keys() -> TestResult {
+    let doc = read("docs/project-toml-reference.md")?;
+    require_all(
+        &doc,
+        "project-toml-reference.md",
+        &[
+            "`builder_permissions`",
+            "`builder_allow`",
+            "acceptEdits",
+            "Bash(<program>:*)",
+            "shell operators",
+            "rmdir",
+            "xargs",
+            "fails closed",
+        ],
+    )
+}
+
+#[test]
+fn software_factory_doc_describes_builder_permissions() -> TestResult {
+    let doc = read("docs/software-factory.md")?;
+    require_all(
+        &doc,
+        "software-factory.md",
+        &[
+            "`builder_permissions`",
+            "`builder_allow`",
+            "`--disallowedTools`",
+            "Edit(//",
+            "builder changed",
+            "acceptEdits",
+            "claude 2.1.303",
+            "2026-10-19",
+            "Deny rule plus an allow",
+            "`find`",
+            "Bash(cd:*)",
+            "Bash(git status:*)",
+        ],
+    )
+}
+
+#[test]
+fn readme_points_to_builder_permissions() -> TestResult {
+    let doc = read("README.md")?;
+    require_all(
+        &doc,
+        "README.md",
+        &[
+            "`builder_permissions`",
+            "docs/project-toml-reference.md",
+            "docs/software-factory.md",
+        ],
+    )
+}
+
+#[test]
 fn agent_max_turns_match_the_driver_constants() -> TestResult {
     let files = [
         (
