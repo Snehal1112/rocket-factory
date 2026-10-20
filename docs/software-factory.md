@@ -33,7 +33,7 @@ factory run (no LLM tokens):
 - `park.json` (job folder, written by the driver when it parks a job): `kind`, `reason`, `at`, `round`, `next` (the commands to run) and `parts` (title, source, text, truncated; each text capped at 200 KB, keeping the end). Kinds: `checks-failed`, `changes-remain`, `risky-diff`, `diff-too-large`, `budget-stopped`, `builder-stopped`, `builder-blocked`, `builder-committed`, `nothing-changed`, `commit-failed`, `other`. The board job has `park_kind` and `park_at`, cleared when the job leaves needs-human. `factory status` prints the reason, the first 12 lines of the first part and the next commands for each parked job.
 - `.superpowers/factory/events.jsonl`: events written by the driver, each with the job id.
 - Only the driver writes the ledger, board and events. Agents and the `/factory` command never do.
-- Config: `.claude/factory/config.toml` (`risk_paths`, `diff_cap_lines`, `budget_weighted`, `fix_rounds`, `stall_minutes`, `builder_model`, `reviewer_model`, `reviewer_model_large`, `reviewer_large_over_lines`, `commit_model`, `commit_subagents`, `commit_budget_weighted`, `commit_batch`, `builder_excerpt`, `tickets_on_merge`, `cache_ttl`, `kb_path`, `kb_model`, `kb_budget_weighted`, `kb_auto_commit`, `[[checks]]`).
+- Config: `.claude/factory/config.toml` (`risk_paths`, `diff_cap_lines`, `budget_weighted`, `fix_rounds`, `stall_minutes`, `builder_model`, `reviewer_model`, `reviewer_model_large`, `reviewer_large_over_lines`, `commit_model`, `commit_subagents`, `commit_budget_weighted`, `commit_batch`, `builder_excerpt`, `builder_permissions`, `builder_allow`, `tickets_on_merge`, `cache_ttl`, `kb_path`, `kb_model`, `kb_budget_weighted`, `kb_auto_commit`, `[[checks]]`).
 
 ## Modes
 
@@ -239,6 +239,33 @@ Data flow: `factory driver -> .superpowers/factory/{board.json,events.jsonl} -> 
 - The dashboard reads the ledger marker `per-task builders` to show each task's true state (`review` after its implementer is done, `active` while dispatched, `pending` before). Jobs without the marker keep the stage-based display.
 - The driver now passes `--agent factory-builder` for the whole-plan, task and fix builders. Before this it never did.
 - Token model (modelled, not measured): a fresh agent for task k pays off when the context it would have inherited, P_k, exceeds `(9F + (n_k+9)S) / n_k` (F = fixed start of about 19K to 38K tokens, S = spec plus plan size, n_k = turns of the task). Estimated saving: about 11 percent on a 2-task run, about 17 percent on a 3-task run, slightly negative on very short plans. The main gain is accurate per-task state on the card.
+
+## Builder permissions
+
+Why: a headless `claude -p` run cannot answer a permission prompt, and Claude Code ignores repository settings in a folder it does not trust. So the driver gives every builder run its own permissions and no repository needs a settings file.
+
+- Flags: each builder run gets `--permission-mode acceptEdits`, `--allowedTools` with the allowlist, `--disallowedTools` with the deny rules and `--add-dir <job folder>`. The flags are passed again on every resume, because a resumed session without them has its commands refused.
+- Base list: `Read`, `Grep`, `Glob`, `Skill`, `Agent`, then `Bash(cd:*)`, `Bash(ls:*)`, `Bash(cat:*)`, `Bash(head:*)`, `Bash(tail:*)`, `Bash(wc:*)`, `Bash(grep:*)`, `Bash(find:*)`, `Bash(pwd:*)`, and the read-only git commands `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git show:*)`.
+- Derived programs: the first word of each `[[checks]]` command and of each `check_hints` entry, after leading `NAME=value` words, becomes `Bash(<program>:*)`. The `rust` preset gives `cargo`, a Go config gives `go`. `git`, `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` and `xargs` are never derived. Then come the `builder_allow` entries, with duplicates removed. A fail-closed config gives only the base list.
+- `builder_allow`: extra entries as `Bash(<command>:*)` or `Bash(<command>)`. A bad entry makes the whole config fail closed. See `docs/project-toml-reference.md`.
+- Deny rules: `Edit(//<job folder>/**)` and `Write(//<job folder>/**)` with the canonical job folder path. A deny rule wins over any allow from a repository setting, and `Read` still works.
+- Guard: the builder must not change `plan.md`, `spec.md` or `progress.md` in the job folder. The driver checks them after each builder run, restores them and parks the job (`ParkKind::Other`) with `builder changed <file>`. This catches writes the deny rules cannot, such as a shell command.
+- Kill switch: `builder_permissions = false` gives the old builder arguments exactly. The reviewer, committer, message and KB runs are not affected.
+- Known limit: the base list includes `find`, which can delete files (`-delete`) or run other commands (`-exec`). The protection is the disposable job worktree, the deny rules and the file guard on the job folder.
+
+Probes with the real claude 2.1.303 on haiku in a scratch folder, 2026-10-19:
+
+| Question | Result |
+|---|---|
+| Compound command `cd sub && python3 ...` with only `Bash(python3:*)` allowed | Runs; `cd` is read-only and always allowed |
+| The same with only `Bash(cd:*)` allowed | Denied: "The following part requires approval: python3 ..." (each part is checked) |
+| `python3 ... \| tee out.txt` with only `python3` allowed | Denied on `tee` |
+| `--add-dir` plus `acceptEdits`, no deny rule | An Edit of a file in the added folder succeeds |
+| The same plus `--disallowedTools Edit(//dir/**),Write(//dir/**)` | Edit denied; Read still works |
+| Deny rule plus an allow for the same path from `--settings` | The deny wins |
+| Bash redirect `echo x > <denied folder>/plan.md` with `Bash(echo:*)` allowed | Denied |
+| `--resume <session>` with the permission flags passed again | Works |
+| `--resume <session>` without the flags | The command is refused: the flags must be passed on every run |
 
 ## Token comparison
 
