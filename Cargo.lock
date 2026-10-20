@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "factory-agent"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "factory-core",
  "serde",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "factory-checks"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "factory-core",
  "tempfile",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "factory-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "factory-agent",
@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "factory-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "factory-engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "factory-agent",
  "factory-checks",
@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "factory-git"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "git2",
  "tempfile",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "factory-supervisor"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "factory-core",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "factory-telemetry"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fs2",
  "serde_json",
