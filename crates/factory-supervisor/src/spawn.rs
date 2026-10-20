@@ -12,7 +12,7 @@ use crate::request::{Action, Request};
 const BIN_NAME: &str = "factory";
 const BIN_ENV: &str = "FACTORY_BIN";
 const HOME_ENV: &str = "FACTORY_HOME";
-const TEXT_FILE_BUSY: i32 = 26;
+pub(crate) const TEXT_FILE_BUSY: i32 = 26;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
@@ -58,6 +58,11 @@ impl ProcessSpawner {
             bin,
             children: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The path of the `factory` binary this spawner starts.
+    pub fn bin(&self) -> &Path {
+        &self.bin
     }
 
     /// `FACTORY_BIN`, else a `factory` file next to the running executable.
@@ -192,7 +197,7 @@ impl Spawner for ProcessSpawner {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
@@ -310,6 +315,12 @@ mod tests {
             .expect_err("refused");
         assert!(matches!(e, SpawnError::Start { .. }), "{e}");
         assert_eq!(std::fs::read_to_string(&target).expect("target"), "keep");
+    }
+
+    #[test]
+    fn bin_returns_the_chosen_path() {
+        let sp = ProcessSpawner::new(PathBuf::from("/opt/x/factory"));
+        assert_eq!(sp.bin(), Path::new("/opt/x/factory"));
     }
 
     #[test]
