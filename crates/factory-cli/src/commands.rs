@@ -506,7 +506,7 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     })
 }
 
-/// Releases the lease on every exit path. A crashed driver's lease expires by itself.
+/// Releases the lease on every exit path. A crashed driver's lease is free once its process is gone, or when it expires.
 struct LeaseGuard<'a> {
     driver: &'a Driver,
     id: String,

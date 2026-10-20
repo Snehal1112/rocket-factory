@@ -9,6 +9,23 @@ fn hold_project(fx: &Fixture, owner: &str, now: f64) {
         .expect("project lease");
 }
 
+/// A pid that no process has: above the kernel's pid limit.
+const DEAD_OWNER: &str = "driver-4294967000-1";
+
+fn job_lease(fx: &Fixture) -> Option<factory_engine::Lease> {
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        Duration::from_secs(15),
+    );
+    let board = store.load().expect("load board");
+    board
+        .jobs
+        .into_iter()
+        .find(|j| j.id == "001")
+        .expect("job 001")
+        .lease
+}
+
 fn new_job(fx: &Fixture) {
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");
     fx.run(&[
@@ -206,4 +223,103 @@ fn kb_refresh_is_refused_while_another_driver_holds_the_project() {
         fx.run(&["status"]).expect("status").lines().next(),
         Some("project: free")
     );
+}
+
+#[test]
+fn run_resumes_a_job_whose_driver_died_with_a_live_lease() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    fx.hold_lease("001", DEAD_OWNER);
+    assert_eq!(
+        job_lease(&fx).expect("held").owner,
+        DEAD_OWNER,
+        "the dead driver's lease is on the board"
+    );
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    assert!(
+        job_lease(&fx).is_none(),
+        "the run released the lease it took over"
+    );
+}
+
+#[test]
+fn run_is_refused_for_a_job_leased_by_a_live_driver() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    let before = fx.main_tip();
+    fx.hold_lease("001", &format!("driver-{}-1", std::process::id()));
+    let e = fx.run(&["run", "1"]).expect_err("leased");
+    assert!(e.to_string().contains("leased by driver-"), "{e}");
+    assert_eq!(fx.main_tip(), before);
+    assert_eq!(fx.builder_calls(), 0);
+}
+
+#[test]
+fn approve_takes_over_a_dead_owner_lease() {
+    let fx = Fixture::with_risk_path("docs/**");
+    new_job(&fx);
+    assert!(fx
+        .run(&["run", "1"])
+        .expect("run")
+        .starts_with("needs-human"));
+    fx.hold_lease("001", DEAD_OWNER);
+    assert!(fx
+        .run(&["approve", "1"])
+        .expect("approve")
+        .starts_with("merged"));
+    assert!(job_lease(&fx).is_none());
+}
+
+#[test]
+fn cancel_without_force_accepts_a_dead_owner_lease() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    fx.hold_lease("001", DEAD_OWNER);
+    let out = fx.run(&["cancel", "1"]).expect("cancel");
+    assert!(out.contains("cancelled"), "{out}");
+    assert!(!out.contains("project lease released"), "{out}");
+    assert!(job_lease(&fx).is_none());
+}
+
+#[test]
+fn tickets_accepts_a_dead_owner_lease() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    fx.hold_lease("001", DEAD_OWNER);
+    let out = fx.run(&["tickets", "1"]).expect("tickets");
+    assert!(out.contains("skipped"), "{out}");
+    assert!(out.contains("not merged"), "{out}");
+}
+
+#[test]
+fn kb_refresh_accepts_a_dead_owner_lease() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    fx.hold_lease("001", DEAD_OWNER);
+    assert_eq!(
+        fx.run(&["kb-refresh", "--job", "1"]).expect("kb"),
+        "kb_path is not set"
+    );
+}
+
+#[test]
+fn cleanup_removes_the_card_despite_a_dead_owner_lease() {
+    let fx = Fixture::with_risk_path("docs/**");
+    new_job(&fx);
+    assert!(fx
+        .run(&["run", "1"])
+        .expect("run")
+        .starts_with("needs-human"));
+    fx.run(&["cancel", "1"]).expect("cancel");
+    fx.hold_lease("001", DEAD_OWNER);
+    let out = fx
+        .run(&["cleanup", "1", "--discard-commits"])
+        .expect("cleanup");
+    assert!(out.contains("card removed from the board"), "{out}");
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        Duration::from_secs(15),
+    );
+    assert!(store.load().expect("load").jobs.is_empty());
 }
