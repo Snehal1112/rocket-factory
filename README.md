@@ -317,6 +317,12 @@ by `factoryd`. Read the `.out` and `.err` logs and the job ledger, then run `fac
 enqueue a new request. A project whose lease belongs to a live driver that is not a child of `factoryd` (for
 example a manual `factory run`) is reported as busy and nothing starts for it until that process ends.
 
+`factory run` and `factory approve` exit with code 75 when the project lease is already held at the start, and
+nothing was done. `factoryd` then keeps the request queued and starts it again once the lease is free, up to 20
+times, after which the request ends as `Failed`. The count is kept in memory, so a restart of `factoryd` begins
+again at 0. Their last stdout line (`merged`, `needs-human: <reason>`, `parked: <reason>`) is always one line: a
+newline in a reason is replaced by a space. `merged` counts only with exit code 0.
+
 #### The daily budget
 
 `daily_budget_weighted = 5000000` in `config.toml` limits all projects together for one UTC day. The unit is
