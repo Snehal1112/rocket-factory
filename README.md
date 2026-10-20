@@ -23,7 +23,15 @@ The processes behind a job:
 
 ![Who talks to whom](docs/images/factory-processes.svg)
 
-The same three diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a private Claude artifact, so only its owner can open it). The page source is `docs/factory-workflow.html` and the images are in `docs/images/`.
+How the driver starts one agent (`claude -p`), the five ways a run ends and the five roles it starts. Only the builder and the KB refresher can start subagents, and the builder's limit of 2 helpers is a line in its prompt, not driver code:
+
+![How an agent is started](docs/images/factory-agents.svg)
+
+The agent runs of one job in order: a fresh builder per task, one batch commit, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. With 3 tasks and the defaults the worst case is 16 agent runs, 18 with a sync message, and the job budget stops a run before that:
+
+![Agent turns in one job](docs/images/factory-turns.svg)
+
+The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a private Claude artifact, so only its owner can open it). The page source is `docs/factory-workflow.html` and the images are in `docs/images/`.
 
 ## Features ported from Rocket
 
