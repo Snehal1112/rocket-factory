@@ -613,6 +613,7 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
         j.cancelled = true;
         j.lease = None;
         j.task_session = None;
+        j.builder_last = None;
         Ok(())
     })?;
     // The reason is folded into one line, because the ledger takes one line.

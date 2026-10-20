@@ -128,6 +128,22 @@ pub struct Job {
     /// The builder session of the running task, saved while the builder runs. New in the crash resume series, absent in older boards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_session: Option<TaskSession>,
+    /// The last finished task builder, used to decide a session carry. New in the builder task resume series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder_last: Option<BuilderLast>,
+}
+
+/// The last finished task builder of the job, used to decide a carry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuilderLast {
+    /// The plan task number, as in `### Task N`.
+    pub task: u32,
+    /// The `claude` session id.
+    pub id: String,
+    /// Unix time in seconds when the builder run returned.
+    pub ended_at: u64,
+    /// The context size at the end of the run, in tokens.
+    pub end_ctx: u64,
 }
 
 /// The builder session of the plan task that is running now. Only a crash leaves it on the board.
@@ -218,6 +234,7 @@ impl Job {
             fix_source: None,
             spec_warning: None,
             task_session: None,
+            builder_last: None,
         }
     }
 
@@ -483,6 +500,24 @@ mod tests {
         job.set_stage(Stage::Build, None, true, 4.0).expect("back");
         assert_eq!(job.park_kind, None);
         assert_eq!(job.park_at, None);
+    }
+
+    #[test]
+    fn builder_last_round_trips_and_is_omitted_when_none() {
+        let mut j = Job::new("001", "d", "s", "2026-10-20", "f", 1.0);
+        assert!(j.builder_last.is_none());
+        assert!(!serde_json::to_string(&j)
+            .expect("json")
+            .contains("builder_last"));
+        j.builder_last = Some(BuilderLast {
+            task: 1,
+            id: "sess-1".into(),
+            ended_at: 1_700_000_000,
+            end_ctx: 31_000,
+        });
+        let text = serde_json::to_string(&j).expect("json");
+        let back: Job = serde_json::from_str(&text).expect("back");
+        assert_eq!(back.builder_last, j.builder_last);
     }
 
     #[test]

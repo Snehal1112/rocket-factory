@@ -87,6 +87,8 @@ pub(crate) struct JobView {
     pub review_missing: bool,
     /// The saved builder session of the task that was running, if any.
     pub task_session: Option<factory_core::board::TaskSession>,
+    /// The last finished task builder, if any.
+    pub builder_last: Option<factory_core::board::BuilderLast>,
 }
 
 impl Engine<'_> {
@@ -109,6 +111,7 @@ impl Engine<'_> {
             fix_source: job.fix_source.clone(),
             review_missing: job.review_missing(),
             task_session: job.task_session.clone(),
+            builder_last: job.builder_last.clone(),
         })
     }
 
