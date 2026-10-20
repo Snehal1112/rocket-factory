@@ -30,7 +30,9 @@ fn parse(text: &str) -> Option<(u64, u64, u64)> {
 
 fn parse_current(current: &str) -> Result<(u64, u64, u64), CoreError> {
     parse(current).ok_or_else(|| {
-        CoreError::Version(format!("this binary's version {current:?} is not a version"))
+        CoreError::Version(format!(
+            "this binary's version {current:?} is not a version"
+        ))
     })
 }
 
@@ -159,14 +161,20 @@ mod tests {
         let (_t, home) = home_with(Some(b"0.1.2"));
         let err = check(&home, "dev").expect_err("bad current");
         let text = err.to_string();
-        assert!(text.contains("\"dev\"") && text.contains("is not a version"), "{text}");
+        assert!(
+            text.contains("\"dev\"") && text.contains("is not a version"),
+            "{text}"
+        );
     }
 
     #[test]
     fn comparison_is_numeric_not_text() {
         let (_t, home) = home_with(Some(b"0.10.0"));
         let err = check(&home, "0.9.0").expect_err("newer");
-        assert!(err.to_string().contains("last used by factory 0.10.0"), "{err}");
+        assert!(
+            err.to_string().contains("last used by factory 0.10.0"),
+            "{err}"
+        );
         assert!(!stamp(&home, "0.9.0").expect("stamp"));
         assert_eq!(std::fs::read(home.version_file()).expect("read"), b"0.10.0");
     }
@@ -177,7 +185,10 @@ mod tests {
             let (_t, home) = home_with(Some(m.as_bytes()));
             check(&home, "0.2.0").expect("equal");
             assert!(!stamp(&home, "0.2.0").expect("stamp"));
-            assert_eq!(std::fs::read(home.version_file()).expect("read"), m.as_bytes());
+            assert_eq!(
+                std::fs::read(home.version_file()).expect("read"),
+                m.as_bytes()
+            );
         }
     }
 
@@ -208,28 +219,40 @@ mod tests {
             std::fs::read_to_string(home.version_file()).expect("read"),
             "0.1.2\n"
         );
-        assert!(!stamp(&home, "0.1.2").expect("second stamp"), "equal is not rewritten");
+        assert!(
+            !stamp(&home, "0.1.2").expect("second stamp"),
+            "equal is not rewritten"
+        );
     }
 
     #[test]
     fn stamp_replaces_an_older_marker() {
         let (_t, home) = home_with(Some(b"0.1.1\n"));
         assert!(stamp(&home, "0.1.2").expect("stamp"));
-        assert_eq!(std::fs::read_to_string(home.version_file()).expect("read"), "0.1.2\n");
+        assert_eq!(
+            std::fs::read_to_string(home.version_file()).expect("read"),
+            "0.1.2\n"
+        );
     }
 
     #[test]
     fn stamp_replaces_an_unparseable_marker() {
         let (_t, home) = home_with(Some(b"garbage"));
         assert!(stamp(&home, "0.1.2").expect("stamp"));
-        assert_eq!(std::fs::read_to_string(home.version_file()).expect("read"), "0.1.2\n");
+        assert_eq!(
+            std::fs::read_to_string(home.version_file()).expect("read"),
+            "0.1.2\n"
+        );
     }
 
     #[test]
     fn stamp_never_writes_an_older_version_over_a_newer_one() {
         let (_t, home) = home_with(Some(b"0.2.0\n"));
         assert!(!stamp(&home, "0.1.2").expect("stamp"));
-        assert_eq!(std::fs::read_to_string(home.version_file()).expect("read"), "0.2.0\n");
+        assert_eq!(
+            std::fs::read_to_string(home.version_file()).expect("read"),
+            "0.2.0\n"
+        );
     }
 
     #[test]

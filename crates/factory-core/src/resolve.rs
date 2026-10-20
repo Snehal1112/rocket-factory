@@ -11,7 +11,7 @@ use crate::project::{self, ProjectFile};
 use crate::{Config, CoreError, Home, Layout};
 
 const OVERRIDE_FILE: &str = ".factory/override.toml";
-const AGENTS_DIR: &str = ".factory/agents";
+pub(crate) const AGENTS_DIR: &str = ".factory/agents";
 /// Always a risk path, so a repo cannot change its own factory settings without review.
 const FACTORY_RISK: &str = ".factory/**";
 
