@@ -4,6 +4,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use factory_core::version::{self, FACTORY_VERSION};
 use factory_core::{Home, HomeConfig};
 use factory_supervisor::api::{ApiDeps, ApiServer};
 use factory_supervisor::lock::stop_file;
@@ -61,6 +62,9 @@ fn now_ms() -> u64 {
 }
 
 fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
+    if let Err(e) = version::stamp(&home, FACTORY_VERSION) {
+        eprintln!("note: version marker not written: {e}");
+    }
     let cfg = HomeConfig::load(&home).map_err(|e| e.to_string())?;
     let target = factory_telemetry::LogTarget {
         path: home.factoryd_log_file(),
@@ -199,6 +203,7 @@ fn status(home: &Home) -> String {
             describe(&r.outcome)
         ));
     }
+    out.push_str(&format!("factoryd {FACTORY_VERSION}\n"));
     out
 }
 
@@ -215,7 +220,10 @@ fn main() -> ExitCode {
             _ => ExitCode::from(1),
         };
     }
-    let result = Home::from_env().map_err(|e| e.to_string()).and_then(|home| match cli.cmd {
+    let result = Home::from_env().map_err(|e| e.to_string()).and_then(|home| {
+        version::check(&home, FACTORY_VERSION).map_err(|e| e.to_string())?;
+        Ok(home)
+    }).and_then(|home| match cli.cmd {
         Cmd::Run { interval_ms, once } => run(home, interval_ms, once),
         Cmd::Status => {
             print!("{}", status(&home));
@@ -275,6 +283,23 @@ mod tests {
             text.starts_with("daily budget: 0 of 1000 weighted tokens today (0%), resets at "),
             "{text}"
         );
+        assert!(
+            text.ends_with(&format!("factoryd {}\n", env!("CARGO_PKG_VERSION"))),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn status_ends_with_the_factoryd_version_line() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        let text = status(&home);
+        assert_eq!(
+            text.lines().last(),
+            Some(format!("factoryd {}", env!("CARGO_PKG_VERSION")).as_str()),
+            "{text}"
+        );
+        assert!(text.starts_with("Queue:\n"), "{text}");
     }
 
     #[test]
