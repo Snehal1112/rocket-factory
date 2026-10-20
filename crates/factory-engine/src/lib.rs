@@ -1,6 +1,7 @@
 //! The factory run loop stages: build, checks, review and decide.
 
 mod build;
+mod carry;
 mod checks_stage;
 mod clock;
 mod combine;
