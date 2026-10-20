@@ -73,7 +73,7 @@ Example: a 0.1.2 binary on a home stamped `0.2.0` prints the first error text an
 - New dependency `sha2` (pinned) in `factory-core` for the hash. A std hasher is not stable across Rust versions, so it cannot be stored.
 - `preset::seed` and `preset::refresh` record the hash of every file they write or find equal to the embedded text. A refused file keeps its old entry.
 - Unedited rule in `refresh`, in order: the file equals the embedded text (`unchanged`); the file hash equals its manifest entry (`updated`); the file equals a `LEGACY` text for that agent (`updated`); else a hand edit: `refused`, or `updated` with `force`.
-- A home with no manifest behaves as today for the first refresh, and then has one. An unedited `config.toml` or `commit-context.md` of such a home that differs from the embedded text is refused once. `--force` clears that.
+- A home with no manifest behaves as today for the first refresh, and then has one. An unedited `config.toml` or `commit-context.md` of such a home that differs from the embedded text is refused on every refresh until `--force` is used.
 - `refresh` gets a dry-run form: `preset::plan_refresh(presets_dir)` returns the same `RefreshReport` and writes nothing, and `refresh` applies it.
 - The output of `factory presets refresh` does not change.
 
