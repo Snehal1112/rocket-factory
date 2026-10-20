@@ -10,6 +10,7 @@ use factory_supervisor::api::{ApiDeps, ApiServer};
 use factory_supervisor::lock::stop_file;
 use factory_supervisor::request::{Action, Request};
 use factory_supervisor::token;
+use factory_supervisor::version_check;
 use factory_supervisor::{
     pid_alive, queue, records, InstanceLock, Outcome, ProcessFactoryCli, ProcessSpawner, QueueItem,
     Supervisor,
@@ -61,6 +62,12 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Prints the version mismatch on stderr and logs it once.
+fn report_mismatch(text: &str) {
+    eprintln!("warning: {text}");
+    tracing::warn!(event = "sup.warn", msg = text);
+}
+
 fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
     if let Err(e) = version::stamp(&home, FACTORY_VERSION) {
         eprintln!("note: version marker not written: {e}");
@@ -85,6 +92,9 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
         }
     };
     let spawner = ProcessSpawner::from_env().map_err(|e| e.to_string())?;
+    if let Some(text) = version_check::mismatch(spawner.bin(), FACTORY_VERSION) {
+        report_mismatch(&text);
+    }
     // The supervisor holds the instance lock for its whole life.
     let mut sup = Supervisor::new_locked(home.clone(), Box::new(spawner), Box::new(now_ms))
         .map_err(|e| e.to_string())?;
@@ -140,7 +150,14 @@ fn describe(outcome: &Outcome) -> String {
     }
 }
 
-fn status(home: &Home) -> String {
+/// The version mismatch with the factory binary, for `status`. Never an error.
+fn status_mismatch() -> Option<String> {
+    ProcessSpawner::from_env()
+        .ok()
+        .and_then(|s| version_check::mismatch(s.bin(), FACTORY_VERSION))
+}
+
+fn status(home: &Home, mismatch: Option<&str>) -> String {
     let mut out = String::new();
     let limit = HomeConfig::load(home)
         .ok()
@@ -203,6 +220,9 @@ fn status(home: &Home) -> String {
             describe(&r.outcome)
         ));
     }
+    if let Some(m) = mismatch {
+        out.push_str(&format!("warning: {m}\n"));
+    }
     out.push_str(&format!("factoryd {FACTORY_VERSION}\n"));
     out
 }
@@ -226,7 +246,7 @@ fn main() -> ExitCode {
     }).and_then(|home| match cli.cmd {
         Cmd::Run { interval_ms, once } => run(home, interval_ms, once),
         Cmd::Status => {
-            print!("{}", status(&home));
+            print!("{}", status(&home, status_mismatch().as_deref()));
             Ok(())
         }
         Cmd::Stop => {
@@ -262,6 +282,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn report_mismatch_logs_a_sup_warn() {
+        let text = "factory binary /x/factory is 0.1.1, factoryd is 0.1.2";
+        let ((), lines) = factory_telemetry::capture("info", || report_mismatch(text));
+        let warns: Vec<_> = lines.iter().filter(|l| l["event"] == "sup.warn").collect();
+        assert_eq!(warns.len(), 1, "{lines:?}");
+        assert_eq!(warns[0]["level"], "warn");
+        assert_eq!(warns[0]["msg"], text);
+    }
+
+    #[test]
     fn version_flag_prints_the_workspace_version() {
         let err = Cli::try_parse_from(["factoryd", "--version"])
             .err()
@@ -276,9 +306,9 @@ mod tests {
     fn status_shows_the_daily_budget_only_with_a_limit() {
         let t = tempfile::tempdir().expect("tempdir");
         let home = Home::at(t.path().to_path_buf());
-        assert!(!status(&home).contains("daily budget"));
+        assert!(!status(&home, None).contains("daily budget"));
         std::fs::write(home.config_file(), "daily_budget_weighted = 1000\n").expect("config");
-        let text = status(&home);
+        let text = status(&home, None);
         assert!(
             text.starts_with("daily budget: 0 of 1000 weighted tokens today (0%), resets at "),
             "{text}"
@@ -293,13 +323,51 @@ mod tests {
     fn status_ends_with_the_factoryd_version_line() {
         let t = tempfile::tempdir().expect("tempdir");
         let home = Home::at(t.path().to_path_buf());
-        let text = status(&home);
+        let text = status(&home, None);
         assert_eq!(
             text.lines().last(),
             Some(format!("factoryd {}", env!("CARGO_PKG_VERSION")).as_str()),
             "{text}"
         );
         assert!(text.starts_with("Queue:\n"), "{text}");
+    }
+
+    #[test]
+    fn status_warns_on_a_mismatch() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        let text = status(
+            &home,
+            Some("factory binary /x/factory is 0.1.1, factoryd is 0.1.2"),
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        let n = lines.len();
+        assert!(n >= 2, "{text}");
+        assert_eq!(
+            lines[n - 2],
+            "warning: factory binary /x/factory is 0.1.1, factoryd is 0.1.2"
+        );
+        assert_eq!(lines[n - 1], format!("factoryd {FACTORY_VERSION}"));
+        assert!(!status(&home, None).contains("warning:"));
+    }
+
+    #[test]
+    fn status_keeps_the_budget_first_with_a_mismatch() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        std::fs::write(home.config_file(), "daily_budget_weighted = 1000\n").expect("config");
+        let text = status(&home, Some("cannot read the version of /x/factory: gone"));
+        assert!(
+            text.starts_with("daily budget: 0 of 1000 weighted tokens today (0%), resets at "),
+            "{text}"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        let n = lines.len();
+        assert_eq!(
+            lines[n - 2],
+            "warning: cannot read the version of /x/factory: gone"
+        );
+        assert_eq!(lines[n - 1], format!("factoryd {FACTORY_VERSION}"));
     }
 
     #[test]
