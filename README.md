@@ -193,6 +193,37 @@ folder and refuses while a job is not merged or cancelled, unless `--force` is g
 project's `worktrees/` folder (a stale one whose folder is gone too, a valid one together with its working
 folder). It never deletes branches: the `factory/*` job branches stay in the repo and are listed in the output.
 
+### Upgrading
+
+To move to a new factory version:
+
+```
+git pull
+cargo build -j4 -p factory-cli -p factory-supervisor
+factory upgrade --dry-run     # preview, changes nothing
+factory upgrade
+factoryd stop                 # then start `factoryd run` again
+cargo build -j4 --manifest-path dashboard/Cargo.toml
+```
+
+Upgrade with no running jobs, because a running job keeps the agent files it started with. The dashboard is
+not touched by `factory upgrade`, so rebuild it with the last command.
+
+`factory upgrade` prints, in order:
+
+- the command line: the `/factory` command is updated, and the old file is kept as `factory.md.bak`.
+- the preset lines, as in `factory presets refresh`, and a note that refused files stay as they are. To
+  overwrite them, run `factory presets refresh --force`.
+- `shadowed: <project> <project-layer|repo-layer> <file>` lines and `skipped: <project> (<reason>)` lines.
+- the marker line.
+
+Project-layer and repo-layer agent files do not follow preset changes. A `shadowed:` line means that override
+still holds the old text of an agent file the upgrade updated, so merge the change by hand.
+
+The marker is `<home>/VERSION`. A binary older than the marker stops with a message naming both versions.
+`--version` and `install` still work. `factory project show` prints `version: <version>`, and `factoryd status`
+ends with `factoryd <version>` and a `warning:` line when it differs from the `factory` binary.
+
 ### Refreshing seeded presets
 
 `factory presets refresh [--force]` brings `<home>/presets/` up to the text built into the binary. It needs no
@@ -217,8 +248,7 @@ Any home whose agent files differ from both the shipped text and the previous re
 change. The `refused` lines name each such file: compare it with the shipped text, which `factory presets refresh`
 writes when `FACTORY_HOME` names an empty folder, keep your own edits, then run `--force`.
 
-`refresh` does not update the global command. After an upgrade also run `factory install --force` to pick up
-the new `/factory` command.
+`refresh` does not update the global command. `factory upgrade` does both in one step, see Upgrading above.
 
 ### The global /factory command
 

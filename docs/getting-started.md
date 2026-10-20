@@ -412,20 +412,20 @@ Where to look:
 
 ## 15. After you update the factory
 
-Pull the new code and then do all four steps. A new binary does not update the seeded presets or the installed command by itself.
+Pull the new code, build, and run one command. A new binary does not update the seeded presets or the installed command by itself, `factory upgrade` does.
 
 ```bash
 cd ~/data/rocket/rocket-factory
 git pull
 cargo build -j4 -p factory-cli -p factory-supervisor
 cargo build -j4 --manifest-path dashboard/Cargo.toml
-factory presets refresh          # add --force to also overwrite agent files you edited
-factory install --force          # update the /factory command
+factory upgrade --dry-run        # optional preview
+factory upgrade                  # command, presets, shadow report, version marker
 factoryd stop                    # wait for running jobs first, then start it again
 nohup factoryd run >> ~/.factory/factoryd.log 2>&1 &
 ```
 
-`factory presets refresh` updates only `~/.factory/presets/`. It never touches your project settings or your repo. A file you edited by hand is listed as `refused` and left alone.
+`factory upgrade` never touches your project settings or your repo. A preset file you edited by hand is listed as `refused` and left alone, and `factory presets refresh --force` overwrites it.
 
 ## 16. Platform notes
 
