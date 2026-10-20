@@ -77,7 +77,9 @@ pub use project_lease::{
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
 pub use runloop::{create_job, create_job_with_spec, job_span, run_job, run_series, RunEnd};
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
-pub use specs::{ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS};
+pub use specs::{
+    ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS, RULES_VERSION,
+};
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_stage, SyncOutcome};
 pub use tasks::{
