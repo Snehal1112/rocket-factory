@@ -15,7 +15,25 @@ fn main() {
         return;
     }
     if let Command::Presets { cmd } = cli.command {
-        let result = factory_cli::open_home().and_then(|home| factory_cli::presets::run(&home, cmd));
+        let result =
+            factory_cli::open_home().and_then(|home| factory_cli::presets::run(&home, cmd));
+        match result {
+            Ok(text) => println!("{text}"),
+            Err(e) => {
+                eprintln!("factory: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if let Command::Upgrade { dry_run } = &cli.command {
+        // Both lookups come before `run`, so an unset $HOME changes nothing.
+        let result = factory_core::Home::from_env()
+            .map_err(factory_cli::CliError::from)
+            .and_then(|home| {
+                let commands = factory_cli::install::commands_folder(None)?;
+                factory_cli::upgrade::run(&home, &commands, *dry_run)
+            });
         match result {
             Ok(text) => println!("{text}"),
             Err(e) => {

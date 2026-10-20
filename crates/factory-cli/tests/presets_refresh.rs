@@ -78,3 +78,46 @@ fn refresh_output_matches_the_golden_text() {
     );
     assert_eq!(run(&home, &["refresh"]), expected.join("\n"));
 }
+
+#[test]
+fn the_refresh_output_is_byte_identical() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let home = Home::at(tmp.path().join("home"));
+    preset::seed(&home.presets_dir()).expect("seed");
+    let p = home.presets_dir();
+    std::fs::write(p.join("rust/config.toml"), "# mine\n").expect("edit");
+    std::fs::remove_file(p.join("go/commit-context.md")).expect("rm");
+    let agents = [
+        "factory-builder.md",
+        "factory-code-reviewer.md",
+        "factory-committer.md",
+        "factory-kb-refresher.md",
+    ];
+    let mut expected = vec![format!(
+        "written: {}",
+        p.join("go/commit-context.md").display()
+    )];
+    expected.push(format!(
+        "unchanged: {}",
+        p.join("rust/commit-context.md").display()
+    ));
+    for a in agents {
+        expected.push(format!(
+            "unchanged: {}",
+            p.join("rust/agents").join(a).display()
+        ));
+    }
+    expected.push(format!("unchanged: {}", p.join("go/config.toml").display()));
+    for a in agents {
+        expected.push(format!(
+            "unchanged: {}",
+            p.join("go/agents").join(a).display()
+        ));
+    }
+    expected.push(format!("refused: {}", p.join("rust/config.toml").display()));
+    expected.push("1 written, 0 updated, 10 unchanged, 1 refused".to_string());
+    expected.push(
+        "refused files differ from every known text, use --force to overwrite them".to_string(),
+    );
+    assert_eq!(run(&home, &["refresh"]), expected.join("\n"));
+}

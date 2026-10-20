@@ -589,6 +589,37 @@ fn software_factory_doc_describes_builder_permissions() -> TestResult {
 }
 
 #[test]
+fn readme_documents_upgrading() -> TestResult {
+    let doc = read("README.md")?;
+    require_all(
+        &doc,
+        "README.md",
+        &[
+            "### Upgrading",
+            "factory upgrade --dry-run",
+            "no running jobs",
+            "factory.md.bak",
+            "refused files stay as they are",
+            "factory presets refresh --force",
+            "shadowed: <project> <project-layer|repo-layer> <file>",
+            "do not follow preset changes",
+            "factoryd stop",
+            "cargo build -j4 --manifest-path dashboard/Cargo.toml",
+            "<home>/VERSION",
+            "version: ",
+        ],
+    )?;
+    forbid_all(&doc, "README.md", &["After an upgrade also run `factory install --force`"])
+}
+
+#[test]
+fn getting_started_upgrades_with_one_command() -> TestResult {
+    let doc = read("docs/getting-started.md")?;
+    require_all(&doc, "getting-started.md", &["factory upgrade", "factoryd stop"])?;
+    forbid_all(&doc, "getting-started.md", &["do all four steps"])
+}
+
+#[test]
 fn readme_points_to_builder_permissions() -> TestResult {
     let doc = read("README.md")?;
     require_all(

@@ -337,6 +337,9 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Install { .. } => Err(CliError::Refused(
             "install needs no repository, run it through install::run".into(),
         )),
+        Command::Upgrade { .. } => Err(CliError::Refused(
+            "upgrade needs no repository, run it through upgrade::run".into(),
+        )),
         Command::Log { job, level, tail } => {
             crate::log::run_log(ctx, job.as_deref(), level.as_deref(), tail)
         }

@@ -666,7 +666,14 @@ fn add_succeeds_with_a_note_when_the_marker_cannot_be_written() {
     let out = run(
         &e,
         &[
-            "add", s(&repo), "--preset", "rust", "--name", "demo", "--base", "main",
+            "add",
+            s(&repo),
+            "--preset",
+            "rust",
+            "--name",
+            "demo",
+            "--base",
+            "main",
         ],
     )
     .expect("add");

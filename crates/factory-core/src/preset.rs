@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{write_atomic, CoreError};
+use crate::resolve::{BaseTipFiles, AGENTS_DIR};
+use crate::{project, write_atomic, CoreError, Home};
 
 mod manifest;
 pub use manifest::MANIFEST_FILE;
@@ -247,6 +248,137 @@ fn plan(presets_dir: &Path, force: bool) -> Result<(RefreshReport, Manifest, Wri
         }
     }
     Ok((report, new, writes))
+}
+
+/// Where an agent file that shadows an updated preset file lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    /// `projects/<name>/agents/` in the factory home.
+    Project,
+    /// `.factory/agents/` on the tip of the base branch.
+    Repo,
+}
+
+impl Layer {
+    /// The word the upgrade report prints for the layer.
+    pub fn label(self) -> &'static str {
+        match self {
+            Layer::Project => "project-layer",
+            Layer::Repo => "repo-layer",
+        }
+    }
+}
+
+/// One line of the shadow report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShadowLine {
+    /// An agent file in `layer` hides the updated preset file `file`.
+    Shadow {
+        project: String,
+        layer: Layer,
+        file: String,
+    },
+    /// The project could not be checked.
+    Skipped { project: String, reason: String },
+}
+
+/// Opens the base tip of a project by name.
+type TipFor<'a> = &'a dyn Fn(&str) -> Result<Box<dyn BaseTipFiles>, String>;
+
+/// Finds project and repo agent files that shadow an updated preset agent file.
+/// Only projects on the same preset are checked. `tip_for` opens a project's base tip.
+pub fn shadowed(
+    home: &Home,
+    updated: &[PathBuf],
+    tip_for: TipFor<'_>,
+) -> Vec<ShadowLine> {
+    let presets = home.presets_dir();
+    // (preset, file name) for each updated agent file, in order.
+    let mut counting: Vec<(String, String)> = Vec::new();
+    for path in updated {
+        let Ok(rel) = path.strip_prefix(&presets) else {
+            continue;
+        };
+        let parts: Vec<&str> = rel.iter().filter_map(|p| p.to_str()).collect();
+        if let [preset, "agents", file] = parts.as_slice() {
+            counting.push(((*preset).to_string(), (*file).to_string()));
+        }
+    }
+    if counting.is_empty() {
+        return Vec::new();
+    }
+    let entries = match project::list(home) {
+        Ok(e) => e,
+        Err(e) => {
+            return vec![ShadowLine::Skipped {
+                project: "*".into(),
+                reason: e.to_string(),
+            }]
+        }
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let file = match entry.file {
+            Ok(f) => f,
+            Err(reason) => {
+                out.push(ShadowLine::Skipped {
+                    project: entry.name,
+                    reason,
+                });
+                continue;
+            }
+        };
+        let files: Vec<&str> = counting
+            .iter()
+            .filter(|(p, _)| *p == file.preset)
+            .map(|(_, f)| f.as_str())
+            .collect();
+        if files.is_empty() {
+            continue;
+        }
+        let tip = match tip_for(&entry.name) {
+            Ok(t) => t,
+            Err(reason) => {
+                out.push(ShadowLine::Skipped {
+                    project: entry.name,
+                    reason,
+                });
+                continue;
+            }
+        };
+        let listing = match tip.list_dir(AGENTS_DIR) {
+            Ok(l) => l,
+            Err(why) => {
+                out.push(ShadowLine::Skipped {
+                    project: entry.name,
+                    reason: format!("cannot read .factory/agents from the base branch: {why}"),
+                });
+                continue;
+            }
+        };
+        for f in files {
+            if home
+                .project_dir(&entry.name)
+                .join("agents")
+                .join(f)
+                .is_file()
+            {
+                out.push(ShadowLine::Shadow {
+                    project: entry.name.clone(),
+                    layer: Layer::Project,
+                    file: f.to_string(),
+                });
+            }
+            if listing.iter().any(|(n, _)| n == f) {
+                out.push(ShadowLine::Shadow {
+                    project: entry.name.clone(),
+                    layer: Layer::Repo,
+                    file: f.to_string(),
+                });
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -828,5 +960,202 @@ mod tests {
         std::fs::create_dir(dir.path().join(MANIFEST_FILE)).expect("mkdir");
         let err = plan_refresh(dir.path()).expect_err("manifest is a directory");
         assert!(matches!(err, CoreError::Io { .. }), "{err:?}");
+    }
+
+    struct ListTip(Vec<(String, String)>);
+    impl BaseTipFiles for ListTip {
+        fn read_file(&self, _rel: &str) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn list_dir(&self, rel: &str) -> Result<Vec<(String, String)>, String> {
+            assert_eq!(rel, ".factory/agents");
+            Ok(self.0.clone())
+        }
+    }
+    struct FailingList;
+    impl BaseTipFiles for FailingList {
+        fn read_file(&self, _rel: &str) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn list_dir(&self, _rel: &str) -> Result<Vec<(String, String)>, String> {
+            Err("bad tree".into())
+        }
+    }
+    /// Writes projects/<name>/project.toml by hand, with an absolute repo path.
+    fn register(home: &Home, name: &str, preset: &str) {
+        let dir = home.project_dir(name);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("project.toml"),
+            format!(
+                "repo = \"/nowhere/{name}\"\npreset = \"{preset}\"\n\n[settings]\nbase_branch = \"main\"\n"
+            ),
+        )
+        .expect("write project.toml");
+    }
+    fn builder_tip() -> Result<Box<dyn BaseTipFiles>, String> {
+        Ok(Box::new(ListTip(vec![(
+            "factory-builder.md".into(),
+            "# repo\n".into(),
+        )])))
+    }
+    fn never(_: &str) -> Result<Box<dyn BaseTipFiles>, String> {
+        panic!("must not be called")
+    }
+
+    #[test]
+    fn shadowed_finds_project_and_repo_layer_files() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = Home::at(tmp.path().to_path_buf());
+        register(&home, "alpha", "rust");
+        let layer = home.project_dir("alpha").join("agents/factory-builder.md");
+        std::fs::create_dir_all(layer.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&layer, "# project override\n").expect("write");
+        let updated = vec![
+            home.presets_dir().join("rust/agents/factory-builder.md"),
+            home.presets_dir().join("rust/agents/factory-committer.md"),
+        ];
+        let tip_for = |name: &str| -> Result<Box<dyn BaseTipFiles>, String> {
+            assert_eq!(name, "alpha");
+            Ok(Box::new(ListTip(vec![
+                ("factory-builder.md".into(), "# repo\n".into()),
+                ("factory-kb-refresher.md".into(), "# repo\n".into()),
+            ])))
+        };
+        let lines = shadowed(&home, &updated, &tip_for);
+        assert_eq!(
+            lines,
+            vec![
+                ShadowLine::Shadow {
+                    project: "alpha".into(),
+                    layer: Layer::Project,
+                    file: "factory-builder.md".into()
+                },
+                ShadowLine::Shadow {
+                    project: "alpha".into(),
+                    layer: Layer::Repo,
+                    file: "factory-builder.md".into()
+                },
+            ]
+        );
+        assert_eq!(Layer::Project.label(), "project-layer");
+        assert_eq!(Layer::Repo.label(), "repo-layer");
+    }
+
+    #[test]
+    fn shadowed_returns_nothing_when_no_agent_file_was_updated() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = Home::at(tmp.path().to_path_buf());
+        register(&home, "alpha", "rust");
+        let updated = vec![
+            home.presets_dir().join("rust/config.toml"),
+            home.presets_dir().join("rust/commit-context.md"),
+        ];
+        assert_eq!(shadowed(&home, &updated, &never), vec![]);
+    }
+
+    #[test]
+    fn shadowed_ignores_non_agent_files_and_other_presets() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = Home::at(tmp.path().to_path_buf());
+        register(&home, "alpha", "go");
+        let layer = home.project_dir("alpha").join("agents/factory-builder.md");
+        std::fs::create_dir_all(layer.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&layer, "# project override\n").expect("write");
+        let updated = vec![
+            home.presets_dir().join("rust/agents/factory-builder.md"),
+            home.presets_dir().join("rust/config.toml"),
+        ];
+        assert_eq!(shadowed(&home, &updated, &never), vec![]);
+    }
+
+    #[test]
+    fn shadowed_skips_a_broken_project_and_checks_the_rest() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = Home::at(tmp.path().to_path_buf());
+        let bad = home.project_dir("bad");
+        std::fs::create_dir_all(&bad).expect("mkdir");
+        std::fs::write(bad.join("project.toml"), "not toml [").expect("write");
+        register(&home, "good", "rust");
+        let updated = vec![home.presets_dir().join("rust/agents/factory-builder.md")];
+        let tip_for = |_: &str| builder_tip();
+        let lines = shadowed(&home, &updated, &tip_for);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        match &lines[0] {
+            ShadowLine::Skipped { project, reason } => {
+                assert_eq!(project, "bad");
+                assert!(reason.contains("project.toml"), "{reason}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(
+            lines[1],
+            ShadowLine::Shadow {
+                project: "good".into(),
+                layer: Layer::Repo,
+                file: "factory-builder.md".into()
+            }
+        );
+    }
+
+    #[test]
+    fn shadowed_skips_a_project_whose_tip_cannot_be_read() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = Home::at(tmp.path().to_path_buf());
+        register(&home, "alpha", "rust");
+        register(&home, "beta", "rust");
+        let updated = vec![home.presets_dir().join("rust/agents/factory-builder.md")];
+        let tip_for = |name: &str| -> Result<Box<dyn BaseTipFiles>, String> {
+            if name == "alpha" {
+                Err("not a git repository: gone".into())
+            } else {
+                builder_tip()
+            }
+        };
+        assert_eq!(
+            shadowed(&home, &updated, &tip_for),
+            vec![
+                ShadowLine::Skipped {
+                    project: "alpha".into(),
+                    reason: "not a git repository: gone".into()
+                },
+                ShadowLine::Shadow {
+                    project: "beta".into(),
+                    layer: Layer::Repo,
+                    file: "factory-builder.md".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn shadowed_skips_when_the_tip_listing_fails() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = Home::at(tmp.path().to_path_buf());
+        register(&home, "alpha", "rust");
+        let updated = vec![home.presets_dir().join("rust/agents/factory-builder.md")];
+        let tip_for =
+            |_: &str| -> Result<Box<dyn BaseTipFiles>, String> { Ok(Box::new(FailingList)) };
+        let lines = shadowed(&home, &updated, &tip_for);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        match &lines[0] {
+            ShadowLine::Skipped { project, reason } => {
+                assert_eq!(project, "alpha");
+                assert!(reason.contains("bad tree"), "{reason}");
+                assert!(reason.contains(".factory/agents"), "{reason}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shadowed_reports_nothing_without_overrides() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let home = Home::at(tmp.path().to_path_buf());
+        register(&home, "alpha", "rust");
+        let updated = vec![home.presets_dir().join("rust/agents/factory-builder.md")];
+        let tip_for =
+            |_: &str| -> Result<Box<dyn BaseTipFiles>, String> { Ok(Box::new(ListTip(vec![]))) };
+        assert_eq!(shadowed(&home, &updated, &tip_for), vec![]);
     }
 }
