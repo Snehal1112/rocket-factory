@@ -381,3 +381,105 @@ fn global_command_describes_one_job_and_consent() {
         assert!(text.contains(needed), "missing phrase: {needed}");
     }
 }
+
+fn cmds_dir(tmp: &Path) -> PathBuf {
+    let dir = tmp.join("commands");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    dir
+}
+
+#[test]
+fn upgrade_into_replaces_a_different_command_and_keeps_a_bak() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = cmds_dir(tmp.path());
+    let target = dir.join("factory.md");
+    std::fs::write(&target, "# old\n").expect("write");
+    let bak = dir.join("factory.md.bak");
+    std::fs::write(&bak, "# older bak\n").expect("write bak");
+    let line = install::upgrade_into(&dir, false).expect("upgrade");
+    assert_eq!(
+        line,
+        format!(
+            "updated {} (old copy saved as {})",
+            target.display(),
+            bak.display()
+        )
+    );
+    assert_eq!(std::fs::read_to_string(&bak).expect("read bak"), "# old\n");
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("read"),
+        GLOBAL_COMMAND
+    );
+}
+
+#[test]
+fn upgrade_into_installs_an_absent_command() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = cmds_dir(tmp.path());
+    let target = dir.join("factory.md");
+    let line = install::upgrade_into(&dir, false).expect("upgrade");
+    assert_eq!(line, format!("installed {}", target.display()));
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("read"),
+        GLOBAL_COMMAND
+    );
+    assert!(!dir.join("factory.md.bak").exists());
+}
+
+#[test]
+fn upgrade_into_leaves_an_equal_command() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = cmds_dir(tmp.path());
+    let target = dir.join("factory.md");
+    std::fs::write(&target, GLOBAL_COMMAND).expect("write");
+    let line = install::upgrade_into(&dir, false).expect("upgrade");
+    assert_eq!(line, format!("already installed: {}", target.display()));
+    assert!(!dir.join("factory.md.bak").exists());
+}
+
+#[test]
+fn upgrade_into_dry_run_writes_nothing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = cmds_dir(tmp.path());
+    let target = dir.join("factory.md");
+    std::fs::write(&target, "# old\n").expect("write");
+    let line = install::upgrade_into(&dir, true).expect("dry");
+    assert!(line.starts_with("would updated "), "{line}");
+    assert_eq!(std::fs::read_to_string(&target).expect("read"), "# old\n");
+    assert!(!dir.join("factory.md.bak").exists());
+    let empty = tmp.path().join("empty");
+    std::fs::create_dir_all(&empty).expect("mkdir");
+    let line = install::upgrade_into(&empty, true).expect("dry");
+    assert_eq!(
+        line,
+        format!("would installed {}", empty.join("factory.md").display())
+    );
+    assert!(!empty.join("factory.md").exists());
+}
+
+#[test]
+fn upgrade_into_stops_when_the_bak_cannot_be_written() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = cmds_dir(tmp.path());
+    let target = dir.join("factory.md");
+    std::fs::write(&target, "# old\n").expect("write");
+    let bak = dir.join("factory.md.bak");
+    std::fs::create_dir_all(&bak).expect("mkdir bak");
+    std::fs::write(bak.join("keep"), "x").expect("write keep");
+    let err = install::upgrade_into(&dir, false)
+        .expect_err("bak blocked")
+        .to_string();
+    assert!(err.contains("cannot save"), "{err}");
+    assert_eq!(std::fs::read_to_string(&target).expect("read"), "# old\n");
+}
+
+#[test]
+fn install_force_still_writes_no_bak() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = cmds_dir(tmp.path());
+    let target = dir.join("factory.md");
+    std::fs::write(&target, "# old\n").expect("write");
+    let out = install_args(&["--dir", s(&dir), "--force"]).expect("force");
+    assert_eq!(out, format!("installed {}", target.display()));
+    assert!(!dir.join("factory.md.bak").exists());
+}

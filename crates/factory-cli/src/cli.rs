@@ -101,6 +101,12 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Update the /factory command and the unedited presets, report overrides that shadow them, and write the version marker.
+    Upgrade {
+        /// Report what would change and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// File the follow-up tickets of a merged job and close its parent tickets.
     Tickets {
         id: String,
@@ -313,6 +319,14 @@ mod tests {
             cli.command,
             Command::Tickets { dry_run: false, .. }
         ));
+    }
+
+    #[test]
+    fn upgrade_parses_dry_run() {
+        let cli = Cli::try_parse_from(["factory", "upgrade", "--dry-run"]).expect("parse");
+        assert!(matches!(cli.command, Command::Upgrade { dry_run: true }));
+        let cli = Cli::try_parse_from(["factory", "upgrade"]).expect("parse");
+        assert!(matches!(cli.command, Command::Upgrade { dry_run: false }));
     }
 
     #[test]

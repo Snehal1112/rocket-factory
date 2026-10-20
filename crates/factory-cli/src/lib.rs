@@ -9,6 +9,7 @@ pub mod presets;
 pub mod project;
 mod status;
 pub mod tokens;
+pub mod upgrade;
 
 pub use cli::{Cli, Command, PresetsCmd, ProjectCmd, SpecCmd};
 pub use commands::{
