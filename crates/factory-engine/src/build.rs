@@ -543,10 +543,15 @@ impl Engine<'_> {
                 .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
         }
         spec.on_session = Some(self.session_hook(task.n, &tip));
-        if saved.is_none() && job.task_session.is_some() {
-            // The saved session belongs to another task or an older tip, so it is dropped.
+        let drop_saved = saved.is_none() && job.task_session.is_some();
+        if drop_saved || job.builder_last.is_some() {
+            // A saved session of another task or an older tip is dropped, and the last
+            // builder record is cleared because a new builder is about to run.
             self.update(|j| {
-                j.task_session = None;
+                if drop_saved {
+                    j.task_session = None;
+                }
+                j.builder_last = None;
                 Ok(())
             })?;
         }
@@ -581,6 +586,8 @@ impl Engine<'_> {
                 }
             };
         }
+        // The time is read when the last builder run returns, before checks and the snapshot.
+        let ended_at = crate::ports::now() as u64;
         self.clear_task_session()?;
         if note.is_some() {
             // The builder has seen the note, so it must not be sent again.
@@ -658,10 +665,17 @@ impl Engine<'_> {
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
         self.note_builder_words(task.n, &run.result_text)?;
         let session = run.session_id.clone().or(job.session_id.clone());
+        let builder_last = session.clone().map(|id| factory_core::BuilderLast {
+            task: task.n,
+            id,
+            ended_at,
+            end_ctx: run.end_ctx,
+        });
         let next = job.task_index + 1;
         let last = next as usize >= tasks.len();
         let snapshot = (self.config.commit_batch && last).then(|| new_tip.clone());
         self.update(|j| {
+            j.builder_last = builder_last;
             j.builder_id = session;
             j.task_index = next;
             j.batch_snapshot = snapshot;
