@@ -235,6 +235,7 @@ fn usage_lines_carry_the_run_details() {
         assert_eq!(v["stop"], "done", "{v}");
         assert!(v["round"].as_u64().unwrap_or(0) >= 1, "{v}");
         assert!(v["resumed"].is_boolean(), "{v}");
+        assert!(v["secs"].is_u64(), "{v}");
         assert_eq!(v.get("tasks_done").is_some(), v["role"] == "builder", "{v}");
     }
 }
