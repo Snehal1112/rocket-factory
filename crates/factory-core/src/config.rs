@@ -322,6 +322,12 @@ fn check_builder_allow(entry: &str) -> Result<(), String> {
         .and_then(|rest| rest.strip_suffix(')'))
         .ok_or_else(|| form.to_string())?;
     let command = inner.strip_suffix(":*").unwrap_or(inner);
+    if ["&&", "||", ";", "|", ">", "<", "`", "$("]
+        .iter()
+        .any(|op| command.contains(op))
+    {
+        return Err("must be one plain command, without shell operators".into());
+    }
     let mut tokens = Vec::new();
     let mut words = command.split_whitespace();
     while let Some(word) = words.next() {
@@ -404,6 +410,37 @@ mod tests {
         let long = format!("Bash({}:*)", "a".repeat(200));
         let body = format!("builder_allow = [{long:?}]\n");
         Config::parse(&body).expect_err("201 or more characters");
+    }
+
+    #[test]
+    fn builder_allow_rejects_shell_operators() {
+        for entry in [
+            "Bash(make && rm -rf x:*)",
+            "Bash(make || true:*)",
+            "Bash(make; ls:*)",
+            "Bash(make | tee f:*)",
+            "Bash(make > f:*)",
+            "Bash(make < f:*)",
+            "Bash(make `id`:*)",
+            "Bash(make $(id):*)",
+        ] {
+            let body = format!("builder_allow = [{entry:?}]\n");
+            let err = Config::parse(&body).expect_err(entry);
+            let text = err.to_string();
+            assert!(text.contains("builder_allow:"), "{entry}: {text}");
+            assert!(text.contains("shell operators"), "{entry}: {text}");
+        }
+    }
+
+    #[test]
+    fn builder_allow_still_accepts_plain_arguments() {
+        let rules = [
+            "Bash(make test:*)",
+            "Bash(git log --format=%h)",
+            "Bash(cargo test -j4 -p x:*)",
+        ];
+        let body = format!("builder_allow = {rules:?}\n");
+        Config::parse(&body).expect("parses");
     }
 
     #[test]
