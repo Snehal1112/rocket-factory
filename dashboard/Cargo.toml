@@ -1,6 +1,6 @@
 [package]
 name = "factory-server"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Local dashboard server for Rocket's software factory"
 
