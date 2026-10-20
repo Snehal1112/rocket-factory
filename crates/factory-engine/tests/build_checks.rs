@@ -2074,3 +2074,362 @@ fn no_cache_ttl_leaves_the_claude_environment_alone() {
         builder.env
     );
 }
+
+use factory_core::board::TaskSession;
+
+/// Leaves job 001 as a driver crash in task 1 does: a worktree, stage Build, task index 0 and a saved
+/// session. Returns the branch tip recorded in the session.
+fn crashed_in_task_one(fx: &Fixture, session: &str) -> String {
+    // An empty script makes the runner report a failed run, so the worktree exists and nothing is committed.
+    let dead = scripted(vec![]);
+    fx.engine(&dead).build_stage().expect("first run");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    let tip = fx.repo.tip(&job.branch).expect("tip");
+    job.task_session = Some(TaskSession {
+        task: 1,
+        id: session.to_string(),
+        tip: tip.clone(),
+    });
+    board.save(&fx.board_path).expect("save");
+    tip
+}
+
+/// The `Task N: dispatched` lines of the ledger, in order.
+fn dispatched_lines(fx: &Fixture) -> Vec<String> {
+    fx.ledger()
+        .lines()
+        .filter(|l| l.contains(": dispatched"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_rerun_resumes_the_saved_session() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let out = fx.engine(&runner).build_stage().expect("rerun");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    let builders = runner.specs_for("builder");
+    assert_eq!(builders.len(), 1);
+    assert_eq!(builders[0].resume.as_deref(), Some("sess-old"));
+    assert_eq!(builders[0].agent.as_deref(), Some("factory-builder"));
+    assert_eq!(builders[0].max_turns, Some(120));
+    assert!(builders[0].strict_mcp);
+    let job = fx.job();
+    assert_eq!(job.task_index, 1);
+    assert!(job.task_session.is_none());
+    assert_eq!(job.builder_id.as_deref(), Some("sess-1"));
+}
+
+const INTERRUPTED: &str =
+    "You were interrupted. Run git status and git diff, check what is already done, continue task";
+
+#[test]
+fn a_resume_prompt_names_the_task() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("rerun");
+    let spec = runner.last_spec_for("builder").expect("spec");
+    assert_eq!(
+        spec.prompt,
+        format!("{INTERRUPTED} 1, and do not redo finished work.")
+    );
+
+    let fx = two_task_fixture();
+    let first = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&first).build_stage().expect("task 1");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    let tip = fx.repo.tip(&job.branch).expect("tip");
+    job.task_session = Some(TaskSession {
+        task: 2,
+        id: "sess-two".into(),
+        tip,
+    });
+    board.save(&fx.board_path).expect("save");
+    let second = scripted_auto(vec![change_effect("b.txt", 2)]);
+    fx.engine(&second).build_stage().expect("task 2");
+    let spec = second.last_spec_for("builder").expect("spec");
+    assert_eq!(spec.resume.as_deref(), Some("sess-two"));
+    assert_eq!(
+        spec.prompt,
+        format!("{INTERRUPTED} 2, and do not redo finished work.")
+    );
+}
+
+#[test]
+fn the_ledger_says_resumed_or_fresh() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let base = fx.job().base.expect("base");
+    assert_eq!(
+        dispatched_lines(&fx),
+        vec![
+            format!("Task 1: dispatched (BASE {base}, sonnet, fresh)"),
+            format!("Task 1: dispatched (BASE {base}, sonnet, resumed)"),
+            format!("Task 2: dispatched (BASE {base}, sonnet, fresh)"),
+        ]
+    );
+    let tasks = factory_core::Ledger::new(fx.job_dir.join("progress.md"))
+        .tasks()
+        .expect("tasks");
+    // The longer detail text must still parse: both tasks are found by their state labels.
+    let dispatched = tasks
+        .iter()
+        .filter(|t| t.1 == factory_core::TaskState::Dispatched)
+        .count();
+    assert_eq!(dispatched, 3, "{tasks:?}");
+}
+
+#[test]
+fn the_resume_is_used_once() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let builders = runner.specs_for("builder");
+    assert!(builders[1].resume.is_none());
+    assert!(builders[1].prompt.contains("Do only Task 2"));
+    assert_eq!(fx.job().task_index, 2);
+}
+
+#[test]
+fn the_whole_plan_dispatched_line_is_unchanged() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let base = fx.job().base.expect("base");
+    assert_eq!(
+        dispatched_lines(&fx),
+        vec![format!("Task 1: dispatched (BASE {base}, sonnet)")]
+    );
+}
+
+use factory_agent::{AgentRun, AgentRunner, AgentSpec, StopReason};
+
+/// Answers every builder run that resumes a session with `stop`, and passes all other runs to `inner`.
+struct ResumeStops {
+    inner: ScriptedRunner,
+    stop: StopReason,
+    resumed: std::sync::Mutex<Vec<AgentSpec>>,
+}
+
+impl AgentRunner for ResumeStops {
+    fn run(&self, spec: &AgentSpec) -> AgentRun {
+        if spec.role == "builder" && spec.resume.is_some() {
+            self.resumed.lock().expect("resumed").push(spec.clone());
+            return AgentRun {
+                stop_reason: self.stop,
+                ..AgentRun::failed("resume stopped")
+            };
+        }
+        self.inner.run(spec)
+    }
+}
+
+fn resume_stops(stop: StopReason, inner: ScriptedRunner) -> ResumeStops {
+    ResumeStops {
+        inner,
+        stop,
+        resumed: std::sync::Mutex::new(Vec::new()),
+    }
+}
+
+#[test]
+fn a_failed_resume_falls_back_to_a_fresh_builder() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = resume_stops(
+        StopReason::Failed,
+        scripted_auto(vec![change_effect("a.txt", 3)]),
+    );
+    let out = fx.engine(&runner).build_stage().expect("rerun");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    let resumed = runner.resumed.lock().expect("resumed").clone();
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].resume.as_deref(), Some("sess-old"));
+    let fresh = runner.inner.specs_for("builder");
+    assert_eq!(fresh.len(), 1);
+    assert!(fresh[0].resume.is_none());
+    assert!(
+        fresh[0].prompt.contains("Do only Task 1"),
+        "{}",
+        fresh[0].prompt
+    );
+    let job = fx.job();
+    assert_eq!(job.task_index, 1);
+    assert!(job.task_session.is_none());
+    let lines = dispatched_lines(&fx);
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[1].ends_with(", sonnet, resumed)"), "{lines:?}");
+    assert!(lines[2].ends_with(", sonnet, fresh)"), "{lines:?}");
+}
+
+/// Runs a resume that stops with `stop` and checks it parks without a fresh builder.
+fn assert_resume_not_retried(stop: StopReason) {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = resume_stops(stop, scripted_auto(vec![change_effect("a.txt", 3)]));
+    match fx.engine(&runner).build_stage().expect("rerun") {
+        StageOutcome::NeedsHuman(r) => {
+            assert!(
+                r.contains(&format!("builder stopped in task 1: {stop:?}")),
+                "{r}"
+            );
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::BuilderStopped);
+    assert!(runner.inner.specs_for("builder").is_empty());
+    let lines = dispatched_lines(&fx);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[1].ends_with("resumed)"), "{lines:?}");
+    let job = fx.job();
+    assert!(job.task_session.is_none());
+    assert_eq!(job.task_index, 0);
+}
+
+#[test]
+fn a_stalled_resume_is_not_retried() {
+    assert_resume_not_retried(StopReason::Stalled);
+}
+
+#[test]
+fn a_resume_that_hits_a_limit_is_not_retried() {
+    assert_resume_not_retried(StopReason::BudgetStop);
+    assert_resume_not_retried(StopReason::TurnLimit);
+}
+
+#[test]
+fn a_failed_fallback_parks_after_one_fresh_run() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = resume_stops(StopReason::Failed, scripted(vec![]));
+    match fx.engine(&runner).build_stage().expect("rerun") {
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("builder stopped in task 1: Failed"), "{r}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(runner.resumed.lock().expect("resumed").len(), 1);
+    let fresh = runner.inner.specs_for("builder");
+    assert_eq!(fresh.len(), 1);
+    assert!(fresh[0].resume.is_none());
+    let lines = dispatched_lines(&fx);
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[0].ends_with("fresh)"), "{lines:?}");
+    assert!(lines[1].ends_with("resumed)"), "{lines:?}");
+    assert!(lines[2].ends_with("fresh)"), "{lines:?}");
+}
+
+/// Edits the saved session of job 001 through the board file.
+fn edit_session(fx: &Fixture, f: impl FnOnce(&mut TaskSession)) {
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    f(job.task_session.as_mut().expect("session"));
+    board.save(&fx.board_path).expect("save");
+}
+
+fn assert_started_fresh(fx: &Fixture, runner: &ScriptedRunner) {
+    let builders = runner.specs_for("builder");
+    assert_eq!(builders.len(), 1);
+    assert!(builders[0].resume.is_none());
+    assert!(builders[0].prompt.contains("Do only Task 1"));
+    let lines = dispatched_lines(fx);
+    assert!(lines.last().expect("line").ends_with("fresh)"), "{lines:?}");
+    let job = fx.job();
+    assert!(job.task_session.is_none());
+    assert_eq!(job.task_index, 1);
+}
+
+#[test]
+fn a_session_of_another_task_is_ignored() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    edit_session(&fx, |s| s.task = 2);
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("rerun");
+    assert_started_fresh(&fx, &runner);
+}
+
+#[test]
+fn a_moved_tip_starts_fresh() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    edit_session(&fx, |s| s.tip = "0".repeat(40));
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("rerun");
+    assert_started_fresh(&fx, &runner);
+}
+
+#[test]
+fn a_fresh_fallback_keeps_the_partial_edits() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let worktree = fx.job().worktree.expect("worktree");
+    let partial = std::path::Path::new(&worktree).join("partial.txt");
+    std::fs::write(&partial, "half\n").expect("partial");
+    let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = seen.clone();
+    let effect: Effect = Box::new(move |spec| {
+        flag.store(
+            spec.cwd.join("partial.txt").exists(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        std::fs::write(spec.cwd.join("a.txt"), "a\n").expect("write");
+        "done".to_string()
+    });
+    let runner = resume_stops(StopReason::Failed, scripted_auto(vec![effect]));
+    fx.engine(&runner).build_stage().expect("rerun");
+    assert!(seen.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(std::fs::read_to_string(&partial).expect("read"), "half\n");
+    assert_eq!(fx.job().task_index, 1);
+}
+
+#[test]
+fn a_tampered_resume_parks_without_a_fresh_run() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let plan = fx.job_dir.join("plan.md");
+    let effect: Effect = Box::new(move |_| {
+        std::fs::write(&plan, "# changed\n").expect("tamper");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![effect]);
+    fx.engine(&runner).build_stage().expect("rerun");
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::BuilderTampered);
+    let builders = runner.specs_for("builder");
+    assert_eq!(builders.len(), 1);
+    assert_eq!(builders[0].resume.as_deref(), Some("sess-old"));
+    assert!(fx.job().task_session.is_none());
+    assert_eq!(
+        std::fs::read_to_string(fx.job_dir.join("plan.md")).expect("plan"),
+        TWO_TASKS
+    );
+}
+
+#[test]
+fn a_blocked_resume_parks_without_a_fresh_run() {
+    let fx = two_task_fixture();
+    crashed_in_task_one(&fx, "sess-old");
+    let runner = scripted_auto(vec![blocked_effect("a.txt", "BLOCKED: no schema")]);
+    fx.engine(&runner).build_stage().expect("rerun");
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::BuilderBlocked);
+    let builders = runner.specs_for("builder");
+    assert_eq!(builders.len(), 1);
+    assert_eq!(builders[0].resume.as_deref(), Some("sess-old"));
+    assert_eq!(fx.job().task_index, 0);
+}

@@ -21,6 +21,14 @@ fn snapshot_subject(n: u32, title: &str) -> String {
     format!("wip: task {n} {title}")
 }
 
+/// The saved session id when it belongs to task `n` and the branch is still at the recorded tip.
+fn saved_session(job: &JobView, n: u32, tip: &str) -> Option<String> {
+    job.task_session
+        .as_ref()
+        .filter(|s| s.task == n && s.tip == tip)
+        .map(|s| s.id.clone())
+}
+
 impl Engine<'_> {
     /// Runs the builder, then records the new head. With a task list in `plan.md` it runs one task agent per
     /// call and stays in Build until the last task has a commit. Fix rounds resume the last session.
@@ -469,6 +477,14 @@ impl Engine<'_> {
         }
     }
 
+    /// Forgets the saved builder session once a builder run has returned.
+    fn clear_task_session(&self) -> Result<(), EngineError> {
+        self.update(|j| {
+            j.task_session = None;
+            Ok(())
+        })
+    }
+
     /// Runs the agent of the next plan task. After the last task it hands over to review.
     fn build_task(&self, job: &JobView, tasks: &[PlanTask]) -> Result<StageOutcome, EngineError> {
         let Some(task) = tasks.get(job.task_index as usize) else {
@@ -487,22 +503,61 @@ impl Engine<'_> {
         }
         let tip = self.repo.tip(&branch).map_err(git_err)?;
         let earlier = self.repo.log_oneline(&base, &tip).map_err(git_err)?;
+        let saved = saved_session(job, task.n, &tip);
+        let how = if saved.is_some() { "resumed" } else { "fresh" };
         self.ledger_task(
             task.n,
             TaskState::Dispatched,
-            &format!("BASE {base}, {}", self.config.builder_model),
+            &format!("BASE {base}, {}, {how}", self.config.builder_model),
         )?;
-        let mut spec = self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier);
+        let mut spec = match &saved {
+            Some(id) => self.builder_task_resume_spec(&cwd, task, id),
+            None => self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier),
+        };
         let note_path = self.job_dir.join("rework-note.md");
         let note = std::fs::read_to_string(&note_path).ok();
         if let Some(text) = &note {
             spec.prompt
                 .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
         }
-        let run = match self.run_builder_guarded(spec)? {
-            Ok(run) => run,
-            Err(parked) => return Ok(parked),
+        if saved.is_none() && job.task_session.is_some() {
+            // The saved session belongs to another task or an older tip, so it is dropped.
+            self.update(|j| {
+                j.task_session = None;
+                Ok(())
+            })?;
+        }
+        let first = self.run_builder_guarded(spec);
+        let mut run = match first {
+            Ok(Ok(run)) => run,
+            Ok(Err(parked)) => {
+                self.clear_task_session()?;
+                return Ok(parked);
+            }
+            Err(e) => return Err(e),
         };
+        if saved.is_some() && run.stop_reason == StopReason::Failed {
+            // A failed resume, such as a missing transcript, gets one fresh builder on the worktree as it is.
+            self.clear_task_session()?;
+            self.ledger_task(
+                task.n,
+                TaskState::Dispatched,
+                &format!("BASE {base}, {}, fresh", self.config.builder_model),
+            )?;
+            let mut spec = self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier);
+            if let Some(text) = &note {
+                spec.prompt
+                    .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
+            }
+            run = match self.run_builder_guarded(spec)? {
+                Ok(run) => run,
+                Err(parked) => {
+                    self.clear_task_session()?;
+                    return Ok(parked);
+                }
+            };
+        }
+        self.clear_task_session()?;
         if note.is_some() {
             // The builder has seen the note, so it must not be sent again.
             let _ = std::fs::remove_file(&note_path);
@@ -586,6 +641,7 @@ impl Engine<'_> {
             j.builder_id = session;
             j.task_index = next;
             j.batch_snapshot = snapshot;
+            j.task_session = None;
             Ok(())
         })?;
         if !last {
