@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use factory_core::{Config, NEVER_ALLOWED_PROGRAMS};
+use factory_agent::{AgentRun, AgentSpec};
+use factory_core::{Config, ParkKind, NEVER_ALLOWED_PROGRAMS};
+
+use crate::{Engine, EngineError, StageOutcome};
 
 const BASE_TOOLS: [&str; 5] = ["Read", "Grep", "Glob", "Skill", "Agent"];
 const BASE_PROGRAMS: [&str; 9] = [
@@ -20,6 +23,56 @@ pub fn builder_allowed_tools(config: &Config) -> Vec<String> {
     }
     tools.extend(config.builder_allow.iter().cloned());
     tools
+}
+
+const GUARDED_FILES: [&str; 3] = ["plan.md", "spec.md", "progress.md"];
+
+impl Engine<'_> {
+    /// Runs a builder and restores `plan.md`, `spec.md` and `progress.md` if it changed them.
+    ///
+    /// `Ok(Err(outcome))` is the parked outcome the caller returns.
+    pub(crate) fn run_builder_guarded(
+        &self,
+        spec: AgentSpec,
+    ) -> Result<Result<AgentRun, StageOutcome>, EngineError> {
+        let before: Vec<Option<Vec<u8>>> = GUARDED_FILES
+            .iter()
+            .map(|name| std::fs::read(self.job_dir.join(name)).ok())
+            .collect();
+        let run = self.run_agent(spec)?;
+        let mut first_changed: Option<&str> = None;
+        for (name, old) in GUARDED_FILES.iter().zip(before) {
+            let path = self.job_dir.join(name);
+            let now = std::fs::read(&path).ok();
+            if now == old {
+                continue;
+            }
+            match old {
+                Some(bytes) => {
+                    if let Err(e) = std::fs::write(&path, bytes) {
+                        eprintln!("factory: could not restore {name}: {e}");
+                    }
+                }
+                None => {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        eprintln!("factory: could not remove {name}: {e}");
+                    }
+                }
+            }
+            first_changed.get_or_insert(name);
+        }
+        match first_changed {
+            None => Ok(Ok(run)),
+            Some(name) => {
+                let parked = self.park_with(
+                    ParkKind::Other,
+                    format!("builder changed {name}"),
+                    Vec::new(),
+                )?;
+                Ok(Err(parked))
+            }
+        }
+    }
 }
 
 /// The rules that stop a builder from editing the job folder.

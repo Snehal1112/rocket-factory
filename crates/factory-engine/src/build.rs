@@ -71,7 +71,10 @@ impl Engine<'_> {
             _ => self.builder_first_spec(&job, &cwd),
         };
         let tip_before = self.repo.tip(&branch).map_err(git_err)?;
-        let run = self.run_agent(spec)?;
+        let run = match self.run_builder_guarded(spec)? {
+            Ok(run) => run,
+            Err(parked) => return Ok(parked),
+        };
         if !new_work {
             // The builder has seen the note, so it must not be sent again. A missing file is fine.
             let _ = std::fs::remove_file(self.job_dir.join("rework-note.md"));
@@ -496,7 +499,10 @@ impl Engine<'_> {
             spec.prompt
                 .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
         }
-        let run = self.run_agent(spec)?;
+        let run = match self.run_builder_guarded(spec)? {
+            Ok(run) => run,
+            Err(parked) => return Ok(parked),
+        };
         if note.is_some() {
             // The builder has seen the note, so it must not be sent again.
             let _ = std::fs::remove_file(&note_path);
