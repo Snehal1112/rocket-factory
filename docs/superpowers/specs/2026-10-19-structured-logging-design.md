@@ -177,7 +177,7 @@ stderr keeps human output at `warn` and above, plus the one-time factoryd notice
 - Board JSON stays unchanged. No new required field.
 - A missing or broken config stays fail-closed.
 - The API token, `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` never appear in the log.
-- The lease heartbeat and `/proc` checks stay Linux only; the log works on every OS.
+- Process checks go through `factory-engine/src/procinfo.rs`, built on `sysinfo`, so they work on Linux and macOS (no code reads `/proc`); the log works on every OS.
 - Only `git` may not be shelled out to.
 
 ## Acceptance criteria

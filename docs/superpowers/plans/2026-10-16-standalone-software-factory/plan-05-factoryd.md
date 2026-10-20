@@ -1,5 +1,7 @@
 # factoryd, the Local Supervisor Implementation Plan
 
+> **Superseded detail (2026-10-20):** this plan describes a `/proc` liveness check. The code now does process checks through `factory-engine/src/procinfo.rs`, built on `sysinfo`, for Linux and macOS (commit c57a1df). Read every `/proc` mention below as that historical design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A local supervisor `factoryd` that takes run and approve requests from a queue, starts the existing `factory` CLI as separate processes (at most N in parallel, at most one per project), keeps jobs running when it stops, and re-adopts or parks them when it starts again.
