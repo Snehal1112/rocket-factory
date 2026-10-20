@@ -25,14 +25,15 @@ cargo run -j4 --manifest-path dashboard/Cargo.toml -- --home ~/.factory --port 8
 ```
 factory-core    pure rules: board, ledger, config, risk, verdict, budget (no I/O deps)
 factory-git     git2 layer: worktrees, diffs, no-ff merge (never shell out to git)
+factory-telemetry  structured logging: tracing layers, redaction, rotating log file (no factory deps)
 factory-agent   runs `claude -p` headless, parses the stream, writes usage and events
 factory-checks  maps changed paths to check commands and runs them
-factory-engine  the run loop: build, checks, review, decide, merge, sync, series (uses all four)
+factory-engine  the run loop: build, checks, review, decide, merge, sync, series (uses all five)
 factory-cli     clap commands over the engine (`factory new|run|status|approve|rework|cancel|cleanup|tokens|tickets|project`)
 factory-supervisor  `factoryd`: queue of run requests, one `factory` child per project, adopts children after a restart
 ```
 
-- `factory-engine` talks to git, agents and checks through the traits in `ports.rs`. Tests use fakes, so keep new engine logic behind a port rather than calling a crate directly.
+- Only two things in `factory-engine` sit behind traits: `AgentRunner` (`factory-agent/src/runner.rs`, fakes in tests) and `Tracker` (`tracker.rs`). Git is the concrete `factory_git::Repo`, and checks (`factory_checks`) and `procinfo.rs` are called directly. `ports.rs` holds no traits, only error mappers and board/ledger helpers on `Engine`. For new agent or tracker logic use the existing trait; do not assume a fake exists for git or checks.
 - `tick.rs` and `runloop.rs` drive one job through the stages. `decide.rs` holds the merge/fix/needs-human choice, `tasks.rs` the per-task builder loop, `series.rs` and `specs.rs` the multi-plan series.
 - Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`dashboard/`, separate workspace), so add fields as optional. The dashboard has a `--home` mode that holds the API token server-side (`dashboard/README.md`); keep the token out of every reply.
 - The repo-level config is `.claude/factory/config.toml`. A missing or broken config must make every diff risky, so never default it to permissive.
