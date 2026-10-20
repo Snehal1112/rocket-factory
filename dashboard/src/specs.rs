@@ -26,6 +26,8 @@ pub struct SpecCard {
     pub goal: Option<String>,
     /// The column the card sits in: "spec", "needs-human" or "merged".
     pub stage: String,
+    /// The latest `stage_since` of the series' plan jobs, cancelled ones included.
+    pub stage_since: f64,
     pub plans: Vec<SpecPlanRow>,
 }
 
@@ -99,11 +101,16 @@ pub fn build_spec_cards(jobs: &[JobView], paths: &Paths) -> Vec<SpecCard> {
                 })
                 .collect();
             let stage = card_stage(&plans).to_string();
+            let stage_since = members
+                .iter()
+                .map(|view| view.job.stage_since)
+                .fold(f64::MIN, f64::max);
             SpecCard {
                 series_id,
                 title: spec.as_ref().and_then(|info| info.title.clone()),
                 goal: spec.and_then(|info| info.goal),
                 stage,
+                stage_since,
                 plans,
             }
         })
@@ -287,6 +294,31 @@ mod tests {
         assert_eq!(cards[0].title.as_deref(), Some("Demo spec"));
         assert_eq!(cards[0].goal.as_deref(), Some("Show the plans."));
         Ok(())
+    }
+
+    fn card_with_stage_times() -> SpecCard {
+        let mut jobs = vec![
+            view("001", "merged", 1, 3, Some("S1"), None),
+            view("002", "needs-human", 2, 3, Some("S1"), None),
+            view("003", "build", 3, 3, Some("S1"), None),
+        ];
+        jobs[0].job.stage_since = 5.0;
+        jobs[1].job.stage_since = 7.0;
+        jobs[1].job.cancelled = Some(true);
+        jobs[2].job.stage_since = 9.0;
+        build_spec_cards(&jobs, &Paths::nowhere()).remove(0)
+    }
+
+    #[test]
+    fn a_spec_card_takes_the_latest_stage_since_of_its_plans() {
+        let card = card_with_stage_times();
+        assert_eq!(card.stage_since, 9.0);
+    }
+
+    #[test]
+    fn a_spec_card_serializes_stage_since() {
+        let json = serde_json::to_value(card_with_stage_times()).expect("json");
+        assert_eq!(json["stage_since"], 9.0);
     }
 
     #[test]
