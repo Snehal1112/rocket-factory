@@ -22,6 +22,7 @@ pub mod stage;
 #[cfg(test)]
 mod test_support;
 pub mod verdict;
+pub mod version;
 
 /// The global `/factory` slash command that `factory install` writes.
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");

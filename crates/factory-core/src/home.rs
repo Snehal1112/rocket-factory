@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::CoreError;
 
 const CONFIG_FILE: &str = "config.toml";
+const VERSION_FILE: &str = "VERSION";
 const QUEUE_DIR: &str = "queue";
 const RESULTS_DIR: &str = "results";
 const RUN_DIR: &str = "run";
@@ -37,6 +38,11 @@ impl Home {
 
     pub fn projects_dir(&self) -> PathBuf {
         self.dir.join("projects")
+    }
+
+    /// The marker naming the newest factory version that touched this home.
+    pub fn version_file(&self) -> PathBuf {
+        self.dir.join(VERSION_FILE)
     }
 
     /// The home-wide settings file.
@@ -122,6 +128,7 @@ mod tests {
     fn supervisor_names_are_under_the_home() {
         let h = Home::at(PathBuf::from("/h"));
         assert_eq!(h.config_file(), PathBuf::from("/h/config.toml"));
+        assert_eq!(h.version_file(), PathBuf::from("/h/VERSION"));
         assert_eq!(h.queue_dir(), PathBuf::from("/h/queue"));
         assert_eq!(h.results_dir(), PathBuf::from("/h/results"));
         assert_eq!(h.run_dir(), PathBuf::from("/h/run"));

@@ -21,6 +21,8 @@ pub enum CoreError {
     LedgerLine,
     #[error("config error: {0}")]
     Config(String),
+    #[error("{0}")]
+    Version(String),
 }
 
 impl CoreError {
