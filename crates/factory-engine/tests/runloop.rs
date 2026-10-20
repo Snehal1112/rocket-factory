@@ -230,7 +230,7 @@ fn usage_lines_carry_the_run_details() {
         .collect();
     assert!(!lines.is_empty());
     for v in &lines {
-        assert_eq!(v["usage_v"], 3, "{v}");
+        assert_eq!(v["usage_v"], 4, "{v}");
         assert!(v["ts"].as_u64().unwrap_or(0) > 0, "{v}");
         assert_eq!(v["stop"], "done", "{v}");
         assert!(v["round"].as_u64().unwrap_or(0) >= 1, "{v}");
