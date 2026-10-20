@@ -43,6 +43,8 @@ pub struct UsageRecord {
     pub start_cc: Option<u64>,
     /// Cache read of the first turn, `None` on old lines.
     pub start_cr: Option<u64>,
+    /// Context the run ended with, `None` on old lines.
+    pub end_ctx: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -190,9 +192,17 @@ pub struct RoleCold {
     pub first_cc: u64,
     pub first_cr: u64,
     pub creation: u64,
+    /// Runs of the role, fresh or resumed, that logged an end context.
+    pub end_rows: u64,
+    pub end_sum: u64,
 }
 
 impl RoleCold {
+    /// Average end-of-run context of the runs that logged it, `None` without any.
+    pub fn avg_end(&self) -> Option<u64> {
+        self.end_sum.checked_div(self.end_rows)
+    }
+
     /// Average first-turn context of the covered runs, `None` without any.
     pub fn avg_start(&self) -> Option<u64> {
         self.start_ctx.checked_div(self.covered)
@@ -269,6 +279,10 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
                 job: r.job.clone(),
                 ..Default::default()
             });
+            if let Some(e) = r.end_ctx {
+                cold_role.end_rows += 1;
+                cold_role.end_sum = cold_role.end_sum.saturating_add(e);
+            }
             if r.resumed {
                 cold_role.resumed += 1;
                 cold_job.resumed += 1;
@@ -406,17 +420,18 @@ fn render_cold(r: &CacheReport) -> String {
         return out;
     }
     out.push_str(&format!(
-        "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {}\n",
-        "ROLE", "FRESH", "RESUMED", "AVG-START", "FIRST-CC", "FIRST-CR", "FIRST-CC%"
+        "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
+        "ROLE", "FRESH", "RESUMED", "AVG-START", "FIRST-CC", "FIRST-CR", "FIRST-CC%", "AVG-END"
     ));
     for c in &r.cold_roles {
         let avg = c.avg_start().map_or("-".to_string(), |a| a.to_string());
+        let end = c.avg_end().map_or("-".to_string(), |a| a.to_string());
         let share = c
             .first_cc_share()
             .map_or("-".to_string(), |s| format!("{:.1}%", s * 100.0));
         out.push_str(&format!(
-            "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {}\n",
-            c.role, c.fresh, c.resumed, avg, c.first_cc, c.first_cr, share
+            "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
+            c.role, c.fresh, c.resumed, avg, c.first_cc, c.first_cr, share, end
         ));
     }
     if r.fresh_covered < r.fresh_runs {
@@ -475,6 +490,7 @@ pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Vec<UsageRecord>, 
             secs: v["secs"].as_u64(),
             start_cc: v["start_cc"].as_u64(),
             start_cr: v["start_cr"].as_u64(),
+            end_ctx: v["end_ctx"].as_u64(),
         });
     }
     Ok(out)
@@ -708,6 +724,84 @@ mod tests {
         let records = load_usage(&path, "001").expect("load");
         assert_eq!(records[0].start_cc, None);
         assert_eq!(records[0].start_cr, None);
+    }
+
+    #[test]
+    fn load_usage_reads_end_ctx() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(
+            &path,
+            "{\"job\":\"001\",\"role\":\"builder\",\"end_ctx\":31000,\"usage_v\":4}\n",
+        )
+        .expect("write usage");
+        let records = load_usage(&path, "001").expect("load");
+        assert_eq!(records[0].end_ctx, Some(31000));
+    }
+
+    #[test]
+    fn old_lines_have_no_end_ctx() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(
+            &path,
+            "{\"job\":\"001\",\"role\":\"builder\",\"usage_v\":3}\n",
+        )
+        .expect("write usage");
+        let records = load_usage(&path, "001").expect("load");
+        assert_eq!(records[0].end_ctx, None);
+    }
+
+    #[test]
+    fn a_non_numeric_end_ctx_is_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(
+            &path,
+            "{\"job\":\"001\",\"role\":\"builder\",\"end_ctx\":\"big\"}\n",
+        )
+        .expect("write usage");
+        let records = load_usage(&path, "001").expect("load");
+        assert_eq!(records[0].end_ctx, None);
+    }
+
+    #[test]
+    fn cold_report_averages_end_ctx_over_runs_that_have_it() {
+        let mut a = cold_rec("001", "builder", false, 10, 1000, Some((400, 100)));
+        a.end_ctx = Some(30_000);
+        let mut b = cold_rec("001", "builder", true, 20, 1000, Some((400, 100)));
+        b.end_ctx = Some(50_000);
+        let c = cold_rec("001", "builder", false, 30, 1000, Some((400, 100)));
+        let r = cache_report(&[vec![a, b, c]], None, 100);
+        let role = r
+            .cold_roles
+            .iter()
+            .find(|x| x.role == "builder")
+            .expect("builder");
+        assert_eq!((role.end_rows, role.end_sum), (2, 80_000));
+        assert_eq!(role.avg_end(), Some(40_000));
+    }
+
+    #[test]
+    fn cold_section_shows_the_average_end_context() {
+        let mut a = cold_rec("001", "builder", false, 10, 1000, Some((400, 100)));
+        a.end_ctx = Some(30_000);
+        let mut b = cold_rec("001", "builder", true, 20, 1000, Some((400, 100)));
+        b.end_ctx = Some(50_000);
+        let out = render_cache(&cache_report(&[vec![a, b]], None, 100));
+        assert!(out.contains("AVG-END"), "{out}");
+        assert!(out.contains("40000"), "{out}");
+    }
+
+    #[test]
+    fn cold_section_dashes_avg_end_without_data() {
+        let rows = vec![cold_rec("001", "builder", false, 10, 1000, Some((250, 0)))];
+        let out = render_cache(&cache_report(&[rows], None, 100));
+        let line = out
+            .lines()
+            .find(|l| l.starts_with("builder") && l.contains("25.0%"))
+            .expect("builder row");
+        assert!(line.trim_end().ends_with('-'), "{out}");
     }
 
     #[test]

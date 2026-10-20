@@ -76,6 +76,19 @@ fn tokens_cache_prints_the_cold_starts_section() {
 }
 
 #[test]
+fn tokens_cache_prints_avg_end() {
+    let fx = Fixture::new();
+    new_job(&fx, "a");
+    let line = concat!(
+        r#"{"job":"001","role":"builder","input":10,"cache_creation":1000,"output":50,"cache_read":9000,"usage_v":4,"resumed":false,"round":1,"ts":1000,"secs":20,"start_cc":400,"start_cr":100,"end_ctx":31000}"#,
+        "\n",
+    );
+    std::fs::write(job_folder(&fx, "001").join("usage.jsonl"), line).expect("write usage");
+    let out = fx.run(&["tokens", "--cache"]).expect("cache report");
+    assert!(out.contains("AVG-END"), "{out}");
+}
+
+#[test]
 fn cache_report_writes_no_file() {
     let fx = Fixture::new();
     new_job(&fx, "a");
