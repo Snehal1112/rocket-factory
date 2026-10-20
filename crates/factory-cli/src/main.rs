@@ -66,11 +66,10 @@ fn main() {
                 eprintln!("factory: {e}");
                 std::process::exit(1);
             }
-            CliCtx::for_project(&home, name, None, &env_owner(), env_lock_wait()).map(|ctx| {
+            CliCtx::for_project(&home, name, None, &env_owner(), env_lock_wait()).inspect(|ctx| {
                 for n in &ctx.notes {
                     eprintln!("note: {n}");
                 }
-                ctx
             })
         }
         None => CliCtx::from_env(cli.root.clone()),

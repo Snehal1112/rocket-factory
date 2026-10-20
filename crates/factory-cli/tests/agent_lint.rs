@@ -609,7 +609,11 @@ fn readme_documents_upgrading() -> TestResult {
             "version: ",
         ],
     )?;
-    forbid_all(&doc, "README.md", &["After an upgrade also run `factory install --force`"])
+    forbid_all(
+        &doc,
+        "README.md",
+        &["After an upgrade also run `factory install --force`"],
+    )
 }
 
 #[test]
@@ -632,13 +636,21 @@ fn readme_documents_the_job_lease_and_resume() -> TestResult {
             "survive a dropped terminal",
         ],
     )?;
-    forbid_all(&doc, "README.md", &["the job lease is judged by expiry only"])
+    forbid_all(
+        &doc,
+        "README.md",
+        &["the job lease is judged by expiry only"],
+    )
 }
 
 #[test]
 fn getting_started_upgrades_with_one_command() -> TestResult {
     let doc = read("docs/getting-started.md")?;
-    require_all(&doc, "getting-started.md", &["factory upgrade", "factoryd stop"])?;
+    require_all(
+        &doc,
+        "getting-started.md",
+        &["factory upgrade", "factoryd stop"],
+    )?;
     forbid_all(&doc, "getting-started.md", &["do all four steps"])
 }
 

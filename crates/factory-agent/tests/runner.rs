@@ -51,7 +51,12 @@ fn a_session_event_is_emitted() {
     let lines = read_events(&log);
     assert_eq!(
         event_names(&lines),
-        vec!["SubagentStart", "FactorySession", "PostToolUse", "SubagentStop"]
+        vec![
+            "SubagentStart",
+            "FactorySession",
+            "PostToolUse",
+            "SubagentStop"
+        ]
     );
     assert_eq!(lines[1]["last_message"], "fake-1");
     assert_eq!(lines[1]["agent_id"], "001-builder");
