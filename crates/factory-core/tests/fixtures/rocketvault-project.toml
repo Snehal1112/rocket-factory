@@ -1,6 +1,6 @@
 # RocketVault's registration in the standalone factory (~/.factory/projects/rocketvault/project.toml).
 # Numeric limits are the same as the rocket project. budget_weighted is left at the default (1000000).
-repo = "/home/numericlabs/data/rocket/rocketvault"
+repo = "/path/to/rocketvault"
 preset = "go"
 
 [settings]

@@ -1,6 +1,6 @@
 # Rocket's registration in the standalone factory (~/.factory/projects/rocket/project.toml).
 # Values come from the old in-repo config (rocket-config.toml), minus the factory's own folders.
-repo = "/home/numericlabs/data/rocket/rocket"
+repo = "/path/to/rocket"
 preset = "rust"
 
 [settings]
