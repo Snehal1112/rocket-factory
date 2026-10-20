@@ -1813,7 +1813,7 @@ fn builder_specs_carry_the_permission_flags() {
         );
         assert_eq!(
             spec.disallowed_tools,
-            factory_engine::builder_denied_tools(&f.job_dir)
+            factory_engine::builder_denied_tools(&f.job_dir, &[])
         );
         assert!(spec.add_dirs.contains(&job_dir), "{:?}", spec.add_dirs);
     }
@@ -1854,6 +1854,88 @@ fn builder_permissions_false_restores_the_old_argument_list() {
     .map(|s| s.to_string())
     .collect();
     assert_eq!(spec.args(&factory_agent::Caps::default()), expected);
+}
+
+#[test]
+fn builder_permissions_false_restores_all_three_builder_specs() {
+    let mut fx = committing_fixture();
+    fx.config.builder_permissions = false;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    std::fs::write(fx.job_dir.join("rework-note.md"), "rename the helper").expect("note");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 0;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    e.build_stage().expect("resume");
+    let mut specs = runner.specs_for("builder");
+    let mut tfx = two_task_fixture();
+    tfx.config.builder_permissions = false;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    tfx.engine(&runner).build_stage().expect("task 1");
+    specs.push(runner.last_spec_for("builder").expect("task spec"));
+    assert_eq!(specs.len(), 3);
+    for spec in &specs {
+        assert_eq!(spec.permission_mode, None);
+        assert!(spec.allowed_tools.is_empty());
+        assert!(spec.disallowed_tools.is_empty());
+        let args = spec.args(&factory_agent::Caps::default());
+        for flag in ["--permission-mode", "--allowedTools", "--disallowedTools"] {
+            assert!(!args.iter().any(|a| a == flag), "{flag} in {args:?}");
+        }
+    }
+}
+
+#[test]
+fn kb_folder_is_denied_for_edit_and_write() {
+    let mut fx = committing_fixture();
+    let kb = fx.tmp.path().join("kb").join("rocketapi");
+    std::fs::create_dir_all(&kb).expect("mkdir kb");
+    fx.config.kb_path = Some(kb.to_string_lossy().into_owned());
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.specs_for("builder").remove(0);
+    let canon = kb.canonicalize().expect("canonical").display().to_string();
+    let p = canon.trim_start_matches('/');
+    assert!(
+        spec.disallowed_tools.contains(&format!("Edit(//{p}/**)")),
+        "{:?}",
+        spec.disallowed_tools
+    );
+    assert!(
+        spec.disallowed_tools.contains(&format!("Write(//{p}/**)")),
+        "{:?}",
+        spec.disallowed_tools
+    );
+}
+
+#[test]
+fn a_path_with_a_rule_character_leaves_the_spec_unchanged() {
+    for name in ["job)1", "job,1"] {
+        let mut fx = committing_fixture();
+        let odd = fx.tmp.path().join(name);
+        std::fs::create_dir_all(&odd).expect("mkdir");
+        std::fs::copy(&fx.plan_file, odd.join("plan.md")).expect("plan");
+        fx.plan_file = odd.join("plan.md");
+        fx.events = factory_agent::EventSink::new(odd.join("events.jsonl"), "001");
+        fx.job_dir = odd;
+        let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+        fx.engine(&runner).build_stage().expect("build");
+        let spec = runner.specs_for("builder").remove(0);
+        assert_eq!(spec.permission_mode, None, "{name}");
+        assert!(spec.allowed_tools.is_empty(), "{name}");
+    }
+    let mut fx = committing_fixture();
+    let kb = fx.tmp.path().join("kb)1");
+    std::fs::create_dir_all(&kb).expect("mkdir kb");
+    fx.config.kb_path = Some(kb.to_string_lossy().into_owned());
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.specs_for("builder").remove(0);
+    assert_eq!(spec.permission_mode, None);
+    assert!(spec.allowed_tools.is_empty());
 }
 
 #[test]

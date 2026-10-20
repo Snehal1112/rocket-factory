@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use factory_agent::AgentSpec;
@@ -101,12 +101,21 @@ impl Engine<'_> {
             .job_dir
             .canonicalize()
             .unwrap_or_else(|_| self.job_dir.clone());
-        if job_dir.to_string_lossy().contains(['*', '?', '[', '{']) {
+        let read_only: Vec<PathBuf> = self
+            .kb_dirs()
+            .into_iter()
+            .map(|d| d.canonicalize().unwrap_or(d))
+            .collect();
+        let guarded = ['*', '?', '[', '{', '(', ')', ',', '\\'];
+        if std::iter::once(&job_dir)
+            .chain(read_only.iter())
+            .any(|d| d.to_string_lossy().contains(guarded))
+        {
             return spec;
         }
         spec.permission_mode = Some("acceptEdits".to_string());
         spec.allowed_tools = crate::permissions::builder_allowed_tools(&self.config);
-        spec.disallowed_tools = crate::permissions::builder_denied_tools(&job_dir);
+        spec.disallowed_tools = crate::permissions::builder_denied_tools(&job_dir, &read_only);
         spec.add_dirs.push(job_dir);
         spec
     }
