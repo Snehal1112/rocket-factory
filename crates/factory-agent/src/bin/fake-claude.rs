@@ -44,6 +44,11 @@ fn main() {
             );
             result("all good", false, "success");
         }
+        "reinit" => {
+            init("fake-1");
+            init("fake-2");
+            result("re-init", false, "success");
+        }
         "args" => {
             init("fake-1");
             result(&args.join(" "), false, "success");

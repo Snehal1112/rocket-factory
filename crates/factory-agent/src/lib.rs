@@ -12,6 +12,6 @@ pub use claude::{AgentError, ClaudeRunner, ALLOW_API_KEY_VAR};
 pub use events::{AgentEvent, EventKind, EventSink};
 pub use run::{AgentRun, StopReason};
 pub use runner::{AgentRunner, FakeRunner};
-pub use spec::{AgentSpec, Caps};
+pub use spec::{AgentSpec, Caps, SessionHook};
 pub use stream::{StreamEvent, StreamState};
 pub use usage::Usage;

@@ -16,6 +16,8 @@ pub enum EventKind {
     BudgetWarn,
     /// A driver note, such as a fallback the driver took. Not an agent action.
     Notice,
+    /// The session id of a run, reported while the run goes on.
+    Session,
 }
 
 impl EventKind {
@@ -27,6 +29,7 @@ impl EventKind {
             EventKind::Stop => "SubagentStop",
             EventKind::BudgetWarn => "BudgetWarn",
             EventKind::Notice => "FactoryNotice",
+            EventKind::Session => "FactorySession",
         }
     }
 }
@@ -121,5 +124,44 @@ impl EventSink {
         if result.is_err() {
             self.failures.fetch_add(1, Ordering::Relaxed);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_kind_is_the_factory_session_hook() {
+        assert_eq!(EventKind::Session.hook_name(), "FactorySession");
+        for other in [
+            EventKind::Start,
+            EventKind::Tool,
+            EventKind::Stop,
+            EventKind::BudgetWarn,
+            EventKind::Notice,
+        ] {
+            assert_ne!(other.hook_name(), "FactorySession");
+        }
+    }
+
+    #[test]
+    fn a_session_line_carries_the_id_as_last_message() {
+        let ev = AgentEvent {
+            kind: EventKind::Session,
+            agent_id: "001-builder".into(),
+            agent_type: "factory-builder".into(),
+            tool_name: None,
+            tool_target: None,
+            cwd: None,
+            last_message: Some("sess-1".into()),
+            tokens: 0,
+        };
+        let line = EventSink::null("001").line(&ev, 1.0);
+        let v: Value = serde_json::from_str(&line).expect("json");
+        assert_eq!(v["hook_event_name"], "FactorySession");
+        assert_eq!(v["last_message"], "sess-1");
+        assert_eq!(v["job_id"], "001");
+        assert!(v.get("tool_name").is_none());
     }
 }

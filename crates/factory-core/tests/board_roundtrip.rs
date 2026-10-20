@@ -96,6 +96,26 @@ fn drafts_round_trip_with_every_field() {
 }
 
 #[test]
+fn a_board_without_task_session_loads() {
+    let board = Board::load(Path::new(FIXTURE)).expect("board loads");
+    assert!(board.jobs.iter().all(|j| j.task_session.is_none()));
+    assert!(!serde_json::to_string(&board)
+        .expect("json")
+        .contains("task_session"));
+    let text = serde_json::to_string(&factory_core::Job::new(
+        "001",
+        "d",
+        "s",
+        "2026-10-20",
+        "f",
+        1.0,
+    ))
+    .expect("json");
+    let job = serde_json::from_str::<factory_core::Job>(&text).expect("parse");
+    assert_eq!(job.task_session, None);
+}
+
+#[test]
 fn spec_warning_is_optional_on_a_job() {
     let mut j = factory_core::Job::new("001", "d", "s", "2026-10-18", "f", 1.0);
     assert!(!serde_json::to_string(&j)

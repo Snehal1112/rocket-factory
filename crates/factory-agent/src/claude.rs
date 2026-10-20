@@ -120,6 +120,7 @@ impl ClaudeRunner {
         let mut last_event = Instant::now();
         let mut stop: Option<StopReason> = None;
         let mut warned = false;
+        let mut session_seen = false;
         self.sink
             .emit(&self.event(spec, EventKind::Start, spec.used_before));
 
@@ -130,11 +131,23 @@ impl ClaudeRunner {
                     let events = state.feed(&line);
                     let used = spec.used_before.saturating_add(state.usage().weighted());
                     for ev in events {
-                        if let StreamEvent::Tool { name, target } = ev {
-                            let mut e = self.event(spec, EventKind::Tool, used);
-                            e.tool_name = Some(name);
-                            e.tool_target = Some(target);
-                            self.sink.emit(&e);
+                        match ev {
+                            StreamEvent::Tool { name, target } => {
+                                let mut e = self.event(spec, EventKind::Tool, used);
+                                e.tool_name = Some(name);
+                                e.tool_target = Some(target);
+                                self.sink.emit(&e);
+                            }
+                            StreamEvent::Init { session_id } if !session_seen => {
+                                session_seen = true;
+                                if let Some(hook) = &spec.on_session {
+                                    hook.call(&session_id);
+                                    let mut e = self.event(spec, EventKind::Session, used);
+                                    e.last_message = Some(session_id);
+                                    self.sink.emit(&e);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     if let Some(limit) = spec.budget_weighted {

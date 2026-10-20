@@ -1,5 +1,32 @@
+use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
+
+/// A callback that gets the session id while the run still goes on.
+pub struct SessionHook(pub Arc<dyn Fn(&str) + Send + Sync>);
+
+impl SessionHook {
+    pub fn new(f: impl Fn(&str) + Send + Sync + 'static) -> SessionHook {
+        SessionHook(Arc::new(f))
+    }
+
+    pub fn call(&self, session_id: &str) {
+        (self.0)(session_id);
+    }
+}
+
+impl Clone for SessionHook {
+    fn clone(&self) -> SessionHook {
+        SessionHook(Arc::clone(&self.0))
+    }
+}
+
+impl fmt::Debug for SessionHook {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SessionHook(..)")
+    }
+}
 
 /// Which optional `claude` flags exist. Defaults come from the probe report in `docs/software-factory.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +80,8 @@ pub struct AgentSpec {
     pub tools: Option<String>,
     /// Extra directories the agent may read, one `--add-dir` flag each.
     pub add_dirs: Vec<PathBuf>,
+    /// Called once with the session id when the stream reports it, while the run still goes on. Only task builders set it.
+    pub on_session: Option<SessionHook>,
 }
 
 impl AgentSpec {
@@ -77,6 +106,7 @@ impl AgentSpec {
             strict_mcp: false,
             tools: None,
             add_dirs: Vec::new(),
+            on_session: None,
         }
     }
 
