@@ -68,8 +68,8 @@ The driver writes a JSON log to `<state_dir>/log.jsonl` and `factoryd` to `<home
 
 ## Builder permissions
 
-Each builder run gets permission mode `acceptEdits`, a tool allowlist and deny rules on the job folder, so a job never blocks on a prompt and no repository needs a settings file.
-The allowlist is a fixed base plus the programs of your `checks`, plus `builder_allow`.
+Each builder run gets permission mode `acceptEdits`, a tool allowlist and deny rules on the job folder, so a job rarely waits on a prompt and no repository needs a settings file. The allowlist is not a sandbox.
+The allowlist is a fixed base plus the programs of your `checks` and `check_hints`, plus `builder_allow`.
 Set `builder_permissions` to `false` in the config to give builders the old arguments.
 Keys, allowlist rules and limits: `docs/project-toml-reference.md` and `docs/software-factory.md` (Builder permissions).
 

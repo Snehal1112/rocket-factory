@@ -70,7 +70,7 @@ builder_*_spec(...)                      (first, per task, resume)
 ### 1. Settings
 
 - `builder_permissions: bool`, default `true`. `false` restores today's builder argument list exactly.
-- `builder_allow: Vec<String>`, default empty. Extra allow rules, such as `Bash(make:*)`. Each entry must be non-empty, one line, at most 200 characters, and must be `Bash(<command>:*)` or `Bash(<command>)`. The validator splits `<command>` on whitespace, drops `-C <path>` pairs, takes the basename of the first word, and rejects the entry when that program is `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` or `xargs`, or when it is `git` and the next word is not one of `status`, `diff`, `log`, `show`, `rev-parse`. A bare `Bash(git:*)` is rejected. `shellcheck` and similar names pass, because the match is on whole words. `Config::parse` rejects a bad entry with `builder_allow: <why>`.
+- `builder_allow: Vec<String>`, default empty. Extra allow rules, such as `Bash(make:*)`. Each entry must be non-empty, one line, at most 200 characters, and must be `Bash(<command>:*)` or `Bash(<command>)`. The command must hold no shell operators (`&`, `|`, `;`, `>`, `<`, a backtick, `$(`), and no quotes, backslashes or wildcards (`*`, `?`). The validator splits `<command>` on whitespace, skips leading `NAME=value` words, drops `-C <path>` pairs, takes the lowercased basename of the first word, and rejects the entry when that program is on the never list (`rm`, `rmdir`, `curl`, `sudo`, `env`, `xargs`, `timeout`, `nice`, `nohup`, `time`, `stdbuf`, `setsid`, `eval`, `exec`, `command`, `source`, `.`, and the shells `sh`, `bash`, `zsh`, `dash`, `ksh`, `fish`, `busybox`), or when it is `git` and the next word is not one of `status`, `diff`, `log`, `show`, `rev-parse`. A bare `Bash(git:*)` is rejected. `shellcheck` and similar names pass, because the match is on whole words. `Config::parse` rejects a bad entry with `builder_allow: <why>`.
 - Both keys are documented in `docs/project-toml-reference.md`. `Config::fail_closed()` keeps `builder_permissions` at its default and `builder_allow` empty.
 
 ### 2. `AgentSpec.disallowed_tools`
@@ -87,21 +87,23 @@ builder_*_spec(...)                      (first, per task, resume)
 4. One `Bash(<program>:*)` per program named by `config.checks[*].commands` and `config.check_hints`, in order of first use, without duplicates. The program is the first word after any leading `NAME=value` words.
 5. The entries of `builder_allow`, as written.
 
-A program is never derived when its basename is `git`, `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` or `xargs`, or when it contains anything but letters, digits and `_ - . /`. An entry of `check_hints` counts only when its first word passes the same test, so prose such as `run the tests` adds the harmless rule `Bash(run:*)`. Broad programs a project lists itself (`make`, `yarn`, `python`) are accepted, because they are the project's own check commands. Edit and Write need no entry: `acceptEdits` covers files in the worktree.
+A program is never derived when its lowercased basename is on the never list of section 1 (`git`, the removal and network programs, the shells and the wrapper programs such as `env`, `xargs` and `timeout`), or when it contains anything but letters, digits and `_ - . /`. An entry of `check_hints` counts only when its first word passes the same test, so prose such as `run the tests` adds the harmless rule `Bash(run:*)`. Broad programs a project lists itself (`make`, `yarn`, `python`) are accepted, because they are the project's own check commands. Edit and Write need no entry: `acceptEdits` covers files in the worktree.
 
 Example: the `rust` preset gives `Bash(cargo:*)`.
 
 ### 4. The deny rules
 
-`pub fn builder_denied_tools(job_dir: &Path) -> Vec<String>` canonicalizes `job_dir` (falling back to the path as given) and returns `Edit(//<job dir>/**)` and `Write(//<job dir>/**)` (`//` marks an absolute path in a rule, as in `kb.rs:28-30`). `--add-dir` makes the job folder writable under `acceptEdits`, and a deny rule wins over it and over any repository settings. The ledger (`progress.md`), the spec and the plan sit in the job folder and stay driver-only. The board lives in `state_dir`, outside the worktree and outside `add_dirs`, so it is not editable, as today.
+`pub fn builder_denied_tools(job_dir: &Path, read_only_dirs: &[PathBuf]) -> Vec<String>` canonicalizes `job_dir` and each knowledge base folder (falling back to the path as given) and returns `Edit(//<job dir>/**)` and `Write(//<job dir>/**)`, then the same two rules for each folder, written `Edit(//<kb dir>/**)` and `Write(//<kb dir>/**)`, so a builder cannot edit the knowledge base (`//` marks an absolute path in a rule, as in `kb.rs:28-30`). `--add-dir` makes the job folder writable under `acceptEdits`, and a deny rule wins over it and over any repository settings. The ledger (`progress.md`), the spec and the plan sit in the job folder and stay driver-only. The board lives in `state_dir`, outside the worktree and outside `add_dirs`, so it is not editable, as today.
 
 ### 5. Applying it
 
-`Engine::with_builder_permissions(&self, spec: AgentSpec) -> AgentSpec` in `specs.rs`. When `config.builder_permissions` is true it sets `permission_mode = Some("acceptEdits")`, `allowed_tools`, `disallowed_tools`, and appends `job_dir` to `add_dirs`. When false it returns the spec unchanged. It also returns the spec unchanged when the canonical job folder path contains `*`, `?`, `[` or `{`, so a path that a rule could misread never widens access. The engine holds the loaded `Config` (`self.config`, as `with_limits` uses it), so the fail-closed config reaches this code like any other. Every run is a new `claude` process, so a resumed run passes the flags again. All three builder specs call it before `with_limits`.
+`Engine::with_builder_permissions(&self, spec: AgentSpec) -> AgentSpec` in `specs.rs`. When `config.builder_permissions` is true it sets `permission_mode = Some("acceptEdits")`, `allowed_tools`, `disallowed_tools`, and appends `job_dir` to `add_dirs`. When false it returns the spec unchanged. It also returns the spec unchanged when the canonical job folder path or a knowledge base folder path contains `*`, `?`, `[`, `{`, `(`, `)`, `,` or `\`, so a path that a rule could misread never widens access. The engine holds the loaded `Config` (`self.config`, as `with_limits` uses it), so the fail-closed config reaches this code like any other. Every run is a new `claude` process, so a resumed run passes the flags again. All three builder specs call it before `with_limits`.
 
 ### 6. Guard on the driver-only files
 
-In `Engine::run_agent`, for a spec whose role is `builder`, the driver reads `plan.md`, `spec.md` and `progress.md` of the job folder before the run (missing files count as absent) and compares them after it. When any differs, the driver writes the original content back, then parks the job with the reason `builder changed <file>` through the existing park path. This holds even when `builder_permissions = false`.
+In `Engine::run_agent`, for a spec whose role is `builder`, the driver reads `plan.md`, `spec.md` and `progress.md` of the job folder before the run (missing files count as absent) and compares them after it. When any differs, the driver writes the original content back (a file that was absent is removed), then parks the job with the kind `builder-tampered` and the reason `builder changed <file>`. When a restore fails, the reason adds `; it could not be restored: <error>`. The kind accepts `rework` and `cancel` only, and the dashboard shows it as `Builder changed a job file`. This holds even when `builder_permissions = false`.
+
+Known limit: the allowlist is not a sandbox. `find` with `-exec` or `-delete` and `git diff|log|show --output` can act outside the worktree, and the deny rules and the guard cover only the job folder files and the knowledge base folders. The probes for these have not been run.
 
 ### 7. Delivery
 
@@ -121,13 +123,18 @@ Three series run in order, each with its own plans and approval:
 | Check command `git diff --check` | `git` is never derived; the fixed `git diff` rule already covers it |
 | Check command `./scripts/test.sh` | `Bash(./scripts/test.sh:*)` |
 | Program with `*`, `(`, `)` or `:` | Skipped |
+| Compound check command `cd web && bun test` | Only `cd` is derived, and the base list has it |
+| Check command `timeout 60 cargo test` or `env X=1 cargo test` | Wrapper programs are never derived |
 | Duplicate programs across rules | One rule, first position |
 | `builder_allow` entry `Bash(rm:*)` | `Config::parse` error, so the config fails closed |
+| `builder_allow` entry with shell operators, quotes, backslashes or wildcards | `Config::parse` error |
+| Knowledge base folder path with a glob character | The spec stays unchanged |
+| Restore of a guarded file fails | The park reason says it could not be restored |
 | Broken config (fail-closed) | Base list only, never wider |
 | Repository `.claude/settings.json` allows more | Honoured only in a trusted folder; deny rules on the job folder win either way |
 | Repository settings deny a command | The deny wins; the job may block, which is the repository's choice |
 | The installed `claude` rejects a permission flag | The run fails with its stop reason and the job parks; `builder_permissions = false` turns it off |
-| Builder changes `plan.md`, `spec.md` or `progress.md` (for example through a tool that writes files) | The original content is restored and the job parks with `builder changed <file>` |
+| Builder changes `plan.md`, `spec.md` or `progress.md` (for example through a tool that writes files) | The original content is restored and the job parks as `builder-tampered` with `builder changed <file>`; only `rework` and `cancel` apply |
 | The job folder lacks `spec.md` (a job without a spec) | Absent before and after counts as unchanged |
 | Workspace not trusted | Command-line flags still apply; a repository settings file does not |
 | Builder asks to edit `plan.md` | Denied |
@@ -176,6 +183,9 @@ Three series run in order, each with its own plans and approval:
 - A fail-closed config gives only the base list.
 - A `fake-claude` run in `factory-agent` shows the new flags reaching the child process.
 - The docs describe both keys, the allowlist rules and the manual check.
+- A builder cannot edit the knowledge base folders: the deny rules cover them like the job folder.
+- Wrapper programs (`env`, `xargs`, `timeout`, `nice`, `nohup`, `time`, `stdbuf`, `setsid`, `eval`, `exec`, `command`) and shells are never derived and `builder_allow` rejects them, as it does entries with shell operators, quotes, backslashes or wildcards.
+- A guard park is the rework-only kind `builder-tampered`, shown in the dashboard as `Builder changed a job file`.
 
 ## Out of scope
 
@@ -196,5 +206,9 @@ Three series run in order, each with its own plans and approval:
 - Should the driver probe the real `claude` before planning? Options: about six haiku calls in a scratch folder; none; a broader sonnet probe. Chosen: about six haiku calls. Decided by: user
 - How are driver-only files protected from Bash writes? Options: before/after content check with restore and park; accept the risk; Bash deny patterns. Chosen: the content check with restore and park. Decided by: user
 - Which commands are in the fixed base? Options: cd, ls, cat, head, tail, wc, grep, find, pwd and read-only git; a shorter list. Chosen: the longer list, because the builder used compound `cd … && …` commands. Decided by: call
-- Which programs are never derived? Options: git, rm, rmdir, curl, sudo, sh, bash, env, xargs; the shorter list git, rm, curl, sudo, sh, bash; none. Chosen: the nine, because `env`, `xargs` and `sh` can run any other command. Decided by: call
+- Which programs are never derived? Options: git, rm, rmdir, curl, sudo, sh, bash, env, xargs; the shorter list git, rm, curl, sudo, sh, bash; none. Chosen: the nine first, because `env`, `xargs` and `sh` can run any other command. Decided by: call
+- Should the never list grow? Options: the nine only; add the other shells and the wrapper programs (`timeout`, `nice`, `nohup`, `time`, `stdbuf`, `setsid`, `eval`, `exec`, `command`, `source`, `.`). Chosen: the longer list, because each wrapper runs any other command and would bypass the rest. Decided by: call
+- How strict is the `builder_allow` validator? Options: the token check only; also reject shell operators, quotes, backslashes and wildcards. Chosen: the stricter one, because an entry must stay one plain command. Decided by: call
+- Should the builder be able to edit the knowledge base? Options: no, with Edit and Write deny rules like the job folder; yes. Chosen: deny rules, written `Edit(//<kb dir>/**)`, because only the refresher writes there. Decided by: call
+- How is a guard park reported? Options: a new rework-only kind `builder-tampered`; the generic `other` kind with approve. Chosen: the new kind, because approving a tampered job makes no sense. Decided by: call
 - Where does the code live? Options: a new `permissions.rs` in the engine; inside `specs.rs`. Chosen: a new file, to keep `specs.rs` focused. Decided by: call

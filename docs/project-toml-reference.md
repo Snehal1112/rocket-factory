@@ -94,16 +94,20 @@ For all five string lists, every entry must be one non-empty line, with no newli
 With `builder_permissions = true`, the builder's allowlist is built in this order:
 
 - A fixed base: the tools `Read`, `Grep`, `Glob`, `Skill` and `Agent`, the programs `cd`, `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `find` and `pwd`, and `git status`, `git diff`, `git log` and `git show`.
-- The programs of the `[[checks]]` commands and of `check_hints`, each as `Bash(<program>:*)`. The `rust` preset gives `Bash(cargo:*)`. Programs in `git`, `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` and `xargs` are never derived.
+- The programs of the `[[checks]]` commands and of `check_hints`, each as `Bash(<program>:*)`. The `rust` preset gives `Bash(cargo:*)`. Programs on the never list below (`git`, `rm`, `rmdir`, `curl`, `sudo`, the shells and wrappers such as `env`, `xargs` and `timeout`) are never derived.
 - The `builder_allow` entries, last.
 
-Each `builder_allow` entry is `Bash(<program>:*)` or `Bash(<program>)`, one line, at most 200 characters, with no shell operators (`&&`, `||`, `;`, `|`, `>`, `<`, a backtick or `$(`). `git` is accepted only before `status`, `diff`, `log`, `show` or `rev-parse`.
+Each `builder_allow` entry is `Bash(<command>:*)` or `Bash(<command>)`, where the command may hold arguments, such as `Bash(git log:*)`. It is one line, at most 200 characters, with no shell operators (`&&`, `||`, `;`, `|`, `&`, `>`, `<`, a backtick or `$(`), no quotes, no backslashes and no wildcards (`*` or `?`). `git` is accepted only before `status`, `diff`, `log`, `show` or `rev-parse`.
+
+The never list is `git`, `rm`, `rmdir`, `curl`, `sudo`, the shells (`sh`, `bash`, `zsh`, `dash`, `ksh`, `fish`, `busybox`), `source`, `.`, `eval`, `exec`, `command` and the wrappers `env`, `xargs`, `timeout`, `nice`, `nohup`, `time`, `stdbuf` and `setsid`. None of them is derived or accepted, because a wrapper can run any other command.
+
+Derived programs hold only letters, digits and `_ - . /`. Programs and entries that repeat are dropped, so duplicates keep only their first position. A compound check command such as `cd web && bun test` derives only its first word, `cd`.
 
 ```toml
 builder_allow = ["Bash(make:*)"]
 ```
 
-The builder also gets deny rules for `Edit` and `Write` on the job folder, so it cannot change the plan, the spec or the ledger.
+The builder also gets deny rules for `Edit` and `Write` on the job folder, so it cannot change the plan, the spec or the ledger, and on the knowledge base folders.
 
 ### Merge and tickets
 
