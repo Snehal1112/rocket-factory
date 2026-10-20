@@ -312,6 +312,22 @@ owner as gone, so run the drivers of one project from one machine.
 A hung agent that keeps producing output keeps the project locked as long as its driver process lives. Only
 `stall_minutes` covers a silent one.
 
+### The job lease
+
+Each job also has a lease on the board, held by the driver that works on it. A running driver renews both the
+project lease and the job lease every 60 seconds. A job lease whose owner is a `driver-<pid>-<secs>` process that
+no longer runs on this machine counts as stale at once, for the job lease too, so `run`, `approve`, `cancel`
+without `--force`, `tickets` and `kb-refresh` take it over on the first retry. Other owners keep it until it
+expires (30 minutes).
+
+While a task builder runs, the driver saves its session id and the branch tip on the board. After a crash the next
+`run` resumes that session with a short "you were interrupted" prompt, as long as the branch tip has not moved. If
+the resume fails, one fresh builder runs on the worktree as it is, with the interrupted edits kept. The ledger line
+of the dispatched task ends in `resumed` or `fresh`.
+
+A run started in a terminal stops when the terminal goes away. For runs that must survive a dropped terminal, use
+`factoryd enqueue`, or start `factory run` under `nohup` or in `tmux`.
+
 ### factoryd
 
 `factoryd` is a small supervisor that runs `factory` for queued requests, so several projects can work in

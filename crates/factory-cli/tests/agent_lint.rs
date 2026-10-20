@@ -613,6 +613,29 @@ fn readme_documents_upgrading() -> TestResult {
 }
 
 #[test]
+fn readme_documents_the_job_lease_and_resume() -> TestResult {
+    let doc = read("README.md")?;
+    require_all(
+        &doc,
+        "README.md",
+        &[
+            "### The job lease",
+            "every 60 seconds",
+            "`driver-<pid>-<secs>`",
+            "counts as stale at once, for the job lease too",
+            "resumes that session",
+            "one fresh builder runs on the worktree as it is",
+            "`resumed` or `fresh`",
+            "`factoryd enqueue`",
+            "`nohup`",
+            "`tmux`",
+            "survive a dropped terminal",
+        ],
+    )?;
+    forbid_all(&doc, "README.md", &["the job lease is judged by expiry only"])
+}
+
+#[test]
 fn getting_started_upgrades_with_one_command() -> TestResult {
     let doc = read("docs/getting-started.md")?;
     require_all(&doc, "getting-started.md", &["factory upgrade", "factoryd stop"])?;

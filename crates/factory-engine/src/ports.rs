@@ -85,6 +85,8 @@ pub(crate) struct JobView {
     pub batch_snapshot: Option<String>,
     pub fix_source: Option<String>,
     pub review_missing: bool,
+    /// The saved builder session of the task that was running, if any.
+    pub task_session: Option<factory_core::board::TaskSession>,
 }
 
 impl Engine<'_> {
@@ -106,6 +108,7 @@ impl Engine<'_> {
             batch_snapshot: job.batch_snapshot.clone(),
             fix_source: job.fix_source.clone(),
             review_missing: job.review_missing(),
+            task_session: job.task_session.clone(),
         })
     }
 

@@ -13,6 +13,14 @@ const BUILDER_AGENT: &str = "factory-builder";
 const REVIEWER_AGENT: &str = "factory-code-reviewer";
 /// The turn cap of a builder run. The builder agent files carry the same number, and a test pins it.
 pub const BUILDER_MAX_TURNS: u32 = 120;
+
+/// The prompt of a resumed task builder after a crash. `{n}` is the task number.
+pub(crate) const INTERRUPTED_PROMPT: &str = "You were interrupted. Run git status and git diff, check what is already done, continue task {n}, and do not redo finished work.";
+
+/// The interrupted prompt with the task number filled in.
+pub(crate) fn interrupted_prompt(n: u32) -> String {
+    INTERRUPTED_PROMPT.replace("{n}", &n.to_string())
+}
 /// The turn cap of a reviewer run. The reviewer agent files carry the same number, and a test pins it.
 pub const REVIEWER_MAX_TURNS: u32 = 40;
 /// The tools a builder run may use. They are every tool the builder agent files tell it to use.
@@ -233,6 +241,24 @@ impl Engine<'_> {
             title = task.title,
         );
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        spec.agent = Some(BUILDER_AGENT.to_string());
+        spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.strict_mcp = true;
+        spec.tools = Some(BUILDER_TOOLS.to_string());
+        spec.add_dirs = self.kb_dirs();
+        let spec = self.with_builder_permissions(spec);
+        self.with_limits(spec, &self.config.builder_model)
+    }
+
+    /// The resumed builder of a task whose driver died while it ran.
+    pub(crate) fn builder_task_resume_spec(
+        &self,
+        cwd: &Path,
+        task: &PlanTask,
+        session: &str,
+    ) -> AgentSpec {
+        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &interrupted_prompt(task.n));
+        spec.resume = Some(session.to_string());
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
         spec.strict_mcp = true;
