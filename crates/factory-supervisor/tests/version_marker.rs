@@ -32,7 +32,11 @@ fn run_once_stamps_a_missing_marker() {
     let t = tempfile::tempdir().expect("tempdir");
     let home = home_with(t.path(), None);
     let out = factoryd(&home, &["run", "--once"]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(marker(&home), format!("{V}\n"));
 }
 
@@ -41,7 +45,11 @@ fn run_once_stamps_over_an_older_marker() {
     let t = tempfile::tempdir().expect("tempdir");
     let home = home_with(t.path(), Some("0.0.1\n"));
     let out = factoryd(&home, &["run", "--once"]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(marker(&home), format!("{V}\n"));
 }
 
@@ -71,7 +79,10 @@ fn status_stop_and_enqueue_refuse_a_newer_marker() {
         let out = factoryd(&home, args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("last used by factory 99.0.0"), "{args:?}: {err}");
+        assert!(
+            err.contains("last used by factory 99.0.0"),
+            "{args:?}: {err}"
+        );
     }
     assert!(!home.queue_dir().exists());
 }
@@ -81,7 +92,11 @@ fn status_accepts_an_older_marker_and_does_not_stamp() {
     let t = tempfile::tempdir().expect("tempdir");
     let home = home_with(t.path(), Some("0.0.1\n"));
     let out = factoryd(&home, &["status"]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.ends_with(&format!("factoryd {V}\n")), "{text}");
     assert_eq!(marker(&home), "0.0.1\n");

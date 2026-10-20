@@ -11,6 +11,7 @@ pub mod scheduler;
 pub mod spawn;
 pub mod supervisor;
 pub mod token;
+pub mod version_check;
 
 pub use factory_cli::{CliOutput, CliSpawnError, FactoryCli, ProcessFactoryCli};
 pub use lock::{InstanceLock, LockError};
