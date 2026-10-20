@@ -1,7 +1,8 @@
 mod common;
 
-use common::{committing_fixture, scripted_auto, Effect};
-use factory_engine::StageOutcome;
+use common::{committing_fixture, scripted_auto, Effect, Fixture, ScriptedRunner};
+use factory_core::{Board, ParkRecord, Stage};
+use factory_engine::{restore_file, StageOutcome};
 
 fn change_effect(file: &'static str) -> Effect {
     Box::new(move |spec| {
@@ -111,6 +112,124 @@ fn guard_holds_with_builder_permissions_false() {
         std::fs::read_to_string(&fx.plan_file).expect("plan"),
         original
     );
+}
+
+const TWO_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n";
+
+fn two_task_fixture() -> Fixture {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let mut board = Board::load(&fx.board_path).expect("load");
+    board
+        .find_mut("001")
+        .expect("job")
+        .set_stage(Stage::Build, None, false, 1.0)
+        .expect("stage");
+    board.save(&fx.board_path).expect("save");
+    fx
+}
+
+fn rewrite_plan_effect(plan: std::path::PathBuf) -> Effect {
+    Box::new(move |_spec| {
+        std::fs::write(&plan, "# rewritten\n").expect("write");
+        "done".to_string()
+    })
+}
+
+/// One clean first build, then round 2 whose builder rewrites `plan.md`.
+fn fix_round_fixture() -> (Fixture, ScriptedRunner) {
+    let fx = committing_fixture();
+    let second = rewrite_plan_effect(fx.plan_file.clone());
+    let runner = scripted_auto(vec![change_effect("a.txt"), second]);
+    fx.engine(&runner).build_stage().expect("first");
+    std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
+    let mut board = Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 2;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    (fx, runner)
+}
+
+#[test]
+fn guard_holds_in_a_per_task_run() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![rewrite_plan_effect(fx.plan_file.clone())]);
+    expect_parked(
+        fx.engine(&runner).build_stage().expect("stage"),
+        "builder changed plan.md",
+    );
+    assert_eq!(
+        std::fs::read_to_string(&fx.plan_file).expect("plan"),
+        TWO_TASKS
+    );
+}
+
+#[test]
+fn guard_holds_in_a_fix_round_resume() {
+    let (fx, runner) = fix_round_fixture();
+    let original = std::fs::read_to_string(&fx.plan_file).expect("plan");
+    expect_parked(
+        fx.engine(&runner).build_stage().expect("stage"),
+        "builder changed plan.md",
+    );
+    assert_eq!(
+        std::fs::read_to_string(&fx.plan_file).expect("plan"),
+        original
+    );
+}
+
+#[test]
+fn a_tampered_fix_round_parks_with_rework_only() {
+    let (fx, runner) = fix_round_fixture();
+    fx.engine(&runner).build_stage().expect("stage");
+    let record = ParkRecord::read(&fx.job_dir).expect("park record");
+    assert_eq!(record.kind.as_str(), "builder-tampered");
+    assert!(
+        !record.next.iter().any(|n| n.contains("approve")),
+        "{record:?}"
+    );
+    assert!(
+        record.next.iter().any(|n| n.contains("rework")),
+        "{record:?}"
+    );
+}
+
+#[test]
+fn a_guard_park_keeps_the_builder_session() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![rewrite_plan_effect(fx.plan_file.clone())]);
+    fx.engine(&runner).build_stage().expect("stage");
+    assert_eq!(fx.job().builder_id.as_deref(), Some("sess-1"));
+}
+
+#[test]
+fn a_runner_error_still_restores_the_job_files() {
+    let fx = committing_fixture();
+    let original = std::fs::read_to_string(&fx.plan_file).expect("plan");
+    let (plan, board) = (fx.plan_file.clone(), fx.board_path.clone());
+    let runner = scripted_auto(vec![Box::new(move |_spec| {
+        std::fs::write(&plan, "# rewritten\n").expect("write");
+        std::fs::remove_file(&board).expect("remove board");
+        "done".to_string()
+    })]);
+    fx.engine(&runner).build_stage().expect_err("board gone");
+    assert_eq!(
+        std::fs::read_to_string(&fx.plan_file).expect("plan"),
+        original
+    );
+}
+
+#[test]
+fn restore_reports_a_failed_write() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let err = restore_file(&tmp.path().join("missing-dir").join("plan.md"), Some(b"x"))
+        .expect_err("write must fail");
+    assert!(!err.is_empty());
+    let file = tmp.path().join("f.md");
+    std::fs::write(&file, "x").expect("write");
+    restore_file(&file, None).expect("remove");
+    assert!(!file.exists());
 }
 
 #[test]

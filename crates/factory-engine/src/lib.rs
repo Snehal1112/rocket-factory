@@ -66,7 +66,7 @@ pub use message::{
 pub use one_job::{
     create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED,
 };
-pub use permissions::{builder_allowed_tools, builder_denied_tools};
+pub use permissions::{builder_allowed_tools, builder_denied_tools, restore_file};
 pub use planlint::{lint_plan, PlanLint};
 pub use ports::set_stage_logged;
 pub use project_lease::{

@@ -1,10 +1,13 @@
 //! The builder allowlist and deny rules, built from the config and the job folder.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use factory_agent::{AgentRun, AgentSpec};
-use factory_core::{Config, ParkKind, NEVER_ALLOWED_PROGRAMS};
+#[cfg(test)]
+use factory_core::NEVER_ALLOWED_PROGRAMS;
+use factory_core::{builder_program_ok, is_env_assignment, Config, ParkKind};
 
+use crate::ports::one_line;
 use crate::{Engine, EngineError, StageOutcome};
 
 const BASE_TOOLS: [&str; 5] = ["Read", "Grep", "Glob", "Skill", "Agent"];
@@ -22,6 +25,8 @@ pub fn builder_allowed_tools(config: &Config) -> Vec<String> {
         tools.push(format!("Bash({program}:*)"));
     }
     tools.extend(config.builder_allow.iter().cloned());
+    let mut seen = std::collections::HashSet::new();
+    tools.retain(|t| seen.insert(t.clone()));
     tools
 }
 
@@ -39,50 +44,62 @@ impl Engine<'_> {
             .iter()
             .map(|name| std::fs::read(self.job_dir.join(name)).ok())
             .collect();
-        let run = self.run_agent(spec)?;
+        let earlier_session = self.job().ok().and_then(|j| j.session_id.clone());
+        let run = self.run_agent(spec);
         let mut first_changed: Option<&str> = None;
+        let mut failed: Vec<String> = Vec::new();
         for (name, old) in GUARDED_FILES.iter().zip(before) {
             let path = self.job_dir.join(name);
             let now = std::fs::read(&path).ok();
             if now == old {
                 continue;
             }
-            match old {
-                Some(bytes) => {
-                    if let Err(e) = std::fs::write(&path, bytes) {
-                        eprintln!("factory: could not restore {name}: {e}");
-                    }
-                }
-                None => {
-                    if let Err(e) = std::fs::remove_file(&path) {
-                        eprintln!("factory: could not remove {name}: {e}");
-                    }
-                }
+            if let Err(e) = restore_file(&path, old.as_deref()) {
+                tracing::warn!(event = "builder.restore_failed", file = *name, msg = %one_line(&e));
+                failed.push(e);
             }
             first_changed.get_or_insert(name);
         }
+        let run = run?;
         match first_changed {
             None => Ok(Ok(run)),
             Some(name) => {
-                let parked = self.park_with(
-                    ParkKind::Other,
-                    format!("builder changed {name}"),
-                    Vec::new(),
-                )?;
+                let session = run.session_id.clone().or(earlier_session);
+                self.update(|j| {
+                    j.builder_id = session;
+                    Ok(())
+                })?;
+                let reason = match failed.first() {
+                    None => format!("builder changed {name}"),
+                    Some(e) => format!("builder changed {name}; it could not be restored: {e}"),
+                };
+                let parked = self.park_with(ParkKind::BuilderTampered, reason, Vec::new())?;
                 Ok(Err(parked))
             }
         }
     }
 }
 
-/// The rules that stop a builder from editing the job folder.
-pub fn builder_denied_tools(job_dir: &Path) -> Vec<String> {
-    let dir = job_dir
-        .canonicalize()
-        .unwrap_or_else(|_| job_dir.to_path_buf());
-    let dir = dir.display().to_string();
-    let dir = dir.trim_start_matches('/');
-    vec![format!("Edit(//{dir}/**)"), format!("Write(//{dir}/**)")]
+/// Writes `old` back to `path`, or removes the file when `old` is `None`.
+pub fn restore_file(path: &Path, old: Option<&[u8]>) -> Result<(), String> {
+    match old {
+        Some(bytes) => std::fs::write(path, bytes),
+        None => std::fs::remove_file(path),
+    }
+    .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The rules that stop a builder from editing the job folder and the read-only folders.
+pub fn builder_denied_tools(job_dir: &Path, read_only_dirs: &[PathBuf]) -> Vec<String> {
+    let mut rules = Vec::new();
+    for dir in std::iter::once(job_dir).chain(read_only_dirs.iter().map(PathBuf::as_path)) {
+        let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        let dir = dir.display().to_string();
+        let dir = dir.trim_start_matches('/');
+        rules.push(format!("Edit(//{dir}/**)"));
+        rules.push(format!("Write(//{dir}/**)"));
+    }
+    rules
 }
 
 /// The programs of the check commands and hints, in order of first use, without duplicates.
@@ -103,29 +120,10 @@ fn derived_programs(config: &Config) -> Vec<String> {
     out
 }
 
-/// True for a `NAME=value` word.
-fn is_env_assignment(word: &str) -> bool {
-    match word.split_once('=') {
-        Some((name, _)) => {
-            !name.is_empty()
-                && !name.starts_with(|c: char| c.is_ascii_digit())
-                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        }
-        None => false,
-    }
-}
-
 /// The program of a command line, or None when it is unsafe to allow.
 fn program_of(command: &str) -> Option<String> {
     let word = command.split_whitespace().find(|w| !is_env_assignment(w))?;
-    if !word
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
-    {
-        return None;
-    }
-    let basename = word.rsplit('/').next().unwrap_or(word);
-    if basename.is_empty() || NEVER_ALLOWED_PROGRAMS.contains(&basename) {
+    if !builder_program_ok(word) {
         return None;
     }
     Some(word.to_string())
@@ -288,14 +286,111 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_and_shell_programs_are_never_derived() {
+        let cfg = with_commands(&[
+            "timeout 600 cargo test",
+            "nice cargo test",
+            ". venv/bin/activate",
+            "source x",
+            "eval x",
+            "exec x",
+            "command x",
+            "zsh -c x",
+            "nohup x",
+            "time cargo t",
+            "stdbuf -o0 x",
+            "setsid x",
+            "busybox sh",
+        ]);
+        assert_eq!(builder_allowed_tools(&cfg), base());
+    }
+
+    #[test]
+    fn a_check_program_already_in_the_base_is_not_repeated() {
+        let cfg = with_commands(&["grep -r x", "ls"]);
+        assert_eq!(builder_allowed_tools(&cfg), base());
+    }
+
+    #[test]
+    fn duplicate_builder_allow_entries_are_removed() {
+        let cfg = Config {
+            builder_allow: vec![
+                "Bash(make:*)".into(),
+                "Bash(make:*)".into(),
+                "Bash(cd:*)".into(),
+            ],
+            ..Config::default()
+        };
+        assert_eq!(builder_allowed_tools(&cfg), plus(&["Bash(make:*)"]));
+    }
+
+    #[test]
+    fn fail_closed_allowlist_is_the_base_list() {
+        assert_eq!(builder_allowed_tools(&Config::fail_closed()), base());
+    }
+
+    #[test]
+    fn allowlist_never_contains_env_xargs_rmdir_or_shells() {
+        for name in factory_core::preset::PRESET_NAMES {
+            let p = factory_core::preset::embedded(name).expect("preset");
+            let cfg = Config::parse(p.config).expect("preset parses");
+            for tool in builder_allowed_tools(&cfg) {
+                let Some(inner) = tool.strip_prefix("Bash(") else {
+                    continue;
+                };
+                let command = inner.trim_end_matches(')').trim_end_matches(":*");
+                if BASE_GIT
+                    .iter()
+                    .any(|s| command == format!("git {s}").as_str())
+                {
+                    continue;
+                }
+                let program = command.split_whitespace().next().unwrap_or("");
+                let base_name = program.rsplit('/').next().unwrap_or(program);
+                assert!(
+                    !NEVER_ALLOWED_PROGRAMS.contains(&base_name.to_lowercase().as_str()),
+                    "{name}: {tool}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn denied_tools_cover_the_job_folder() {
         let dir = tempfile::tempdir().expect("tempdir");
         let real = dir.path().canonicalize().expect("canonical");
         let p = real.display().to_string();
         let p = p.trim_start_matches('/');
         assert_eq!(
-            builder_denied_tools(dir.path()),
+            builder_denied_tools(dir.path(), &[]),
             vec![format!("Edit(//{p}/**)"), format!("Write(//{p}/**)")]
+        );
+    }
+
+    #[test]
+    fn denied_tools_list_each_read_only_folder_after_the_job_folder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let job = dir.path().join("job");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        for d in [&job, &a, &b] {
+            std::fs::create_dir(d).expect("mkdir");
+        }
+        let rule = |d: &std::path::Path| {
+            let c = d.canonicalize().expect("canonical").display().to_string();
+            c.trim_start_matches('/').to_string()
+        };
+        let (j, pa, pb) = (rule(&job), rule(&a), rule(&b));
+        assert_eq!(
+            builder_denied_tools(&job, &[a, b]),
+            vec![
+                format!("Edit(//{j}/**)"),
+                format!("Write(//{j}/**)"),
+                format!("Edit(//{pa}/**)"),
+                format!("Write(//{pa}/**)"),
+                format!("Edit(//{pb}/**)"),
+                format!("Write(//{pb}/**)"),
+            ]
         );
     }
 
@@ -310,7 +405,7 @@ mod tests {
         let p = canon.display().to_string();
         let p = p.trim_start_matches('/');
         assert_eq!(
-            builder_denied_tools(&link),
+            builder_denied_tools(&link, &[]),
             vec![format!("Edit(//{p}/**)"), format!("Write(//{p}/**)")]
         );
     }
