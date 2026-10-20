@@ -72,8 +72,16 @@ pub enum Command {
         #[arg(long)]
         discard_commits: bool,
     },
+    /// Print the token use of one job, or with --cache the prompt cache use of the whole project.
     Tokens {
-        id: String,
+        #[arg(required_unless_present = "cache", conflicts_with = "cache")]
+        id: Option<String>,
+        /// Print cache use per role and the resumed runs, for every job of the project.
+        #[arg(long)]
+        cache: bool,
+        /// Only list resumed runs of the last N days.
+        #[arg(long, requires = "cache", value_parser = clap::value_parser!(u32).range(1..))]
+        days: Option<u32>,
     },
     /// Print the cost of every job and the figures per size group, and write costs.json.
     Costs,
@@ -277,6 +285,37 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
         let cli = Cli::try_parse_from(["factory", "--project", "p", "status"]).expect("parses");
         assert_eq!(cli.project.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn tokens_cache_with_an_id_is_refused() {
+        let err = Cli::try_parse_from(["factory", "tokens", "1", "--cache"]).expect_err("conflict");
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn tokens_without_id_or_cache_is_refused() {
+        Cli::try_parse_from(["factory", "tokens"]).expect_err("needs an id or --cache");
+    }
+
+    #[test]
+    fn tokens_days_needs_cache_and_at_least_one() {
+        Cli::try_parse_from(["factory", "tokens", "--days", "3"]).expect_err("days alone");
+        Cli::try_parse_from(["factory", "tokens", "--cache", "--days", "0"]).expect_err("zero");
+    }
+
+    #[test]
+    fn tokens_cache_with_days_parses() {
+        let cli =
+            Cli::try_parse_from(["factory", "tokens", "--cache", "--days", "7"]).expect("parses");
+        assert!(matches!(
+            cli.command,
+            Command::Tokens {
+                id: None,
+                cache: true,
+                days: Some(7)
+            }
+        ));
     }
 
     #[test]

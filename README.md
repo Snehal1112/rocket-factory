@@ -130,6 +130,10 @@ after the spec's own warning, and the job still runs.
   ledger as `review model: <name> (<reason>)`.
 - The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
 
+## Cache report
+
+`factory tokens --cache [--days N]` prints, for every job of the project, a table of prompt cache use per role (runs, creation, read, creation percent, 5M and 1H) and a list of resumed runs with their idle gap, creation, read, share and a rewrite flag. A resumed run whose creation share is 25% or more counts as a rewrite. `--days N` limits the listing and the tables to runs of the last N days. It takes no job id, only reads `usage.jsonl` files, and needs no network. The gap needs the `secs` field that runs write since 2026-10-20, so older runs show `?`.
+
 ## One job per spec
 
 By default a spec with several plans becomes one job per plan. `factory new ... --plans <dir> --one-job` makes

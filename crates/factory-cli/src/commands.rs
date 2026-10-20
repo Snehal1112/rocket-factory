@@ -326,7 +326,8 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             id,
             discard_commits,
         } => cleanup(ctx, &norm(&id)?, discard_commits),
-        Command::Tokens { id } => tokens(ctx, &norm(&id)?),
+        Command::Tokens { id: Some(id), .. } => tokens(ctx, &norm(&id)?),
+        Command::Tokens { days, .. } => cache_tokens(ctx, days),
         Command::Costs => costs(ctx),
         Command::Project { .. } => Err(CliError::Refused(
             "project commands do not need a repository, run them through project::run".into(),
@@ -819,6 +820,20 @@ fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
         }
     }
     Ok(d.kb_refresh(id, true)?)
+}
+
+/// Prints cache use per role and the resumed runs of every job on the board.
+fn cache_tokens(ctx: &CliCtx, days: Option<u32>) -> Result<String, CliError> {
+    let d = ctx.driver()?;
+    let mut jobs = Vec::new();
+    for job in &d.store().load()?.jobs {
+        jobs.push(crate::tokens::load_usage(
+            &d.job_dir(job).join("usage.jsonl"),
+            &job.id,
+        )?);
+    }
+    let report = crate::tokens::cache_report(&jobs, days, now_secs() as u64);
+    Ok(crate::tokens::render_cache(&report))
 }
 
 fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
