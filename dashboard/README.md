@@ -52,7 +52,7 @@ It never writes any of these files. If it is not running, the factory works the 
 | `/` and `/dashboard.html` | the page |
 | `/dashboard.css`, `/board.js`, `/patch.js`, `/app.js` | page assets |
 | `/projects.js` | the project, form and action helpers |
-| `/api/state` | JSON (only with `--root`): `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `specs[]` (`series_id`, `title`, `goal`, `stage`, `plans[]`), `drafts[]` (the board's interview drafts plus `seconds_since_update` and `stale`, shown first in the Spec column; the card carries copyable `factory spec resume` and `factory cancel` commands, no buttons), `spec_warning` on a job (shown on its card), `unassigned_agents[]` |
+| `/api/state` | JSON (only with `--root`): `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `token_view`), `specs[]` (`series_id`, `title`, `goal`, `stage`, `stage_since` (the latest of its plans), `plans[]`; each column lists spec and job cards in one list, newest first by `stage_since`, and Merged shows the 10 newest), `drafts[]` (the board's interview drafts plus `seconds_since_update` and `stale`, shown first in the Spec column; the card carries copyable `factory spec resume` and `factory cancel` commands, no buttons), `spec_warning` on a job (shown on its card), `unassigned_agents[]` |
 | `/healthz` | `ok` |
 | `GET /api/projects` | home mode only: `[{name, repo, preset, baseBranch, status, reason, activeJob}]` by name (404 with `--root`, which is how the page tells the modes apart) |
 | `GET /api/projects/{p}/state` | home mode: the same state view for one project |

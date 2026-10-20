@@ -61,6 +61,14 @@
     return `${Math.floor(seconds / 86400)}d`;
   }
 
+  // Local date and time as YYYY-MM-DD HH:MM, empty unless ts is a finite number above 0.
+  function formatStamp(ts) {
+    if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) return "";
+    const d = new Date(ts * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
   function clock(ts) {
     if (!Number.isFinite(ts)) return "--:--:--";
     return new Date(ts * 1000).toTimeString().slice(0, 8);
@@ -226,10 +234,12 @@
     const key = `spec-${spec.series_id}`;
     const open = (taskChoice.has(key) ? taskChoice.get(key) : stage !== "merged") ? " open" : "";
     const goal = spec.goal ? `<p class="plan-goal">${inlineCode(spec.goal)}</p>` : "";
+    const stamp = formatStamp(spec.stage_since);
+    const when = stamp ? `<time class="job-date" title="Last stage change">${escapeHtml(stamp)}</time>` : "";
     return (
       `<article class="card card-${stage}" data-spec="${id}">` +
       `<header class="card-head"><span class="job-id">${id}</span><span class="card-stage">Spec</span>` +
-      `<span class="series">${plans.length} ${plural(plans.length, "plan", "plans")}</span></header>` +
+      `<span class="series">${plans.length} ${plural(plans.length, "plan", "plans")}</span>${when}</header>` +
       `<p class="feature">${escapeHtml(spec.title || `Spec ${spec.series_id}`)}</p>` +
       `<div class="progress"><span class="bar" role="img" aria-label="${done} of ${plans.length} plans done">${segs}</span>` +
       `<span class="progress-label">${done}/${plans.length} ${plural(plans.length, "plan", "plans")} done</span></div>` +
@@ -258,7 +268,7 @@
     return (
       `<article class="card card-spec card-draft" data-draft="${slug}">` +
       `<header class="card-head"><span class="job-id">${slug}</span><span class="card-stage">Draft</span>${stale}` +
-      `<time class="job-date">${escapeHtml(draft.created)}</time></header>` +
+      `<time class="job-date" title="Last change">${escapeHtml(formatStamp(draft.updated_at) || draft.created)}</time></header>` +
       `<p class="feature">${escapeHtml(draft.feature)}</p>` +
       `<div class="meta"><span class="draft-stage">${stage}</span>` +
       `<span class="age">${formatAge(draft.seconds_since_update)} since the last change</span></div>` +
@@ -586,7 +596,7 @@
       `<span class="card-stage">${escapeHtml(stageTitle)}</span>` +
       seriesChip(job.series) +
       specChip(job.series, specs) +
-      `<time class="job-date">${escapeHtml(job.created)}</time></header>` +
+      `<time class="job-date" title="Last stage change">${escapeHtml(formatStamp(job.stage_since) || job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
       progressBar(job) +
       `<div class="meta"><span class="round" title="builder rounds used">` +
@@ -615,23 +625,22 @@
     const specs = state.specs || [];
     const drafts = Array.isArray(state.drafts) ? state.drafts.filter((draft) => draft) : [];
     const columns = STAGES.map((stage) => {
-      let items = jobs.filter((job) => job.stage === stage.key);
-      let specCards = specs.filter((spec) => spec && spec.stage === stage.key);
+      const items = jobs.filter((job) => job.stage === stage.key);
+      const specCards = specs.filter((spec) => spec && spec.stage === stage.key);
       const draftCards = stage.key === "spec" ? drafts : [];
       const total = items.length + specCards.length + draftCards.length;
-      if (stage.key === "merged") {
-        // Spec cards have no timestamp, so keep the last ones the server sent.
-        specCards = specCards.slice(-MERGED_LIMIT);
-        items = items
-          .slice()
-          .sort((a, b) => (b.stage_since || 0) - (a.stage_since || 0))
-          .slice(0, MERGED_LIMIT);
-      }
+      const sinceOf = (value) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+      // Server order is specs then jobs. Reversing first makes the stable sort put the later entry first on ties.
+      let entries = [
+        ...specCards.map((spec) => ({ since: sinceOf(spec.stage_since), html: renderSpecCard(spec) })),
+        ...items.map((job) => ({ since: sinceOf(job.stage_since), html: renderCard(job, state.generated_at, specs) })),
+      ]
+        .reverse()
+        .sort((a, b) => b.since - a.since);
+      if (stage.key === "merged") entries = entries.slice(0, MERGED_LIMIT);
       const cards =
         total
-          ? draftCards.map(renderDraftCard).join("") +
-            specCards.map(renderSpecCard).join("") +
-            items.map((job) => renderCard(job, state.generated_at, specs)).join("")
+          ? draftCards.map(renderDraftCard).join("") + entries.map((entry) => entry.html).join("")
           : `<p class="empty">Nothing here</p>`;
       return (
         `<section class="column panel column-${stage.key}">` +
@@ -764,6 +773,7 @@
     taskChoice,
     escapeHtml,
     formatAge,
+    formatStamp,
     clock,
     reviewChip,
     agentLine,
