@@ -353,6 +353,42 @@ impl Engine<'_> {
         self.with_limits(spec, &self.config.builder_model)
     }
 
+    /// The builder of a task that continues the session of the previous task.
+    pub(crate) fn builder_task_carry_spec(
+        &self,
+        cwd: &Path,
+        task: &PlanTask,
+        session: &str,
+        base: &str,
+        tip: &str,
+    ) -> AgentSpec {
+        let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
+        let your_task = match task_section(&plan, task.n) {
+            Some(section) => format!("--- your task ---\n{section}"),
+            None => format!("Your task is in the plan at {}.", self.plan_file.display()),
+        };
+        let prompt = format!(
+            "Task {prev} is done and committed as {sha}. Base {base7}, current tip {tip7}. \
+             The driver now gives you Task {n} in this same session; this replaces the earlier line that later tasks belong to other agents. \
+             Do only Task {n}: {title}. Do not redo or rework earlier tasks.\n{your_task}\n",
+            prev = task.n.saturating_sub(1),
+            sha = crate::ports::short_sha(tip),
+            base7 = crate::ports::short_sha(base),
+            tip7 = crate::ports::short_sha(tip),
+            n = task.n,
+            title = task.title,
+        );
+        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        spec.resume = Some(session.to_string());
+        spec.agent = Some(BUILDER_AGENT.to_string());
+        spec.max_turns = Some(BUILDER_MAX_TURNS);
+        spec.strict_mcp = true;
+        spec.tools = Some(BUILDER_TOOLS.to_string());
+        spec.add_dirs = self.kb_dirs();
+        let spec = self.with_builder_permissions(spec);
+        self.with_limits(spec, &self.config.builder_model)
+    }
+
     /// The resumed builder for a fix round.
     pub(crate) fn builder_resume_spec(
         &self,
