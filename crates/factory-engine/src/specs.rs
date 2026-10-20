@@ -30,7 +30,62 @@ pub const BUILDER_TOOLS: &str = "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent";
 const NOT_CONTROLLER: &str =
     "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";
 
+/// The rules version this engine knows. Agent files carry `<!-- factory-rules: N -->` with the same number.
+pub const RULES_VERSION: u32 = 1;
+
+#[cfg(test)]
+mod marker_tests {
+    use super::rules_marker;
+
+    #[test]
+    fn rules_marker_reads_only_exact_lines() {
+        assert_eq!(
+            rules_marker("---\n---\n<!-- factory-rules: 3 -->\n"),
+            Some(3)
+        );
+        assert_eq!(rules_marker("x <!-- factory-rules: 3 -->"), None);
+        assert_eq!(rules_marker("<!-- factory-rules: x -->"), None);
+        assert_eq!(rules_marker(""), None);
+    }
+}
+
+/// The number of the first line that is exactly `<!-- factory-rules: N -->`.
+pub(crate) fn rules_marker(text: &str) -> Option<u32> {
+    text.lines().find_map(|line| {
+        let n = line
+            .strip_prefix("<!-- factory-rules: ")?
+            .strip_suffix(" -->")?;
+        n.parse::<u32>().ok()
+    })
+}
+
 impl Engine<'_> {
+    /// True when the worktree's agent file carries a rules marker at or above `RULES_VERSION`.
+    fn agent_rules_current(&self, cwd: &Path, agent: &str) -> bool {
+        let path = cwd
+            .join(factory_core::agent_files_rel_dir())
+            .join(format!("{agent}.md"));
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| rules_marker(&text))
+            .is_some_and(|n| n >= RULES_VERSION)
+    }
+
+    /// True when the prompt for `agent` may drop the rules its file carries. A fallback is noted once per job and agent.
+    pub(crate) fn slim_prompt(&self, cwd: &Path, agent: &str) -> bool {
+        if self.agent_rules_current(cwd, agent) {
+            return true;
+        }
+        let note = format!(
+            "agent file {agent}.md has no current rules marker, prompts keep the full rules"
+        );
+        let seen = std::fs::read_to_string(self.job_dir.join("progress.md")).unwrap_or_default();
+        if !seen.contains(&note) {
+            let _ = self.ruling(&note);
+        }
+        false
+    }
+
     /// The prompt line that points an agent at the knowledge base. Empty when the KB is off.
     fn kb_line(&self) -> String {
         match self.config.kb_dir() {
@@ -131,7 +186,18 @@ impl Engine<'_> {
     /// The headless builder for the first run of a job.
     pub(crate) fn builder_first_spec(&self, job: &JobView, cwd: &Path) -> AgentSpec {
         let spec_line = self.spec_line();
-        let prompt = format!(
+        let prompt = if self.slim_prompt(cwd, BUILDER_AGENT) {
+            format!(
+                "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
+                 {read} Never edit the plan.\n{spec_line}\
+                 {rules}{kb}",
+                branch = job.branch,
+                read = self.read_line(false),
+                rules = self.rules_line(),
+                kb = self.kb_line(),
+            )
+        } else {
+            format!(
             "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
              {read} Never edit the plan.\n{spec_line}\
              Follow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), task by task. {NOT_CONTROLLER} \
@@ -144,7 +210,8 @@ impl Engine<'_> {
             read = self.read_line(false),
             rules = self.rules_line(),
             kb = self.kb_line(),
-        );
+            )
+        };
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
@@ -221,7 +288,24 @@ impl Engine<'_> {
                 earlier.join("\n")
             )
         };
-        let prompt = format!(
+        let prompt = if self.slim_prompt(cwd, BUILDER_AGENT) {
+            format!(
+                "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
+                 {read} Never edit the plan.\n{spec_line}{excerpt}\
+                 Base commit: {base}. Current tip: {tip}.\n{done}\n\
+                 Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
+                 {rules}\
+                 Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
+                 {kb}",
+                branch = job.branch,
+                read = self.read_line(!excerpt.is_empty()),
+                rules = self.rules_line(),
+                kb = self.kb_line(),
+                n = task.n,
+                title = task.title,
+            )
+        } else {
+            format!(
             "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
              {read} Never edit the plan.\n{spec_line}{excerpt}\
              Base commit: {base}. Current tip: {tip}.\n{done}\n\
@@ -239,7 +323,8 @@ impl Engine<'_> {
             kb = self.kb_line(),
             n = task.n,
             title = task.title,
-        );
+            )
+        };
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
@@ -287,7 +372,21 @@ impl Engine<'_> {
                 .collect();
             format!(" (for example {})", list.join(", "))
         };
-        let prompt = format!(
+        let prompt = if self.slim_prompt(cwd, BUILDER_AGENT) {
+            format!(
+                "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
+                 Follow `superpowers:receiving-code-review` for the findings. \
+                 Read all the findings first, then verify each against the code. \
+                 Work one item at a time. If a finding is wrong, push back with a reason in your reply and do not change the code for it. \
+                 If an item is unclear, reply with `Status: NEEDS_CONTEXT` and the question instead of guessing. \
+                 Run the relevant checks{hints} before you finish.",
+                findings = findings.display(),
+                branch = job.branch,
+                hints = hints,
+                kb = self.kb_line(),
+            )
+        } else {
+            format!(
             "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
              Do not run `git add` or `git commit`: leave the fixes in the worktree and the driver commits them. \
              Do not amend or rewrite earlier commits. \
@@ -301,7 +400,8 @@ impl Engine<'_> {
             branch = job.branch,
             hints = hints,
             kb = self.kb_line(),
-        );
+            )
+        };
         let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
         spec.resume = Some(session.to_string());
         spec.agent = Some(BUILDER_AGENT.to_string());
@@ -424,26 +524,42 @@ impl Engine<'_> {
         if extra.no_tests {
             context.push_str("No test was added in this job. Judge whether the new behavior is covered, and treat missing tests as a blocker.\n");
         }
-        let prompt = format!(
-            "Review this round's diff for the job.\n\
-             Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan} (read it only to look up one step), and the worktree at {cwd}. \
-             Round {round}.\n{spec_line}{earlier_line}{reply_line}{rereview}{context}\
-             Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
-             {rules_line}\
-             Check: the diff does what the plan asks and nothing else; correctness and edge cases; tests that would fail without the change; no debug leftovers. \
-             The spec and plan are a vision document: where they are silent, what a reasonable person would expect counts. \
-             You are read-only and you do not dispatch subagents.\n\
-             {kb}Reply in at most 60 lines. List findings as a numbered list with file:line, severity [blocker] or [minor], and a concrete fix. \
-             Grade each finding: Critical and Important findings carry [blocker], Minor findings carry [minor]. \
-             Before the verdict list anything you could not judge under `Declined to judge`, with the reason. \
-             Any blocker means CHANGES. Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
-            diff = diff.display(),
-            names = names.display(),
-            plan = self.plan_file.display(),
-            rules_line = rules_line,
-            cwd = cwd.display(),
-            kb = self.kb_line(),
-        );
+        let prompt = if self.slim_prompt(cwd, REVIEWER_AGENT) {
+            // The agent file carries the paging, check, grading and verdict rules.
+            format!(
+                "Review this round's diff for the job.\n\
+                 Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan} (read it only to look up one step), and the worktree at {cwd}. \
+                 Round {round}.\n{spec_line}{earlier_line}{reply_line}{rereview}{context}\
+                 {rules_line}{kb}",
+                diff = diff.display(),
+                names = names.display(),
+                plan = self.plan_file.display(),
+                rules_line = rules_line,
+                cwd = cwd.display(),
+                kb = self.kb_line(),
+            )
+        } else {
+            format!(
+                "Review this round's diff for the job.\n\
+                 Inputs: the diff at {diff}, the list of changed files at {names}, the plan at {plan} (read it only to look up one step), and the worktree at {cwd}. \
+                 Round {round}.\n{spec_line}{earlier_line}{reply_line}{rereview}{context}\
+                 Read the diff in pages: use the Read tool with offset and limit 1500 lines per call. Do not read the whole file at once. \
+                 {rules_line}\
+                 Check: the diff does what the plan asks and nothing else; correctness and edge cases; tests that would fail without the change; no debug leftovers. \
+                 The spec and plan are a vision document: where they are silent, what a reasonable person would expect counts. \
+                 You are read-only and you do not dispatch subagents.\n\
+                 {kb}Reply in at most 60 lines. List findings as a numbered list with file:line, severity [blocker] or [minor], and a concrete fix. \
+                 Grade each finding: Critical and Important findings carry [blocker], Minor findings carry [minor]. \
+                 Before the verdict list anything you could not judge under `Declined to judge`, with the reason. \
+                 Any blocker means CHANGES. Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
+                diff = diff.display(),
+                names = names.display(),
+                plan = self.plan_file.display(),
+                rules_line = rules_line,
+                cwd = cwd.display(),
+                kb = self.kb_line(),
+            )
+        };
         let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
         spec.agent = Some(REVIEWER_AGENT.to_string());
         spec.max_turns = Some(REVIEWER_MAX_TURNS);
