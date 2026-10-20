@@ -1,8 +1,115 @@
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use factory_agent::{
-    AgentRun, AgentRunner, AgentSpec, Caps, ClaudeRunner, EventSink, FakeRunner, StopReason,
+    AgentRun, AgentRunner, AgentSpec, Caps, ClaudeRunner, EventSink, FakeRunner, SessionHook,
+    StopReason,
 };
+
+/// A hook that records every id it gets.
+fn recording_hook() -> (SessionHook, Arc<Mutex<Vec<String>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let into = Arc::clone(&seen);
+    let hook = SessionHook::new(move |id| into.lock().expect("seen").push(id.to_string()));
+    (hook, seen)
+}
+
+fn read_events(log: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(log)
+        .expect("log")
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("json"))
+        .collect()
+}
+
+fn event_names(lines: &[serde_json::Value]) -> Vec<String> {
+    lines
+        .iter()
+        .map(|v| v["hook_event_name"].as_str().expect("name").to_string())
+        .collect()
+}
+
+#[test]
+fn the_session_hook_is_called_once_with_the_init_id() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let (hook, seen) = recording_hook();
+    let mut s = spec("ok", tmp.path());
+    s.on_session = Some(hook);
+    let run = runner(EventSink::null("001")).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Done);
+    assert_eq!(*seen.lock().expect("seen"), vec!["fake-1".to_string()]);
+}
+
+#[test]
+fn a_session_event_is_emitted() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let log = tmp.path().join("events.jsonl");
+    let (hook, _seen) = recording_hook();
+    let mut s = spec("ok", tmp.path());
+    s.on_session = Some(hook);
+    runner(EventSink::new(&log, "001")).run(&s);
+    let lines = read_events(&log);
+    assert_eq!(
+        event_names(&lines),
+        vec!["SubagentStart", "FactorySession", "PostToolUse", "SubagentStop"]
+    );
+    assert_eq!(lines[1]["last_message"], "fake-1");
+    assert_eq!(lines[1]["agent_id"], "001-builder");
+    assert_eq!(lines[1]["job_id"], "001");
+}
+
+#[test]
+fn the_session_hook_fires_before_a_stalled_run_is_killed() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let (hook, seen) = recording_hook();
+    let mut s = spec("silent", tmp.path());
+    s.on_session = Some(hook);
+    s.stall_after = Some(Duration::from_millis(400));
+    let started = Instant::now();
+    let run = runner(EventSink::null("001")).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Stalled);
+    assert_eq!(*seen.lock().expect("seen"), vec!["fake-1".to_string()]);
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn the_session_hook_is_called_once_even_with_two_init_lines() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let log = tmp.path().join("events.jsonl");
+    let (hook, seen) = recording_hook();
+    let mut s = spec("reinit", tmp.path());
+    s.on_session = Some(hook);
+    let run = runner(EventSink::new(&log, "001")).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Done);
+    assert_eq!(*seen.lock().expect("seen"), vec!["fake-1".to_string()]);
+    let lines = read_events(&log);
+    let count = event_names(&lines)
+        .iter()
+        .filter(|n| *n == "FactorySession")
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn a_run_without_a_hook_emits_no_session_event() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let log = tmp.path().join("events.jsonl");
+    runner(EventSink::new(&log, "001")).run(&spec("ok", tmp.path()));
+    let names = event_names(&read_events(&log));
+    assert!(!names.iter().any(|n| n == "FactorySession"));
+    assert_eq!(names, vec!["SubagentStart", "PostToolUse", "SubagentStop"]);
+}
+
+#[test]
+fn a_new_spec_has_no_session_hook_and_debug_hides_the_closure() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let s = AgentSpec::new("001", "builder", tmp.path(), "p");
+    assert!(s.on_session.is_none());
+    assert!(format!("{s:?}").contains("on_session: None"));
+    let hook = SessionHook::new(|_| {});
+    assert_eq!(format!("{hook:?}"), "SessionHook(..)");
+    assert!(Arc::ptr_eq(&hook.0, &hook.clone().0));
+}
 
 fn runner(sink: EventSink) -> ClaudeRunner {
     ClaudeRunner::new(
