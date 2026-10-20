@@ -100,6 +100,12 @@ fn main() {
             init("fake-1");
             result("it broke", true, "error_during_execution");
         }
+        "missing-session" => {
+            // The real claude reports an unknown --resume id like this.
+            eprintln!("No conversation found with session ID: no-such-session");
+            result("", true, "error_during_execution");
+            std::process::exit(1);
+        }
         "noresult" => {
             init("fake-1");
             eprintln!("fake claude crashed: boom");

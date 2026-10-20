@@ -205,6 +205,15 @@ fn error_result_is_failed() {
 }
 
 #[test]
+fn a_missing_session_resume_is_classified_as_failed() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let mut s = spec("missing-session", tmp.path());
+    s.resume = Some("no-such-session".into());
+    let run = runner(EventSink::null("001")).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Failed);
+}
+
+#[test]
 fn no_result_is_failed() {
     let tmp = tempfile::tempdir().expect("tmp");
     let run = runner(EventSink::null("001")).run(&spec("noresult", tmp.path()));
