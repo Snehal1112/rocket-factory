@@ -7,6 +7,7 @@ use factory_core::{
 };
 use factory_git::{CommitInfo, JobRef, Worktree};
 
+use crate::carry::{carry_decision, carry_idle_limit, Carry, CarryInput};
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
 use crate::park::{builder_blocked_parts, builder_stop_parts, part_from_file};
 use crate::ports::{git_err, now, short_sha, JobView};
@@ -526,18 +527,40 @@ impl Engine<'_> {
         let tip = self.repo.tip(&branch).map_err(git_err)?;
         let earlier = self.repo.log_oneline(&base, &tip).map_err(git_err)?;
         let saved = saved_session(job, task.n, &tip);
-        let how = if saved.is_some() { "resumed" } else { "fresh" };
+        let note_path = self.job_dir.join("rework-note.md");
+        let note = std::fs::read_to_string(&note_path).ok();
+        let carry = carry_decision(&CarryInput {
+            enabled: self.config.builder_carry_session,
+            max_ctx: self.config.builder_carry_max_ctx,
+            idle_limit: carry_idle_limit(self.config.cache_ttl.as_deref()),
+            last: job.builder_last.as_ref(),
+            task_n: task.n,
+            now: now().max(0.0) as u64,
+            rework_note: note.is_some(),
+            saved: saved.is_some(),
+        });
+        let how = match (&saved, &carry) {
+            (Some(_), _) => "resumed".to_string(),
+            (None, Carry::Yes { .. }) => "continued".to_string(),
+            (None, Carry::No { reason }) if self.config.builder_carry_session => {
+                format!("fresh ({reason})")
+            }
+            (None, Carry::No { .. }) => "fresh".to_string(),
+        };
         self.ledger_task(
             task.n,
             TaskState::Dispatched,
             &format!("BASE {base}, {}, {how}", self.config.builder_model),
         )?;
-        let mut spec = match &saved {
-            Some(id) => self.builder_task_resume_spec(&cwd, task, id),
-            None => self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier),
+        let carried = match &carry {
+            Carry::Yes { id } if saved.is_none() => Some(id.clone()),
+            _ => None,
         };
-        let note_path = self.job_dir.join("rework-note.md");
-        let note = std::fs::read_to_string(&note_path).ok();
+        let mut spec = match (&saved, &carried) {
+            (Some(id), _) => self.builder_task_resume_spec(&cwd, task, id),
+            (None, Some(id)) => self.builder_task_carry_spec(&cwd, task, id, &base, &tip),
+            (None, None) => self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier),
+        };
         if let Some(text) = &note {
             spec.prompt
                 .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
@@ -564,13 +587,18 @@ impl Engine<'_> {
             }
             Err(e) => return Err(e),
         };
-        if saved.is_some() && run.stop_reason == StopReason::Failed {
-            // A failed resume, such as a missing transcript, gets one fresh builder on the worktree as it is.
+        if (saved.is_some() || carried.is_some()) && run.stop_reason == StopReason::Failed {
+            // A failed resume or carry, such as a missing transcript, gets one fresh builder on the worktree as it is.
             self.clear_task_session()?;
+            let again = if saved.is_some() {
+                "fresh"
+            } else {
+                "fresh (carry failed)"
+            };
             self.ledger_task(
                 task.n,
                 TaskState::Dispatched,
-                &format!("BASE {base}, {}, fresh", self.config.builder_model),
+                &format!("BASE {base}, {}, {again}", self.config.builder_model),
             )?;
             let mut spec = self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier);
             if let Some(text) = &note {

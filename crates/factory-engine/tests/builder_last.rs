@@ -2,8 +2,7 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::{committing_fixture, scripted_auto, Effect, Fixture, ScriptedRunner};
-use factory_agent::{AgentRun, AgentRunner, AgentSpec};
+use common::{committing_fixture, scripted_auto, Effect, Fixture, Tagged};
 use factory_core::{Board, Stage};
 use factory_engine::StageOutcome;
 
@@ -28,42 +27,6 @@ fn two_task_fixture() -> Fixture {
         .expect("stage");
     board.save(&fx.board_path).expect("save");
     fx
-}
-
-/// Gives each builder call its own session id and a fixed end context.
-struct Tagged {
-    inner: ScriptedRunner,
-    end_ctx: u64,
-    calls: Mutex<u32>,
-    no_session: bool,
-}
-
-impl Tagged {
-    fn new(inner: ScriptedRunner, end_ctx: u64) -> Self {
-        Tagged {
-            inner,
-            end_ctx,
-            calls: Mutex::new(0),
-            no_session: false,
-        }
-    }
-}
-
-impl AgentRunner for Tagged {
-    fn run(&self, spec: &AgentSpec) -> AgentRun {
-        let mut run = self.inner.run(spec);
-        if spec.role == "builder" {
-            let mut n = self.calls.lock().expect("calls");
-            *n += 1;
-            run.session_id = if self.no_session {
-                None
-            } else {
-                Some(format!("sess-{n}"))
-            };
-            run.end_ctx = self.end_ctx;
-        }
-        run
-    }
 }
 
 #[test]

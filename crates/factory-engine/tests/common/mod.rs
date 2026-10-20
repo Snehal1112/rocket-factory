@@ -211,6 +211,42 @@ impl AgentRunner for ScriptedRunner {
     }
 }
 
+/// Gives each builder call its own session id and a fixed end context.
+pub struct Tagged {
+    pub inner: ScriptedRunner,
+    pub end_ctx: u64,
+    pub calls: Mutex<u32>,
+    pub no_session: bool,
+}
+
+impl Tagged {
+    pub fn new(inner: ScriptedRunner, end_ctx: u64) -> Tagged {
+        Tagged {
+            inner,
+            end_ctx,
+            calls: Mutex::new(0),
+            no_session: false,
+        }
+    }
+}
+
+impl AgentRunner for Tagged {
+    fn run(&self, spec: &AgentSpec) -> AgentRun {
+        let mut run = self.inner.run(spec);
+        if spec.role == "builder" {
+            let mut n = self.calls.lock().expect("calls");
+            *n += 1;
+            run.session_id = if self.no_session {
+                None
+            } else {
+                Some(format!("sess-{n}"))
+            };
+            run.end_ctx = self.end_ctx;
+        }
+        run
+    }
+}
+
 pub fn scripted(effects: Vec<Effect>) -> ScriptedRunner {
     ScriptedRunner {
         effects: Mutex::new(effects.into()),
