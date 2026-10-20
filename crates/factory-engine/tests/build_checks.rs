@@ -832,7 +832,10 @@ fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
     assert!(first.contains(KB_PROMPT), "{first}");
     assert_eq!(
         runner.last_spec_for("builder").expect("spec").add_dirs,
-        vec![std::path::PathBuf::from("/kb/rocketapi")]
+        vec![
+            std::path::PathBuf::from("/kb/rocketapi"),
+            std::fs::canonicalize(&fx.job_dir).expect("job dir")
+        ]
     );
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
@@ -845,7 +848,10 @@ fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
     assert!(resume.contains(KB_PROMPT), "{resume}");
     assert_eq!(
         runner.last_spec_for("builder").expect("spec").add_dirs,
-        vec![std::path::PathBuf::from("/kb/rocketapi")]
+        vec![
+            std::path::PathBuf::from("/kb/rocketapi"),
+            std::fs::canonicalize(&fx.job_dir).expect("job dir")
+        ]
     );
 
     let off = committing_fixture();
@@ -853,7 +859,10 @@ fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
     off.engine(&runner).build_stage().expect("first");
     let spec = runner.last_spec_for("builder").expect("spec");
     assert!(!spec.prompt.contains("Knowledge base"));
-    assert!(spec.add_dirs.is_empty());
+    assert_eq!(
+        spec.add_dirs,
+        vec![std::fs::canonicalize(&off.job_dir).expect("job dir")]
+    );
 }
 
 #[test]
@@ -866,7 +875,10 @@ fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
     assert!(prompt.contains(KB_PROMPT), "{prompt}");
     assert_eq!(
         runner.last_spec_for("builder").expect("spec").add_dirs,
-        vec![std::path::PathBuf::from("/kb/rocketapi")]
+        vec![
+            std::path::PathBuf::from("/kb/rocketapi"),
+            std::fs::canonicalize(&fx.job_dir).expect("job dir")
+        ]
     );
 
     let off = two_task_fixture();
@@ -874,7 +886,10 @@ fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
     off.engine(&runner).build_stage().expect("build");
     let spec = runner.last_spec_for("builder").expect("spec");
     assert!(!spec.prompt.contains("Knowledge base"));
-    assert!(spec.add_dirs.is_empty());
+    assert_eq!(
+        spec.add_dirs,
+        vec![std::fs::canonicalize(&off.job_dir).expect("job dir")]
+    );
 }
 
 #[test]
@@ -1761,6 +1776,101 @@ fn builder_specs_are_strict_and_name_their_tools() {
     let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     assert_builder_spec_is_strict(&runner.last_spec_for("builder").expect("spec"));
+}
+
+/// The first, resume and task specs of a builder, in that order.
+fn three_builder_specs() -> (Fixture, Fixture, Vec<factory_agent::AgentSpec>) {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    std::fs::write(fx.job_dir.join("rework-note.md"), "rename the helper").expect("note");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 0;
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    e.build_stage().expect("resume");
+    let mut specs = runner.specs_for("builder");
+    let tfx = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    tfx.engine(&runner).build_stage().expect("task 1");
+    specs.push(runner.last_spec_for("builder").expect("task spec"));
+    (fx, tfx, specs)
+}
+
+#[test]
+fn builder_specs_carry_the_permission_flags() {
+    let (fx, tfx, specs) = three_builder_specs();
+    assert_eq!(specs.len(), 3);
+    assert!(specs[1].resume.is_some());
+    for (spec, f) in specs.iter().zip([&fx, &fx, &tfx]) {
+        let job_dir = std::fs::canonicalize(&f.job_dir).expect("canonical");
+        assert_eq!(spec.permission_mode.as_deref(), Some("acceptEdits"));
+        assert_eq!(
+            spec.allowed_tools,
+            factory_engine::builder_allowed_tools(&f.config)
+        );
+        assert_eq!(
+            spec.disallowed_tools,
+            factory_engine::builder_denied_tools(&f.job_dir)
+        );
+        assert!(spec.add_dirs.contains(&job_dir), "{:?}", spec.add_dirs);
+    }
+}
+
+#[test]
+fn builder_specs_still_pass_assert_builder_spec_is_strict() {
+    let (_fx, _tfx, specs) = three_builder_specs();
+    specs.iter().for_each(assert_builder_spec_is_strict);
+}
+
+#[test]
+fn builder_permissions_false_restores_the_old_argument_list() {
+    let mut fx = committing_fixture();
+    fx.config.builder_permissions = false;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.specs_for("builder").remove(0);
+    assert_eq!(spec.permission_mode, None);
+    assert!(spec.allowed_tools.is_empty());
+    assert!(spec.disallowed_tools.is_empty());
+    let expected: Vec<String> = [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--strict-mcp-config",
+        "--model",
+        "sonnet",
+        "--tools",
+        "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent",
+        "--agent",
+        "factory-builder",
+        "--max-turns",
+        "120",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(spec.args(&factory_agent::Caps::default()), expected);
+}
+
+#[test]
+fn glob_character_in_job_dir_leaves_the_spec_unchanged() {
+    let mut fx = committing_fixture();
+    let odd = fx.tmp.path().join("job[1]");
+    std::fs::create_dir_all(&odd).expect("mkdir");
+    std::fs::copy(&fx.plan_file, odd.join("plan.md")).expect("plan");
+    fx.plan_file = odd.join("plan.md");
+    fx.events = factory_agent::EventSink::new(odd.join("events.jsonl"), "001");
+    fx.job_dir = odd;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.specs_for("builder").remove(0);
+    assert_eq!(spec.permission_mode, None);
+    assert!(spec.allowed_tools.is_empty());
+    assert!(spec.disallowed_tools.is_empty());
 }
 
 #[test]
