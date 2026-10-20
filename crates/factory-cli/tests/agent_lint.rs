@@ -671,6 +671,22 @@ fn readme_points_to_builder_permissions() -> TestResult {
 }
 
 #[test]
+fn readme_documents_the_rules_marker() -> TestResult {
+    let text = read("README.md")?;
+    require_all(
+        &text,
+        "README",
+        &[
+            "## Agent file rules marker",
+            "<!-- factory-rules: 1 -->",
+            "no current rules marker",
+            "factory upgrade",
+            "prompts keep the full rules",
+        ],
+    )
+}
+
+#[test]
 fn agent_max_turns_match_the_driver_constants() -> TestResult {
     let files = [
         (
@@ -822,6 +838,50 @@ fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> Test
             path,
             &["as its implementer: one implementer per task"],
         )?;
+    }
+    Ok(())
+}
+
+// The `.claude/agents` copies are marked by the maintainer, so they are not listed here.
+const MARKED: [&str; 4] = [
+    "crates/factory-core/presets/rust/agents/factory-builder.md",
+    "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/go/agents/factory-builder.md",
+    "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+];
+
+#[test]
+fn shipped_builder_and_reviewer_files_carry_the_rules_marker() -> TestResult {
+    for path in MARKED {
+        let text = read(path)?;
+        let after_frontmatter = text.splitn(3, "---\n").nth(2).unwrap_or_default();
+        if after_frontmatter.lines().next() != Some("<!-- factory-rules: 1 -->") {
+            return Err(format!(
+                "{path} has no marker on the line after the frontmatter"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_marker_version_matches_the_engine_constant() -> TestResult {
+    let marker = format!("<!-- factory-rules: {} -->", factory_engine::RULES_VERSION);
+    for path in MARKED {
+        require_all(&read(path)?, path, &[marker.as_str()])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_committer_and_kb_files_have_no_rules_marker() -> TestResult {
+    for path in [
+        ".claude/agents/factory-committer.md",
+        ".claude/agents/factory-kb-refresher.md",
+    ] {
+        if read(path)?.contains("factory-rules") {
+            return Err(format!("{path} must not carry a rules marker"));
+        }
     }
     Ok(())
 }
