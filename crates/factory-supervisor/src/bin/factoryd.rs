@@ -18,7 +18,7 @@ const DEFAULT_INTERVAL_MS: u64 = 2000;
 const RECENT_RESULTS: usize = 10;
 
 #[derive(Parser)]
-#[command(name = "factoryd", about = "Runs queued factory requests")]
+#[command(name = "factoryd", version, about = "Runs queued factory requests")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -252,6 +252,17 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_flag_prints_the_workspace_version() {
+        let err = Cli::try_parse_from(["factoryd", "--version"])
+            .err()
+            .expect("prints the version");
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        let text = err.to_string();
+        assert!(text.contains("factoryd "), "{text}");
+        assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
+    }
 
     #[test]
     fn status_shows_the_daily_budget_only_with_a_limit() {

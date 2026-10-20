@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "factory", about = "Software factory driver")]
+#[command(name = "factory", version, about = "Software factory driver")]
 pub struct Cli {
     /// Main checkout root. Defaults to the repository containing the current directory.
     #[arg(long, global = true)]
@@ -183,6 +183,15 @@ pub enum ProjectCmd {
 mod tests {
     use super::*;
     use clap::error::ErrorKind;
+
+    #[test]
+    fn version_flag_prints_the_workspace_version() {
+        let err = Cli::try_parse_from(["factory", "--version"]).expect_err("prints the version");
+        assert_eq!(err.kind(), ErrorKind::DisplayVersion);
+        let text = err.to_string();
+        assert!(text.contains("factory "), "{text}");
+        assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
+    }
 
     #[test]
     fn spec_without_plans_is_a_usage_error() {
