@@ -1,5 +1,10 @@
 # rocket-factory
 
+[![CI](https://github.com/Snehal1112/rocket-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/Snehal1112/rocket-factory/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Snehal1112/rocket-factory)](https://github.com/Snehal1112/rocket-factory/releases)
+[![License: MIT](https://img.shields.io/github/license/Snehal1112/rocket-factory)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-lightgrey)
+
 A standalone software factory. A Rust driver builds, checks, reviews and merges one feature at a time in a separate git worktree, and a local dashboard shows what it is doing. It was extracted from Rocket's `tools/factory` and is being generalized to drive several projects at once.
 
 - Design: `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`
