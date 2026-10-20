@@ -490,3 +490,14 @@ Agent files are merged by name from the preset `agents/` folder, the project `ag
 `.factory/agents/` folder on the base branch (later wins). The engine writes them to `.claude/agents/` in each new
 job worktree. Only names like `factory-<name>.md` are written, they are git-excluded, and a file that is tracked
 on the base branch is never overwritten.
+
+## Agent file rules marker
+
+The builder and reviewer agent files carry the line `<!-- factory-rules: 1 -->` right after their frontmatter. When
+the agent file in the job worktree has a current marker, the prompts leave out the rules that file already holds.
+Otherwise the driver uses the full prompts and writes one ledger line per job and agent:
+`agent file <name>.md has no current rules marker, prompts keep the full rules`.
+
+`factory upgrade` refreshes agent files you have not edited. An edited file, or a repo file in `.factory/agents/` that
+shadows the shipped one, keeps working with the full prompt until you merge the new marker and rules by hand. The
+committer, message and KB prompts are unchanged.
