@@ -242,7 +242,7 @@ fn cache_ttl_var(ttl: Option<&str>) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Builds one `usage.jsonl` line. `usage_v` 2 marks lines with the corrected output count.
+/// Builds one `usage.jsonl` line. `usage_v` 3 marks lines with the first-turn cache fields.
 pub(crate) fn usage_line(
     job_id: &str,
     spec: &AgentSpec,
@@ -269,7 +269,9 @@ pub(crate) fn usage_line(
         "stop": run.stop_reason.as_str(),
         "round": round,
         "start_ctx": run.start_ctx,
-        "usage_v": 2,
+        "start_cc": run.start_cc,
+        "start_cr": run.start_cr,
+        "usage_v": 3,
     });
     if spec.role == "builder" {
         if let Some(obj) = line.as_object_mut() {
@@ -295,6 +297,8 @@ mod tests {
             },
             turns: 7,
             start_ctx: 55,
+            start_cc: 40,
+            start_cr: 15,
             stop_reason: stop,
             ..AgentRun::done("x")
         }
@@ -327,7 +331,7 @@ mod tests {
         assert_eq!(line["stop"], "done");
         assert_eq!(line["round"], 2);
         assert_eq!(line["start_ctx"], 55);
-        assert_eq!(line["usage_v"], 2);
+        assert_eq!(line["usage_v"], 3);
         assert_eq!(line["tasks_done"], 1);
     }
 
@@ -384,6 +388,23 @@ mod tests {
         assert_eq!(line["stop"], "failed");
         assert_eq!(line["input"], 0);
         assert_eq!(line["output"], 0);
-        assert_eq!(line["usage_v"], 2);
+        assert_eq!(line["usage_v"], 3);
+    }
+
+    #[test]
+    fn usage_line_carries_start_cc_and_start_cr() {
+        let spec = AgentSpec::new("001", "builder", "/w", "p");
+        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5);
+        assert_eq!(line["start_cc"], 40);
+        assert_eq!(line["start_cr"], 15);
+        assert_eq!(line["usage_v"], 3);
+    }
+
+    #[test]
+    fn a_failed_run_still_writes_zero_start_fields() {
+        let spec = AgentSpec::new("001", "builder", "/w", "p");
+        let line = usage_line("001", &spec, &AgentRun::failed("x"), 1, 0, 1, 0);
+        assert_eq!(line["start_cc"], 0);
+        assert_eq!(line["start_cr"], 0);
     }
 }
