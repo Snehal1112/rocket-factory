@@ -125,6 +125,20 @@ pub struct Job {
     /// A warning about the job's spec, for the dashboard. New in the draft cards series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec_warning: Option<String>,
+    /// The builder session of the running task, saved while the builder runs. New in the crash resume series, absent in older boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_session: Option<TaskSession>,
+}
+
+/// The builder session of the plan task that is running now. Only a crash leaves it on the board.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskSession {
+    /// The plan task number, as in `### Task N`.
+    pub task: u32,
+    /// The `claude` session id.
+    pub id: String,
+    /// The branch tip when the task started.
+    pub tip: String,
 }
 
 /// One stage change, with the unix time in seconds it happened.
@@ -203,6 +217,7 @@ impl Job {
             estimate: None,
             fix_source: None,
             spec_warning: None,
+            task_session: None,
         }
     }
 
@@ -468,6 +483,27 @@ mod tests {
         job.set_stage(Stage::Build, None, true, 4.0).expect("back");
         assert_eq!(job.park_kind, None);
         assert_eq!(job.park_at, None);
+    }
+
+    #[test]
+    fn task_session_round_trips() {
+        let mut j = Job::new("001", "d", "s", "2026-10-20", "f", 1.0);
+        assert!(j.task_session.is_none());
+        assert!(!serde_json::to_string(&j)
+            .expect("json")
+            .contains("task_session"));
+        j.task_session = Some(TaskSession {
+            task: 2,
+            id: "sess-9".to_string(),
+            tip: "abc1234".to_string(),
+        });
+        let value = serde_json::to_value(&j).expect("json");
+        assert_eq!(
+            value["task_session"],
+            serde_json::json!({"task": 2, "id": "sess-9", "tip": "abc1234"})
+        );
+        let back: Job = serde_json::from_value(value).expect("parse");
+        assert_eq!(back.task_session, j.task_session);
     }
 
     #[test]

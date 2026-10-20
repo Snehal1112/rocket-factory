@@ -287,11 +287,7 @@ type TipFor<'a> = &'a dyn Fn(&str) -> Result<Box<dyn BaseTipFiles>, String>;
 
 /// Finds project and repo agent files that shadow an updated preset agent file.
 /// Only projects on the same preset are checked. `tip_for` opens a project's base tip.
-pub fn shadowed(
-    home: &Home,
-    updated: &[PathBuf],
-    tip_for: TipFor<'_>,
-) -> Vec<ShadowLine> {
+pub fn shadowed(home: &Home, updated: &[PathBuf], tip_for: TipFor<'_>) -> Vec<ShadowLine> {
     let presets = home.presets_dir();
     // (preset, file name) for each updated agent file, in order.
     let mut counting: Vec<(String, String)> = Vec::new();

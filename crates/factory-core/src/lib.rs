@@ -28,7 +28,8 @@ pub mod version;
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
 
 pub use board::{
-    Board, Draft, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry, DRAFT_STAGES,
+    Board, Draft, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry, TaskSession,
+    DRAFT_STAGES,
 };
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{
