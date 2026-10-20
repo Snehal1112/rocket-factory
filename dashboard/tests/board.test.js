@@ -95,7 +95,7 @@ test("renderCard escapes the feature text", () => {
 });
 
 test("renderCard shows id, slug, date, branch, round and age", () => {
-  const html = board.renderCard(makeJob({ round: 1 }));
+  const html = board.renderCard(makeJob({ round: 1, stage_since: undefined }));
   assert.match(html, /001/);
   assert.match(html, /fix-import/);
   assert.match(html, /2026-10-13/);
@@ -231,7 +231,7 @@ test("a cancelled job in the needs-you list offers only cleanup", () => {
 });
 
 test("the merged column keeps only the last spec cards but counts all", () => {
-  const specs = Array.from({ length: 13 }, (_, n) => makeSpec({ series_id: `S${n + 1}`, stage: "merged" }));
+  const specs = Array.from({ length: 13 }, (_, n) => makeSpec({ series_id: `S${n + 1}`, stage: "merged", stage_since: n + 1 }));
   const html = board.renderBoard(makeState([], { specs }));
   assert.match(html, /column-merged"><h2>Merged<span class="sub">[^<]*<\/span><span class="count">13<\/span>/);
   assert.equal((html.match(/data-spec="/g) || []).length, 10);

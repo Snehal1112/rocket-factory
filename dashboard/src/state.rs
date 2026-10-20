@@ -461,6 +461,7 @@ mod tests {
         assert_eq!(states, vec!["building", "waiting"]);
         let json = serde_json::to_value(&view)?;
         assert_eq!(json["specs"][0]["plans"][1]["job_id"], "002");
+        assert!(json["specs"][0]["stage_since"].is_number());
         assert_eq!(
             json["jobs"].as_array().map(Vec::len),
             Some(3),
