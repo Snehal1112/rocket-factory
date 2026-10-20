@@ -348,3 +348,29 @@ fn cancel_clears_the_saved_task_session() {
     assert!(job.cancelled);
     assert_eq!(job.task_session, None);
 }
+
+#[test]
+fn cancel_clears_builder_last() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        Duration::from_secs(5),
+    );
+    store
+        .update_job("001", |j| {
+            j.builder_last = Some(factory_core::BuilderLast {
+                task: 1,
+                id: "sess-old".to_string(),
+                ended_at: 1,
+                end_ctx: 5,
+            });
+            Ok(())
+        })
+        .expect("seed builder_last");
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let board = store.load().expect("load board");
+    let job = board.jobs.iter().find(|j| j.id == "001").expect("job 001");
+    assert!(job.cancelled);
+    assert_eq!(job.builder_last, None);
+}

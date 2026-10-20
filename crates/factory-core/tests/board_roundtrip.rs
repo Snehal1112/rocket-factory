@@ -116,6 +116,15 @@ fn a_board_without_task_session_loads() {
 }
 
 #[test]
+fn a_board_without_builder_last_loads_and_omits_it() {
+    let board = Board::load(Path::new(FIXTURE)).expect("board loads");
+    assert!(board.jobs.iter().all(|j| j.builder_last.is_none()));
+    assert!(!serde_json::to_string(&board)
+        .expect("json")
+        .contains("builder_last"));
+}
+
+#[test]
 fn spec_warning_is_optional_on_a_job() {
     let mut j = factory_core::Job::new("001", "d", "s", "2026-10-18", "f", 1.0);
     assert!(!serde_json::to_string(&j)
