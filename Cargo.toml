@@ -28,5 +28,7 @@ tempfile = "3"
 tiny_http = "0.12"
 # Process lookups (alive, zombie, start time). Pinned: 0.39 needs Rust 1.95.
 sysinfo = { version = "=0.38.4", default-features = false, features = ["system"] }
+# Preset manifest hashes. Pinned to the version in the local registry.
+sha2 = "=0.10.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "registry", "fmt", "std"] }
