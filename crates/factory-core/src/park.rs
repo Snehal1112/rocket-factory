@@ -26,6 +26,7 @@ pub enum ParkKind {
     BuilderBlocked,
     BuilderCommitted,
     NothingChanged,
+    BuilderTampered,
     CommitFailed,
     NoChecks,
     NoTests,
@@ -44,6 +45,7 @@ impl ParkKind {
             ParkKind::BuilderBlocked => "builder-blocked",
             ParkKind::BuilderCommitted => "builder-committed",
             ParkKind::NothingChanged => "nothing-changed",
+            ParkKind::BuilderTampered => "builder-tampered",
             ParkKind::CommitFailed => "commit-failed",
             ParkKind::NoChecks => "no-checks",
             ParkKind::NoTests => "no-tests",
@@ -85,7 +87,7 @@ impl ParkKind {
             | ParkKind::NoChecks
             | ParkKind::NoTests => vec![approve, rework],
             ParkKind::BudgetStopped => vec![approve, cancel],
-            ParkKind::NothingChanged => vec![rework, cancel],
+            ParkKind::NothingChanged | ParkKind::BuilderTampered => vec![rework, cancel],
             ParkKind::Other => vec![approve, rework, cancel],
         }
     }
@@ -180,8 +182,17 @@ mod tests {
         assert_eq!(ParkKind::BuilderBlocked.as_str(), "builder-blocked");
         assert_eq!(ParkKind::BuilderCommitted.as_str(), "builder-committed");
         assert_eq!(ParkKind::NothingChanged.as_str(), "nothing-changed");
+        assert_eq!(ParkKind::BuilderTampered.as_str(), "builder-tampered");
         assert_eq!(ParkKind::CommitFailed.as_str(), "commit-failed");
         assert_eq!(ParkKind::Other.as_str(), "other");
+    }
+
+    #[test]
+    fn builder_tampered_offers_rework_and_cancel_only() {
+        assert_eq!(
+            ParkKind::BuilderTampered.next("007"),
+            vec!["factory rework 007 <note>", "factory cancel 007"]
+        );
     }
 
     #[test]

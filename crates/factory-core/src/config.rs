@@ -298,8 +298,10 @@ fn expand_home(path: &str, home: Option<&str>) -> Option<PathBuf> {
 }
 
 /// Programs that no builder allowlist entry may name, and that are never derived.
-pub const NEVER_ALLOWED_PROGRAMS: [&str; 9] = [
-    "git", "rm", "rmdir", "curl", "sudo", "sh", "bash", "env", "xargs",
+pub const NEVER_ALLOWED_PROGRAMS: [&str; 25] = [
+    "git", "rm", "rmdir", "curl", "sudo", "sh", "bash", "env", "xargs", "zsh", "dash", "ksh",
+    "fish", "busybox", "source", ".", "eval", "exec", "command", "timeout", "nice", "nohup",
+    "time", "stdbuf", "setsid",
 ];
 
 /// The only git subcommands a `builder_allow` entry may name.
@@ -322,17 +324,22 @@ fn check_builder_allow(entry: &str) -> Result<(), String> {
         .and_then(|rest| rest.strip_suffix(')'))
         .ok_or_else(|| form.to_string())?;
     let command = inner.strip_suffix(":*").unwrap_or(inner);
-    if ["&&", "||", ";", "|", ">", "<", "`", "$("]
+    if ["&", "|", ";", ">", "<", "`", "$("]
         .iter()
         .any(|op| command.contains(op))
     {
         return Err("must be one plain command, without shell operators".into());
     }
-    let mut tokens = Vec::new();
+    if command.contains(['"', '\'', '\\', '*', '?']) {
+        return Err("must not contain quotes, backslashes or wildcards".into());
+    }
+    let mut tokens: Vec<&str> = Vec::new();
     let mut words = command.split_whitespace();
     while let Some(word) = words.next() {
         if word == "-C" {
             words.next();
+        } else if tokens.is_empty() && is_env_assignment(word) {
+            continue;
         } else {
             tokens.push(word);
         }
@@ -340,14 +347,45 @@ fn check_builder_allow(entry: &str) -> Result<(), String> {
     let Some(first) = tokens.first() else {
         return Err("needs a command".into());
     };
-    let program = first.rsplit('/').next().unwrap_or(first);
-    if program != "git" && NEVER_ALLOWED_PROGRAMS.contains(&program) {
-        return Err(format!("{program} is never allowed"));
-    }
-    if program == "git" && !tokens.get(1).is_some_and(|w| READ_ONLY_GIT.contains(w)) {
-        return Err("git is allowed only for status, diff, log, show and rev-parse".into());
+    let program = first.rsplit('/').next().unwrap_or(first).to_lowercase();
+    if program == "git" {
+        let read_only = tokens
+            .get(1)
+            .is_some_and(|w| READ_ONLY_GIT.contains(&w.to_lowercase().as_str()));
+        if !read_only {
+            return Err("git is allowed only for status, diff, log, show and rev-parse".into());
+        }
+    } else if NEVER_ALLOWED_PROGRAMS.contains(&program.as_str()) || !builder_program_ok(first) {
+        return Err(format!("{program} is not allowed"));
     }
     Ok(())
+}
+
+/// True when `word` is a program a builder may be granted: plain characters, and a basename
+/// (lowercased) that is not in the never list.
+pub fn builder_program_ok(word: &str) -> bool {
+    if word.is_empty()
+        || !word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
+    {
+        return false;
+    }
+    let base = word.rsplit('/').next().unwrap_or(word).to_lowercase();
+    !base.is_empty() && !NEVER_ALLOWED_PROGRAMS.contains(&base.as_str())
+}
+
+/// True for a `NAME=value` word, where NAME is letters, digits and `_` and does not start with
+/// a digit.
+pub fn is_env_assignment(word: &str) -> bool {
+    match word.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty()
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        None => false,
+    }
 }
 
 /// A branch name git accepts, and not one of the factory's own job branches.
@@ -470,10 +508,68 @@ mod tests {
     }
 
     #[test]
+    fn builder_allow_rejects_the_bypass_forms() {
+        for entry in [
+            "Bash(*)",
+            "Bash(* :*)",
+            "Bash(g* push:*)",
+            "Bash(FOO=1 rm:*)",
+            "Bash(GIT_DIR=x git push:*)",
+            "Bash(\"rm\":*)",
+            "Bash('git' push)",
+            "Bash(\\rm:*)",
+            "Bash(RM:*)",
+            "Bash(Git push:*)",
+            "Bash(make & rm -rf x:*)",
+            "Bash(timeout 5 make:*)",
+            "Bash(Timeout 5 make:*)",
+            "Bash(zsh:*)",
+            "Bash(.:*)",
+            "Bash(source x:*)",
+            "Bash(eval x:*)",
+            "Bash(exec x:*)",
+            "Bash(command x:*)",
+            "Bash(nohup x:*)",
+        ] {
+            let err = Config::parse(&format!("builder_allow = [{entry:?}]\n")).expect_err(entry);
+            assert!(err.to_string().contains("builder_allow:"), "{entry}: {err}");
+        }
+    }
+
+    #[test]
+    fn builder_allow_still_accepts_plain_commands() {
+        for entry in [
+            "Bash(make:*)",
+            "Bash(Make:*)",
+            "Bash(FOO=1 make test:*)",
+            "Bash(git log:*)",
+            "Bash(git -C x log)",
+            "Bash(./scripts/test.sh:*)",
+            "Bash(cargo test -j4 -p x:*)",
+            "Bash(shellcheck:*)",
+        ] {
+            Config::parse(&format!("builder_allow = [{entry:?}]\n")).expect(entry);
+        }
+    }
+
+    #[test]
+    fn builder_program_ok_checks_chars_and_the_lowercased_basename() {
+        assert!(builder_program_ok("cargo"));
+        assert!(builder_program_ok("./scripts/t.sh"));
+        for word in ["", "a*b", "a b", "a(b)", "RM", "/bin/Rm", ".", "timeout"] {
+            assert!(!builder_program_ok(word), "{word}");
+        }
+    }
+
+    #[test]
     fn never_allowed_and_read_only_lists_are_exact() {
         assert_eq!(
             NEVER_ALLOWED_PROGRAMS,
-            ["git", "rm", "rmdir", "curl", "sudo", "sh", "bash", "env", "xargs"]
+            [
+                "git", "rm", "rmdir", "curl", "sudo", "sh", "bash", "env", "xargs", "zsh", "dash",
+                "ksh", "fish", "busybox", "source", ".", "eval", "exec", "command", "timeout",
+                "nice", "nohup", "time", "stdbuf", "setsid"
+            ]
         );
         assert_eq!(
             READ_ONLY_GIT,
