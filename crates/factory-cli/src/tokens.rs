@@ -39,6 +39,10 @@ pub struct UsageRecord {
     pub cache_creation_1h: Option<u64>,
     /// Run duration in seconds, `None` on old lines.
     pub secs: Option<u64>,
+    /// Cache creation of the first turn, `None` on old lines.
+    pub start_cc: Option<u64>,
+    /// Cache read of the first turn, `None` on old lines.
+    pub start_cr: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -175,12 +179,54 @@ impl ResumedRun {
     }
 }
 
+/// Cold-start figures of one role. Start sums cover fresh runs with start fields only.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RoleCold {
+    pub role: String,
+    pub fresh: u64,
+    pub resumed: u64,
+    pub covered: u64,
+    pub start_ctx: u64,
+    pub first_cc: u64,
+    pub first_cr: u64,
+    pub creation: u64,
+}
+
+impl RoleCold {
+    /// Average first-turn context of the covered runs, `None` without any.
+    pub fn avg_start(&self) -> Option<u64> {
+        self.start_ctx.checked_div(self.covered)
+    }
+
+    /// Share of the creation that the first turn wrote, `None` when creation is 0.
+    pub fn first_cc_share(&self) -> Option<f64> {
+        if self.creation == 0 {
+            None
+        } else {
+            Some(self.first_cc as f64 / self.creation as f64)
+        }
+    }
+}
+
+/// Cold-start figures of one job.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct JobCold {
+    pub job: String,
+    pub cold: u64,
+    pub resumed: u64,
+    pub first_cc: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CacheReport {
     pub runs: u64,
     pub days: Option<u32>,
     pub roles: Vec<RoleCache>,
     pub resumed: Vec<ResumedRun>,
+    pub cold_roles: Vec<RoleCold>,
+    pub cold_jobs: Vec<JobCold>,
+    pub fresh_runs: u64,
+    pub fresh_covered: u64,
 }
 
 /// Builds the cache report. Gaps use all rows of a job, `days` only limits what is counted.
@@ -191,6 +237,8 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
         ..Default::default()
     };
     let mut roles: BTreeMap<String, RoleCache> = BTreeMap::new();
+    let mut cold_roles: BTreeMap<String, RoleCold> = BTreeMap::new();
+    let mut cold_jobs: BTreeMap<String, JobCold> = BTreeMap::new();
     for rows in jobs {
         for (i, r) in rows.iter().enumerate() {
             if cutoff.is_some_and(|c| r.ts < c) {
@@ -211,6 +259,33 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
                     .five_min
                     .saturating_add(r.cache_creation.saturating_sub(h));
             }
+            let cold_role = cold_roles
+                .entry(r.role.clone())
+                .or_insert_with(|| RoleCold {
+                    role: r.role.clone(),
+                    ..Default::default()
+                });
+            let cold_job = cold_jobs.entry(r.job.clone()).or_insert_with(|| JobCold {
+                job: r.job.clone(),
+                ..Default::default()
+            });
+            if r.resumed {
+                cold_role.resumed += 1;
+                cold_job.resumed += 1;
+            } else {
+                cold_role.fresh += 1;
+                cold_job.cold += 1;
+                report.fresh_runs += 1;
+                if let (Some(cc), Some(cr)) = (r.start_cc, r.start_cr) {
+                    report.fresh_covered += 1;
+                    cold_role.covered += 1;
+                    cold_role.start_ctx = cold_role.start_ctx.saturating_add(r.start_ctx);
+                    cold_role.first_cc = cold_role.first_cc.saturating_add(cc);
+                    cold_role.first_cr = cold_role.first_cr.saturating_add(cr);
+                    cold_role.creation = cold_role.creation.saturating_add(r.cache_creation);
+                    cold_job.first_cc = cold_job.first_cc.saturating_add(cc);
+                }
+            }
             if r.resumed {
                 let prev = i.checked_sub(1).and_then(|p| rows.get(p));
                 let gap = match (r.secs, prev) {
@@ -229,6 +304,8 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
         }
     }
     report.roles = roles.into_values().collect();
+    report.cold_roles = cold_roles.into_values().collect();
+    report.cold_jobs = cold_jobs.into_values().collect();
     report
 }
 
@@ -279,6 +356,8 @@ pub fn render_cache(r: &CacheReport) -> String {
     out.push('\n');
     if r.resumed.is_empty() {
         out.push_str("no resumed runs\n");
+        out.push('\n');
+        out.push_str(&render_cold(r));
         return out;
     }
     out.push_str("RESUMED RUNS\n");
@@ -314,6 +393,49 @@ pub fn render_cache(r: &CacheReport) -> String {
         "resumed runs: {}, idle over 5m: {idle}, of those rewrote: {idle_rewrote}, rewrote with gap unknown: {unknown}\n",
         r.resumed.len()
     ));
+    out.push('\n');
+    out.push_str(&render_cold(r));
+    out
+}
+
+/// The COLD STARTS section: first-turn cache figures of fresh runs.
+fn render_cold(r: &CacheReport) -> String {
+    let mut out = String::from("COLD STARTS\n");
+    if r.fresh_covered == 0 {
+        out.push_str("no runs with start fields yet\n");
+        return out;
+    }
+    out.push_str(&format!(
+        "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {}\n",
+        "ROLE", "FRESH", "RESUMED", "AVG-START", "FIRST-CC", "FIRST-CR", "FIRST-CC%"
+    ));
+    for c in &r.cold_roles {
+        let avg = c.avg_start().map_or("-".to_string(), |a| a.to_string());
+        let share = c
+            .first_cc_share()
+            .map_or("-".to_string(), |s| format!("{:.1}%", s * 100.0));
+        out.push_str(&format!(
+            "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {}\n",
+            c.role, c.fresh, c.resumed, avg, c.first_cc, c.first_cr, share
+        ));
+    }
+    if r.fresh_covered < r.fresh_runs {
+        out.push_str(&format!(
+            "start fields cover {} of {} fresh runs\n",
+            r.fresh_covered, r.fresh_runs
+        ));
+    }
+    out.push('\n');
+    out.push_str(&format!(
+        "{:<5} {:<5} {:<8} {}\n",
+        "JOB", "COLD", "RESUMED", "FIRST-CC"
+    ));
+    for j in &r.cold_jobs {
+        out.push_str(&format!(
+            "{:<5} {:<5} {:<8} {}\n",
+            j.job, j.cold, j.resumed, j.first_cc
+        ));
+    }
     out
 }
 
@@ -351,6 +473,8 @@ pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Vec<UsageRecord>, 
             ts: n("ts"),
             cache_creation_1h: v["cache_creation_1h"].as_u64(),
             secs: v["secs"].as_u64(),
+            start_cc: v["start_cc"].as_u64(),
+            start_cr: v["start_cr"].as_u64(),
         });
     }
     Ok(out)
@@ -371,6 +495,140 @@ mod tests {
             usage_v: 2,
             ..Default::default()
         }
+    }
+
+    fn cold_rec(
+        job: &str,
+        role: &str,
+        resumed: bool,
+        ts: u64,
+        creation: u64,
+        start: Option<(u64, u64)>,
+    ) -> UsageRecord {
+        UsageRecord {
+            job: job.into(),
+            role: role.into(),
+            resumed,
+            ts,
+            cache_creation: creation,
+            start_ctx: start.map_or(0, |(c, r)| c + r),
+            start_cc: start.map(|(c, _)| c),
+            start_cr: start.map(|(_, r)| r),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cold_report_counts_fresh_runs_only() {
+        let rows = vec![
+            cold_rec("001", "builder", false, 10, 1000, Some((400, 100))),
+            cold_rec("001", "builder", false, 20, 3000, Some((600, 0))),
+            cold_rec("001", "builder", true, 30, 5000, Some((9000, 9000))),
+        ];
+        let r = cache_report(&[rows], None, 100);
+        let b = r
+            .cold_roles
+            .iter()
+            .find(|c| c.role == "builder")
+            .expect("builder");
+        assert_eq!((b.fresh, b.resumed, b.covered), (2, 1, 2));
+        assert_eq!((b.first_cc, b.first_cr, b.creation), (1000, 100, 4000));
+        assert_eq!(b.avg_start(), Some(550));
+        assert_eq!(b.first_cc_share(), Some(0.25));
+    }
+
+    #[test]
+    fn cold_report_counts_cold_and_resumed_per_job() {
+        let two = vec![
+            cold_rec("002", "builder", false, 10, 500, Some((200, 0))),
+            cold_rec("002", "builder", false, 20, 500, None),
+            cold_rec("002", "builder", true, 30, 500, None),
+        ];
+        let one = vec![cold_rec("001", "committer", false, 5, 100, None)];
+        let r = cache_report(&[two, one], None, 100);
+        let ids: Vec<&str> = r.cold_jobs.iter().map(|j| j.job.as_str()).collect();
+        assert_eq!(ids, vec!["001", "002"]);
+        let j = &r.cold_jobs[1];
+        assert_eq!((j.cold, j.resumed, j.first_cc), (2, 1, 200));
+    }
+
+    #[test]
+    fn cold_report_respects_days() {
+        let rows = vec![
+            cold_rec("001", "builder", false, 10, 100, Some((1, 1))),
+            cold_rec("001", "builder", false, 90_000, 100, Some((1, 1))),
+        ];
+        let r = cache_report(&[rows], Some(1), 100_000);
+        assert_eq!(r.fresh_runs, 1);
+        assert_eq!(r.cold_roles[0].fresh, 1);
+    }
+
+    #[test]
+    fn a_fresh_run_without_start_fields_counts_but_is_not_covered() {
+        let rows = vec![cold_rec("001", "builder", false, 10, 100, None)];
+        let r = cache_report(&[rows], None, 100);
+        let b = &r.cold_roles[0];
+        assert_eq!((b.fresh, b.covered), (1, 0));
+        assert_eq!(b.avg_start(), None);
+        assert_eq!((r.fresh_runs, r.fresh_covered), (1, 0));
+    }
+
+    #[test]
+    fn cold_share_is_a_dash_without_creation() {
+        let rows = vec![cold_rec("001", "builder", false, 10, 0, Some((5, 5)))];
+        let r = cache_report(&[rows], None, 100);
+        assert_eq!(r.cold_roles[0].first_cc_share(), None);
+    }
+
+    #[test]
+    fn cold_section_prints_without_resumed_runs() {
+        let rows = vec![cold_rec("001", "builder", false, 10, 1000, Some((250, 0)))];
+        let out = render_cache(&cache_report(&[rows], None, 100));
+        assert!(out.contains("COLD STARTS"), "{out}");
+        assert!(out.contains("no resumed runs"), "{out}");
+        assert!(out.contains("25.0%"), "{out}");
+    }
+
+    #[test]
+    fn cold_section_says_when_no_start_fields_exist() {
+        let rows = vec![cold_rec("001", "builder", false, 10, 1000, None)];
+        let out = render_cache(&cache_report(&[rows], None, 100));
+        assert!(out.contains("no runs with start fields yet"), "{out}");
+        assert!(!out.contains("FIRST-CC%"), "{out}");
+    }
+
+    #[test]
+    fn cold_section_notes_runs_without_start_fields() {
+        let rows = vec![
+            cold_rec("001", "builder", false, 10, 1000, Some((250, 0))),
+            cold_rec("001", "builder", false, 20, 1000, None),
+        ];
+        let out = render_cache(&cache_report(&[rows], None, 100));
+        assert!(
+            out.contains("start fields cover 1 of 2 fresh runs"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn cold_section_has_no_coverage_note_when_all_covered() {
+        let rows = vec![
+            cold_rec("001", "builder", false, 10, 1000, Some((250, 0))),
+            cold_rec("001", "builder", false, 20, 1000, Some((250, 0))),
+        ];
+        let out = render_cache(&cache_report(&[rows], None, 100));
+        assert!(!out.contains("start fields cover"), "{out}");
+    }
+
+    #[test]
+    fn cold_section_lists_jobs_in_id_order() {
+        let a = vec![cold_rec("002", "builder", false, 10, 1000, Some((250, 0)))];
+        let b = vec![cold_rec("001", "builder", false, 10, 1000, Some((250, 0)))];
+        let out = render_cache(&cache_report(&[a, b], None, 100));
+        let jobs = out.split("JOB   COLD").nth(1).expect("job table");
+        let p1 = jobs.find("001").expect("001");
+        let p2 = jobs.find("002").expect("002");
+        assert!(p1 < p2, "{out}");
     }
 
     #[test]
@@ -408,6 +666,48 @@ mod tests {
         assert_eq!(records[1].start_ctx, 77);
         assert!(under_counted(&records));
         Ok(())
+    }
+
+    #[test]
+    fn load_usage_reads_the_start_fields() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(
+            &path,
+            "{\"job\":\"001\",\"role\":\"builder\",\"start_cc\":300,\"start_cr\":50,\"usage_v\":3}\n",
+        )
+        .expect("write usage");
+        let records = load_usage(&path, "001").expect("load");
+        assert_eq!(records[0].start_cc, Some(300));
+        assert_eq!(records[0].start_cr, Some(50));
+    }
+
+    #[test]
+    fn old_lines_have_no_start_fields() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(
+            &path,
+            "{\"job\":\"001\",\"role\":\"builder\",\"usage_v\":2}\n",
+        )
+        .expect("write usage");
+        let records = load_usage(&path, "001").expect("load");
+        assert_eq!(records[0].start_cc, None);
+        assert_eq!(records[0].start_cr, None);
+    }
+
+    #[test]
+    fn a_non_numeric_start_field_is_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(
+            &path,
+            "{\"job\":\"001\",\"role\":\"builder\",\"start_cc\":\"many\",\"start_cr\":null}\n",
+        )
+        .expect("write usage");
+        let records = load_usage(&path, "001").expect("load");
+        assert_eq!(records[0].start_cc, None);
+        assert_eq!(records[0].start_cr, None);
     }
 
     #[test]

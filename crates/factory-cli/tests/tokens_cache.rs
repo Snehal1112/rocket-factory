@@ -62,6 +62,20 @@ fn cache_report_reads_every_job_of_the_project() {
 }
 
 #[test]
+fn tokens_cache_prints_the_cold_starts_section() {
+    let fx = Fixture::new();
+    new_job(&fx, "a");
+    let line = concat!(
+        r#"{"job":"001","role":"builder","input":10,"cache_creation":1000,"output":50,"cache_read":9000,"usage_v":3,"resumed":false,"round":1,"ts":1000,"secs":20,"start_cc":400,"start_cr":100}"#,
+        "\n",
+    );
+    std::fs::write(job_folder(&fx, "001").join("usage.jsonl"), line).expect("write usage");
+    let out = fx.run(&["tokens", "--cache"]).expect("cache report");
+    assert!(out.contains("COLD STARTS"), "{out}");
+    assert!(out.contains("builder"), "{out}");
+}
+
+#[test]
 fn cache_report_writes_no_file() {
     let fx = Fixture::new();
     new_job(&fx, "a");
