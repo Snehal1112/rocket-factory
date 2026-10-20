@@ -36,6 +36,8 @@ pub struct AgentSpec {
     pub resume: Option<String>,
     pub permission_mode: Option<String>,
     pub allowed_tools: Vec<String>,
+    /// Tool rules the run may never use, sent as `--disallowedTools`.
+    pub disallowed_tools: Vec<String>,
     pub max_turns: Option<u32>,
     /// Job budget in weighted tokens. `None` means no budget kill.
     pub budget_weighted: Option<u64>,
@@ -66,6 +68,7 @@ impl AgentSpec {
             resume: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
             max_turns: None,
             budget_weighted: None,
             used_before: 0,
@@ -106,6 +109,9 @@ impl AgentSpec {
         }
         if !self.allowed_tools.is_empty() {
             push("--allowedTools", &self.allowed_tools.join(","));
+        }
+        if !self.disallowed_tools.is_empty() {
+            push("--disallowedTools", &self.disallowed_tools.join(","));
         }
         if let Some(t) = &self.tools {
             push("--tools", t);

@@ -66,6 +66,25 @@ fn args_reach_the_child_and_prompt_goes_to_stdin() {
 }
 
 #[test]
+fn builder_run_receives_permission_mode_allow_and_deny_flags() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let mut s = spec("args", tmp.path());
+    s.permission_mode = Some("acceptEdits".into());
+    s.allowed_tools = vec!["Read".into()];
+    s.disallowed_tools = vec!["Edit(//j/**)".into()];
+    s.add_dirs = vec![tmp.path().to_path_buf()];
+    let run = runner(EventSink::null("001")).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Done);
+    assert!(
+        run.result_text.contains(
+            "--permission-mode acceptEdits --allowedTools Read --disallowedTools Edit(//j/**) --add-dir"
+        ),
+        "args: {}",
+        run.result_text
+    );
+}
+
+#[test]
 fn error_result_is_failed() {
     let tmp = tempfile::tempdir().expect("tmp");
     let run = runner(EventSink::null("001")).run(&spec("error", tmp.path()));

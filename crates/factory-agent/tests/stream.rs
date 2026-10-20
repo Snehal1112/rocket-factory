@@ -112,6 +112,74 @@ fn caps(agent: bool, max_turns: bool, append: bool) -> Caps {
 }
 
 #[test]
+fn args_of_a_default_spec_are_unchanged() {
+    let spec = AgentSpec::new("001", "reviewer", "/w", "p");
+    assert_eq!(
+        spec.args(&caps(true, true, true)),
+        vec!["-p", "--output-format", "stream-json", "--verbose"]
+    );
+    let mut full = AgentSpec::new("001", "builder", "/w", "p");
+    full.strict_mcp = true;
+    full.model = Some("sonnet".into());
+    full.resume = Some("s1".into());
+    full.permission_mode = Some("dontAsk".into());
+    full.allowed_tools = vec!["Read".into(), "Bash(ls:*)".into()];
+    full.tools = Some("Read,Bash".into());
+    full.add_dirs = vec!["/kb".into()];
+    full.agent = Some("factory-builder".into());
+    full.max_turns = Some(40);
+    assert_eq!(
+        full.args(&caps(true, true, true)),
+        vec![
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--strict-mcp-config",
+            "--model",
+            "sonnet",
+            "--resume",
+            "s1",
+            "--permission-mode",
+            "dontAsk",
+            "--allowedTools",
+            "Read,Bash(ls:*)",
+            "--tools",
+            "Read,Bash",
+            "--add-dir",
+            "/kb",
+            "--agent",
+            "factory-builder",
+            "--max-turns",
+            "40",
+        ]
+    );
+}
+
+#[test]
+fn disallowed_tools_are_sent_after_allowed_tools() {
+    let mut spec = AgentSpec::new("001", "builder", "/w", "p");
+    spec.allowed_tools = vec!["Read".into()];
+    spec.disallowed_tools = vec!["Edit(//j/**)".into(), "Write(//j/**)".into()];
+    let args = spec.args(&caps(true, true, true));
+    let i = args
+        .iter()
+        .position(|a| a == "--allowedTools")
+        .expect("allowedTools flag");
+    assert_eq!(args[i + 2], "--disallowedTools");
+    assert_eq!(args[i + 3], "Edit(//j/**),Write(//j/**)");
+}
+
+#[test]
+fn empty_disallowed_tools_add_no_flag() {
+    let spec = AgentSpec::new("001", "builder", "/w", "p");
+    assert!(!spec
+        .args(&caps(true, true, true))
+        .iter()
+        .any(|a| a == "--disallowedTools"));
+}
+
+#[test]
 fn args_full_spec() {
     let mut spec = AgentSpec::new("001", "builder", "/w", "do it");
     spec.agent = Some("factory-builder".into());
