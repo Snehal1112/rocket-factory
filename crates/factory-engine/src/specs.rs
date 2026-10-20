@@ -91,6 +91,26 @@ impl Engine<'_> {
         spec
     }
 
+    /// Gives a builder spec its permission mode, allowlist, deny rules and the job folder as an extra directory.
+    /// The spec stays as it is when `builder_permissions` is off, or when the job folder path holds a glob character.
+    pub(crate) fn with_builder_permissions(&self, mut spec: AgentSpec) -> AgentSpec {
+        if !self.config.builder_permissions {
+            return spec;
+        }
+        let job_dir = self
+            .job_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.job_dir.clone());
+        if job_dir.to_string_lossy().contains(['*', '?', '[', '{']) {
+            return spec;
+        }
+        spec.permission_mode = Some("acceptEdits".to_string());
+        spec.allowed_tools = crate::permissions::builder_allowed_tools(&self.config);
+        spec.disallowed_tools = crate::permissions::builder_denied_tools(&job_dir);
+        spec.add_dirs.push(job_dir);
+        spec
+    }
+
     /// The headless builder for the first run of a job.
     pub(crate) fn builder_first_spec(&self, job: &JobView, cwd: &Path) -> AgentSpec {
         let spec_line = self.spec_line();
@@ -114,6 +134,7 @@ impl Engine<'_> {
         spec.strict_mcp = true;
         spec.tools = Some(BUILDER_TOOLS.to_string());
         spec.add_dirs = self.kb_dirs();
+        let spec = self.with_builder_permissions(spec);
         self.with_limits(spec, &self.config.builder_model)
     }
 
@@ -208,6 +229,7 @@ impl Engine<'_> {
         spec.strict_mcp = true;
         spec.tools = Some(BUILDER_TOOLS.to_string());
         spec.add_dirs = self.kb_dirs();
+        let spec = self.with_builder_permissions(spec);
         self.with_limits(spec, &self.config.builder_model)
     }
 
@@ -252,6 +274,7 @@ impl Engine<'_> {
         spec.strict_mcp = true;
         spec.tools = Some(BUILDER_TOOLS.to_string());
         spec.add_dirs = self.kb_dirs();
+        let spec = self.with_builder_permissions(spec);
         self.with_limits(spec, &self.config.builder_model)
     }
 }
