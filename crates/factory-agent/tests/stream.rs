@@ -411,6 +411,37 @@ fn start_ctx_is_zero_without_messages() {
 }
 
 #[test]
+fn start_cache_is_the_first_messages_creation_and_read() {
+    let state = feed_lines(&[MSG_1, MSG_2]);
+    assert_eq!(state.start_cache(), (100, 1000));
+}
+
+#[test]
+fn start_cache_is_zero_without_messages() {
+    assert_eq!(StreamState::default().start_cache(), (0, 0));
+}
+
+#[test]
+fn start_cache_is_zero_for_a_first_message_without_usage() {
+    let line = r#"{"type":"assistant","message":{"id":"m","role":"assistant","content":[]}}"#;
+    let state = feed_lines(&[line]);
+    assert_eq!(state.start_cache(), (0, 0));
+}
+
+#[test]
+fn start_cache_adds_up_with_start_ctx() {
+    let state = feed_lines(&[MSG_1]);
+    let (c, r) = state.start_cache();
+    assert_eq!(c + r, state.start_ctx());
+}
+
+#[test]
+fn a_done_run_has_zero_start_cache() {
+    let run = factory_agent::AgentRun::done("x");
+    assert!(run.start_cc == 0 && run.start_cr == 0);
+}
+
+#[test]
 fn start_ctx_does_not_overflow() {
     let big = format!(
         r#"{{"type":"assistant","message":{{"id":"m","role":"assistant","content":[],"usage":{{"input_tokens":0,"cache_creation_input_tokens":{max},"cache_read_input_tokens":{max},"output_tokens":0}}}}}}"#,

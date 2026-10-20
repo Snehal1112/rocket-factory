@@ -32,6 +32,8 @@ pub struct AgentRun {
     pub stop_reason: StopReason,
     pub turns: u32,
     pub start_ctx: u64,
+    pub start_cc: u64,
+    pub start_cr: u64,
     pub exit_code: Option<i32>,
     pub error: Option<String>,
 }
@@ -46,6 +48,8 @@ impl AgentRun {
             stop_reason: StopReason::Done,
             turns: 0,
             start_ctx: 0,
+            start_cc: 0,
+            start_cr: 0,
             exit_code: Some(0),
             error: None,
         }

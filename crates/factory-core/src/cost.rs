@@ -375,6 +375,12 @@ mod tests {
     }
 
     #[test]
+    fn a_usage_v_3_line_is_not_approximate() {
+        let text = "{\"job\":\"001\",\"role\":\"builder\",\"input\":1,\"cache_creation\":1,\"output\":1,\"cache_read\":10,\"start_cc\":1,\"start_cr\":2,\"usage_v\":3}\n";
+        assert!(!usage_summary(text, "001").approx);
+    }
+
+    #[test]
     fn usage_summary_of_nothing_is_empty_and_not_approximate() {
         let s = usage_summary("", "001");
         assert_eq!(s.runs, 0);

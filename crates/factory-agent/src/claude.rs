@@ -234,6 +234,7 @@ impl ClaudeRunner {
         });
         self.sink.emit(&stop_event);
 
+        let (start_cc, start_cr) = state.start_cache();
         Ok(AgentRun {
             session_id: state.session_id.clone(),
             usage,
@@ -242,6 +243,8 @@ impl ClaudeRunner {
             stop_reason,
             turns: state.turns(),
             start_ctx: state.start_ctx(),
+            start_cc,
+            start_cr,
             exit_code,
             error,
         })
