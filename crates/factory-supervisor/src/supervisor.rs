@@ -192,6 +192,7 @@ pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .unwrap_or("");
+    // An adopted child has no exit code, so its last line decides. A series and approve print merged only at the very end, so that line is a finished result.
     // A merge ends with exit code 0. A `merged` line next to another code is not a result.
     let clean_exit = matches!(code, None | Some(Some(0)));
     if clean_exit && (last == "merged" || last.starts_with("merged ")) {
@@ -852,6 +853,27 @@ mod tests {
             }
         );
         assert!(matches!(classify("", "", None), Outcome::Lost { .. }));
+    }
+
+    #[test]
+    fn an_adopted_child_with_a_merged_line_is_merged() {
+        use factory_core::outcome_lines::merged_line;
+        assert_eq!(
+            classify(&format!("{}\n", merged_line(None)), "", None),
+            Outcome::Merged
+        );
+        assert_eq!(
+            classify(&format!("{}\n", merged_line(Some("abc1234"))), "", None),
+            Outcome::Merged
+        );
+        assert_eq!(
+            classify("plan 1 of 2\nmerged\n\n", "", None),
+            Outcome::Merged
+        );
+        assert!(matches!(
+            classify("merged\nplan 2 of 2\n", "", None),
+            Outcome::Lost { .. }
+        ));
     }
 
     #[test]

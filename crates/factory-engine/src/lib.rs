@@ -70,7 +70,7 @@ pub use permissions::{builder_allowed_tools, builder_denied_tools, restore_file}
 pub use planlint::{lint_plan, PlanLint};
 pub use ports::set_stage_logged;
 pub use project_lease::{
-    acquire_project_lease, force_release_project_lease, owner_pid, process_gone,
+    acquire_project_lease, force_release_project_lease, lease_owner_dead, owner_pid, process_gone,
     project_lease_status, release_project_lease, LeaseTake, ProjectLease, ProjectLeaseError,
     ProjectLeaseStatus,
 };

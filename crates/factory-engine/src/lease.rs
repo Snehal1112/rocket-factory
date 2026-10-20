@@ -1,5 +1,6 @@
 use factory_core::Job;
 
+use crate::lease_owner_dead;
 use crate::{BoardStore, StoreError};
 
 pub use factory_core::Lease;
@@ -13,12 +14,14 @@ pub enum LeaseError {
 }
 
 pub fn lease_is_live(job: &Job, now: f64) -> bool {
-    job.lease.as_ref().is_some_and(|l| l.expires > now)
+    job.lease
+        .as_ref()
+        .is_some_and(|l| l.expires > now && !lease_owner_dead(&l.owner))
 }
 
 fn check_free(job: &Job, owner: &str, now: f64) -> Result<(), LeaseError> {
     match &job.lease {
-        Some(l) if l.expires > now && l.owner != owner => Err(LeaseError::Held {
+        Some(l) if lease_is_live(job, now) && l.owner != owner => Err(LeaseError::Held {
             owner: l.owner.clone(),
             secs_left: (l.expires - now) as u64,
         }),
@@ -26,7 +29,7 @@ fn check_free(job: &Job, owner: &str, now: f64) -> Result<(), LeaseError> {
     }
 }
 
-/// Takes or renews the lease. An expired lease can be taken over by anyone.
+/// Takes or renews the lease. A lease that is expired, or whose driver process is gone, can be taken over by anyone.
 pub fn acquire_lease(
     store: &BoardStore,
     id: &str,
@@ -45,7 +48,7 @@ pub fn acquire_lease(
     })?
 }
 
-/// Drops the lease. Another owner's live lease is left alone and reported.
+/// Drops the lease. Another owner's live lease is left alone and reported; a dead owner's lease is not live.
 pub fn release_lease(
     store: &BoardStore,
     id: &str,
