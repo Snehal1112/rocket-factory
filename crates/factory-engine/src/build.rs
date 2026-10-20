@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use factory_agent::StopReason;
+use factory_agent::{SessionHook, StopReason};
 use factory_core::{
     agent_files_rel_dir, builder_rulings, builder_status, is_agent_file_name, parse_builder_status,
-    BuilderStatus, ParkKind, ParkPart, Stage, TaskState, AGENT_EXCLUDE_PATTERN,
+    BuilderStatus, ParkKind, ParkPart, Stage, TaskSession, TaskState, AGENT_EXCLUDE_PATTERN,
 };
 use factory_git::{CommitInfo, JobRef, Worktree};
 
@@ -11,7 +11,7 @@ use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
 use crate::park::{builder_blocked_parts, builder_stop_parts, part_from_file};
 use crate::ports::{git_err, now, short_sha, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
-use crate::{Engine, EngineError, StageOutcome};
+use crate::{BoardStore, Engine, EngineError, StageOutcome};
 
 /// The most characters of a builder reply kept in `builder-r{round}.md`.
 const REPLY_CAP: usize = 6000;
@@ -477,6 +477,28 @@ impl Engine<'_> {
         }
     }
 
+    /// A hook that saves the builder session of task `task` on the board while the run goes on.
+    /// It uses its own store, because the stream thread calls it. A failed write is logged and dropped.
+    fn session_hook(&self, task: u32, tip: &str) -> SessionHook {
+        let board_path = self.board_path.clone();
+        let job_id = self.job_id.clone();
+        let wait = self.lock_wait;
+        let tip = tip.to_string();
+        SessionHook::new(move |id| {
+            let saved = BoardStore::new(&board_path, wait).update_job(&job_id, |j| {
+                j.task_session = Some(TaskSession {
+                    task,
+                    id: id.to_string(),
+                    tip: tip.clone(),
+                });
+                Ok(())
+            });
+            if let Err(e) = saved {
+                tracing::warn!(event = "builder.session_save_failed", job_id = %job_id, task, msg = %e);
+            }
+        })
+    }
+
     /// Forgets the saved builder session once a builder run has returned.
     fn clear_task_session(&self) -> Result<(), EngineError> {
         self.update(|j| {
@@ -520,6 +542,7 @@ impl Engine<'_> {
             spec.prompt
                 .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
         }
+        spec.on_session = Some(self.session_hook(task.n, &tip));
         if saved.is_none() && job.task_session.is_some() {
             // The saved session belongs to another task or an older tip, so it is dropped.
             self.update(|j| {
@@ -549,6 +572,7 @@ impl Engine<'_> {
                 spec.prompt
                     .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
             }
+            spec.on_session = Some(self.session_hook(task.n, &tip));
             run = match self.run_builder_guarded(spec)? {
                 Ok(run) => run,
                 Err(parked) => {

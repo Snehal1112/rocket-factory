@@ -612,6 +612,7 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
         factory_engine::set_stage_logged(j, Stage::NeedsHuman, Some(&text), false, now)?;
         j.cancelled = true;
         j.lease = None;
+        j.task_session = None;
         Ok(())
     })?;
     // The reason is folded into one line, because the ledger takes one line.

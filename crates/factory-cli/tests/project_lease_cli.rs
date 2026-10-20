@@ -323,3 +323,28 @@ fn cleanup_removes_the_card_despite_a_dead_owner_lease() {
     );
     assert!(store.load().expect("load").jobs.is_empty());
 }
+
+#[test]
+fn cancel_clears_the_saved_task_session() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        Duration::from_secs(5),
+    );
+    store
+        .update_job("001", |j| {
+            j.task_session = Some(factory_core::TaskSession {
+                task: 1,
+                id: "sess-old".to_string(),
+                tip: "abc1234".to_string(),
+            });
+            Ok(())
+        })
+        .expect("seed session");
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let board = store.load().expect("load board");
+    let job = board.jobs.iter().find(|j| j.id == "001").expect("job 001");
+    assert!(job.cancelled);
+    assert_eq!(job.task_session, None);
+}

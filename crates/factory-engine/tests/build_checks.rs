@@ -2433,3 +2433,201 @@ fn a_blocked_resume_parks_without_a_fresh_run() {
     assert_eq!(builders[0].resume.as_deref(), Some("sess-old"));
     assert_eq!(fx.job().task_index, 0);
 }
+
+use std::sync::{Arc, Mutex};
+
+/// The board's `task_session` as the builder saw it during its run.
+type Seen = Arc<Mutex<Option<TaskSession>>>;
+
+/// A task builder that reports `id` through its session hook, notes the board's `task_session`,
+/// then writes `file`.
+fn session_effect(
+    board: std::path::PathBuf,
+    id: &'static str,
+    file: &'static str,
+    seen: Seen,
+) -> Effect {
+    Box::new(move |spec| {
+        spec.on_session
+            .as_ref()
+            .expect("task builders get a session hook")
+            .call(id);
+        let job = factory_core::Board::load(&board)
+            .expect("load")
+            .find("001")
+            .expect("job")
+            .clone();
+        *seen.lock().expect("seen") = job.task_session;
+        std::fs::write(spec.cwd.join(file), "x\n").expect("write change");
+        "done".to_string()
+    })
+}
+
+#[test]
+fn build_task_saves_the_session_while_the_builder_runs() {
+    let fx = two_task_fixture();
+    let seen: Seen = Arc::new(Mutex::new(None));
+    let runner = scripted_auto(vec![session_effect(
+        fx.board_path.clone(),
+        "sess-live",
+        "a.txt",
+        Arc::clone(&seen),
+    )]);
+    let out = fx.engine(&runner).build_stage().expect("task 1");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    let base = fx.job().base.clone().expect("base");
+    assert_eq!(
+        *seen.lock().expect("seen"),
+        Some(TaskSession {
+            task: 1,
+            id: "sess-live".to_string(),
+            tip: base,
+        })
+    );
+    assert_eq!(fx.job().task_session, None);
+    assert_eq!(fx.job().task_index, 1);
+}
+
+#[test]
+fn the_hook_writes_the_board_through_its_own_store() {
+    let fx = two_task_fixture();
+    let seen: Seen = Arc::new(Mutex::new(None));
+    let board = fx.board_path.clone();
+    let noted = Arc::clone(&seen);
+    let effect: Effect = Box::new(move |spec| {
+        let hook = spec.on_session.clone().expect("hook");
+        std::thread::spawn(move || hook.call("sess-thread"))
+            .join()
+            .expect("thread");
+        let job = factory_core::Board::load(&board)
+            .expect("load")
+            .find("001")
+            .expect("job")
+            .clone();
+        *noted.lock().expect("seen") = job.task_session;
+        std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![effect]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let base = fx.job().base.clone().expect("base");
+    assert_eq!(
+        *seen.lock().expect("seen"),
+        Some(TaskSession {
+            task: 1,
+            id: "sess-thread".to_string(),
+            tip: base,
+        })
+    );
+    assert_eq!(fx.job().task_session, None);
+}
+
+#[test]
+fn the_second_task_session_records_the_tip_after_the_first_commit() {
+    let mut fx = two_task_fixture();
+    fx.config.commit_batch = false;
+    let seen: Seen = Arc::new(Mutex::new(None));
+    let runner = scripted_auto(vec![
+        change_effect("a.txt", 3),
+        session_effect(
+            fx.board_path.clone(),
+            "sess-two",
+            "b.txt",
+            Arc::clone(&seen),
+        ),
+    ]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    let first = fx.repo.tip(&fx.job().branch).expect("tip after task 1");
+    e.build_stage().expect("task 2");
+    assert_ne!(Some(first.clone()), fx.job().base);
+    assert_eq!(
+        *seen.lock().expect("seen"),
+        Some(TaskSession {
+            task: 2,
+            id: "sess-two".to_string(),
+            tip: first,
+        })
+    );
+}
+
+#[test]
+fn the_session_is_cleared_when_the_run_returns_even_if_it_parks() {
+    let fx = two_task_fixture();
+    let seen: Seen = Arc::new(Mutex::new(None));
+    let board = fx.board_path.clone();
+    let noted = Arc::clone(&seen);
+    let effect: Effect = Box::new(move |spec| {
+        spec.on_session.as_ref().expect("hook").call("sess-live");
+        let job = factory_core::Board::load(&board)
+            .expect("load")
+            .find("001")
+            .expect("job")
+            .clone();
+        *noted.lock().expect("seen") = job.task_session;
+        std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
+        "BLOCKED: no schema".to_string()
+    });
+    let runner = scripted_auto(vec![effect]);
+    let out = fx.engine(&runner).build_stage().expect("task 1");
+    assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::BuilderBlocked);
+    assert_eq!(seen.lock().expect("seen").as_ref().map(|s| s.task), Some(1));
+    assert_eq!(fx.job().task_session, None);
+    assert_eq!(fx.job().task_index, 0);
+}
+
+#[test]
+fn a_failing_session_write_does_not_stop_the_run() {
+    let fx = two_task_fixture();
+    let seen: Seen = Arc::new(Mutex::new(None));
+    let board = fx.board_path.clone();
+    let noted = Arc::clone(&seen);
+    let effect: Effect = Box::new(move |spec| {
+        let guard = factory_engine::lock_board(
+            &board.with_extension("json.lock"),
+            std::time::Duration::from_secs(1),
+        )
+        .expect("lock");
+        spec.on_session.as_ref().expect("hook").call("sess-lost");
+        let job = factory_core::Board::load(&board)
+            .expect("load")
+            .find("001")
+            .expect("job")
+            .clone();
+        *noted.lock().expect("seen") = job.task_session;
+        drop(guard);
+        std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![effect]);
+    let out = fx
+        .engine(&runner)
+        .with_lock_wait(std::time::Duration::from_millis(200))
+        .build_stage()
+        .expect("task 1");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    assert_eq!(*seen.lock().expect("seen"), None);
+    assert_eq!(fx.job().task_index, 1);
+    assert_eq!(fx.job().task_session, None);
+    assert!(fx.ledger().contains("Task 1: implementer done"));
+}
+
+#[test]
+fn only_task_builders_get_a_session_hook() {
+    let fx = committing_fixture();
+    let effect: Effect = Box::new(|spec| {
+        assert!(spec.on_session.is_none());
+        std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![effect]);
+    let out = fx.engine(&runner).build_stage().expect("build");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    for role in ["builder", "committer"] {
+        let specs = runner.specs_for(role);
+        assert!(!specs.is_empty(), "{role}");
+        assert!(specs.iter().all(|s| s.on_session.is_none()), "{role}");
+    }
+}
