@@ -104,6 +104,10 @@ pub struct Config {
     pub builder_permissions: bool,
     /// Extra `Bash(...)` allowlist entries for builder runs.
     pub builder_allow: Vec<String>,
+    /// Resume the previous task's builder session for the next task of a plan. Off by default.
+    pub builder_carry_session: bool,
+    /// The largest end-of-task context, in tokens, that may be carried to the next task.
+    pub builder_carry_max_ctx: u64,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
     pub degraded: bool,
@@ -148,6 +152,8 @@ impl Default for Config {
             log_level: None,
             builder_permissions: true,
             builder_allow: Vec::new(),
+            builder_carry_session: false,
+            builder_carry_max_ctx: 100_000,
             degraded: false,
         }
     }
@@ -212,6 +218,11 @@ impl Config {
         if cfg.kb_path.as_deref().is_some_and(|p| p.trim().is_empty()) {
             return Err(CoreError::Config(
                 "kb_path must not be empty when it is set".into(),
+            ));
+        }
+        if cfg.builder_carry_max_ctx == 0 {
+            return Err(CoreError::Config(
+                "builder_carry_max_ctx must be above 0".into(),
             ));
         }
         if cfg
@@ -624,6 +635,30 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn builder_carry_settings_have_off_and_100000_defaults() {
+        let c = Config::default();
+        assert!(!c.builder_carry_session);
+        assert_eq!(c.builder_carry_max_ctx, 100_000);
+        let parsed = Config::parse("builder_carry_session = true\nbuilder_carry_max_ctx = 60000")
+            .expect("parse");
+        assert!(parsed.builder_carry_session);
+        assert_eq!(parsed.builder_carry_max_ctx, 60_000);
+    }
+
+    #[test]
+    fn builder_carry_max_ctx_zero_is_refused() {
+        let err = Config::parse("builder_carry_max_ctx = 0").expect_err("zero is refused");
+        assert!(err
+            .to_string()
+            .contains("builder_carry_max_ctx must be above 0"));
+    }
+
+    #[test]
+    fn builder_carry_session_must_be_a_bool() {
+        Config::parse("builder_carry_session = \"yes\"").expect_err("not a bool");
+    }
 
     #[test]
     fn cache_ttl_is_unset_by_default_and_takes_only_5m_or_1h() {
