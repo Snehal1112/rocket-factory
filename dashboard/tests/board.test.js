@@ -677,13 +677,14 @@ test("the card never contains the popup, so a repaint cannot close it", () => {
 });
 
 test("parkKindLabel and parkKindClass cover every kind", () => {
-  const red = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "commit-failed"];
+  const red = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "builder-tampered", "commit-failed"];
   const amber = ["risky-diff", "diff-too-large", "budget-stopped", "builder-committed", "nothing-changed", "other"];
   for (const kind of red) assert.equal(board.parkKindClass(kind), "chip-changes", kind);
   for (const kind of amber) assert.equal(board.parkKindClass(kind), "chip-warn", kind);
   assert.equal(board.parkKindClass("something-new"), "chip-warn");
   assert.equal(board.parkKindLabel("checks-failed"), "Checks failed");
   assert.equal(board.parkKindLabel("builder-blocked"), "Builder blocked");
+  assert.equal(board.parkKindLabel("builder-tampered"), "Builder changed a job file");
   assert.equal(board.parkKindLabel("other"), "Needs a human");
   assert.equal(board.parkKindLabel("something-new"), "Needs a human");
 });

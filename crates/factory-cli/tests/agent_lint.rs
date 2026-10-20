@@ -533,6 +533,27 @@ fn reference_documents_the_builder_permission_keys() -> TestResult {
             "rmdir",
             "xargs",
             "fails closed",
+            "timeout",
+            "quotes",
+            "wildcards",
+            "duplicates",
+            "Bash(<command>:*)",
+        ],
+    )
+}
+
+#[test]
+fn spec_matches_the_builder_permission_fixes() -> TestResult {
+    let doc = read("docs/superpowers/specs/2026-10-19-builder-permissions-design.md")?;
+    require_all(
+        &doc,
+        "builder-permissions-design.md",
+        &[
+            "builder-tampered",
+            "timeout",
+            "Edit(//<kb dir>/**)",
+            "shell operators",
+            "quotes",
         ],
     )
 }
@@ -556,6 +577,13 @@ fn software_factory_doc_describes_builder_permissions() -> TestResult {
             "`find`",
             "Bash(cd:*)",
             "Bash(git status:*)",
+            "builder-tampered",
+            "knowledge base",
+            "not a sandbox",
+            "--output",
+            "has not been probed",
+            "cd web && bun test",
+            "duplicates are removed",
         ],
     )
 }
@@ -570,8 +598,10 @@ fn readme_points_to_builder_permissions() -> TestResult {
             "`builder_permissions`",
             "docs/project-toml-reference.md",
             "docs/software-factory.md",
+            "check_hints",
         ],
-    )
+    )?;
+    forbid_all(&doc, "README.md", &["never blocks on a prompt"])
 }
 
 #[test]
