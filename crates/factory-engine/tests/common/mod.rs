@@ -387,6 +387,11 @@ pub fn approved_job_config(
 
 /// Like `approved_job`, for the `web` project in `apps/web`. The job branch commits each of `files`, repo-relative.
 pub fn approved_scoped_job(files: &[&str]) -> MergeFixture {
+    approved_scoped_job_with(files, Config::default())
+}
+
+/// Like `approved_scoped_job`, with the given config.
+pub fn approved_scoped_job_with(files: &[&str], config: Config) -> MergeFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
     let main = tmp.path().join("repo");
     init_repo(&main);
@@ -399,7 +404,7 @@ pub fn approved_scoped_job(files: &[&str]) -> MergeFixture {
     let runner = approving_runner(3);
     let rf = runner.clone();
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| rf.clone());
-    let driver = factory_engine::Driver::new(layout, Config::default(), factory).expect("driver");
+    let driver = factory_engine::Driver::new(layout, config, factory).expect("driver");
     let wt = driver
         .repo()
         .create_worktree(&factory_git::JobRef {

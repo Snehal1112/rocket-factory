@@ -102,14 +102,18 @@ impl Engine<'_> {
             .head
             .clone()
             .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
-        if self.repo.subpath().is_none() {
-            return Ok((base, head));
-        }
-        let from = self
-            .repo
-            .merge_base(self.repo.base_branch(), &head)
-            .map_err(git_err)?;
+        let from = self.range_start(&base, &head)?;
         Ok((from, head))
+    }
+
+    /// The start of the whole job diff for the given base and head, see `job_range`.
+    pub(crate) fn range_start(&self, base: &str, head: &str) -> Result<String, EngineError> {
+        if self.repo.subpath().is_none() {
+            return Ok(base.to_string());
+        }
+        self.repo
+            .merge_base(self.repo.base_branch(), head)
+            .map_err(git_err)
     }
 
     /// The no-checks gate: a park kind and reason when a code diff ran no check.

@@ -121,6 +121,35 @@ fn another_projects_merge_is_not_out_of_scope_after_a_sync() {
 }
 
 #[test]
+fn another_projects_large_merge_does_not_trip_the_diff_cap_after_a_sync() {
+    let config = factory_core::Config {
+        diff_cap_lines: 10,
+        ..factory_core::Config::default()
+    };
+    let fx = common::approved_scoped_job_with(&["apps/web/ok.md"], config);
+    // Project api merges a change far over the cap after the web job forked.
+    let big = "line\n".repeat(60);
+    common::commit_file(&fx.main, "apps/api/big.txt", &big);
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.syncs, 1);
+    // The whole diff does not list the sibling project's file. The sync round diff, which starts
+    // at the old head, does list it by design.
+    let old_head = job.prev_head.clone().expect("prev head");
+    let round_mark = format!("review-{}..", &old_head[..7]);
+    let dir = fx.driver.job_dir(&job);
+    for entry in std::fs::read_dir(&dir).expect("job dir").flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let whole = name.starts_with("review-") && !name.starts_with(&round_mark);
+        if whole && (name.ends_with(".diff") || name.ends_with(".stat")) {
+            let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            assert!(!text.contains("apps/api/big.txt"), "{name} lists it");
+        }
+    }
+}
+
+#[test]
 fn a_sync_conflict_parks() {
     let fx = common::approved_job();
     let wt = common::worktree_of(&fx);

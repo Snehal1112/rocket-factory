@@ -104,6 +104,7 @@ impl Engine<'_> {
     fn diff_stat_text(&self) -> Option<String> {
         let job = self.job().ok()?;
         let (base, head) = (job.base?, job.head?);
+        let base = self.range_start(&base, &head).ok()?;
         let files = self.repo.diff_to_files(&base, &head, &self.job_dir).ok()?;
         std::fs::read_to_string(files.stat).ok()
     }

@@ -856,9 +856,10 @@ impl Engine<'_> {
         head: String,
         previous_head: Option<String>,
     ) -> Result<StageOutcome, EngineError> {
+        let from = self.range_start(base, &head)?;
         let info = self
             .repo
-            .diff_to_files(base, &head, &self.job_dir)
+            .diff_to_files(&from, &head, &self.job_dir)
             .map_err(git_err)?;
         let cap = self.config.diff_cap_lines as usize;
         if info.changed_lines() > cap {

@@ -46,9 +46,10 @@ impl Engine<'_> {
             .repo
             .diff_to_files(&round_base, &head, &self.job_dir)
             .map_err(git_err)?;
+        let whole_base = self.range_start(&base, &head)?;
         let whole = self
             .repo
-            .diff_to_files(&base, &head, &self.job_dir)
+            .diff_to_files(&whole_base, &head, &self.job_dir)
             .map_err(git_err)?;
         let paths = self.job_changed_paths()?;
 
