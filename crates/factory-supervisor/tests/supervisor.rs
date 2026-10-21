@@ -281,6 +281,32 @@ fn a_project_with_a_missing_repo_is_rejected_and_others_start() {
 }
 
 #[test]
+fn a_subfolder_project_with_a_missing_folder_is_rejected() {
+    let e = env();
+    let repo = e._tmp.path().join("repos").join("mono");
+    std::fs::create_dir_all(repo.join("apps/web")).expect("folder");
+    project::add(
+        &e.home,
+        "web",
+        &repo,
+        Some(Path::new("apps/web")),
+        "rust",
+        None,
+        &|_| Ok(()),
+        None,
+    )
+    .expect("add project");
+    std::fs::remove_dir_all(repo.join("apps/web")).expect("remove folder");
+    let bad = e.enqueue("web", "1", "merged");
+    let mut s = e.supervisor(2);
+    let r = s.tick().expect("tick");
+    assert!(r.started.is_empty());
+    assert_eq!(r.rejected.len(), 1);
+    assert_eq!(r.rejected[0].0, bad);
+    assert!(matches!(e.result(&bad), Outcome::Rejected { .. }));
+}
+
+#[test]
 fn a_broken_project_file_is_rejected() {
     let e = env();
     e.add_project("broken");

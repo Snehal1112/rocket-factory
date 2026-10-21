@@ -362,3 +362,15 @@ fn unknown_and_missing_projects_are_refused() {
     let err = e.ctx().err().expect("refused").to_string();
     assert!(err.contains("repo path is missing"), "{err}");
 }
+
+#[test]
+fn a_missing_project_folder_is_refused() {
+    let e = setup(&[("apps/web/index.txt", "web\n")]);
+    let file = e.home.project_dir("p").join("project.toml");
+    let text = std::fs::read_to_string(&file).expect("read");
+    std::fs::write(&file, format!("subpath = \"apps/web\"\n{text}")).expect("write");
+    assert!(e.ctx().is_ok());
+    std::fs::remove_dir_all(e.repo.join("apps/web")).expect("remove folder");
+    let err = e.ctx().err().expect("refused").to_string();
+    assert!(err.contains("project folder is missing"), "{err}");
+}

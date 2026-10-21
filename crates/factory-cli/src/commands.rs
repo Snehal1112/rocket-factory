@@ -128,6 +128,12 @@ impl CliCtx {
                 file.repo.display()
             )));
         }
+        if !file.folder().is_dir() {
+            return Err(CliError::Refused(format!(
+                "project folder is missing: {}",
+                file.folder().display()
+            )));
+        }
         let strict = crate::project::base_of_strict(&file);
         let base = strict
             .clone()

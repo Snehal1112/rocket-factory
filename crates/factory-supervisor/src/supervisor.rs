@@ -436,6 +436,9 @@ impl Supervisor {
                 Ok(file) if !file.repo.is_dir() => ProjectState::Disabled {
                     reason: format!("repo path {} is missing", file.repo.display()),
                 },
+                Ok(file) if !file.folder().is_dir() => ProjectState::Disabled {
+                    reason: format!("project folder {} is missing", file.folder().display()),
+                },
                 Ok(file) => match project::layout(&self.home, &entry.name, file) {
                     Err(e) => ProjectState::Disabled {
                         reason: e.to_string(),
