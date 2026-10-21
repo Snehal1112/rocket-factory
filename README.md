@@ -204,6 +204,14 @@ and exits 1 when nothing matches, for example at the root of a repo that holds o
 `add` takes the top folder of a git repository or any folder inside one, and stores the base branch it used
 (`--base`, or the branch the repo is on). The name defaults to the lowercased folder name of `<path>`.
 
+`list` shows a project whose repo is gone as `disabled`. `show` prints the resolved settings, the folders, the
+number of risk paths, the agent file names and any problems; a project whose settings failed closed is marked
+`degraded`. `remove` deletes only the project folder and refuses while a job is not merged or cancelled, unless
+`--force` is given. A project with an unreadable `project.toml` is removed only with `--force`. `remove` also
+prunes the git worktree registrations of the project's `worktrees/` folder (a stale one whose folder is gone too,
+a valid one together with its working folder). It never deletes branches: the `factory/*` job branches stay in the
+repo and are listed in the output.
+
 #### Monorepos
 
 `factory project add /path/to/repo/apps/web --preset rust` registers a subfolder as its own project, with its own
@@ -224,16 +232,11 @@ Projects of one repo run side by side, and each has its own job ids.
   outside it, or a rename across the boundary, parks the job as `needs-human` with the paths named, and
   `factory approve` refuses it, also with `--without-review`. The driver never reverts a file. Use
   `factory rework <id> "<note>"` so the builder removes those files, then run the job again.
-- Merge lock. Merges and syncs into the base branch take a per-repo lock in the git common dir, so only one
-  project of a repo merges at a time. A project that finds it held waits up to 30 seconds. If it is still held,
-  the job parks with `another project is merging into this repository, approve again to retry`; run
-  `factory approve <id>` again. A lock whose holder has died is cleared. `list` shows a project whose repo is gone as
-`disabled`. `show` prints the resolved settings, the folders, the number of risk paths, the agent file names and
-any problems; a project whose settings failed closed is marked `degraded`. `remove` deletes only the project
-folder and refuses while a job is not merged or cancelled, unless `--force` is given. A project with an unreadable
-`project.toml` is removed only with `--force`. `remove` also prunes the git worktree registrations of the
-project's `worktrees/` folder (a stale one whose folder is gone too, a valid one together with its working
-folder). It never deletes branches: the `factory/*` job branches stay in the repo and are listed in the output.
+- Merge lock. Merges into the base branch take a per-repo lock in the git common dir, so only one project of a
+  repo merges at a time. A sync runs in the job worktree, outside the lock. A project that finds the lock held
+  waits up to 30 seconds. If it is still held, the job parks with
+  `another project is merging into this repository, approve again to retry`; run `factory approve <id>` again.
+  The OS releases the lock if its holder dies.
 
 ### Upgrading
 

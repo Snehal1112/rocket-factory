@@ -1,4 +1,6 @@
-//! Two subfolder projects of one repo run side by side, and the scope rule parks stray edits.
+//! Two subfolder projects of one repo each build and merge in their own folder, with their own branches
+//! and board, and the scope rule parks stray edits. The runs are sequential. Real lock contention is
+//! covered by `crates/factory-engine/tests/merge.rs`.
 
 mod common;
 

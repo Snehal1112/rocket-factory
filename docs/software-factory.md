@@ -201,8 +201,8 @@ The driver merges the reviewed sha only: it checks the branch tip equals the rec
 A folder inside a git repo can be its own project (`factory project add <repo>/apps/web`, stored as `subpath`). A repo holds one top-folder project or disjoint subfolder projects, never both. Their builds, checks and reviews run side by side. The builder, fix builder and reviewer start in the project folder of the job worktree, for `claude` and for `codex`. Risk paths and check mappings are relative to that folder, and check commands run in it.
 
 - Scope: the driver lists the job's own changes (from the merge base with the base branch) after the builder and every fix round. Any path outside the folder, including either side of a cross-boundary rename, parks the job as `needs-human` with the paths named. It never auto-merges, `factory approve` refuses it, and the driver never reverts files. `factory rework` makes the builder remove them.
-- Lock: the main-checkout merge takes a per-repo lock in the git common dir, held for the merge and the sync. The wait is 30 seconds, then the job parks with `another project is merging into this repository, approve again to retry`. Main is re-checked under the lock before a busy main parks the job.
-- Contention: while other projects merge, main moves more often, so a job can use more of the sync cap (`MAX_SYNCS`, 2) and park with `<main> moved again after the maximum number of syncs`. Approve it again.
+- Lock: merges into the base branch take a per-repo lock in the git common dir. A sync runs in the job worktree, outside the lock. The wait is 30 seconds, then the job parks with `another project is merging into this repository, approve again to retry`. Main is re-checked under the lock before a busy main parks the job. The OS releases the lock if its holder dies.
+- Contention: while other projects merge, main moves more often, so a job can use more of the sync cap (`MAX_SYNCS`, 2) and park with `<main> moved again after the maximum number of syncs` (from the merge step) or `<main> moved again after N syncs` (from the sync stage). Approve it again.
 
 ## How to run
 
