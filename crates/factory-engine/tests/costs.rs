@@ -55,6 +55,20 @@ fn gather_costs_builds_one_record_per_job_with_group_tasks_and_usage() {
 }
 
 #[test]
+fn gather_costs_carries_the_providers_of_each_job() {
+    let fx = common::SeriesFixture::new("x");
+    let usage = concat!(
+        "{\"job\":\"105\",\"role\":\"builder\",\"input\":100,\"cache_creation\":0,\"output\":0,\"cache_read\":0,\"usage_v\":2}\n",
+        "{\"job\":\"105\",\"role\":\"builder\",\"provider\":\"codex\",\"input\":50,\"cache_creation\":0,\"output\":0,\"cache_read\":0,\"usage_v\":2}\n",
+    );
+    add_finished_job(&fx, "105", "# P\n", Some(usage));
+    let jobs = gather_costs(&fx.driver).expect("gather");
+    let j = jobs.iter().find(|j| j.id == "105").expect("job 105");
+    assert_eq!(j.providers.get("codex"), Some(&50));
+    assert_eq!(j.providers.get("claude"), Some(&100));
+}
+
+#[test]
 fn a_job_without_a_plan_or_usage_is_listed_without_data() {
     let fx = common::SeriesFixture::new("x");
     let mut job = Job::new("102", "2026-10-16-102-x", "x", "2026-10-16", "f", 1.0);

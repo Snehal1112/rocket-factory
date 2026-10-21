@@ -268,6 +268,31 @@ Probes with the real claude 2.1.303 on haiku in a scratch folder, 2026-10-19:
 | `--resume <session>` with the permission flags passed again | Works |
 | `--resume <session>` without the flags | The command is refused: the flags must be passed on every run |
 
+## Using Codex
+
+Set `agent_cli = "codex"` in `project.toml`, or run `factory project add <path> --agent-cli codex`, to run every agent through `codex exec --json` instead of `claude -p`. Unset or `"claude"` changes nothing. Each usage line in `usage.jsonl` carries the provider, old lines without it read as `claude`, and `factory tokens`, `factory tokens --cache`, `factory costs` and the dashboard card show it.
+
+Limits:
+
+- `max_turns` does not apply. `builder_permissions` and `builder_allow` are ignored; the sandbox below replaces them.
+- There is no mid-run budget warning or stop. Codex reports usage only at the end of a turn, so the run total is added to the job tally after the run and the job parks when it is over budget. `stall_minutes` still stops a silent run.
+- `cache_ttl` does not apply and is not set. `builder_carry_session` is off.
+- There is no cold-start data, so the COLD STARTS tables show `n/a` for Codex.
+- The agent file text and a short preface go into the prompt. No skill is loaded.
+- Runs pass `--ignore-user-config`, so your own `~/.codex/config.toml` is not read. The login still works. `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from the child unless `FACTORY_ALLOW_API_KEY=1`.
+- Switching a project from one CLI to the other clears the saved session ids of a running job once. One fresh builder runs next.
+
+Sandbox by role:
+
+| Role | Sandbox |
+|---|---|
+| builder, fix builder | `workspace-write`, network on |
+| committer, message | `workspace-write`, the repo's `.git` folder writable, network off |
+| kb | `workspace-write` in the KB folder, network off |
+| reviewer | `read-only`, network off |
+
+A failed Codex commit falls back to the driver commit. The real smoke test is `#[ignore]`; run it by hand with `cargo test -j4 -p factory-agent real_codex_smoke -- --ignored`.
+
 ## Token comparison
 
 | | Raw tokens | Weighted tokens | Status |
