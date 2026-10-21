@@ -30,6 +30,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         name: JobRef {
             id: job.id.clone(),
             slug: job.slug.clone(),
+            project: None,
         }
         .dir_name(),
         path: PathBuf::from(path),

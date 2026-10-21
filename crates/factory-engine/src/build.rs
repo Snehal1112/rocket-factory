@@ -215,6 +215,7 @@ impl Engine<'_> {
             .create_worktree(&JobRef {
                 id: self.job_id.clone(),
                 slug: job.slug.clone(),
+                project: None,
             })
             .map_err(git_err)?;
         let (path, base, branch) = (
@@ -359,6 +360,7 @@ impl Engine<'_> {
             name: JobRef {
                 id: self.job_id.clone(),
                 slug: job.slug.clone(),
+                project: None,
             }
             .dir_name(),
             path: cwd.to_path_buf(),

@@ -1,4 +1,5 @@
 use crate::error::{GitError, Result};
+use crate::worktree::JobRef;
 use git2::{BranchType, Commit, Diff, ErrorCode, Repository};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,10 @@ pub struct Repo {
     pub(crate) root: PathBuf,
     pub(crate) base: String,
     pub(crate) worktrees: PathBuf,
+    /// The subfolder project name, `None` for a top-folder project.
+    pub(crate) project: Option<String>,
+    /// The project folder relative to the repo root.
+    pub(crate) subpath: Option<PathBuf>,
 }
 
 /// First 7 characters of a sha, or the whole string when it is shorter.
@@ -47,6 +52,108 @@ impl Repo {
             root,
             base: DEFAULT_BASE_BRANCH.to_string(),
             worktrees,
+            project: None,
+            subpath: None,
+        })
+    }
+
+    /// Like `open`, but refuses a path that is not the top folder of the repository.
+    pub fn open_top(path: &Path) -> Result<Repo> {
+        let repo = Repo::open(path)?;
+        let same = std::fs::canonicalize(repo.root()).ok() == std::fs::canonicalize(path).ok();
+        if !same {
+            return Err(GitError::NotTopFolder(path.to_path_buf()));
+        }
+        Ok(repo)
+    }
+
+    /// The same repo scoped to a subfolder project.
+    pub fn with_scope(mut self, project: &str, subpath: &Path) -> Repo {
+        self.project = Some(project.to_string());
+        self.subpath = Some(subpath.to_path_buf());
+        self
+    }
+
+    /// The subfolder project name, if the repo is scoped.
+    pub fn project(&self) -> Option<&str> {
+        self.project.as_deref()
+    }
+
+    /// The project folder relative to the repo root, if the repo is scoped.
+    pub fn subpath(&self) -> Option<&Path> {
+        self.subpath.as_deref()
+    }
+
+    /// The project folder inside a job worktree, or the worktree itself without a scope.
+    pub fn workdir_in(&self, worktree: &Path) -> PathBuf {
+        match &self.subpath {
+            Some(sub) => worktree.join(sub),
+            None => worktree.to_path_buf(),
+        }
+    }
+
+    /// The job worktree folder under `worktrees_dir()` that holds `path`.
+    pub fn worktree_root_of(&self, path: &Path) -> Option<PathBuf> {
+        let rest = path.strip_prefix(&self.worktrees).ok()?;
+        let first = rest.components().next()?;
+        Some(self.worktrees.join(first))
+    }
+
+    /// The paths that are not under the project folder. Empty without a scope.
+    pub fn out_of_scope(&self, paths: &[String]) -> Vec<String> {
+        match &self.subpath {
+            Some(sub) => paths
+                .iter()
+                .filter(|p| !Path::new(p).starts_with(sub))
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The paths with the project folder removed. Unchanged without a scope.
+    pub fn scoped_paths(&self, paths: &[String]) -> Vec<String> {
+        match &self.subpath {
+            Some(sub) => paths
+                .iter()
+                .map(|p| match Path::new(p).strip_prefix(sub) {
+                    Ok(rest) => rest.to_string_lossy().into_owned(),
+                    Err(_) => p.clone(),
+                })
+                .collect(),
+            None => paths.to_vec(),
+        }
+    }
+
+    /// A job reference for this repo's scope.
+    pub fn job_ref(&self, id: &str, slug: &str) -> JobRef {
+        JobRef {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            project: self.project.clone(),
+        }
+    }
+
+    /// The factory branches this repo's project owns, as `factory/<id>-<slug>`.
+    /// With a scope only `factory/<project>/` branches count. Without one, branches
+    /// of subfolder projects (`factory/<name>/...`) are dropped.
+    pub fn own_branch_names(&self) -> Result<Vec<String>> {
+        let all = self.local_branch_names()?;
+        Ok(match &self.project {
+            Some(p) => {
+                let prefix = format!("factory/{p}/");
+                all.iter()
+                    .filter_map(|n| n.strip_prefix(&prefix))
+                    .map(|rest| format!("factory/{rest}"))
+                    .collect()
+            }
+            None => all
+                .into_iter()
+                .filter(|n| {
+                    n.strip_prefix("factory/")
+                        .is_none_or(|rest| !rest.contains('/'))
+                })
+                .collect(),
         })
     }
 

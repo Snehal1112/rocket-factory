@@ -2,6 +2,7 @@ mod common;
 
 use common::*;
 use factory_git::{GitError, Repo};
+use std::path::Path;
 
 #[test]
 fn open_reports_the_checkout_root_from_a_subdirectory() {
@@ -15,6 +16,82 @@ fn open_reports_the_checkout_root_from_a_subdirectory() {
 }
 
 #[test]
+fn open_top_rejects_subfolder() {
+    let fx = Fixture::new();
+    let sub = fx.path.join("apps");
+    std::fs::create_dir_all(&sub).expect("mkdir");
+    let err = Repo::open_top(&sub).err().expect("subfolder is refused");
+    assert!(matches!(err, GitError::NotTopFolder(_)));
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "{} is not the top folder of a git repository",
+            sub.display()
+        )
+    );
+    assert!(Repo::open_top(&fx.path).is_ok());
+}
+
+#[test]
+fn out_of_scope_uses_components_not_prefixes() {
+    let fx = Fixture::new();
+    let repo = fx.repo().with_scope("web", Path::new("apps/web"));
+    let paths: Vec<String> = ["apps/web/a.rs", "apps/web2/b.rs", "README.md"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        repo.out_of_scope(&paths),
+        vec!["apps/web2/b.rs", "README.md"]
+    );
+    assert!(fx.repo().out_of_scope(&paths).is_empty());
+}
+
+#[test]
+fn scoped_paths_strips_prefix() {
+    let fx = Fixture::new();
+    let repo = fx.repo().with_scope("web", Path::new("apps/web"));
+    let paths = vec!["apps/web/src/a.rs".to_string()];
+    assert_eq!(repo.scoped_paths(&paths), vec!["src/a.rs"]);
+    assert_eq!(fx.repo().scoped_paths(&paths), paths);
+}
+
+#[test]
+fn own_branch_names_ignore_other_projects() {
+    let fx = Fixture::new();
+    let git = fx.git();
+    let main = git
+        .find_branch("main", git2::BranchType::Local)
+        .expect("main")
+        .get()
+        .peel_to_commit()
+        .expect("commit");
+    for name in ["factory/001-a", "factory/web/002-b", "factory/2fa/003-c"] {
+        git.branch(name, &main, false).expect("branch");
+    }
+    // A top-folder repo also keeps branches outside `factory/`, such as main.
+    let mut top = fx.repo().own_branch_names().expect("top");
+    top.retain(|n| n.starts_with("factory/"));
+    assert_eq!(top, vec!["factory/001-a"]);
+    let web = fx.repo().with_scope("web", Path::new("apps/web"));
+    assert_eq!(web.own_branch_names().expect("web"), vec!["factory/002-b"]);
+    let tfa = fx.repo().with_scope("2fa", Path::new("apps/2fa"));
+    assert_eq!(tfa.own_branch_names().expect("2fa"), vec!["factory/003-c"]);
+}
+
+#[test]
+fn workdir_in_and_worktree_root_of() {
+    let fx = Fixture::new();
+    let repo = fx.repo().with_scope("web", Path::new("apps/web"));
+    let wt = repo.worktrees_dir().join("factory-web-001-x");
+    assert_eq!(repo.workdir_in(&wt), wt.join("apps/web"));
+    assert_eq!(fx.repo().workdir_in(&wt), wt);
+    let inside = wt.join("apps/web");
+    assert_eq!(repo.worktree_root_of(&inside), Some(wt.clone()));
+    assert_eq!(repo.worktree_root_of(Path::new("/elsewhere/x")), None);
+}
+
+#[test]
 fn common_git_dir_is_the_main_dot_git_from_a_worktree() {
     let fx = Fixture::new();
     let repo = fx.repo();
@@ -22,6 +99,7 @@ fn common_git_dir_is_the_main_dot_git_from_a_worktree() {
         .create_worktree(&factory_git::JobRef {
             id: "001".into(),
             slug: "demo".into(),
+            project: None,
         })
         .expect("create worktree");
     let want = std::fs::canonicalize(fx.path.join(".git")).expect("canon");

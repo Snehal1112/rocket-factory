@@ -244,6 +244,7 @@ fn fallback_commit_runs_when_a_codex_committer_fails() {
         .create_worktree(&factory_git::JobRef {
             id: "001".into(),
             slug: "demo".into(),
+            project: None,
         })
         .expect("worktree");
     std::fs::write(wt.path.join("a.txt"), "content\n").expect("write change");

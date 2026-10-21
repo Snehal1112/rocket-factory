@@ -11,6 +11,8 @@ pub enum GitError {
     Refused(String),
     #[error("bad input: {0}")]
     BadInput(String),
+    #[error("{} is not the top folder of a git repository", .0.display())]
+    NotTopFolder(std::path::PathBuf),
 }
 
 pub type Result<T> = std::result::Result<T, GitError>;

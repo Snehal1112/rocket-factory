@@ -10,20 +10,40 @@ use std::path::{Component, Path, PathBuf};
 pub struct JobRef {
     pub id: String,
     pub slug: String,
+    /// The subfolder project name, `None` for a top-folder project.
+    pub project: Option<String>,
 }
 
 impl JobRef {
-    /// `factory/NNN-<slug>`.
+    /// `factory/<project>/NNN-<slug>`, or `factory/NNN-<slug>` without a project.
     pub fn branch_name(&self) -> String {
-        format!("factory/{}-{}", self.id, self.slug)
+        match &self.project {
+            Some(p) => format!("factory/{p}/{}-{}", self.id, self.slug),
+            None => format!("factory/{}-{}", self.id, self.slug),
+        }
     }
 
-    /// `factory-NNN-<slug>`, the worktree directory and git worktree name.
+    /// `factory-<project>-NNN-<slug>` or `factory-NNN-<slug>`, the worktree directory and git worktree name.
     pub fn dir_name(&self) -> String {
-        format!("factory-{}-{}", self.id, self.slug)
+        match &self.project {
+            Some(p) => format!("factory-{p}-{}-{}", self.id, self.slug),
+            None => format!("factory-{}-{}", self.id, self.slug),
+        }
     }
 
     fn validate(&self) -> Result<()> {
+        let name_ok = |s: &str| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        };
+        if let Some(p) = &self.project {
+            if !name_ok(p) {
+                return Err(GitError::BadInput(format!(
+                    "project {p:?} must be lower case letters, digits and dashes"
+                )));
+            }
+        }
         let id_ok = !self.id.is_empty() && self.id.chars().all(|c| c.is_ascii_digit());
         let slug_ok = !self.slug.is_empty()
             && self

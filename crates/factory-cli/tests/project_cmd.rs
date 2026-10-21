@@ -531,12 +531,14 @@ fn remove_prunes_worktree_registrations_and_leaves_job_branches() {
         .create_worktree(&JobRef {
             id: "001".into(),
             slug: "valid".into(),
+            project: None,
         })
         .expect("wt");
     let stale = repo
         .create_worktree(&JobRef {
             id: "002".into(),
             slug: "stale".into(),
+            project: None,
         })
         .expect("wt");
     std::fs::remove_dir_all(&stale.path).expect("stale folder gone");

@@ -8,6 +8,7 @@ fn job() -> JobRef {
     JobRef {
         id: "001".into(),
         slug: "demo".into(),
+        project: None,
     }
 }
 
@@ -43,6 +44,41 @@ fn create_worktree_makes_the_branch_and_the_directory() {
 }
 
 #[test]
+fn same_id_and_slug_in_two_projects_do_not_collide() {
+    let fx = Fixture::new();
+    let web = fx
+        .repo()
+        .with_scope("web", std::path::Path::new("apps/web"));
+    let api = fx
+        .repo()
+        .with_scope("api", std::path::Path::new("apps/api"));
+    let a = web
+        .create_worktree(&web.job_ref("001", "x"))
+        .expect("web worktree");
+    let b = api
+        .create_worktree(&api.job_ref("001", "x"))
+        .expect("api worktree");
+    assert_eq!(a.branch, "factory/web/001-x");
+    assert_eq!(b.branch, "factory/api/001-x");
+    assert_eq!(a.name, "factory-web-001-x");
+    assert_eq!(b.name, "factory-api-001-x");
+    assert_ne!(a.path, b.path);
+    assert!(a.path.is_dir() && b.path.is_dir());
+}
+
+#[test]
+fn create_worktree_rejects_a_hostile_project_name() {
+    let fx = Fixture::new();
+    let repo = fx
+        .repo()
+        .with_scope("Bad/Name", std::path::Path::new("apps/web"));
+    assert!(matches!(
+        repo.create_worktree(&repo.job_ref("001", "x")),
+        Err(GitError::BadInput(_))
+    ));
+}
+
+#[test]
 fn create_worktree_rejects_hostile_slugs_before_touching_the_disk() {
     let fx = Fixture::new();
     let repo = fx.repo();
@@ -50,6 +86,7 @@ fn create_worktree_rejects_hostile_slugs_before_touching_the_disk() {
         let bad = JobRef {
             id: "001".into(),
             slug: slug.into(),
+            project: None,
         };
         assert!(
             matches!(repo.create_worktree(&bad), Err(GitError::BadInput(_))),
@@ -59,6 +96,7 @@ fn create_worktree_rejects_hostile_slugs_before_touching_the_disk() {
     let bad_id = JobRef {
         id: "1x".into(),
         slug: "ok".into(),
+        project: None,
     };
     assert!(matches!(
         repo.create_worktree(&bad_id),
@@ -241,6 +279,7 @@ fn prune_worktrees_under_removes_registrations_in_the_folder_and_keeps_branches(
         .create_worktree(&JobRef {
             id: "002".into(),
             slug: "gone".into(),
+            project: None,
         })
         .expect("create b");
     // A stale registration: the folder is gone but the registration is left.
@@ -248,6 +287,7 @@ fn prune_worktrees_under_removes_registrations_in_the_folder_and_keeps_branches(
     repo.create_worktree(&JobRef {
         id: "003".into(),
         slug: "third".into(),
+        project: None,
     })
     .expect("create c");
     let mut pruned = repo
@@ -293,6 +333,7 @@ fn moved_outside(
         .create_worktree(&JobRef {
             id: id.into(),
             slug: slug.into(),
+            project: None,
         })
         .expect("create");
     let elsewhere = fx.path.join(format!("outside-{id}"));
@@ -347,6 +388,7 @@ fn prune_leaves_a_sibling_folder_with_a_shared_prefix() {
         .create_worktree(&JobRef {
             id: "001".into(),
             slug: "sib".into(),
+            project: None,
         })
         .expect("create");
     std::fs::create_dir_all(&sibling).expect("mkdir");

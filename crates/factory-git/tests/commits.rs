@@ -10,6 +10,7 @@ fn job_worktree(fx: &Fixture) -> (Repo, Worktree) {
         .create_worktree(&JobRef {
             id: "001".into(),
             slug: "demo".into(),
+            project: None,
         })
         .expect("create worktree");
     (repo, wt)

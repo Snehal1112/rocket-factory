@@ -10,6 +10,7 @@ fn job() -> JobRef {
     JobRef {
         id: "001".into(),
         slug: "x".into(),
+        project: None,
     }
 }
 

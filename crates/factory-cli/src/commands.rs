@@ -729,6 +729,7 @@ fn cleanup_checkout(
     let jr = factory_git::JobRef {
         id: job.id.clone(),
         slug: job.slug.clone(),
+        project: None,
     };
     let wt = factory_git::Worktree {
         name: jr.dir_name(),

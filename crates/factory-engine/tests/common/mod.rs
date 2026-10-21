@@ -346,6 +346,7 @@ pub fn approved_job_config(
         .create_worktree(&factory_git::JobRef {
             id: "001".into(),
             slug: "hello".into(),
+            project: None,
         })
         .expect("worktree");
     let head = commit_file(&wt.path, "docs/hello.txt", "hello\n");

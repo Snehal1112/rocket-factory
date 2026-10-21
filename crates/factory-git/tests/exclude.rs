@@ -52,6 +52,7 @@ fn matching_files_are_not_untracked_in_main_or_a_worktree() {
         .create_worktree(&JobRef {
             id: "001".into(),
             slug: "demo".into(),
+            project: None,
         })
         .expect("worktree");
     for root in [fx.path.clone(), wt.path.clone()] {

@@ -22,6 +22,7 @@ fn worktree(fx: &Fixture) -> Worktree {
         .create_worktree(&JobRef {
             id: "001".into(),
             slug: "demo".into(),
+            project: None,
         })
         .expect("worktree")
 }
