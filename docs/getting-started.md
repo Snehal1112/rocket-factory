@@ -148,7 +148,7 @@ Note: a `.claude/commands/factory.md` inside a repo shadows the global one.
 
 ## 7. Register your repository
 
-Registration tells the factory which repo to work on and which preset to use. Do it once per repo. The repo must be a git repo, you must give its top folder, and its base branch must exist locally and be the branch you merge into.
+Registration tells the factory which repo to work on and which preset to use. Do it once per repo. The repo must be a git repo, and its base branch must exist locally and be the branch you merge into. Give the top folder of the repo, or, in a monorepo, a subfolder such as `apps/web`. A subfolder becomes its own project, and a job may change only files inside it. A repo holds either one top-folder project or several disjoint subfolder projects (see "Monorepos" in the README).
 
 ```bash
 cd /path/to/your/repo

@@ -196,13 +196,38 @@ factory project remove demo [--force]
 factory project which [<path>]
 ```
 
-`which` prints the name of the registered project whose repo is `<path>` (default: the current directory) or
-contains it, and exits 0. When two registered repos nest, the inner one wins. A linked git worktree of a
+`which` prints the name of the registered project whose folder is `<path>` (default: the current directory) or
+contains it, and exits 0. When two registered folders nest, the inner one wins. A linked git worktree of a
 registered repo resolves to that repo's project. It prints `no registered project contains <path>` to stderr
-and exits 1 when nothing matches.
+and exits 1 when nothing matches, for example at the root of a repo that holds only subfolder projects.
 
-`add` needs the top folder of a git repository and stores the base branch it used (`--base`, or the branch the
-repo is on). The name defaults to the lowercased repo folder name. `list` shows a project whose repo is gone as
+`add` takes the top folder of a git repository or any folder inside one, and stores the base branch it used
+(`--base`, or the branch the repo is on). The name defaults to the lowercased folder name of `<path>`.
+
+#### Monorepos
+
+`factory project add /path/to/repo/apps/web --preset rust` registers a subfolder as its own project, with its own
+queue, settings, lease and board. `project.toml` keeps `repo` as the git top folder and stores the folder in
+`subpath` (`apps/web`). A repo holds either one top-folder project or any number of disjoint subfolder projects:
+`add` refuses a folder that equals, contains or sits inside another project's folder, and names that project.
+Projects of one repo run side by side, and each has its own job ids.
+
+- Job ids, branches and worktrees. A top-folder project keeps `factory/<id>-<slug>`. A subfolder project uses
+  `factory/<project>/<id>-<slug>` and a worktree called `factory-<project>-<id>-<slug>`, so two projects never
+  collide. A project only sees its own branches.
+- The agent starts in the project folder inside the job worktree (`<worktree>/apps/web`), for the builder, the
+  fix builder and the reviewer, with both `claude` and `codex`. The committer, the message writer and the KB
+  refresher keep the worktree root. Risk paths and check mappings are relative to the project folder, and check
+  commands run there.
+- Scope rule. A job may change only files inside the project folder. After the builder and every fix round the
+  driver compares the job's own changes (from the merge base with the base branch) with the folder. A path
+  outside it, or a rename across the boundary, parks the job as `needs-human` with the paths named, and
+  `factory approve` refuses it, also with `--without-review`. The driver never reverts a file. Use
+  `factory rework <id> "<note>"` so the builder removes those files, then run the job again.
+- Merge lock. Merges and syncs into the base branch take a per-repo lock in the git common dir, so only one
+  project of a repo merges at a time. A project that finds it held waits up to 30 seconds. If it is still held,
+  the job parks with `another project is merging into this repository, approve again to retry`; run
+  `factory approve <id>` again. A lock whose holder has died is cleared. `list` shows a project whose repo is gone as
 `disabled`. `show` prints the resolved settings, the folders, the number of risk paths, the agent file names and
 any problems; a project whose settings failed closed is marked `degraded`. `remove` deletes only the project
 folder and refuses while a job is not merged or cancelled, unless `--force` is given. A project with an unreadable

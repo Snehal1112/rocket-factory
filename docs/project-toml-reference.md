@@ -14,15 +14,18 @@ A project is a registration, not a copy. The repo stays where it is. The state f
 repo   = "/abs/path/to/checkout"   # required, absolute
 preset = "rust"                    # required, "rust", "go", "ruby" or "csharp"
 
+subpath = "apps/web"               # optional, only for a project in a subfolder of the repo
+
 [settings]                         # optional, every key below is optional
 base_branch = "main"
 ```
 
 Rules:
 
-- Only `repo`, `preset` and `[settings]` are allowed at the top level. Any other key makes the file unreadable (`factory-core/src/project.rs:37`).
+- `subpath` is the project folder relative to the git top folder `repo`, with `/` separators. Absent means the project is the repo top folder. `factory project add <repo>/apps/web` writes it. It must be a relative path without `..` and must name an existing folder, otherwise the project shows as disabled. A job may change only files inside this folder, the agents start there, and every path in `risk_paths` and `[[checks]]` (`paths`, and the working directory of the commands) is relative to it, not to the repo root. A project without `subpath` is unchanged.
+- Only `repo`, `preset`, `subpath` and `[settings]` are allowed at the top level. Any other key makes the file unreadable (`factory-core/src/project.rs:37`).
 - `[settings]` takes any `Config` key from the next sections. An unknown key or a wrong type makes the project fail closed (see "Fail closed").
-- `factory project add` writes only `repo`, `preset` and `base_branch`. Everything else is added by you.
+- `factory project add` writes only `repo`, `preset`, `subpath` (for a subfolder) and `base_branch`. Everything else is added by you.
 
 ## How settings combine
 
