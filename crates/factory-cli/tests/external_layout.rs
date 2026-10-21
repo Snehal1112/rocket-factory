@@ -37,6 +37,7 @@ impl External {
             worktrees_dir: home.join("worktrees"),
             config_file: home.join("project.toml"),
             commit_context_file: home.join("commit-context.md"),
+            scope: None,
         };
         std::fs::create_dir_all(&home).expect("home");
         std::fs::write(

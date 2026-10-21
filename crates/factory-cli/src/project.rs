@@ -107,7 +107,16 @@ fn add(
             ))
         }
     };
-    let dir = project::add(home, &name, path, preset, Some(&base), &check, agent_cli)?;
+    let dir = project::add(
+        home,
+        &name,
+        path,
+        None,
+        preset,
+        Some(&base),
+        &check,
+        agent_cli,
+    )?;
     let mut text = format!(
         "added project {name} ({preset}, base {base}) at {}",
         dir.display()

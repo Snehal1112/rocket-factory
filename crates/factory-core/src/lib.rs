@@ -52,8 +52,8 @@ pub use home::Home;
 pub use homeconfig::HomeConfig;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
 pub use layout::{
-    agent_files_rel_dir, claude_commands_dir, is_agent_file_name, Layout, AGENT_EXCLUDE_PATTERN,
-    PROJECT_LEASE_FILE,
+    agent_files_rel_dir, claude_commands_dir, is_agent_file_name, Layout, Scope,
+    AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE,
 };
 pub use ledger::{Ledger, TaskState};
 pub use park::{ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};

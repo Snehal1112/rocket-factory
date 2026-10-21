@@ -32,6 +32,15 @@ pub fn is_agent_file_name(name: &str) -> bool {
 /// The file name of the project lease, inside the state folder.
 pub const PROJECT_LEASE_FILE: &str = "project.lease";
 
+/// The slice of a repo a subfolder project owns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scope {
+    /// The project name.
+    pub project: String,
+    /// The project folder, relative to the repo root.
+    pub subpath: PathBuf,
+}
+
 /// The folders and files of one project. `in_repo` gives the layout Rocket uses today.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
@@ -47,6 +56,8 @@ pub struct Layout {
     pub config_file: PathBuf,
     /// The context file the committer prompt reads.
     pub commit_context_file: PathBuf,
+    /// Set for a project that owns one subfolder of a shared repo, else `None`.
+    pub scope: Option<Scope>,
 }
 
 impl Layout {
@@ -59,6 +70,7 @@ impl Layout {
             worktrees_dir: repo.join(".claude/worktrees"),
             config_file: repo.join(".claude/factory/config.toml"),
             commit_context_file: repo.join(".claude/factory/commit-context.md"),
+            scope: None,
         }
     }
 

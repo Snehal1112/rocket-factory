@@ -74,8 +74,17 @@ impl Env {
     fn add_project(&self, name: &str) {
         let repo = self._tmp.path().join("repos").join(name);
         std::fs::create_dir_all(&repo).expect("repo");
-        project::add(&self.home, name, &repo, "rust", None, &|_| Ok(()), None)
-            .expect("add project");
+        project::add(
+            &self.home,
+            name,
+            &repo,
+            None,
+            "rust",
+            None,
+            &|_| Ok(()),
+            None,
+        )
+        .expect("add project");
     }
 
     /// Queues a request. The script behavior is `merged` or `hold`, and `hold` creates its gate file.

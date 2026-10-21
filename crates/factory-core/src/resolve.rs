@@ -327,7 +327,7 @@ mod tests {
         let repo: PathBuf = t.path().join("repo");
         std::fs::create_dir_all(&repo).expect("mkdir");
         let home = Home::at(t.path().join("home"));
-        project::add(&home, "p", &repo, preset, base, &|_| Ok(()), None).expect("add");
+        project::add(&home, "p", &repo, None, preset, base, &|_| Ok(()), None).expect("add");
         Env { _t: t, home }
     }
 
