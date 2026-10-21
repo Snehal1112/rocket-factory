@@ -155,8 +155,9 @@ tolerating the new optional field.
 ## Agent working directory (Claude and Codex)
 
 Both runners start the agent in `AgentSpec.cwd`. For the builder, fix builder and reviewer roles the
-driver sets `cwd` to the project folder inside the job worktree (`Repo::workdir_in`); the committer,
-message and KB roles keep the worktree root, because they run git on the whole checkout.
+driver sets `cwd` to the project folder inside the job worktree (`Repo::workdir_in`); the committer
+and message roles keep the worktree root, because they run git on the whole checkout. The KB role
+is unchanged (the main checkout, or the KB folder under Codex).
 
 - Claude: agent files stay at the worktree root. Claude Code finds project `.claude/agents` by
   walking up from the working directory (documented), so a subfolder start still sees them.

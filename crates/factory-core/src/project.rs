@@ -212,7 +212,8 @@ pub fn add(
         Err(e) => return Err(CoreError::io(&dir, e)),
     }
     let made = (|| -> Result<(), CoreError> {
-        // Checked again after the claim, so two racing adds cannot both pass.
+        // Checked again after the claim, which narrows the window for racing adds.
+        // Two adds with different names can still both pass; the merge lock serializes them.
         check_overlap(home, &canon, subpath)?;
         preset::seed(&home.presets_dir())?;
         for sub in ["agents", "state", "worktrees"] {

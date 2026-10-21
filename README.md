@@ -224,8 +224,8 @@ Projects of one repo run side by side, and each has its own job ids.
   `factory/<project>/<id>-<slug>` and a worktree called `factory-<project>-<id>-<slug>`, so two projects never
   collide. A project only sees its own branches.
 - The agent starts in the project folder inside the job worktree (`<worktree>/apps/web`), for the builder, the
-  fix builder and the reviewer, with both `claude` and `codex`. The committer, the message writer and the KB
-  refresher keep the worktree root. Risk paths and check mappings are relative to the project folder, and check
+  fix builder and the reviewer, with both `claude` and `codex`. The committer and the message writer keep the
+  worktree root. The KB refresher is unchanged (the main checkout, or the KB folder under Codex). Risk paths and check mappings are relative to the project folder, and check
   commands run there.
 - Scope rule. A job may change only files inside the project folder. After the builder and every fix round the
   driver compares the job's own changes (from the merge base with the base branch) with the folder. A path
@@ -237,6 +237,9 @@ Projects of one repo run side by side, and each has its own job ids.
   waits up to 30 seconds. If it is still held, the job parks with
   `another project is merging into this repository, approve again to retry`; run `factory approve <id>` again.
   The OS releases the lock if its holder dies.
+- Known limit. The KB refresh safety check fingerprints every ref of the repo, so another project's activity in
+  the same repo during a long KB agent run can make a refresh report "tampered". Automatic refreshes for that
+  project then stop until a manual `factory kb` succeeds.
 
 ### Upgrading
 
