@@ -214,7 +214,7 @@ fn a_provider_switch_clears_saved_session_ids_once() {
     assert_eq!(job.task_session, None);
     // The fresh builder may save its own new id, never the Claude one.
     assert_ne!(job.builder_id.as_deref(), Some("claude-sess"));
-    assert!(job.builder_last.map_or(true, |l| l.id != "claude-sess"));
+    assert!(job.builder_last.is_none_or(|l| l.id != "claude-sess"));
     let spec = runner.last_spec_for("builder").expect("builder");
     assert_eq!(spec.resume, None, "nothing goes to codex exec resume");
 }

@@ -191,7 +191,7 @@ pub(crate) fn drive<S: AgentStream>(
     let usage = state.final_usage();
     let weighted = usage.weighted();
     let exit_code = status.code();
-    let result_text = state.result_text().unwrap_or(String::new());
+    let result_text = state.result_text().unwrap_or_default();
     let label = &cfg.label;
     let (stop_reason, error) = match stop {
         Some(reason) => (reason, None),
@@ -203,7 +203,7 @@ pub(crate) fn drive<S: AgentStream>(
             (StopReason::Failed, Some(msg))
         }
         None if state.result_is_error() => {
-            let subtype = state.result_subtype().unwrap_or(String::new());
+            let subtype = state.result_subtype().unwrap_or_default();
             let reason = if cfg.honor_max_turns && subtype.contains("max_turns") {
                 StopReason::TurnLimit
             } else {

@@ -278,49 +278,6 @@ pub fn codex_problems(cfg: &Config, path_env: &str) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn project_show_reports_a_missing_codex_and_a_claude_alias() {
-        let mut cfg = Config::default();
-        cfg.agent_cli = Some("codex".into());
-        cfg.builder_model = "sonnet".into();
-        cfg.reviewer_model_large = Some("opus".into());
-        let problems = codex_problems(&cfg, "/nonexistent-dir");
-        assert!(
-            problems
-                .iter()
-                .any(|p| p.contains("codex") && p.contains("PATH")),
-            "{problems:?}"
-        );
-        assert!(problems
-            .iter()
-            .any(|p| p.contains("builder_model") && p.contains("sonnet")));
-        assert!(problems.iter().any(|p| p.contains("reviewer_model_large")));
-    }
-
-    #[test]
-    fn no_codex_problems_for_claude_projects() {
-        let cfg = Config::default();
-        assert!(codex_problems(&cfg, "/nonexistent-dir").is_empty());
-    }
-
-    #[test]
-    fn program_in_path_finds_an_executable() {
-        use std::os::unix::fs::PermissionsExt;
-        let t = tempfile::tempdir().expect("tempdir");
-        let exe = t.path().join("codex");
-        std::fs::write(&exe, "#!/bin/sh\n").expect("write");
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let env = t.path().to_str().expect("utf8");
-        assert!(program_in_path(env, "codex"));
-        assert!(!program_in_path(env, "other"));
-        assert!(!program_in_path("/nonexistent-dir", "codex"));
-    }
-}
-
 fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
     project::validate_name(name)?;
     let dir: PathBuf = home.project_dir(name);
@@ -415,4 +372,49 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
         out.push_str(&n);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_show_reports_a_missing_codex_and_a_claude_alias() {
+        let cfg = Config {
+            agent_cli: Some("codex".into()),
+            builder_model: "sonnet".into(),
+            reviewer_model_large: Some("opus".into()),
+            ..Config::default()
+        };
+        let problems = codex_problems(&cfg, "/nonexistent-dir");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("codex") && p.contains("PATH")),
+            "{problems:?}"
+        );
+        assert!(problems
+            .iter()
+            .any(|p| p.contains("builder_model") && p.contains("sonnet")));
+        assert!(problems.iter().any(|p| p.contains("reviewer_model_large")));
+    }
+
+    #[test]
+    fn no_codex_problems_for_claude_projects() {
+        let cfg = Config::default();
+        assert!(codex_problems(&cfg, "/nonexistent-dir").is_empty());
+    }
+
+    #[test]
+    fn program_in_path_finds_an_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().expect("tempdir");
+        let exe = t.path().join("codex");
+        std::fs::write(&exe, "#!/bin/sh\n").expect("write");
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let env = t.path().to_str().expect("utf8");
+        assert!(program_in_path(env, "codex"));
+        assert!(!program_in_path(env, "other"));
+        assert!(!program_in_path("/nonexistent-dir", "codex"));
+    }
 }

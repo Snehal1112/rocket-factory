@@ -274,6 +274,7 @@ fn cache_ttl_var(ttl: Option<&str>) -> Option<(&'static str, &'static str)> {
 
 /// Builds one `usage.jsonl` line. `usage_v` 3 marks lines with the first-turn cache fields,
 /// `usage_v` 4 marks lines with `end_ctx`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn usage_line(
     job_id: &str,
     spec: &AgentSpec,
