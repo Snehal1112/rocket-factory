@@ -117,6 +117,43 @@ fn worktree(fx: &Fixture) -> std::path::PathBuf {
     std::path::PathBuf::from(fx.job().worktree.expect("worktree"))
 }
 
+/// A fixture scoped to the `web` project in `apps/web`, which exists on the base branch.
+fn scoped_fixture() -> Fixture {
+    let mut fx = committing_fixture();
+    commit_file(&fx.main, "apps/web/index.txt", "web\n");
+    fx.repo = factory_git::Repo::open(&fx.main)
+        .expect("open")
+        .with_scope("web", std::path::Path::new("apps/web"));
+    fx
+}
+
+#[test]
+fn builder_starts_in_the_project_folder() {
+    let fx = scoped_fixture();
+    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let wt = worktree(&fx);
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(spec.cwd, wt.join("apps/web"));
+    assert!(wt.join(BUILDER).exists(), "agent files stay at the root");
+    assert!(!wt.join("apps/web/.claude").exists());
+}
+
+#[test]
+fn top_folder_project_cwd_is_unchanged() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(spec.cwd, worktree(&fx));
+}
+
 #[test]
 fn a_later_build_step_restores_edited_files() {
     let fx = committing_fixture();

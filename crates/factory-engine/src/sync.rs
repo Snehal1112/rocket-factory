@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use factory_core::Stage;
-use factory_git::{JobRef, MergeOutcome, Worktree};
+use factory_git::{MergeOutcome, Worktree};
 
 use crate::{now_secs, Decision, Driver, EngineError, MessageKind, StageOutcome, MAX_SYNCS};
 
@@ -27,12 +27,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         .ok_or_else(|| EngineError::Msg("job has no worktree to sync".into()))?;
     let old_head = job.head.clone().unwrap_or_default();
     let wt = Worktree {
-        name: JobRef {
-            id: job.id.clone(),
-            slug: job.slug.clone(),
-            project: None,
-        }
-        .dir_name(),
+        name: driver.repo().job_ref(&job.id, &job.slug).dir_name(),
         path: PathBuf::from(path),
         branch: job.branch.clone(),
         base: job.base.clone().unwrap_or_default(),

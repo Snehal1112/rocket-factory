@@ -5,7 +5,7 @@ use factory_core::{
     agent_files_rel_dir, builder_rulings, builder_status, is_agent_file_name, parse_builder_status,
     BuilderStatus, ParkKind, ParkPart, Stage, TaskSession, TaskState, AGENT_EXCLUDE_PATTERN,
 };
-use factory_git::{CommitInfo, JobRef, Worktree};
+use factory_git::{CommitInfo, Worktree};
 
 use crate::carry::{carry_decision, carry_idle_limit, Carry, CarryInput};
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
@@ -212,11 +212,7 @@ impl Engine<'_> {
         self.check_agent_names()?;
         let wt = self
             .repo
-            .create_worktree(&JobRef {
-                id: self.job_id.clone(),
-                slug: job.slug.clone(),
-                project: None,
-            })
+            .create_worktree(&self.repo.job_ref(&self.job_id, &job.slug))
             .map_err(git_err)?;
         let (path, base, branch) = (
             wt.path.to_string_lossy().to_string(),
@@ -357,12 +353,7 @@ impl Engine<'_> {
     /// The worktree handle the git layer needs, built from the job record.
     fn job_worktree(&self, job: &JobView, cwd: &Path, base: &str, branch: &str) -> Worktree {
         Worktree {
-            name: JobRef {
-                id: self.job_id.clone(),
-                slug: job.slug.clone(),
-                project: None,
-            }
-            .dir_name(),
+            name: self.repo.job_ref(&self.job_id, &job.slug).dir_name(),
             path: cwd.to_path_buf(),
             branch: branch.to_string(),
             base: base.to_string(),

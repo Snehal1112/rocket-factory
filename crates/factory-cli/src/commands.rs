@@ -726,11 +726,7 @@ fn cleanup_checkout(
     let d = ctx.driver()?;
     let id = job.id.as_str();
     let repo = d.repo();
-    let jr = factory_git::JobRef {
-        id: job.id.clone(),
-        slug: job.slug.clone(),
-        project: None,
-    };
+    let jr = repo.job_ref(&job.id, &job.slug);
     let wt = factory_git::Worktree {
         name: jr.dir_name(),
         path: job

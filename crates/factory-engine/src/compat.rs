@@ -209,9 +209,12 @@ impl Driver {
         config: Config,
         runner_for: RunnerFactory,
     ) -> Result<Driver, EngineError> {
-        let repo = Repo::open(&layout.repo)?
+        let mut repo = Repo::open(&layout.repo)?
             .with_base_branch(&config.base_branch)
             .with_worktrees_dir(layout.worktrees_dir.clone());
+        if let Some(scope) = &layout.scope {
+            repo = repo.with_scope(&scope.project, &scope.subpath);
+        }
         let store = BoardStore::new(&layout.board_file(), DEFAULT_LOCK_WAIT);
         let tracker: Box<dyn crate::Tracker> = Box::new(crate::GhTracker::new(&layout.repo));
         Ok(Driver {

@@ -103,6 +103,27 @@ fn committer_gets_the_git_dir_as_a_writable_root() {
 }
 
 #[test]
+fn codex_builder_runs_in_the_project_folder() {
+    let mut fx = codex(committing_fixture());
+    common::commit_file(&fx.main, "apps/web/index.txt", "web\n");
+    fx.repo = factory_git::Repo::open(&fx.main)
+        .expect("open")
+        .with_scope("web", std::path::Path::new("apps/web"));
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
+    let builder = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(builder.cwd, wt.join("apps/web"));
+    assert_eq!(builder.sandbox.as_deref(), Some("workspace-write"));
+    let committer = runner.last_spec_for("committer").expect("committer");
+    assert_eq!(committer.cwd, wt);
+    assert_eq!(committer.writable_roots, vec![fx.repo.common_git_dir()]);
+}
+
+#[test]
 fn kb_runs_in_the_kb_folder_under_codex() {
     let fx = with_kb(codex(Fixture::new()));
     let runner = scripted(vec![reply("No relevant changes")]);

@@ -750,6 +750,22 @@ fn list_shows_subfolder_project_disabled_when_folder_is_gone() {
 }
 
 #[test]
+fn remove_of_a_subfolder_project_lists_only_its_own_branches() {
+    let e = env();
+    let repo = make_monorepo(&e);
+    run(&e, &["add", s(&repo.join("apps/web")), "--preset", "rust"]).expect("add web");
+    let git = Repository::open(&repo).expect("open");
+    let head = git.head().expect("head").peel_to_commit().expect("commit");
+    for name in ["factory/web/001-a", "factory/api/002-b", "factory/003-top"] {
+        git.branch(name, &head, false).expect("branch");
+    }
+    let out = run(&e, &["remove", "web"]).expect("remove");
+    assert!(out.contains("factory/web/001-a"), "{out}");
+    assert!(!out.contains("factory/api/002-b"), "{out}");
+    assert!(!out.contains("factory/003-top"), "{out}");
+}
+
+#[test]
 fn which_resolves_the_deepest_project() {
     let e = env();
     let repo = make_monorepo(&e);

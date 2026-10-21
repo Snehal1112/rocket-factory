@@ -32,7 +32,8 @@ pub(crate) fn add_job(
                 .collect()
         })
         .unwrap_or_default();
-    let branches = driver.repo().local_branch_names()?;
+    // Only this project's own branches count, and `next_job_id` reads the `factory/` ones.
+    let branches = driver.repo().own_branch_names()?;
     let job = driver.store().update(|board| {
         let ids: Vec<String> = board.jobs.iter().map(|j| j.id.clone()).collect();
         let id = factory_core::next_job_id(&ids, &dirs, &branches);

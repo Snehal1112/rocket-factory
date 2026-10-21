@@ -147,3 +147,39 @@ fn plan_warnings_are_stored_and_the_job_is_created() {
     let stored = fx.driver.job(&job.id).expect("job");
     assert_eq!(stored.spec_warning.as_deref(), Some(warning.as_str()));
 }
+
+/// A repo with the branches of two projects and a driver, scoped to `web` when `scoped` is set.
+fn driver_over_branches(scoped: bool) -> (tempfile::TempDir, factory_engine::Driver) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let main = tmp.path().join("repo");
+    common::init_repo(&main);
+    let git = git2::Repository::open(&main).expect("open");
+    let head = git.head().expect("head").peel_to_commit().expect("commit");
+    for name in ["factory/001-x", "factory/api/005-y"] {
+        git.branch(name, &head, false).expect("branch");
+    }
+    let mut layout = factory_core::Layout::in_repo(&main);
+    if scoped {
+        layout.scope = Some(factory_core::Scope {
+            project: "web".into(),
+            subpath: "apps/web".into(),
+        });
+    }
+    let runner = common::approving_runner(1);
+    let factory: factory_engine::RunnerFactory = Box::new(move |_| runner.clone());
+    let driver = factory_engine::Driver::new(layout, factory_core::Config::default(), factory)
+        .expect("driver");
+    (tmp, driver)
+}
+
+#[test]
+fn new_job_ids_ignore_other_projects_branches() {
+    // The scoped project owns no branch yet, so it starts at 001.
+    let (_scoped_repo, scoped) = driver_over_branches(true);
+    let job = factory_engine::create_job(&scoped, "demo", "f", None, None).expect("create");
+    assert_eq!(job.id, "001");
+    // The top-folder project counts factory/001-x and ignores factory/api/005-y.
+    let (_top_repo, top) = driver_over_branches(false);
+    let job = factory_engine::create_job(&top, "demo", "f", None, None).expect("create");
+    assert_eq!(job.id, "002");
+}

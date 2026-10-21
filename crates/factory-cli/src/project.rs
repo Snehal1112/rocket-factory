@@ -392,11 +392,20 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
                         notes.push(format!("could not prune the worktree registrations: {e}"))
                     }
                 }
-                let left: Vec<String> = repo
-                    .local_branch_names()
+                // A subfolder project owns only the branches under its own name.
+                let scoped = match &file.subpath {
+                    Some(sub) => repo.with_scope(name, sub),
+                    None => repo,
+                };
+                let left: Vec<String> = scoped
+                    .own_branch_names()
                     .unwrap_or_default()
                     .into_iter()
                     .filter(|b| b.starts_with("factory/"))
+                    .map(|b| match scoped.project() {
+                        Some(p) => b.replacen("factory/", &format!("factory/{p}/"), 1),
+                        None => b,
+                    })
                     .collect();
                 if !left.is_empty() {
                     notes.push(format!("job branches left in place: {}", left.join(", ")));

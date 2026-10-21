@@ -177,8 +177,11 @@ impl Engine<'_> {
             spec.env.push((var.0.to_string(), var.1.to_string()));
         }
         // Every agent that runs in a job worktree finds the resolved agent files as resolved.
-        if !self.agent_files.is_empty() && spec.cwd.starts_with(self.repo.worktrees_dir()) {
-            self.write_agent_files(&spec.cwd)?;
+        if !self.agent_files.is_empty() {
+            // The agent may start in a project folder, but the files live at the worktree root.
+            if let Some(root) = self.repo.worktree_root_of(&spec.cwd) {
+                self.write_agent_files(&root)?;
+            }
         }
         tracing::info!(event = "agent.start", role = %spec.role, model = spec.model.as_deref().unwrap_or(""));
         let started = std::time::Instant::now();

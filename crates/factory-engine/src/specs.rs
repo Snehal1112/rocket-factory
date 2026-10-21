@@ -212,7 +212,7 @@ impl Engine<'_> {
             kb = self.kb_line(),
             )
         };
-        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        let mut spec = AgentSpec::new(&self.job_id, "builder", self.repo.workdir_in(cwd), &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
         spec.strict_mcp = true;
@@ -325,7 +325,7 @@ impl Engine<'_> {
             title = task.title,
             )
         };
-        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        let mut spec = AgentSpec::new(&self.job_id, "builder", self.repo.workdir_in(cwd), &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
         spec.strict_mcp = true;
@@ -342,7 +342,12 @@ impl Engine<'_> {
         task: &PlanTask,
         session: &str,
     ) -> AgentSpec {
-        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &interrupted_prompt(task.n));
+        let mut spec = AgentSpec::new(
+            &self.job_id,
+            "builder",
+            self.repo.workdir_in(cwd),
+            &interrupted_prompt(task.n),
+        );
         spec.resume = Some(session.to_string());
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
@@ -378,7 +383,7 @@ impl Engine<'_> {
             n = task.n,
             title = task.title,
         );
-        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        let mut spec = AgentSpec::new(&self.job_id, "builder", self.repo.workdir_in(cwd), &prompt);
         spec.resume = Some(session.to_string());
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
@@ -438,7 +443,7 @@ impl Engine<'_> {
             kb = self.kb_line(),
             )
         };
-        let mut spec = AgentSpec::new(&self.job_id, "builder", cwd, &prompt);
+        let mut spec = AgentSpec::new(&self.job_id, "builder", self.repo.workdir_in(cwd), &prompt);
         spec.resume = Some(session.to_string());
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
@@ -596,7 +601,7 @@ impl Engine<'_> {
                 kb = self.kb_line(),
             )
         };
-        let mut spec = AgentSpec::new(&self.job_id, "reviewer", cwd, &prompt);
+        let mut spec = AgentSpec::new(&self.job_id, "reviewer", self.repo.workdir_in(cwd), &prompt);
         spec.agent = Some(REVIEWER_AGENT.to_string());
         spec.max_turns = Some(REVIEWER_MAX_TURNS);
         spec.strict_mcp = true;
