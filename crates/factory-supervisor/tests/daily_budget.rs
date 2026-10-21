@@ -45,7 +45,7 @@ fn env(limit: Option<u64>) -> Env {
     for n in ["a", "b"] {
         let repo = t.path().join("repos").join(n);
         std::fs::create_dir_all(&repo).expect("repo");
-        project::add(&home, n, &repo, "rust", None, &|_| Ok(())).expect("add");
+        project::add(&home, n, &repo, "rust", None, &|_| Ok(()), None).expect("add");
     }
     let e = Env {
         _t: t,

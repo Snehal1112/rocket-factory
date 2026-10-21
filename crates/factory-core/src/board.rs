@@ -131,6 +131,9 @@ pub struct Job {
     /// The last finished task builder, used to decide a session carry. New in the builder task resume series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builder_last: Option<BuilderLast>,
+    /// The agent provider of the latest run, `claude` or `codex`. Absent means `claude`. New in the Codex series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// The last finished task builder of the job, used to decide a carry.
@@ -235,6 +238,7 @@ impl Job {
             spec_warning: None,
             task_session: None,
             builder_last: None,
+            provider: None,
         }
     }
 
@@ -610,6 +614,19 @@ mod tests {
         let back: Job =
             serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
         assert_eq!(back.fix_source.as_deref(), Some("checks"));
+    }
+
+    #[test]
+    fn job_provider_is_optional_and_old_boards_load() {
+        let mut j = job();
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(!text.contains("provider"), "{text}");
+        let back: Job = serde_json::from_str(&text).expect("old job loads");
+        assert_eq!(back.provider, None);
+        j.provider = Some("codex".into());
+        let text = serde_json::to_string(&j).expect("json");
+        let back: Job = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back.provider.as_deref(), Some("codex"));
     }
 
     fn job() -> Job {

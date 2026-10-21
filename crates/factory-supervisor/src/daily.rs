@@ -88,7 +88,7 @@ mod tests {
         for n in names {
             let repo = t.path().join("repos").join(n);
             std::fs::create_dir_all(&repo).expect("repo");
-            project::add(&home, n, &repo, "rust", None, &|_| Ok(())).expect("add");
+            project::add(&home, n, &repo, "rust", None, &|_| Ok(()), None).expect("add");
         }
         (t, home)
     }

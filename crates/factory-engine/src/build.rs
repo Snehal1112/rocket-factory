@@ -538,6 +538,7 @@ impl Engine<'_> {
             now: now().max(0.0) as u64,
             rework_note: note.is_some(),
             saved: saved.is_some(),
+            codex: self.config.agent_cli() == "codex",
         });
         let how = match (&saved, &carry) {
             (Some(_), _) => "resumed".to_string(),

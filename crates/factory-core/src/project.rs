@@ -80,6 +80,9 @@ fn read_file(path: &Path) -> Result<ProjectFile, String> {
 /// The prompt cache lifetime a new project starts with. One-shot agent runs rarely resume, so the cheaper 5 minute write wins.
 pub const DEFAULT_CACHE_TTL: &str = "5m";
 
+/// The model a Codex project starts with for every role.
+pub const CODEX_DEFAULT_MODEL: &str = "gpt-5.6-luna";
+
 /// Registers a project. Every check runs before anything is created.
 pub fn add(
     home: &Home,
@@ -88,6 +91,7 @@ pub fn add(
     preset_name: &str,
     base: Option<&str>,
     repo_ok: &dyn Fn(&Path) -> Result<(), String>,
+    agent_cli: Option<&str>,
 ) -> Result<PathBuf, CoreError> {
     validate_name(name)?;
     if preset::embedded(preset_name).is_none() {
@@ -113,10 +117,22 @@ pub fn add(
     }
     repo_ok(&canon).map_err(|why| CoreError::Config(format!("{}: {why}", canon.display())))?;
     let mut settings = toml::Table::new();
-    settings.insert(
-        "cache_ttl".into(),
-        toml::Value::String(DEFAULT_CACHE_TTL.into()),
-    );
+    if agent_cli == Some("codex") {
+        settings.insert("agent_cli".into(), toml::Value::String("codex".into()));
+        for key in [
+            "builder_model",
+            "reviewer_model",
+            "commit_model",
+            "kb_model",
+        ] {
+            settings.insert(key.into(), toml::Value::String(CODEX_DEFAULT_MODEL.into()));
+        }
+    } else {
+        settings.insert(
+            "cache_ttl".into(),
+            toml::Value::String(DEFAULT_CACHE_TTL.into()),
+        );
+    }
     if let Some(b) = base {
         settings.insert(
             "base_branch".into(),
@@ -325,6 +341,18 @@ mod tests {
         Ok(())
     }
 
+    /// The Claude-project form of `add`, which most tests use.
+    fn add(
+        home: &Home,
+        name: &str,
+        repo: &Path,
+        preset_name: &str,
+        base: Option<&str>,
+        repo_ok: &dyn Fn(&Path) -> Result<(), String>,
+    ) -> Result<PathBuf, CoreError> {
+        super::add(home, name, repo, preset_name, base, repo_ok, None)
+    }
+
     struct Env {
         _t: TempDir,
         home: Home,
@@ -384,6 +412,35 @@ mod tests {
             f.settings.get("cache_ttl").and_then(|v| v.as_str()),
             Some("5m")
         );
+    }
+
+    #[test]
+    fn project_add_with_agent_cli_codex_seeds_models_and_no_cache_ttl() {
+        let e = env();
+        super::add(&e.home, "rocket", &e.repo, "go", None, &ok, Some("codex")).expect("add");
+        let f = get(&e.home, "rocket").expect("get");
+        let text = |k: &str| f.settings.get(k).and_then(|v| v.as_str()).map(String::from);
+        assert_eq!(text("agent_cli").as_deref(), Some("codex"));
+        for key in [
+            "builder_model",
+            "reviewer_model",
+            "commit_model",
+            "kb_model",
+        ] {
+            assert_eq!(text(key).as_deref(), Some("gpt-5.6-luna"), "{key}");
+        }
+        assert!(!f.settings.contains_key("cache_ttl"));
+        assert!(!f.settings.contains_key("reviewer_model_large"));
+    }
+
+    #[test]
+    fn project_add_without_the_flag_is_unchanged() {
+        let e = env();
+        add(&e.home, "rocket", &e.repo, "go", Some("dev"), &ok).expect("add");
+        let f = get(&e.home, "rocket").expect("get");
+        let mut keys: Vec<&str> = f.settings.keys().map(|k| k.as_str()).collect();
+        keys.sort();
+        assert_eq!(keys, ["base_branch", "cache_ttl"]);
     }
 
     fn assert_refused(e: &Env, r: Result<PathBuf, CoreError>, name: &str) {

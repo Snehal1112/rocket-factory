@@ -19,7 +19,15 @@ pub fn run(home: &Home, cmd: ProjectCmd) -> Result<String, CliError> {
             preset,
             base,
             name,
-        } => add(home, &path, &preset, base.as_deref(), name.as_deref()),
+            agent_cli,
+        } => add(
+            home,
+            &path,
+            &preset,
+            base.as_deref(),
+            name.as_deref(),
+            agent_cli.as_deref(),
+        ),
         ProjectCmd::List => list(home),
         ProjectCmd::Which { path } => which(home, path.as_deref()),
         ProjectCmd::Show { name } => show(home, &name),
@@ -69,6 +77,7 @@ fn add(
     preset: &str,
     base: Option<&str>,
     name: Option<&str>,
+    agent_cli: Option<&str>,
 ) -> Result<String, CliError> {
     // A relative or non-canonical path (such as ".") is resolved first, so the name and the registry see the real folder.
     let path = std::fs::canonicalize(path).map_err(|e| {
@@ -98,7 +107,7 @@ fn add(
             ))
         }
     };
-    let dir = project::add(home, &name, path, preset, Some(&base), &check)?;
+    let dir = project::add(home, &name, path, preset, Some(&base), &check, agent_cli)?;
     let mut text = format!(
         "added project {name} ({preset}, base {base}) at {}",
         dir.display()
@@ -180,6 +189,10 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
             ));
         }
     }
+    if resolved.config.agent_cli() == "codex" {
+        let path_env = std::env::var("PATH").unwrap_or_default();
+        problems.extend(codex_problems(&resolved.config, &path_env));
+    }
     let l = &resolved.layout;
     let mut out = vec![
         format!("project: {name}"),
@@ -187,6 +200,7 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         format!("repo: {}", file.repo.display()),
         format!("preset: {}", file.preset),
         format!("base branch: {base}"),
+        format!("agent cli: {}", resolved.config.agent_cli()),
         format!("state folder: {}", l.state_dir.display()),
         format!("worktrees folder: {}", l.worktrees_dir.display()),
         format!("risk paths: {}", resolved.config.risk_paths.len()),
@@ -218,6 +232,96 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         out.extend(problems.iter().map(|p| format!("  - {p}")));
     }
     Ok(out.join("\n"))
+}
+
+/// Model names that belong to Claude, not Codex.
+const CLAUDE_ALIASES: [&str; 3] = ["sonnet", "opus", "haiku"];
+
+fn is_claude_model(model: &str) -> bool {
+    let m = model.trim().to_lowercase();
+    CLAUDE_ALIASES.contains(&m.as_str()) || m.starts_with("claude")
+}
+
+/// True when an executable file `name` sits in a folder of `path_env`.
+pub fn program_in_path(path_env: &str, name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::env::split_paths(path_env).any(|dir| {
+        std::fs::metadata(dir.join(name))
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    })
+}
+
+/// Problems of a Codex project: a missing `codex` program and Claude model names.
+pub fn codex_problems(cfg: &Config, path_env: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if cfg.agent_cli() != "codex" {
+        return out;
+    }
+    if !program_in_path(path_env, "codex") {
+        out.push("agent_cli is codex but the codex program is not on PATH".to_string());
+    }
+    let models = [
+        ("builder_model", Some(cfg.builder_model.as_str())),
+        ("reviewer_model", Some(cfg.reviewer_model.as_str())),
+        (
+            "reviewer_model_large",
+            cfg.reviewer_model_large.as_deref(),
+        ),
+        ("commit_model", Some(cfg.commit_model.as_str())),
+        ("kb_model", Some(cfg.kb_model.as_str())),
+    ];
+    for (key, value) in models {
+        if let Some(v) = value.filter(|v| is_claude_model(v)) {
+            out.push(format!(
+                "{key} is {v:?}, a Claude model name; set a Codex model such as gpt-5.6-luna"
+            ));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_show_reports_a_missing_codex_and_a_claude_alias() {
+        let mut cfg = Config::default();
+        cfg.agent_cli = Some("codex".into());
+        cfg.builder_model = "sonnet".into();
+        cfg.reviewer_model_large = Some("opus".into());
+        let problems = codex_problems(&cfg, "/nonexistent-dir");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("codex") && p.contains("PATH")),
+            "{problems:?}"
+        );
+        assert!(problems
+            .iter()
+            .any(|p| p.contains("builder_model") && p.contains("sonnet")));
+        assert!(problems.iter().any(|p| p.contains("reviewer_model_large")));
+    }
+
+    #[test]
+    fn no_codex_problems_for_claude_projects() {
+        let cfg = Config::default();
+        assert!(codex_problems(&cfg, "/nonexistent-dir").is_empty());
+    }
+
+    #[test]
+    fn program_in_path_finds_an_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().expect("tempdir");
+        let exe = t.path().join("codex");
+        std::fs::write(&exe, "#!/bin/sh\n").expect("write");
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let env = t.path().to_str().expect("utf8");
+        assert!(program_in_path(env, "codex"));
+        assert!(!program_in_path(env, "other"));
+        assert!(!program_in_path("/nonexistent-dir", "codex"));
+    }
 }
 
 fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
