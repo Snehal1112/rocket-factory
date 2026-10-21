@@ -15,6 +15,24 @@ fn open_reports_the_checkout_root_from_a_subdirectory() {
 }
 
 #[test]
+fn common_git_dir_is_the_main_dot_git_from_a_worktree() {
+    let fx = Fixture::new();
+    let repo = fx.repo();
+    let wt = repo
+        .create_worktree(&factory_git::JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+        })
+        .expect("create worktree");
+    let want = std::fs::canonicalize(fx.path.join(".git")).expect("canon");
+    let main = std::fs::canonicalize(repo.common_git_dir()).expect("canon");
+    assert_eq!(main, want);
+    let from_wt = Repo::open(&wt.path).expect("open worktree");
+    let got = std::fs::canonicalize(from_wt.common_git_dir()).expect("canon");
+    assert_eq!(got, want);
+}
+
+#[test]
 fn tip_returns_the_branch_sha_and_not_found_for_a_missing_branch() {
     let fx = Fixture::new();
     let repo = fx.repo();

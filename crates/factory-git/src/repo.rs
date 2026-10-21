@@ -77,6 +77,11 @@ impl Repo {
         &self.root
     }
 
+    /// The common git folder of the repository, the main `.git` even when opened from a worktree.
+    pub fn common_git_dir(&self) -> PathBuf {
+        self.inner.path().to_path_buf()
+    }
+
     /// Resolves a sha or other revision to a commit.
     pub(crate) fn commit_of(&self, rev: &str) -> Result<Commit<'_>> {
         let obj = self.inner.revparse_single(rev).map_err(|e| {
