@@ -98,6 +98,8 @@ pub struct Config {
     pub require_tests: bool,
     /// Prompt cache lifetime for every agent run, `5m` or `1h`. `None` leaves the choice to `claude`.
     pub cache_ttl: Option<String>,
+    /// The agent CLI for every run, `claude` or `codex`. `None` means `claude`.
+    pub agent_cli: Option<String>,
     /// File log level: error, warn, info, debug or trace. `None` means info.
     pub log_level: Option<String>,
     /// Give builder runs their own permission mode and tool allowlist. On by default.
@@ -149,6 +151,7 @@ impl Default for Config {
             test_markers: Vec::new(),
             require_tests: false,
             cache_ttl: None,
+            agent_cli: None,
             log_level: None,
             builder_permissions: true,
             builder_allow: Vec::new(),
@@ -160,6 +163,11 @@ impl Default for Config {
 }
 
 impl Config {
+    /// The agent CLI, `claude` when unset.
+    pub fn agent_cli(&self) -> &str {
+        self.agent_cli.as_deref().unwrap_or("claude")
+    }
+
     /// The file log level, `info` when unset.
     pub fn log_level_or_default(&self) -> &str {
         self.log_level.as_deref().unwrap_or("info")
@@ -232,6 +240,15 @@ impl Config {
         {
             return Err(CoreError::Config(
                 "cache_ttl must be \"5m\" or \"1h\" when it is set".into(),
+            ));
+        }
+        if cfg
+            .agent_cli
+            .as_deref()
+            .is_some_and(|c| c != "claude" && c != "codex")
+        {
+            return Err(CoreError::Config(
+                "agent_cli must be \"claude\" or \"codex\" when it is set".into(),
             ));
         }
         if cfg
@@ -658,6 +675,24 @@ mod tests {
     #[test]
     fn builder_carry_session_must_be_a_bool() {
         Config::parse("builder_carry_session = \"yes\"").expect_err("not a bool");
+    }
+
+    #[test]
+    fn agent_cli_is_unset_by_default_and_takes_claude_or_codex() {
+        assert_eq!(Config::default().agent_cli, None);
+        assert_eq!(Config::default().agent_cli(), "claude");
+        let cfg = Config::parse("agent_cli = \"codex\"").expect("codex parses");
+        assert_eq!(cfg.agent_cli(), "codex");
+        let cfg = Config::parse("agent_cli = \"claude\"").expect("claude parses");
+        assert_eq!(cfg.agent_cli(), "claude");
+    }
+
+    #[test]
+    fn agent_cli_rejects_other_values() {
+        for text in ["agent_cli = \"gpt\"", "agent_cli = \"\""] {
+            let err = Config::parse(text).expect_err("must fail");
+            assert!(err.to_string().contains("agent_cli must be"), "{err}");
+        }
     }
 
     #[test]

@@ -175,6 +175,9 @@ pub enum ProjectCmd {
         /// The project name. Defaults to the lowercased repo folder name.
         #[arg(long)]
         name: Option<String>,
+        /// The agent CLI for the project. `codex` seeds the Codex model names.
+        #[arg(long, value_parser = ["claude", "codex"])]
+        agent_cli: Option<String>,
     },
     /// List the projects.
     List,
@@ -205,6 +208,38 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("factory "), "{text}");
         assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
+    }
+
+    #[test]
+    fn project_add_takes_agent_cli() {
+        let cli = Cli::try_parse_from([
+            "factory",
+            "project",
+            "add",
+            "/r",
+            "--preset",
+            "rust",
+            "--agent-cli",
+            "codex",
+        ])
+        .expect("parses");
+        match cli.command {
+            Command::Project {
+                cmd: ProjectCmd::Add { agent_cli, .. },
+            } => assert_eq!(agent_cli.as_deref(), Some("codex")),            other => panic!("unexpected {other:?}"),
+        }
+        let err = Cli::try_parse_from([
+            "factory",
+            "project",
+            "add",
+            "/r",
+            "--preset",
+            "rust",
+            "--agent-cli",
+            "gpt",
+        ])
+        .expect_err("gpt is refused");
+        assert_eq!(err.kind(), ErrorKind::InvalidValue);
     }
 
     #[test]

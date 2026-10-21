@@ -70,7 +70,7 @@ impl Env {
     fn add_project(&self, name: &str) -> PathBuf {
         let repo = self._tmp.path().join("repos").join(name);
         std::fs::create_dir_all(&repo).expect("repo");
-        project::add(&self.home, name, &repo, "rust", None, &|_| Ok(())).expect("add project");
+        project::add(&self.home, name, &repo, "rust", None, &|_| Ok(()), None).expect("add project");
         repo
     }
 
