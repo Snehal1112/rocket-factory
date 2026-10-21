@@ -17,10 +17,12 @@ pub struct Baseline {
 }
 
 /// One agent run as logged by the engine in `usage.jsonl`.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UsageRecord {
     pub job: String,
     pub role: String,
+    /// Agent provider of the run, `claude` when the line has none.
+    pub provider: String,
     pub input: u64,
     pub cache_creation: u64,
     pub output: u64,
@@ -45,6 +47,42 @@ pub struct UsageRecord {
     pub start_cr: Option<u64>,
     /// Context the run ended with, `None` on old lines.
     pub end_ctx: Option<u64>,
+}
+
+impl Default for UsageRecord {
+    fn default() -> Self {
+        Self {
+            job: String::new(),
+            role: String::new(),
+            provider: DEFAULT_PROVIDER.to_string(),
+            input: 0,
+            cache_creation: 0,
+            output: 0,
+            cache_read: 0,
+            usage_v: 0,
+            model: String::new(),
+            turns: 0,
+            resumed: false,
+            stop: String::new(),
+            round: 0,
+            tasks_done: None,
+            start_ctx: 0,
+            ts: 0,
+            cache_creation_1h: None,
+            secs: None,
+            start_cc: None,
+            start_cr: None,
+            end_ctx: None,
+        }
+    }
+}
+
+/// Provider of lines that carry none.
+const DEFAULT_PROVIDER: &str = "claude";
+
+/// Cuts a provider to the 8 characters of its table column.
+fn provider_cell(p: &str) -> String {
+    p.chars().take(8).collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -121,9 +159,10 @@ pub fn render_detail(records: &[UsageRecord]) -> String {
         let task = r.tasks_done.map_or(String::new(), |n| format!(" done {n}"));
         let resumed = if r.resumed { " resumed" } else { "" };
         out.push_str(&format!(
-            "  {:<3} {:<10} round {}{task}{resumed} turns {} weighted {}\n",
+            "  {:<3} {:<10} {:<8} round {}{task}{resumed} turns {} weighted {}\n",
             i + 1,
             r.role,
+            provider_cell(&r.provider),
             r.round.max(1),
             r.turns,
             weighted(r)
@@ -140,6 +179,7 @@ pub const CACHE_5M_SECS: u64 = 300;
 /// Cache use of one role over the counted runs.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RoleCache {
+    pub provider: String,
     pub role: String,
     pub runs: u64,
     pub creation: u64,
@@ -154,6 +194,7 @@ pub struct RoleCache {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResumedRun {
     pub job: String,
+    pub provider: String,
     pub role: String,
     pub round: u64,
     pub gap: Option<u64>,
@@ -184,6 +225,7 @@ impl ResumedRun {
 /// Cold-start figures of one role. Start sums cover fresh runs with start fields only.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RoleCold {
+    pub provider: String,
     pub role: String,
     pub fresh: u64,
     pub resumed: u64,
@@ -246,8 +288,8 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
         days,
         ..Default::default()
     };
-    let mut roles: BTreeMap<String, RoleCache> = BTreeMap::new();
-    let mut cold_roles: BTreeMap<String, RoleCold> = BTreeMap::new();
+    let mut roles: BTreeMap<(String, String), RoleCache> = BTreeMap::new();
+    let mut cold_roles: BTreeMap<(String, String), RoleCold> = BTreeMap::new();
     let mut cold_jobs: BTreeMap<String, JobCold> = BTreeMap::new();
     for rows in jobs {
         for (i, r) in rows.iter().enumerate() {
@@ -255,7 +297,9 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
                 continue;
             }
             report.runs += 1;
-            let role = roles.entry(r.role.clone()).or_insert_with(|| RoleCache {
+            let key = (r.provider.clone(), r.role.clone());
+            let role = roles.entry(key.clone()).or_insert_with(|| RoleCache {
+                provider: r.provider.clone(),
                 role: r.role.clone(),
                 ..Default::default()
             });
@@ -270,8 +314,9 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
                     .saturating_add(r.cache_creation.saturating_sub(h));
             }
             let cold_role = cold_roles
-                .entry(r.role.clone())
+                .entry(key)
                 .or_insert_with(|| RoleCold {
+                    provider: r.provider.clone(),
                     role: r.role.clone(),
                     ..Default::default()
                 });
@@ -308,6 +353,7 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
                 };
                 report.resumed.push(ResumedRun {
                     job: r.job.clone(),
+                    provider: r.provider.clone(),
                     role: r.role.clone(),
                     round: r.round.max(1),
                     gap,
@@ -342,8 +388,8 @@ pub fn render_cache(r: &CacheReport) -> String {
         return out;
     }
     out.push_str(&format!(
-        "{:<10} {:<5} {:<10} {:<10} {:<10} {:<10} {}\n",
-        "ROLE", "RUNS", "CREATION", "READ", "CREATION%", "5M", "1H"
+        "{:<8} {:<10} {:<5} {:<10} {:<10} {:<10} {:<10} {}\n",
+        "PROVIDER", "ROLE", "RUNS", "CREATION", "READ", "CREATION%", "5M", "1H"
     ));
     let mut split_total = 0;
     for role in &r.roles {
@@ -354,7 +400,8 @@ pub fn render_cache(r: &CacheReport) -> String {
         };
         split_total += role.split_runs;
         out.push_str(&format!(
-            "{:<10} {:<5} {:<10} {:<10} {:<10} {:<10} {}\n",
+            "{:<8} {:<10} {:<5} {:<10} {:<10} {:<10} {:<10} {}\n",
+            provider_cell(&role.provider),
             role.role,
             role.runs,
             role.creation,
@@ -376,8 +423,8 @@ pub fn render_cache(r: &CacheReport) -> String {
     }
     out.push_str("RESUMED RUNS\n");
     out.push_str(&format!(
-        "{:<5} {:<10} {:<6} {:<8} {:<10} {:<10} {:<6} {}\n",
-        "JOB", "ROLE", "ROUND", "GAP", "CREATION", "READ", "SHARE", "REWROTE"
+        "{:<5} {:<8} {:<10} {:<6} {:<8} {:<10} {:<10} {:<6} {}\n",
+        "JOB", "PROVIDER", "ROLE", "ROUND", "GAP", "CREATION", "READ", "SHARE", "REWROTE"
     ));
     for m in &r.resumed {
         let gap = m.gap.map_or("?".to_string(), |g| format!("{g}s"));
@@ -385,8 +432,9 @@ pub fn render_cache(r: &CacheReport) -> String {
             .share()
             .map_or("-".to_string(), |s| format!("{:.1}%", s * 100.0));
         out.push_str(&format!(
-            "{:<5} {:<10} {:<6} {:<8} {:<10} {:<10} {:<6} {}\n",
+            "{:<5} {:<8} {:<10} {:<6} {:<8} {:<10} {:<10} {:<6} {}\n",
             m.job,
+            provider_cell(&m.provider),
             m.role,
             m.round,
             gap,
@@ -420,8 +468,8 @@ fn render_cold(r: &CacheReport) -> String {
         return out;
     }
     out.push_str(&format!(
-        "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
-        "ROLE", "FRESH", "RESUMED", "AVG-START", "FIRST-CC", "FIRST-CR", "FIRST-CC%", "AVG-END"
+        "{:<8} {:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
+        "PROVIDER", "ROLE", "FRESH", "RESUMED", "AVG-START", "FIRST-CC", "FIRST-CR", "FIRST-CC%", "AVG-END"
     ));
     for c in &r.cold_roles {
         let avg = c.avg_start().map_or("-".to_string(), |a| a.to_string());
@@ -430,8 +478,10 @@ fn render_cold(r: &CacheReport) -> String {
             .first_cc_share()
             .map_or("-".to_string(), |s| format!("{:.1}%", s * 100.0));
         out.push_str(&format!(
-            "{:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
-            c.role, c.fresh, c.resumed, avg, c.first_cc, c.first_cr, share, end
+            "{:<8} {:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
+            provider_cell(&c.provider),
+            c.role,
+            c.fresh, c.resumed, avg, c.first_cc, c.first_cr, share, end
         ));
     }
     if r.fresh_covered < r.fresh_runs {
@@ -473,6 +523,10 @@ pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Vec<UsageRecord>, 
         out.push(UsageRecord {
             job: job.to_string(),
             role: v["role"].as_str().unwrap_or("unknown").to_string(),
+            provider: v["provider"]
+                .as_str()
+                .unwrap_or(DEFAULT_PROVIDER)
+                .to_string(),
             input: n("input"),
             cache_creation: n("cache_creation"),
             output: n("output"),
@@ -799,7 +853,7 @@ mod tests {
         let out = render_cache(&cache_report(&[rows], None, 100));
         let line = out
             .lines()
-            .find(|l| l.starts_with("builder") && l.contains("25.0%"))
+            .find(|l| l.starts_with("claude   builder") && l.contains("25.0%"))
             .expect("builder row");
         assert!(line.trim_end().ends_with('-'), "{out}");
     }
@@ -986,7 +1040,7 @@ mod tests {
         let text = render_cache(&cache_report(&[rows], None, 10));
         let line = text
             .lines()
-            .find(|l| l.starts_with("builder"))
+            .find(|l| l.starts_with("claude   builder"))
             .expect("role row");
         assert_eq!(line.matches("n/a").count(), 2, "{text}");
         assert!(!text.contains("split covers"), "{text}");
@@ -1134,7 +1188,7 @@ mod tests {
         assert!(text.contains("25.0%"), "{text}");
         let line = text
             .lines()
-            .find(|l| l.starts_with("reviewer"))
+            .find(|l| l.starts_with("claude   reviewer"))
             .expect("reviewer row");
         assert!(line.contains(" - "), "{line}");
     }
@@ -1148,6 +1202,87 @@ mod tests {
         let r = cache_report(&[rows], None, 10);
         assert_eq!(r.roles[0].role, "builder");
         assert_eq!(r.roles[1].role, "reviewer");
+    }
+
+    fn usage_file(line: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(&path, format!("{line}\n")).expect("write usage");
+        (dir, path)
+    }
+
+    #[test]
+    fn tokens_cache_groups_by_provider_and_role() {
+        let mut codex = run("020", "builder", false, 1_000, Some(50), 100, Some(0), 900);
+        codex.provider = "codex".into();
+        let claude = run("020", "builder", false, 900, Some(50), 100, Some(0), 900);
+        let r = cache_report(&[vec![claude, codex]], None, 2_000);
+        let keys: Vec<(&str, &str)> = r
+            .roles
+            .iter()
+            .map(|x| (x.provider.as_str(), x.role.as_str()))
+            .collect();
+        assert_eq!(keys, vec![("claude", "builder"), ("codex", "builder")]);
+        let text = render_cache(&r);
+        assert!(text.lines().any(|l| l.starts_with("PROVIDER")), "{text}");
+    }
+
+    #[test]
+    fn old_lines_without_provider_read_as_claude() {
+        let (_d, path) = usage_file("{\"job\":\"001\",\"role\":\"builder\"}");
+        assert_eq!(load_usage(&path, "001").expect("load")[0].provider, "claude");
+        let (_d2, path2) = usage_file("{\"job\":\"001\",\"role\":\"builder\",\"provider\":5}");
+        assert_eq!(
+            load_usage(&path2, "001").expect("load")[0].provider,
+            "claude"
+        );
+    }
+
+    #[test]
+    fn load_usage_reads_the_provider() {
+        let (_d, path) = usage_file("{\"job\":\"001\",\"role\":\"builder\",\"provider\":\"codex\"}");
+        assert_eq!(load_usage(&path, "001").expect("load")[0].provider, "codex");
+    }
+
+    #[test]
+    fn run_rows_show_the_provider() {
+        let mut codex = rec("builder", 1, 0, 0, 0);
+        codex.provider = "codex".into();
+        let text = render_detail(&[codex, rec("reviewer", 1, 0, 0, 0)]);
+        let rows: Vec<&str> = text.lines().skip(1).collect();
+        assert!(rows[0].contains("builder    codex    round"), "{text}");
+        assert!(rows[1].contains("reviewer   claude   round"), "{text}");
+    }
+
+    #[test]
+    fn resumed_rows_and_cold_roles_carry_the_provider() {
+        let mut first = run("020", "builder", false, 1_000, Some(50), 1, Some(0), 1);
+        first.start_cc = Some(1);
+        first.start_cr = Some(1);
+        first.provider = "codex".into();
+        let mut second = run("020", "builder", true, 1_400, Some(100), 5, Some(0), 5);
+        second.provider = "codex".into();
+        let r = cache_report(&[vec![first, second]], None, 2_000);
+        assert_eq!(r.resumed[0].provider, "codex");
+        assert_eq!(r.cold_roles[0].provider, "codex");
+        let text = render_cache(&r);
+        let headers = text
+            .lines()
+            .filter(|l| l.starts_with("JOB") && l.contains("PROVIDER") || l.starts_with("PROVIDER"))
+            .count();
+        assert_eq!(headers, 3, "{text}");
+    }
+
+    #[test]
+    fn long_provider_names_are_cut_to_eight_characters() {
+        let mut r = run("1", "builder", false, 1, None, 1, None, 1);
+        r.provider = "averyveryverylongname".into();
+        let text = render_cache(&cache_report(&[vec![r]], None, 10));
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("averyver"))
+            .expect("role row");
+        assert!(line.starts_with("averyver builder"), "{line}");
     }
 
     #[test]
