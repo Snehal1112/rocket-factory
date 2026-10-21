@@ -306,6 +306,12 @@
     return `<span class="series" title="Plan ${k} of ${total} in this series">plan ${k} of ${total}</span>`;
   }
 
+  // Names the agent CLI of a job. A missing or empty value shows nothing.
+  function providerChip(provider) {
+    if (typeof provider !== "string" || provider === "") return "";
+    return `<span class="chip chip-provider" title="Agent CLI">${escapeHtml(provider)}</span>`;
+  }
+
   // Says which spec a plan belongs to. Jobs made before series ids, and one-plan series, have none.
   function specChip(series, specs) {
     if (!series || !series.id) return "";
@@ -595,6 +601,7 @@
       `<header class="card-head"><span class="job-id">${id}</span>` +
       `<span class="card-stage">${escapeHtml(stageTitle)}</span>` +
       seriesChip(job.series) +
+      providerChip(job.provider) +
       specChip(job.series, specs) +
       `<time class="job-date" title="Last stage change">${escapeHtml(formatStamp(job.stage_since) || job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
@@ -797,6 +804,7 @@
     parkMessage,
     parkButton,
     seriesChip,
+    providerChip,
     specChip,
     durationsLine,
     tokensBar,

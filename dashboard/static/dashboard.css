@@ -188,6 +188,7 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .chip { height: 1.25rem; white-space: nowrap; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 11.5px; font-weight: 500; line-height: calc(1.25rem - 2px); }
 .chip-pass { border-color: var(--success); background: var(--success-wash); color: var(--success); }
 .chip-changes { border-color: var(--destructive); background: var(--destructive-wash); color: var(--destructive); }
+.chip-provider { height: 1.1rem; padding: 0 0.4rem; font-size: 10.5px; line-height: calc(1.1rem - 2px); text-transform: lowercase; }
 .chip-running { border-color: var(--primary); background: var(--primary-wash); color: var(--primary); }
 
 .agents { margin: 0.65rem 0 0; padding: 0.55rem 0 0; border-top: 1px solid var(--border); font-size: 12px; list-style: none; }

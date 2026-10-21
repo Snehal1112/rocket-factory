@@ -57,6 +57,7 @@ Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factor
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
+| `agent_cli` | `"claude"` or `"codex"` | unset, which means `"claude"` | The CLI that runs every agent of the project. `"codex"` runs them through `codex exec --json`, with the limits in "Using Codex" in `docs/software-factory.md`. Any other value makes the config invalid. `factory project add <path> --agent-cli codex` writes it with `gpt-5.6-luna` for the four model keys and no `cache_ttl`. |
 | `builder_model` | string | `"sonnet"` | `--model` for every builder run. Not blank. |
 | `reviewer_model` | string | `"sonnet"` | Reviewer model. Not blank. |
 | `reviewer_model_large` | string | unset | A stronger reviewer. Used when the diff is risky, or the round's changed lines are strictly above `reviewer_large_over_lines`. Unset turns the switch off. Not blank when set. |

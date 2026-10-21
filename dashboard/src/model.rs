@@ -190,6 +190,13 @@ pub struct Job {
         skip_serializing_if = "Option::is_none"
     )]
     pub spec_warning: Option<String>,
+    /// The agent CLI that runs the job, such as "codex". A bad value is dropped.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider: Option<String>,
 }
 
 /// The cost estimate the driver stored on a job when it created it.
@@ -254,4 +261,34 @@ pub struct AgentState {
     pub cwd: Option<String>,
     pub job_id: Option<String>,
     pub tokens_weighted: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job_with(extra: serde_json::Value) -> Job {
+        let mut value = serde_json::json!({
+            "id": "001", "dir": "d", "slug": "s", "created": "2026-10-13", "feature": "f",
+            "branch": "b", "stage": "build", "round": 0, "stage_since": 0.0, "reviews": {},
+        });
+        if let (Some(base), Some(more)) = (value.as_object_mut(), extra.as_object()) {
+            base.extend(more.clone());
+        }
+        serde_json::from_value(value).expect("job parses")
+    }
+
+    #[test]
+    fn a_job_provider_is_read_and_optional() {
+        let with = job_with(serde_json::json!({ "provider": "codex" }));
+        assert_eq!(with.provider.as_deref(), Some("codex"));
+        let without = job_with(serde_json::json!({}));
+        assert_eq!(without.provider, None);
+    }
+
+    #[test]
+    fn a_bad_provider_value_is_dropped() {
+        let job = job_with(serde_json::json!({ "provider": 5 }));
+        assert_eq!(job.provider, None);
+    }
 }

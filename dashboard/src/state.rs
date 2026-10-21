@@ -313,6 +313,7 @@ mod tests {
             park_at: None,
             estimate: None,
             spec_warning: None,
+            provider: None,
         }
     }
 
