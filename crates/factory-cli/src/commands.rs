@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use factory_agent::{AgentRunner, Caps, ClaudeRunner, EventSink};
+use factory_agent::{AgentRunner, Caps, ClaudeRunner, CodexRunner, EventSink};
 use factory_core::{
     outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage,
 };
@@ -205,7 +205,19 @@ impl CliCtx {
             Some(r) => r.clone(),
             None => {
                 let sink = EventSink::new(self.layout.events_file(), job_id);
-                Arc::new(ClaudeRunner::new("claude", Caps::default(), sink))
+                // Without a resolved config the same file the driver loads decides.
+                let loaded;
+                let cfg = match &self.config {
+                    Some(c) => Some(c),
+                    None => {
+                        loaded = Config::load(&self.layout.config_file);
+                        Some(&loaded)
+                    }
+                };
+                match runner_kind(cfg) {
+                    AgentCli::Codex => Arc::new(CodexRunner::new("codex", sink)),
+                    AgentCli::Claude => Arc::new(ClaudeRunner::new("claude", Caps::default(), sink)),
+                }
             }
         }
     }
@@ -233,6 +245,21 @@ impl CliCtx {
             Some(t) => driver.with_tracker(Box::new(t.clone())),
             None => driver,
         })
+    }
+}
+
+/// Which agent CLI a project runs through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCli {
+    Claude,
+    Codex,
+}
+
+/// The agent CLI of a config. No config or an unset `agent_cli` means Claude.
+pub fn runner_kind(cfg: Option<&Config>) -> AgentCli {
+    match cfg {
+        Some(c) if c.agent_cli() == "codex" => AgentCli::Codex,
+        _ => AgentCli::Claude,
     }
 }
 
@@ -865,6 +892,15 @@ fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runner_kind_follows_agent_cli() {
+        assert_eq!(runner_kind(None), AgentCli::Claude);
+        let mut cfg = Config::default();
+        assert_eq!(runner_kind(Some(&cfg)), AgentCli::Claude);
+        cfg.agent_cli = Some("codex".to_string());
+        assert_eq!(runner_kind(Some(&cfg)), AgentCli::Codex);
+    }
 
     #[test]
     fn rework_notes_are_one_short_line() {

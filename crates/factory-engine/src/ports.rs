@@ -168,7 +168,12 @@ impl Engine<'_> {
 
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
     pub(crate) fn run_agent(&self, mut spec: AgentSpec) -> Result<AgentRun, EngineError> {
-        if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
+        self.sync_provider()?;
+        if self.config.agent_cli() == "codex" {
+            if let Err(e) = self.prepare_for_codex(&mut spec) {
+                return Ok(AgentRun::failed(&e.to_string()));
+            }
+        } else if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
             spec.env.push((var.0.to_string(), var.1.to_string()));
         }
         // Every agent that runs in a job worktree finds the resolved agent files as resolved.
@@ -200,6 +205,31 @@ impl Engine<'_> {
         Ok(run)
     }
 
+    /// Clears every saved session id once when the project's provider differs from the job's.
+    /// A job with no provider counts as `claude`.
+    pub(crate) fn sync_provider(&self) -> Result<(), EngineError> {
+        let want = self.config.agent_cli().to_string();
+        let board = Board::load(&self.board_path).map_err(core_err)?;
+        let stored = board
+            .find(&self.job_id)
+            .map_err(core_err)?
+            .provider
+            .clone();
+        if stored.as_deref() == Some(want.as_str()) {
+            return Ok(());
+        }
+        let switched = stored.as_deref().unwrap_or("claude") != want;
+        self.update(|j| {
+            if switched {
+                j.task_session = None;
+                j.builder_id = None;
+                j.builder_last = None;
+            }
+            j.provider = Some(want.clone());
+            Ok(())
+        })
+    }
+
     /// Appends one usage line per agent run to `usage.jsonl` in the job folder, for `factory tokens`.
     /// A write error is ignored, because the report is informational.
     fn log_usage(&self, spec: &AgentSpec, run: &AgentRun, secs: u64) {
@@ -214,6 +244,7 @@ impl Engine<'_> {
             tasks_done,
             now().max(0.0) as u64,
             secs,
+            self.config.agent_cli(),
         );
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -255,6 +286,7 @@ pub(crate) fn usage_line(
     tasks_done: u32,
     ts: u64,
     secs: u64,
+    provider: &str,
 ) -> serde_json::Value {
     let u = &run.usage;
     let mut line = serde_json::json!({
@@ -277,6 +309,7 @@ pub(crate) fn usage_line(
         "start_cr": run.start_cr,
         "end_ctx": run.end_ctx,
         "usage_v": 4,
+        "provider": provider,
     });
     if spec.role == "builder" {
         if let Some(obj) = line.as_object_mut() {
@@ -323,6 +356,7 @@ mod tests {
             1,
             1_700_000_000,
             0,
+            "claude",
         );
         assert_eq!(line["job"], "001");
         assert_eq!(line["role"], "builder");
@@ -339,6 +373,20 @@ mod tests {
         assert_eq!(line["start_ctx"], 55);
         assert_eq!(line["usage_v"], 4);
         assert_eq!(line["tasks_done"], 1);
+    }
+
+    #[test]
+    fn usage_line_carries_the_provider() {
+        let spec = AgentSpec::new("001", "builder", "/w", "p");
+        let run = run_with(StopReason::Done);
+        assert_eq!(
+            usage_line("001", &spec, &run, 1, 0, 1, 0, "claude")["provider"],
+            "claude"
+        );
+        assert_eq!(
+            usage_line("001", &spec, &run, 1, 0, 1, 0, "codex")["provider"],
+            "codex"
+        );
     }
 
     #[test]
@@ -359,14 +407,14 @@ mod tests {
         let mut run = run_with(StopReason::Done);
         run.usage.cache_creation_1h_input_tokens = 2;
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run, 1, 0, 1, 0);
+        let line = usage_line("001", &spec, &run, 1, 0, 1, 0, "claude");
         assert_eq!(line["cache_creation_1h"], 2);
     }
 
     #[test]
     fn usage_line_has_the_run_duration() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 1, 42);
+        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 1, 42, "claude");
         assert_eq!(line["secs"], 42);
         assert_eq!(line["role"], "builder");
     }
@@ -374,7 +422,7 @@ mod tests {
     #[test]
     fn tasks_done_is_written_for_builder_lines_only() {
         let spec = AgentSpec::new("001", "reviewer", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 3, 1, 0);
+        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 3, 1, 0, "claude");
         assert!(line.get("tasks_done").is_none(), "{line}");
         assert!(line["model"].is_null());
         assert_eq!(line["resumed"], false);
@@ -383,14 +431,14 @@ mod tests {
     #[test]
     fn a_killed_run_names_its_stop_reason() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::BudgetStop), 1, 0, 1, 0);
+        let line = usage_line("001", &spec, &run_with(StopReason::BudgetStop), 1, 0, 1, 0, "claude");
         assert_eq!(line["stop"], "budget-stop");
     }
 
     #[test]
     fn a_failed_run_still_gets_a_line_with_zero_counters() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &AgentRun::failed("boom"), 1, 0, 1, 0);
+        let line = usage_line("001", &spec, &AgentRun::failed("boom"), 1, 0, 1, 0, "claude");
         assert_eq!(line["stop"], "failed");
         assert_eq!(line["input"], 0);
         assert_eq!(line["output"], 0);
@@ -400,7 +448,7 @@ mod tests {
     #[test]
     fn usage_line_carries_start_cc_and_start_cr() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5);
+        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5, "claude");
         assert_eq!(line["start_cc"], 40);
         assert_eq!(line["start_cr"], 15);
         assert_eq!(line["usage_v"], 4);
@@ -409,7 +457,7 @@ mod tests {
     #[test]
     fn usage_line_carries_end_ctx() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5);
+        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5, "claude");
         assert_eq!(line["end_ctx"], 70);
         assert_eq!(line["usage_v"], 4);
     }
@@ -417,14 +465,14 @@ mod tests {
     #[test]
     fn a_failed_run_writes_zero_end_ctx() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &AgentRun::failed("x"), 1, 0, 1, 0);
+        let line = usage_line("001", &spec, &AgentRun::failed("x"), 1, 0, 1, 0, "claude");
         assert_eq!(line["end_ctx"], 0);
     }
 
     #[test]
     fn a_failed_run_still_writes_zero_start_fields() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &AgentRun::failed("x"), 1, 0, 1, 0);
+        let line = usage_line("001", &spec, &AgentRun::failed("x"), 1, 0, 1, 0, "claude");
         assert_eq!(line["start_cc"], 0);
         assert_eq!(line["start_cr"], 0);
     }

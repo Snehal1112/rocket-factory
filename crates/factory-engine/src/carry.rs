@@ -19,6 +19,7 @@ pub(crate) struct CarryInput<'a> {
     pub now: u64,
     pub rework_note: bool,
     pub saved: bool,
+    pub codex: bool,
 }
 
 /// The idle limit in seconds, which follows the cache TTL.
@@ -39,6 +40,9 @@ fn no(reason: &str) -> Carry {
 pub(crate) fn carry_decision(i: &CarryInput) -> Carry {
     if !i.enabled {
         return no("off");
+    }
+    if i.codex {
+        return no("codex");
     }
     if i.saved {
         return no("crash resume");
@@ -79,6 +83,7 @@ mod tests {
             now: 1_000,
             rework_note: false,
             saved: false,
+            codex: false,
         }
     }
     fn last(task: u32, ended_at: u64, end_ctx: u64) -> BuilderLast {
@@ -112,6 +117,14 @@ mod tests {
         let mut i = input(Some(&l));
         i.enabled = false;
         assert_eq!(carry_decision(&i), refused("off"));
+    }
+
+    #[test]
+    fn carry_is_refused_under_codex() {
+        let l = last(1, 900, 30_000);
+        let mut i = input(Some(&l));
+        i.codex = true;
+        assert_eq!(carry_decision(&i), refused("codex"));
     }
 
     #[test]
