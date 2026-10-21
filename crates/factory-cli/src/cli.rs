@@ -164,8 +164,9 @@ pub enum PresetsCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum ProjectCmd {
-    /// Register a repository as a project.
+    /// Register a repository, or a folder inside one, as a project.
     Add {
+        /// The repository top folder, or a subfolder of it for a monorepo project.
         path: PathBuf,
         #[arg(long)]
         preset: String,

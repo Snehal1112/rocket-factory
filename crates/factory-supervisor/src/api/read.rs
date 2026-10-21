@@ -3,7 +3,7 @@
 use factory_core::project::{self, ProjectFile};
 use factory_core::{resolve, Board, Config, CoreError, Home, Layout};
 use factory_engine::{project_lease_status, ProjectLeaseStatus, RepoTip};
-use factory_git::Repo;
+use factory_git::{GitError, Repo};
 use serde_json::{json, Value};
 
 use crate::api::http::{error_response, ApiResponse};
@@ -20,19 +20,16 @@ fn base_of(file: &ProjectFile) -> String {
 
 /// Opens the repo at exactly `path`, like `factory project list` does.
 fn open_repo(path: &std::path::Path, base: &str) -> Result<Repo, String> {
-    let repo = Repo::open(path).map_err(|e| format!("not a git repository: {e}"))?;
-    if std::fs::canonicalize(repo.root()).ok() != std::fs::canonicalize(path).ok() {
-        return Err(format!(
-            "{} is not the top folder of a git repository",
-            path.display()
-        ));
+    match Repo::open_top(path) {
+        Ok(repo) => Ok(repo.with_base_branch(base)),
+        Err(e @ GitError::NotTopFolder(_)) => Err(e.to_string()),
+        Err(e) => Err(format!("not a git repository: {e}")),
     }
-    Ok(repo.with_base_branch(base))
 }
 
 fn disabled(name: &str, reason: &str) -> Value {
     json!({
-        "name": name, "repo": null, "preset": null, "baseBranch": null, "status": "disabled",
+        "name": name, "repo": null, "preset": null, "subpath": null, "baseBranch": null, "status": "disabled",
         "reason": reason, "stateDir": null, "jobsDir": null, "activeJob": null,
     })
 }
@@ -47,6 +44,7 @@ fn describe(home: &Home, name: &str, file: &ProjectFile, now_secs: f64) -> Value
         "name": name,
         "repo": file.repo,
         "preset": file.preset,
+        "subpath": file.subpath,
         "baseBranch": base,
         "status": "ready",
         "reason": null,
@@ -60,6 +58,10 @@ fn describe(home: &Home, name: &str, file: &ProjectFile, now_secs: f64) -> Value
     };
     if !file.repo.is_dir() {
         set(&mut v, "disabled", "repo path is missing".to_string());
+        return v;
+    }
+    if !file.folder().is_dir() {
+        set(&mut v, "disabled", "project folder is missing".to_string());
         return v;
     }
     let repo = match open_repo(&file.repo, &base) {
@@ -226,6 +228,36 @@ mod tests {
             .expect("jobs")
             .ends_with("projects/good/state/jobs"));
         assert!(good["activeJob"].is_null());
+    }
+
+    #[test]
+    fn projects_report_the_subpath_and_a_missing_folder() {
+        let (t, home) = fixture();
+        let repo = t.path().join("repo");
+        std::fs::create_dir_all(repo.join("apps/web")).expect("mkdir");
+        let dir = home.project_dir("web");
+        std::fs::create_dir_all(&dir).expect("project dir");
+        let text = format!(
+            "repo = {:?}\nsubpath = \"apps/web\"\npreset = \"rust\"\n[settings]\nbase_branch = \"trunk\"\n",
+            repo.display().to_string()
+        );
+        std::fs::write(dir.join("project.toml"), text).expect("project.toml");
+        let find = |list: &serde_json::Value, n: &str| {
+            list.as_array()
+                .expect("array")
+                .iter()
+                .find(|p| p["name"] == n)
+                .cloned()
+                .expect("project")
+        };
+        let body = get(&home, "/projects").body;
+        assert_eq!(find(&body, "web")["subpath"], "apps/web");
+        assert!(find(&body, "good")["subpath"].is_null());
+        std::fs::remove_dir_all(repo.join("apps/web")).expect("rm");
+        let web = find(&get(&home, "/projects").body, "web");
+        assert_eq!(web["status"], "disabled");
+        assert_eq!(web["reason"], "project folder is missing");
+        assert_eq!(web["subpath"], "apps/web");
     }
 
     #[test]

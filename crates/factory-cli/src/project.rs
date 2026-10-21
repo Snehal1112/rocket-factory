@@ -7,7 +7,7 @@ use factory_core::project::{self, ProjectFile};
 use factory_core::PROJECT_LEASE_FILE;
 use factory_core::{resolve, Board, Config, Home};
 use factory_engine::{now_secs, project_lease_status, ProjectLeaseStatus, RepoTip};
-use factory_git::Repo;
+use factory_git::{GitError, Repo};
 
 use crate::cli::ProjectCmd;
 use crate::CliError;
@@ -48,15 +48,11 @@ pub(crate) fn base_of_strict(file: &ProjectFile) -> Option<String> {
 
 /// Opens the repo at exactly `path` (not a parent repo) with the project's base branch.
 pub(crate) fn open_repo(path: &Path, base: &str) -> Result<Repo, String> {
-    let repo = Repo::open(path).map_err(|e| format!("not a git repository: {e}"))?;
-    let same = std::fs::canonicalize(repo.root()).ok() == std::fs::canonicalize(path).ok();
-    if !same {
-        return Err(format!(
-            "{} is not the top folder of a git repository",
-            path.display()
-        ));
+    match Repo::open_top(path) {
+        Ok(repo) => Ok(repo.with_base_branch(base)),
+        Err(e @ GitError::NotTopFolder(_)) => Err(e.to_string()),
+        Err(e) => Err(format!("not a git repository: {e}")),
     }
-    Ok(repo.with_base_branch(base))
 }
 
 /// The project name for a repo folder: the lowercased folder name, when it is a valid name.
@@ -89,6 +85,27 @@ fn add(
         None => name_from_folder(path)?,
     };
     project::validate_name(&name)?;
+    // The folder may sit anywhere inside a repo. The repo top is found first.
+    let found =
+        Repo::open(path).map_err(|e| CliError::Refused(format!("not a git repository: {e}")))?;
+    let top = std::fs::canonicalize(found.root()).map_err(|e| {
+        CliError::Refused(format!(
+            "repo path {} is not usable: {e}",
+            found.root().display()
+        ))
+    })?;
+    let subpath = match path.strip_prefix(&top) {
+        Ok(rel) if rel.as_os_str().is_empty() => None,
+        Ok(rel) => Some(rel.to_path_buf()),
+        Err(_) => {
+            return Err(CliError::Refused(format!(
+                "{} is not inside the repository at {}",
+                path.display(),
+                top.display()
+            )))
+        }
+    };
+    let path = top.as_path();
     let probe = open_repo(path, "").map_err(CliError::Refused)?;
     let base = match base {
         Some(b) => b.to_string(),
@@ -111,7 +128,7 @@ fn add(
         home,
         &name,
         path,
-        None,
+        subpath.as_deref(),
         preset,
         Some(&base),
         &check,
@@ -121,16 +138,29 @@ fn add(
         "added project {name} ({preset}, base {base}) at {}",
         dir.display()
     );
+    if let Some(sub) = &subpath {
+        text.push_str(&format!(" in {}", sub.display()));
+    }
     if let Err(e) = factory_core::version::stamp(home, factory_core::version::FACTORY_VERSION) {
         text.push_str(&format!("\nnote: version marker not written: {e}"));
     }
     Ok(text)
 }
 
+/// The `subpath:` line of `show`, only for a subfolder project.
+fn subpath_line(file: &ProjectFile) -> Option<String> {
+    file.subpath
+        .as_ref()
+        .map(|s| format!("subpath: {}", s.display()))
+}
+
 /// Why a readable project cannot be used, or `None` when its repo opens.
 fn disabled_reason(file: &ProjectFile) -> Option<String> {
     if !file.repo.is_dir() {
         return Some("repo path is missing".to_string());
+    }
+    if !file.folder().is_dir() {
+        return Some("project folder is missing".to_string());
     }
     open_repo(&file.repo, &base_of(file)).err()
 }
@@ -151,7 +181,7 @@ fn list(home: &Home) -> Result<String, CliError> {
                     e.name,
                     f.preset,
                     base_of(&f),
-                    f.repo.display()
+                    f.folder().display()
                 ),
             },
         };
@@ -182,10 +212,15 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
             format!("project: {name}"),
             format!("version: {}", factory_core::version::FACTORY_VERSION),
             format!("repo: {}", file.repo.display()),
+        ]
+        .into_iter()
+        .chain(subpath_line(&file))
+        .chain([
             format!("preset: {}", file.preset),
             format!("base branch: {base}"),
             format!("disabled: {why}"),
-        ]
+        ])
+        .collect::<Vec<_>>()
         .join("\n"));
     }
     let repo = open_repo(&file.repo, &base).map_err(CliError::Refused)?;
@@ -207,6 +242,9 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         format!("project: {name}"),
         format!("version: {}", factory_core::version::FACTORY_VERSION),
         format!("repo: {}", file.repo.display()),
+    ];
+    out.extend(subpath_line(&file));
+    out.extend([
         format!("preset: {}", file.preset),
         format!("base branch: {base}"),
         format!("agent cli: {}", resolved.config.agent_cli()),
@@ -214,7 +252,7 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         format!("worktrees folder: {}", l.worktrees_dir.display()),
         format!("risk paths: {}", resolved.config.risk_paths.len()),
         format!("tickets on merge: {}", resolved.config.tickets_on_merge),
-    ];
+    ]);
     let names: Vec<&str> = resolved.agents.iter().map(|a| a.name.as_str()).collect();
     out.push(format!(
         "agent files: {}",

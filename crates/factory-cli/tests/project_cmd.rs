@@ -123,12 +123,6 @@ fn add_refusals() {
     let plain = e.tmp.path().join("plain");
     std::fs::create_dir_all(&plain).expect("mkdir");
     assert!(run(&e, &["add", s(&plain), "--preset", "rust", "--name", "p"]).is_err());
-    let sub = make_repo(e.tmp.path(), "outer", "main").join("inner");
-    std::fs::create_dir_all(&sub).expect("mkdir");
-    assert!(
-        run(&e, &["add", s(&sub), "--preset", "rust", "--name", "p"]).is_err(),
-        "a subfolder is not a repo root"
-    );
     let repo = make_repo(e.tmp.path(), "r1", "main");
     let err = run(&e, &["add", s(&repo), "--preset", "nope", "--name", "p"])
         .expect_err("preset")
@@ -151,14 +145,15 @@ fn add_refusals() {
     .to_string();
     assert!(err.contains("ghost"), "{err}");
     run(&e, &["add", s(&repo), "--preset", "rust", "--name", "p"]).expect("add");
-    let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "p"])
+    let other = make_repo(e.tmp.path(), "r2", "main");
+    let err = run(&e, &["add", s(&other), "--preset", "rust", "--name", "p"])
         .expect_err("dup name")
         .to_string();
     assert!(err.contains("already exists"), "{err}");
     let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "q"])
         .expect_err("dup repo")
         .to_string();
-    assert!(err.contains("already project p"), "{err}");
+    assert!(err.contains("project p already covers"), "{err}");
 }
 
 #[test]
@@ -684,4 +679,82 @@ fn add_succeeds_with_a_note_when_the_marker_cannot_be_written() {
     assert!(run(&e, &["list"])
         .expect("list")
         .starts_with("demo rust main"));
+}
+
+/// A repo with committed `apps/web/w.txt` and `apps/api/x.txt` files.
+fn make_monorepo(e: &Env) -> PathBuf {
+    let repo = make_repo(e.tmp.path(), "mono", "main");
+    let r = Repository::open(&repo).expect("open");
+    for (dir, file) in [("apps/web", "w.txt"), ("apps/api", "x.txt")] {
+        std::fs::create_dir_all(repo.join(dir)).expect("mkdir");
+        std::fs::write(repo.join(dir).join(file), "x").expect("write");
+    }
+    let mut index = r.index().expect("index");
+    index
+        .add_all(["apps"], git2::IndexAddOption::DEFAULT, None)
+        .expect("add");
+    let tree = r
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find");
+    let sig = Signature::now("t", "t@t").expect("sig");
+    let parent = r.head().expect("head").peel_to_commit().expect("commit");
+    r.commit(Some("HEAD"), &sig, &sig, "apps", &tree, &[&parent])
+        .expect("commit");
+    repo
+}
+
+#[test]
+fn add_accepts_a_subfolder() {
+    let e = env();
+    let repo = make_monorepo(&e);
+    let web = repo.join("apps/web");
+    let out = run(&e, &["add", s(&web), "--preset", "rust"]).expect("add");
+    assert!(out.contains("added project web "), "{out}");
+    assert!(out.contains(" in apps/web"), "{out}");
+    let text = std::fs::read_to_string(e.home.project_dir("web").join("project.toml"))
+        .expect("project.toml");
+    assert!(text.contains("subpath = \"apps/web\""), "{text}");
+    let canon = std::fs::canonicalize(&repo).expect("canon");
+    assert!(
+        text.contains(&format!("repo = {:?}", canon.display().to_string())),
+        "{text}"
+    );
+    let listed = run(&e, &["list"]).expect("list");
+    assert!(listed.contains("apps/web"), "{listed}");
+    let shown = run(&e, &["show", "web"]).expect("show");
+    assert!(shown.contains("subpath: apps/web"), "{shown}");
+}
+
+#[test]
+fn add_refuses_overlap_and_root_after_subfolder() {
+    let e = env();
+    let repo = make_monorepo(&e);
+    run(&e, &["add", s(&repo.join("apps/web")), "--preset", "rust"]).expect("add web");
+    let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "root"])
+        .expect_err("root after subfolder")
+        .to_string();
+    assert!(err.contains("web"), "{err}");
+}
+
+#[test]
+fn list_shows_subfolder_project_disabled_when_folder_is_gone() {
+    let e = env();
+    let repo = make_monorepo(&e);
+    run(&e, &["add", s(&repo.join("apps/web")), "--preset", "rust"]).expect("add");
+    std::fs::remove_dir_all(repo.join("apps/web")).expect("rm");
+    let out = run(&e, &["list"]).expect("list");
+    assert!(
+        out.contains("web  disabled: project folder is missing"),
+        "{out}"
+    );
+}
+
+#[test]
+fn which_resolves_the_deepest_project() {
+    let e = env();
+    let repo = make_monorepo(&e);
+    run(&e, &["add", s(&repo.join("apps/web")), "--preset", "rust"]).expect("add");
+    std::fs::create_dir_all(repo.join("apps/web/src")).expect("mkdir");
+    let out = run(&e, &["which", s(&repo.join("apps/web/src"))]).expect("which");
+    assert_eq!(out, "web");
 }
