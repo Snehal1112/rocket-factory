@@ -702,6 +702,14 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
             factory_engine::BUILDER_MAX_TURNS,
         ),
         (
+            "crates/factory-core/presets/ruby/agents/factory-builder.md",
+            factory_engine::BUILDER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/csharp/agents/factory-builder.md",
+            factory_engine::BUILDER_MAX_TURNS,
+        ),
+        (
             ".claude/agents/factory-code-reviewer.md",
             factory_engine::REVIEWER_MAX_TURNS,
         ),
@@ -711,6 +719,14 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
         ),
         (
             "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
             factory_engine::REVIEWER_MAX_TURNS,
         ),
     ];
@@ -735,6 +751,8 @@ fn reviewer_files_carry_the_vision_rule_and_declined_to_judge() -> TestResult {
         ".claude/agents/factory-code-reviewer.md",
         "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
         "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
     ] {
         let text = read(path)?;
         require_all(
@@ -768,9 +786,11 @@ fn reviewer_files_carry_the_vision_rule_and_declined_to_judge() -> TestResult {
     Ok(())
 }
 
-const PRESET_BUILDERS: [&str; 2] = [
+const PRESET_BUILDERS: [&str; 4] = [
     "crates/factory-core/presets/rust/agents/factory-builder.md",
     "crates/factory-core/presets/go/agents/factory-builder.md",
+    "crates/factory-core/presets/ruby/agents/factory-builder.md",
+    "crates/factory-core/presets/csharp/agents/factory-builder.md",
 ];
 
 #[test]
@@ -807,6 +827,8 @@ fn reviewer_files_name_the_review_focus_and_the_builder_rulings() -> TestResult 
         ".claude/agents/factory-code-reviewer.md",
         "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
         "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
     ] {
         require_all(&read(path)?, path, &["Review Focus", "rulings", "concerns"])?;
     }
@@ -823,6 +845,8 @@ fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> Test
         ".claude/agents/factory-builder.md",
         PRESET_BUILDERS[0],
         PRESET_BUILDERS[1],
+        PRESET_BUILDERS[2],
+        PRESET_BUILDERS[3],
     ] {
         require_all(
             &read(path)?,
@@ -843,11 +867,15 @@ fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> Test
 }
 
 // The `.claude/agents` copies are marked by the maintainer, so they are not listed here.
-const MARKED: [&str; 4] = [
+const MARKED: [&str; 8] = [
     "crates/factory-core/presets/rust/agents/factory-builder.md",
     "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
     "crates/factory-core/presets/go/agents/factory-builder.md",
     "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/ruby/agents/factory-builder.md",
+    "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/csharp/agents/factory-builder.md",
+    "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
 ];
 
 #[test]
@@ -909,6 +937,8 @@ fn builder_files_carry_the_rules_digest() -> TestResult {
         ".claude/agents/factory-builder.md",
         PRESET_BUILDERS[0],
         PRESET_BUILDERS[1],
+        PRESET_BUILDERS[2],
+        PRESET_BUILDERS[3],
     ] {
         require_all(
             &read(path)?,

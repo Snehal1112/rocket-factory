@@ -1,0 +1,27 @@
+# Preset: Ruby project (Bundler, RSpec or Minitest). Edit this file in ~/.factory/presets/ruby/ to change every project that uses it.
+risk_paths = [
+  "Gemfile",
+  "Gemfile.lock",
+  "*.gemspec",
+  "config/credentials*",
+  "config/master.key",
+  "db/migrate/**",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*credential*",
+  "**/Dockerfile",
+  ".github/**",
+]
+read_first = ["CLAUDE.md"]
+builder_rules = [
+  "Run `bundle exec rspec` (or `bundle exec rake test`) for the files you touch and `bundle exec rubocop` on the files you change; keep methods small.",
+  "Do not rescue errors you cannot handle, and never leave a bare `rescue`.",
+]
+check_hints = ["bundle exec rubocop", "bundle exec rspec"]
+reviewer_rules = [
+  "Judge correctness, error handling (no swallowed exceptions), test quality and the project's own rules in CLAUDE.md.",
+]
+
+[[checks]]
+paths = ["**/*.rb", "Gemfile", "*.gemspec", "Rakefile"]
+commands = ["bundle exec rubocop", "bundle exec rspec"]

@@ -33,7 +33,7 @@ fn the_command_reports_each_outcome_and_refused_paths() {
     );
     assert!(out.contains("unchanged: "), "{out}");
     assert!(
-        out.contains("1 written, 0 updated, 10 unchanged, 1 refused"),
+        out.contains("1 written, 0 updated, 22 unchanged, 1 refused"),
         "{out}"
     );
     assert!(out.contains("--force"), "{out}");
@@ -68,11 +68,23 @@ fn refresh_output_matches_the_golden_text() {
         "go/agents/factory-code-reviewer.md",
         "go/agents/factory-committer.md",
         "go/agents/factory-kb-refresher.md",
+        "ruby/config.toml",
+        "ruby/commit-context.md",
+        "ruby/agents/factory-builder.md",
+        "ruby/agents/factory-code-reviewer.md",
+        "ruby/agents/factory-committer.md",
+        "ruby/agents/factory-kb-refresher.md",
+        "csharp/config.toml",
+        "csharp/commit-context.md",
+        "csharp/agents/factory-builder.md",
+        "csharp/agents/factory-code-reviewer.md",
+        "csharp/agents/factory-committer.md",
+        "csharp/agents/factory-kb-refresher.md",
     ] {
         expected.push(format!("unchanged: {}", p(rel)));
     }
     expected.push(format!("refused: {}", p("rust/config.toml")));
-    expected.push("1 written, 0 updated, 10 unchanged, 1 refused".to_string());
+    expected.push("1 written, 0 updated, 22 unchanged, 1 refused".to_string());
     expected.push(
         "refused files differ from every known text, use --force to overwrite them".to_string(),
     );
@@ -114,8 +126,24 @@ fn the_refresh_output_is_byte_identical() {
             p.join("go/agents").join(a).display()
         ));
     }
+    for name in ["ruby", "csharp"] {
+        expected.push(format!(
+            "unchanged: {}",
+            p.join(name).join("config.toml").display()
+        ));
+        expected.push(format!(
+            "unchanged: {}",
+            p.join(name).join("commit-context.md").display()
+        ));
+        for a in agents {
+            expected.push(format!(
+                "unchanged: {}",
+                p.join(name).join("agents").join(a).display()
+            ));
+        }
+    }
     expected.push(format!("refused: {}", p.join("rust/config.toml").display()));
-    expected.push("1 written, 0 updated, 10 unchanged, 1 refused".to_string());
+    expected.push("1 written, 0 updated, 22 unchanged, 1 refused".to_string());
     expected.push(
         "refused files differ from every known text, use --force to overwrite them".to_string(),
     );

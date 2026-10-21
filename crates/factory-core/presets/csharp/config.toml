@@ -1,0 +1,28 @@
+# Preset: C# solution or project (.NET SDK). Edit this file in ~/.factory/presets/csharp/ to change every project that uses it.
+risk_paths = [
+  "**/*.csproj",
+  "**/*.sln",
+  "**/Directory.Build.props",
+  "**/Directory.Packages.props",
+  "**/nuget.config",
+  "**/appsettings*.json",
+  "**/Migrations/**",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*credential*",
+  "**/Dockerfile",
+  ".github/**",
+]
+read_first = ["CLAUDE.md"]
+builder_rules = [
+  "Run `dotnet build` and `dotnet test` for the projects you touch; keep methods small.",
+  "Never swallow an exception, dispose `IDisposable` values and pass `CancellationToken` through async calls.",
+]
+check_hints = ["dotnet build", "dotnet test"]
+reviewer_rules = [
+  "Judge correctness, error handling (no swallowed exceptions), async correctness, test quality and the project's own rules in CLAUDE.md.",
+]
+
+[[checks]]
+paths = ["**/*.cs", "**/*.csproj", "**/*.sln"]
+commands = ["dotnet build --nologo", "dotnet test --nologo"]

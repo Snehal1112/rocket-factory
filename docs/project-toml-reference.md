@@ -12,7 +12,7 @@ A project is a registration, not a copy. The repo stays where it is. The state f
 
 ```toml
 repo   = "/abs/path/to/checkout"   # required, absolute
-preset = "rust"                    # required, "rust" or "go"
+preset = "rust"                    # required, "rust", "go", "ruby" or "csharp"
 
 [settings]                         # optional, every key below is optional
 base_branch = "main"
