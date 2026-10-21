@@ -81,7 +81,12 @@ fn network_is_on_only_for_builder_roles() {
         .build_stage()
         .expect("build");
     assert!(runner.last_spec_for("builder").expect("builder").network);
-    assert!(!runner.last_spec_for("committer").expect("committer").network);
+    assert!(
+        !runner
+            .last_spec_for("committer")
+            .expect("committer")
+            .network
+    );
 }
 
 #[test]
@@ -151,7 +156,10 @@ fn agent_file_name_missing_from_the_list_fails_before_spawn() {
         ),
         other => panic!("expected Failed, got {other:?}"),
     }
-    assert!(runner.last_spec().is_none(), "the runner must not be called");
+    assert!(
+        runner.last_spec().is_none(),
+        "the runner must not be called"
+    );
 }
 
 #[test]

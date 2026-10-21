@@ -393,7 +393,10 @@ mod tests {
         assert_eq!(s.result_text(), Some("OK".to_string()));
         assert!(s.has_result());
         assert_eq!(s.final_usage().weighted(), 9503);
-        assert_eq!(s.session_id().as_deref(), Some("01a15eac-9d1e-73f0-98dd-ce2929f333e6"));
+        assert_eq!(
+            s.session_id().as_deref(),
+            Some("01a15eac-9d1e-73f0-98dd-ce2929f333e6")
+        );
     }
 
     #[test]
@@ -432,8 +435,9 @@ mod tests {
     fn codex_stream_ignores_reasoning_and_file_change_items() {
         let mut s = CodexStream::default();
         for ty in ["reasoning", "file_change"] {
-            let line = serde_json::json!({"type":"item.completed","item":{"id":"a","type":ty,"text":"t"}})
-                .to_string();
+            let line =
+                serde_json::json!({"type":"item.completed","item":{"id":"a","type":ty,"text":"t"}})
+                    .to_string();
             assert!(s.feed(&line).is_empty());
         }
     }

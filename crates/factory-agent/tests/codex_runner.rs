@@ -45,8 +45,8 @@ fn no_turn_completed_is_failed() {
 #[test]
 fn spawn_error_names_the_program() {
     let tmp = tempfile::tempdir().expect("tmp");
-    let run = CodexRunner::new("no-such-codex", EventSink::null("001"))
-        .run(&spec("ok", tmp.path()));
+    let run =
+        CodexRunner::new("no-such-codex", EventSink::null("001")).run(&spec("ok", tmp.path()));
     assert_eq!(run.stop_reason, StopReason::Failed);
     let err = run.error.expect("error text");
     assert!(err.contains("cannot start no-such-codex"), "{err}");

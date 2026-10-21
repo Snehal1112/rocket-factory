@@ -313,13 +313,11 @@ pub fn cache_report(jobs: &[Vec<UsageRecord>], days: Option<u32>, now: u64) -> C
                     .five_min
                     .saturating_add(r.cache_creation.saturating_sub(h));
             }
-            let cold_role = cold_roles
-                .entry(key)
-                .or_insert_with(|| RoleCold {
-                    provider: r.provider.clone(),
-                    role: r.role.clone(),
-                    ..Default::default()
-                });
+            let cold_role = cold_roles.entry(key).or_insert_with(|| RoleCold {
+                provider: r.provider.clone(),
+                role: r.role.clone(),
+                ..Default::default()
+            });
             let cold_job = cold_jobs.entry(r.job.clone()).or_insert_with(|| JobCold {
                 job: r.job.clone(),
                 ..Default::default()
@@ -469,7 +467,15 @@ fn render_cold(r: &CacheReport) -> String {
     }
     out.push_str(&format!(
         "{:<8} {:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
-        "PROVIDER", "ROLE", "FRESH", "RESUMED", "AVG-START", "FIRST-CC", "FIRST-CR", "FIRST-CC%", "AVG-END"
+        "PROVIDER",
+        "ROLE",
+        "FRESH",
+        "RESUMED",
+        "AVG-START",
+        "FIRST-CC",
+        "FIRST-CR",
+        "FIRST-CC%",
+        "AVG-END"
     ));
     for c in &r.cold_roles {
         let avg = c.avg_start().map_or("-".to_string(), |a| a.to_string());
@@ -481,7 +487,13 @@ fn render_cold(r: &CacheReport) -> String {
             "{:<8} {:<10} {:<6} {:<8} {:<10} {:<9} {:<9} {:<10} {}\n",
             provider_cell(&c.provider),
             c.role,
-            c.fresh, c.resumed, avg, c.first_cc, c.first_cr, share, end
+            c.fresh,
+            c.resumed,
+            avg,
+            c.first_cc,
+            c.first_cr,
+            share,
+            end
         ));
     }
     if r.fresh_covered < r.fresh_runs {
@@ -1230,7 +1242,10 @@ mod tests {
     #[test]
     fn old_lines_without_provider_read_as_claude() {
         let (_d, path) = usage_file("{\"job\":\"001\",\"role\":\"builder\"}");
-        assert_eq!(load_usage(&path, "001").expect("load")[0].provider, "claude");
+        assert_eq!(
+            load_usage(&path, "001").expect("load")[0].provider,
+            "claude"
+        );
         let (_d2, path2) = usage_file("{\"job\":\"001\",\"role\":\"builder\",\"provider\":5}");
         assert_eq!(
             load_usage(&path2, "001").expect("load")[0].provider,
@@ -1240,7 +1255,8 @@ mod tests {
 
     #[test]
     fn load_usage_reads_the_provider() {
-        let (_d, path) = usage_file("{\"job\":\"001\",\"role\":\"builder\",\"provider\":\"codex\"}");
+        let (_d, path) =
+            usage_file("{\"job\":\"001\",\"role\":\"builder\",\"provider\":\"codex\"}");
         assert_eq!(load_usage(&path, "001").expect("load")[0].provider, "codex");
     }
 

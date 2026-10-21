@@ -226,7 +226,8 @@ mod tests {
         match cli.command {
             Command::Project {
                 cmd: ProjectCmd::Add { agent_cli, .. },
-            } => assert_eq!(agent_cli.as_deref(), Some("codex")),            other => panic!("unexpected {other:?}"),
+            } => assert_eq!(agent_cli.as_deref(), Some("codex")),
+            other => panic!("unexpected {other:?}"),
         }
         let err = Cli::try_parse_from([
             "factory",

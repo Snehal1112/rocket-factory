@@ -107,8 +107,14 @@ mod tests {
 
     #[test]
     fn strip_frontmatter_removes_only_a_leading_block() {
-        assert_eq!(strip_frontmatter("---\nname: x\n---\nBody\n---\nmore"), "Body\n---\nmore");
-        assert_eq!(strip_frontmatter("Body\n---\nx\n---\n"), "Body\n---\nx\n---\n");
+        assert_eq!(
+            strip_frontmatter("---\nname: x\n---\nBody\n---\nmore"),
+            "Body\n---\nmore"
+        );
+        assert_eq!(
+            strip_frontmatter("Body\n---\nx\n---\n"),
+            "Body\n---\nx\n---\n"
+        );
         assert_eq!(strip_frontmatter("---\nno end"), "---\nno end");
     }
 

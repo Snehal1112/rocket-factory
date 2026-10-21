@@ -210,11 +210,7 @@ impl Engine<'_> {
     pub(crate) fn sync_provider(&self) -> Result<(), EngineError> {
         let want = self.config.agent_cli().to_string();
         let board = Board::load(&self.board_path).map_err(core_err)?;
-        let stored = board
-            .find(&self.job_id)
-            .map_err(core_err)?
-            .provider
-            .clone();
+        let stored = board.find(&self.job_id).map_err(core_err)?.provider.clone();
         if stored.as_deref() == Some(want.as_str()) {
             return Ok(());
         }
@@ -414,7 +410,16 @@ mod tests {
     #[test]
     fn usage_line_has_the_run_duration() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 1, 42, "claude");
+        let line = usage_line(
+            "001",
+            &spec,
+            &run_with(StopReason::Done),
+            1,
+            0,
+            1,
+            42,
+            "claude",
+        );
         assert_eq!(line["secs"], 42);
         assert_eq!(line["role"], "builder");
     }
@@ -422,7 +427,16 @@ mod tests {
     #[test]
     fn tasks_done_is_written_for_builder_lines_only() {
         let spec = AgentSpec::new("001", "reviewer", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 3, 1, 0, "claude");
+        let line = usage_line(
+            "001",
+            &spec,
+            &run_with(StopReason::Done),
+            1,
+            3,
+            1,
+            0,
+            "claude",
+        );
         assert!(line.get("tasks_done").is_none(), "{line}");
         assert!(line["model"].is_null());
         assert_eq!(line["resumed"], false);
@@ -431,14 +445,32 @@ mod tests {
     #[test]
     fn a_killed_run_names_its_stop_reason() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::BudgetStop), 1, 0, 1, 0, "claude");
+        let line = usage_line(
+            "001",
+            &spec,
+            &run_with(StopReason::BudgetStop),
+            1,
+            0,
+            1,
+            0,
+            "claude",
+        );
         assert_eq!(line["stop"], "budget-stop");
     }
 
     #[test]
     fn a_failed_run_still_gets_a_line_with_zero_counters() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &AgentRun::failed("boom"), 1, 0, 1, 0, "claude");
+        let line = usage_line(
+            "001",
+            &spec,
+            &AgentRun::failed("boom"),
+            1,
+            0,
+            1,
+            0,
+            "claude",
+        );
         assert_eq!(line["stop"], "failed");
         assert_eq!(line["input"], 0);
         assert_eq!(line["output"], 0);
@@ -448,7 +480,16 @@ mod tests {
     #[test]
     fn usage_line_carries_start_cc_and_start_cr() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5, "claude");
+        let line = usage_line(
+            "001",
+            &spec,
+            &run_with(StopReason::Done),
+            1,
+            0,
+            10,
+            5,
+            "claude",
+        );
         assert_eq!(line["start_cc"], 40);
         assert_eq!(line["start_cr"], 15);
         assert_eq!(line["usage_v"], 4);
@@ -457,7 +498,16 @@ mod tests {
     #[test]
     fn usage_line_carries_end_ctx() {
         let spec = AgentSpec::new("001", "builder", "/w", "p");
-        let line = usage_line("001", &spec, &run_with(StopReason::Done), 1, 0, 10, 5, "claude");
+        let line = usage_line(
+            "001",
+            &spec,
+            &run_with(StopReason::Done),
+            1,
+            0,
+            10,
+            5,
+            "claude",
+        );
         assert_eq!(line["end_ctx"], 70);
         assert_eq!(line["usage_v"], 4);
     }

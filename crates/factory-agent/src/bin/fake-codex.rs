@@ -5,7 +5,8 @@ use std::time::Duration;
 
 const SESSION: &str = include_str!("../../tests/fixtures/codex-session.jsonl");
 const FAILED: &str = include_str!("../../tests/fixtures/codex-failed.jsonl");
-const THREAD: &str = r#"{"type":"thread.started","thread_id":"01a15eac-9d1e-73f0-98dd-ce2929f333e6"}"#;
+const THREAD: &str =
+    r#"{"type":"thread.started","thread_id":"01a15eac-9d1e-73f0-98dd-ce2929f333e6"}"#;
 
 fn emit(line: &str) {
     let mut out = std::io::stdout().lock();

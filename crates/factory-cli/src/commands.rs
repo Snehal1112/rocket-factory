@@ -216,7 +216,9 @@ impl CliCtx {
                 };
                 match runner_kind(cfg) {
                     AgentCli::Codex => Arc::new(CodexRunner::new("codex", sink)),
-                    AgentCli::Claude => Arc::new(ClaudeRunner::new("claude", Caps::default(), sink)),
+                    AgentCli::Claude => {
+                        Arc::new(ClaudeRunner::new("claude", Caps::default(), sink))
+                    }
                 }
             }
         }

@@ -3,8 +3,8 @@
 mod build;
 mod carry;
 mod checks_stage;
-mod codex_prep;
 mod clock;
+mod codex_prep;
 mod combine;
 mod commit;
 mod compat;
