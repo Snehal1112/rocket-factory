@@ -41,6 +41,7 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
             runs: usage.runs,
             approx: usage.approx,
             roles: usage.roles,
+            providers: usage.providers,
         });
     }
     Ok(out)

@@ -73,6 +73,8 @@ pub struct UsageSummary {
     pub approx: bool,
     /// Weighted tokens per agent role.
     pub roles: BTreeMap<String, u64>,
+    /// Weighted tokens per provider. A line without a string `provider` counts as `claude`.
+    pub providers: BTreeMap<String, u64>,
 }
 
 /// Sums the lines of `job`. Lines of other jobs and lines that are not JSON are skipped.
@@ -106,6 +108,9 @@ pub fn usage_summary(text: &str, job: &str) -> UsageSummary {
         let role = v["role"].as_str().unwrap_or("unknown").to_string();
         let slot = s.roles.entry(role).or_insert(0);
         *slot = slot.saturating_add(weighted);
+        let provider = v["provider"].as_str().unwrap_or("claude").to_string();
+        let slot = s.providers.entry(provider).or_insert(0);
+        *slot = slot.saturating_add(weighted);
     }
     s
 }
@@ -138,6 +143,7 @@ pub struct JobCost {
     pub runs: u32,
     pub approx: bool,
     pub roles: BTreeMap<String, u64>,
+    pub providers: BTreeMap<String, u64>,
 }
 
 impl JobCost {
@@ -166,6 +172,9 @@ pub struct GroupStats {
     pub high: u64,
     /// Share of the weighted tokens per role, in whole percent.
     pub roles: BTreeMap<String, u32>,
+    /// Share of the weighted tokens per provider, in whole percent.
+    #[serde(default)]
+    pub providers: BTreeMap<String, u32>,
     /// The same figures over jobs that are not approximate, or `None` when there are none.
     pub corrected: Option<Spread>,
 }
@@ -206,25 +215,8 @@ fn group_stats(jobs: &[&JobCost]) -> GroupStats {
     } else {
         Some(spread(&mut fixed))
     };
-    let mut role_totals: BTreeMap<String, u128> = BTreeMap::new();
-    let mut total: u128 = 0;
-    for j in jobs {
-        for (role, w) in &j.roles {
-            *role_totals.entry(role.clone()).or_insert(0) += u128::from(*w);
-            total += u128::from(*w);
-        }
-    }
-    let roles = role_totals
-        .into_iter()
-        .map(|(role, w)| {
-            (
-                role,
-                (w * 100 + total / 2)
-                    .checked_div(total)
-                    .map_or(0, |share| share as u32),
-            )
-        })
-        .collect();
+    let roles = shares(jobs.iter().map(|j| &j.roles));
+    let providers = shares(jobs.iter().map(|j| &j.providers));
     GroupStats {
         n: s.n,
         n_approx: jobs.iter().filter(|j| j.approx).count() as u32,
@@ -232,8 +224,32 @@ fn group_stats(jobs: &[&JobCost]) -> GroupStats {
         low: s.low,
         high: s.high,
         roles,
+        providers,
         corrected,
     }
+}
+
+/// Whole-percent share of each key over the weighted totals of several maps.
+fn shares<'a>(maps: impl Iterator<Item = &'a BTreeMap<String, u64>>) -> BTreeMap<String, u32> {
+    let mut totals: BTreeMap<String, u128> = BTreeMap::new();
+    let mut total: u128 = 0;
+    for m in maps {
+        for (key, w) in m {
+            *totals.entry(key.clone()).or_insert(0) += u128::from(*w);
+            total += u128::from(*w);
+        }
+    }
+    totals
+        .into_iter()
+        .map(|(key, w)| {
+            (
+                key,
+                (w * 100 + total / 2)
+                    .checked_div(total)
+                    .map_or(0, |share| share as u32),
+            )
+        })
+        .collect()
 }
 
 /// Statistics per size group over merged jobs with data, plus an `all` entry.
@@ -424,7 +440,40 @@ mod tests {
             runs: 3,
             approx,
             roles,
+            providers: BTreeMap::from([("claude".to_string(), weighted)]),
         }
+    }
+
+    #[test]
+    fn usage_summary_sums_weighted_tokens_per_provider() {
+        let text = concat!(
+            "{\"job\":\"001\",\"role\":\"builder\",\"input\":700,\"output\":0,\"cache_creation\":0,\"cache_read\":0,\"usage_v\":2}\n",
+            "{\"job\":\"001\",\"role\":\"builder\",\"provider\":\"codex\",\"input\":300,\"output\":0,\"cache_creation\":0,\"cache_read\":0,\"usage_v\":2}\n",
+            "{\"job\":\"001\",\"role\":\"builder\",\"provider\":5,\"input\":1,\"output\":0,\"cache_creation\":0,\"cache_read\":0,\"usage_v\":2}\n",
+        );
+        let s = usage_summary(text, "001");
+        assert_eq!(s.providers.get("claude"), Some(&701));
+        assert_eq!(s.providers.get("codex"), Some(&300));
+    }
+
+    #[test]
+    fn group_stats_hold_provider_percentages() {
+        let mut a = job("1", SizeGroup::Small, "merged", 500, false);
+        a.providers = BTreeMap::from([("claude".to_string(), 500)]);
+        let mut b = job("2", SizeGroup::Small, "merged", 500, false);
+        b.providers = BTreeMap::from([("claude".to_string(), 200), ("codex".to_string(), 300)]);
+        let all = &stats(&[a, b])["all"];
+        assert_eq!(all.providers["claude"], 70);
+        assert_eq!(all.providers["codex"], 30);
+    }
+
+    #[test]
+    fn an_old_costs_file_without_providers_still_loads() {
+        let old = r#"{"generated_at":1.0,"thresholds":{"small_max_bytes":1,"medium_max_bytes":2},
+            "groups":{"all":{"n":1,"n_approx":0,"median":5,"low":5,"high":5,"roles":{"builder":100},"corrected":null}},
+            "roles":{"builder":100}}"#;
+        let file: CostsFile = serde_json::from_str(old).expect("old file loads");
+        assert!(file.groups["all"].providers.is_empty());
     }
 
     #[test]

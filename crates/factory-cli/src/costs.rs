@@ -91,6 +91,14 @@ pub fn render_costs(jobs: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> 
             "\nROLES (share of weighted tokens)\n  {}\n",
             roles.join("  ")
         ));
+        if all.providers.len() >= 2 {
+            let providers: Vec<String> = all
+                .providers
+                .iter()
+                .map(|(r, p)| format!("{r} {p}%"))
+                .collect();
+            out.push_str(&format!("PROVIDERS  {}\n", providers.join("  ")));
+        }
     }
     out
 }
@@ -148,8 +156,6 @@ pub fn estimate_lines(board: &Board, first: &Job) -> String {
 mod tests {
     use super::*;
     use factory_core::{stats, JobCost, SizeGroup};
-    use std::collections::BTreeMap;
-
     fn cost(
         id: &str,
         group: Option<SizeGroup>,
@@ -175,7 +181,26 @@ mod tests {
             runs,
             approx,
             roles,
+            providers: BTreeMap::from([("claude".to_string(), weighted)]),
         }
+    }
+
+    #[test]
+    fn costs_with_two_providers_prints_a_providers_line() {
+        let mut a = cost("1", Some(SizeGroup::Small), "merged", 700, false, 1);
+        a.providers = BTreeMap::from([("claude".to_string(), 700)]);
+        let mut b = cost("2", Some(SizeGroup::Small), "merged", 300, false, 1);
+        b.providers = BTreeMap::from([("codex".to_string(), 300)]);
+        let jobs = vec![a, b];
+        let text = render_costs(&jobs, &stats(&jobs));
+        assert!(text.contains("PROVIDERS  claude 70%  codex 30%"), "{text}");
+    }
+
+    #[test]
+    fn costs_with_only_claude_prints_no_providers_line() {
+        let jobs = vec![cost("1", Some(SizeGroup::Small), "merged", 1000, false, 1)];
+        let text = render_costs(&jobs, &stats(&jobs));
+        assert!(!text.contains("PROVIDERS"), "{text}");
     }
 
     #[test]
