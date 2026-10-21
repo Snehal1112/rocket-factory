@@ -17,7 +17,8 @@ settings, lease and board, and let the factory change only files inside that fol
 
 - Each subfolder is an independent project: own job queue, settings, lease, board.
 - Builds, checks and reviews of different subprojects of one repo run in parallel.
-- Merges and syncs into the base branch take a short lock shared by every project of that repo. A
+- Merges into the base branch take a short lock shared by every project of that repo (a sync runs
+  in the job worktree, outside the lock). A
   project that finds the lock held waits for it (a bounded time), then merges. If the wait runs
   out, the job parks with a clear reason. It never merges without the lock.
 - A job may change files only inside the selected folder. The factory does not edit shared code
@@ -135,12 +136,14 @@ or broken config makes every diff risky.
 Merges run in the repo's main checkout with the base branch checked out
 (`factory-git/src/merge.rs`). The project lease only prevents two jobs in one project. A new
 per-repo lock file, kept in the git common dir (so linked worktrees and all projects of that repo
-see the same file), is held for the whole merge or sync, including the safe checkout and the ref
-move. Acquisition retries for a bounded time (suggested 30 seconds, builder's call) and then
-parks the job with a clear reason and does not lose work. It never proceeds without the lock. The
-lock is released on drop and on a crashed holder (a stale lock whose pid is gone is cleared,
-through `procinfo.rs`, never `/proc`). A top-folder project takes the same lock, which costs
-nothing since it is alone in its repo.
+see the same file), is held from the last base-branch check through the merge into the main
+checkout, including the safe checkout and the ref move. A sync runs in the job worktree and takes
+no lock. A busy-main result before the lock is re-checked once under the lock before the job
+parks, so another project's merge in flight does not park it. Acquisition retries for a bounded
+time (30 seconds) and then parks the job with a clear reason and does not lose work. It never
+proceeds without the lock. It is an OS advisory lock, so a crashed holder releases it and no stale
+lock needs clearing. A top-folder project takes the same lock, which costs nothing since it is
+alone in its repo.
 
 ### Supervisor and dashboard
 
