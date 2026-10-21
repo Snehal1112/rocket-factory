@@ -8,11 +8,14 @@ const MAX_LISTED: usize = 10;
 
 /// The reason text for a job that changed files outside the project folder, or `None` when it did not.
 /// A repo without a scope has no such folder, so it never has a violation.
-pub fn scope_violation(repo: &Repo, base: &str, head: &str) -> Result<Option<String>, EngineError> {
+/// The job's own changes start at the merge base with the base branch, because a sync
+/// moves the head onto main and leaves the recorded base behind.
+pub fn scope_violation(repo: &Repo, head: &str) -> Result<Option<String>, EngineError> {
     let Some(sub) = repo.subpath() else {
         return Ok(None);
     };
-    let changed = repo.changed_paths(base, head).map_err(git_err)?;
+    let from = repo.merge_base(repo.base_branch(), head).map_err(git_err)?;
+    let changed = repo.changed_paths(&from, head).map_err(git_err)?;
     let outside = repo.out_of_scope(&changed);
     if outside.is_empty() {
         return Ok(None);

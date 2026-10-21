@@ -104,6 +104,23 @@ fn main_moved_triggers_a_sync_then_merges() {
 }
 
 #[test]
+fn another_projects_merge_is_not_out_of_scope_after_a_sync() {
+    let fx = common::approved_scoped_job(&["apps/web/ok.md"]);
+    // Project api merges into main after the web job forked.
+    common::commit_file(&fx.main, "apps/api/merged.txt", "api\n");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
+    assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
+    // The synced head is still in scope.
+    let job = fx.driver.job(&fx.id).expect("job");
+    let head = job.head.expect("head");
+    assert_eq!(
+        factory_engine::scope_violation(fx.driver.repo(), &head).expect("scope"),
+        None
+    );
+}
+
+#[test]
 fn a_sync_conflict_parks() {
     let fx = common::approved_job();
     let wt = common::worktree_of(&fx);

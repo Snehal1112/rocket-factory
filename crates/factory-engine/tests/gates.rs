@@ -400,7 +400,46 @@ fn more_than_ten_out_of_scope_paths_are_counted() {
     let runner = built(&fx, files);
     let out = fx.engine(&runner).checks_stage().expect("checks");
     match out {
-        StageOutcome::NeedsHuman(r) => assert!(r.ends_with("and 2 more"), "{r}"),
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.ends_with("and 2 more"), "{r}");
+            assert_eq!(r.matches(".txt").count(), 10, "{r}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn rename_into_the_project_is_out_of_scope_by_its_old_path() {
+    let mut fx = committing_fixture();
+    common::commit_file(&fx.main, "apps/api/a.rs", "fn a() {}\n");
+    common::commit_file(&fx.main, "apps/web/keep.txt", "k\n");
+    fx.repo = factory_git::Repo::open(&fx.main)
+        .expect("open")
+        .with_scope("web", std::path::Path::new("apps/web"));
+    let mover: Effect = Box::new(|spec| {
+        let root = spec.cwd.join("../..");
+        std::fs::rename(root.join("apps/api/a.rs"), root.join("apps/web/a.rs")).expect("move");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![mover]);
+    fx.engine(&runner).build_stage().expect("build");
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    match out {
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("apps/api/a.rs"), "{r}");
+            assert!(!r.contains("apps/web/a.rs"), "{r}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn a_sibling_folder_with_a_shared_prefix_is_out_of_scope() {
+    let fx = scoped_fixture();
+    let runner = built(&fx, vec![("../web2/b.rs", "x\n")]);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    match out {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("apps/web2/b.rs"), "{r}"),
         other => panic!("unexpected {other:?}"),
     }
 }

@@ -276,6 +276,13 @@ impl Repo {
         Ok(paths_of(&self.tree_diff(base, head)?))
     }
 
+    /// The best common ancestor of two revisions, as a sha.
+    pub fn merge_base(&self, a: &str, b: &str) -> Result<String> {
+        let a = self.commit_of(a)?.id();
+        let b = self.commit_of(b)?.id();
+        Ok(self.inner.merge_base(a, b)?.to_string())
+    }
+
     /// True when `older` is `newer` or one of its ancestors.
     pub fn is_ancestor(&self, older: &str, newer: &str) -> Result<bool> {
         let a = self.commit_of(older)?.id();

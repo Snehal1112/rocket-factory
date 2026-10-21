@@ -48,6 +48,17 @@ fn out_of_scope_uses_components_not_prefixes() {
 }
 
 #[test]
+fn merge_base_is_the_fork_point_of_a_branch_and_main() {
+    let fx = Fixture::new();
+    let (base, head) = fx.job_branch("job", &[("job.txt", "j\n")]);
+    // Main moves on after the fork.
+    commit_files(&fx.git(), &[("later.txt", "l\n")], "later");
+    let repo = fx.repo();
+    assert_eq!(repo.merge_base("main", &head).expect("merge base"), base);
+    assert_eq!(repo.merge_base(&head, "main").expect("merge base"), base);
+}
+
+#[test]
 fn scoped_paths_strips_prefix() {
     let fx = Fixture::new();
     let repo = fx.repo().with_scope("web", Path::new("apps/web"));

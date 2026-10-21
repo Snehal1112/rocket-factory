@@ -119,7 +119,12 @@ fn approve_refuses_while_paths_remain() {
     assert!(out.starts_with("needs-human"), "{out}");
     assert!(out.contains("README.md"), "{out}");
     let before = main_tip(&fx);
-    // The review never ran, so the user skips it to reach the scope check.
+    // The scope blocker shows first, not the missing review.
+    let err = run(&fx, &["approve", "1"]).expect_err("refused");
+    assert!(matches!(err, CliError::Refused(_)), "{err:?}");
+    assert!(err.to_string().contains("README.md"), "{err}");
+    assert!(!err.to_string().contains("--without-review"), "{err}");
+    // Skipping the review does not lift the scope refusal.
     let err = run(&fx, &["approve", "1", "--without-review"]).expect_err("refused");
     assert!(matches!(err, CliError::Refused(_)), "{err:?}");
     assert!(err.to_string().contains("README.md"), "{err}");

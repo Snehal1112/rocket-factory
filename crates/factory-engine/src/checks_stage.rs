@@ -68,15 +68,7 @@ fn log_check_results(report: &ChecksReport) {
 impl Engine<'_> {
     /// Runs the mapped checks over the whole job diff and writes `checks.md`.
     pub(crate) fn run_checks_now(&self) -> Result<ChecksReport, EngineError> {
-        let job = self.job()?;
-        let base = job
-            .base
-            .clone()
-            .ok_or_else(|| EngineError::Msg("job has no base".into()))?;
-        let head = job
-            .head
-            .clone()
-            .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
+        let (base, head) = self.job_range()?;
         let raw = self.repo.changed_paths(&base, &head).map_err(git_err)?;
         let plan = plan_checks(&self.repo.scoped_paths(&raw), &self.config);
         let report = run_checks(&self.repo.workdir_in(&self.worktree()?), &plan);
@@ -93,6 +85,14 @@ impl Engine<'_> {
 
     /// The paths changed by the whole job diff, relative to the repo root.
     pub(crate) fn job_changed_paths_raw(&self) -> Result<Vec<String>, EngineError> {
+        let (base, head) = self.job_range()?;
+        self.repo.changed_paths(&base, &head).map_err(git_err)
+    }
+
+    /// The commits that hold the whole job diff. A subfolder project starts at the merge base with
+    /// the base branch, because a sync moves the head onto main and leaves the recorded base behind.
+    /// Other projects keep the recorded base.
+    pub(crate) fn job_range(&self) -> Result<(String, String), EngineError> {
         let job = self.job()?;
         let base = job
             .base
@@ -102,7 +102,14 @@ impl Engine<'_> {
             .head
             .clone()
             .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
-        self.repo.changed_paths(&base, &head).map_err(git_err)
+        if self.repo.subpath().is_none() {
+            return Ok((base, head));
+        }
+        let from = self
+            .repo
+            .merge_base(self.repo.base_branch(), &head)
+            .map_err(git_err)?;
+        Ok((from, head))
     }
 
     /// The no-checks gate: a park kind and reason when a code diff ran no check.
@@ -196,8 +203,8 @@ impl Engine<'_> {
     pub fn checks_stage(&self) -> Result<StageOutcome, EngineError> {
         // Files outside the project folder park the job before any check runs.
         let job = self.job()?;
-        if let (Some(base), Some(head)) = (job.base.as_deref(), job.head.as_deref()) {
-            if let Some(reason) = crate::scope::scope_violation(self.repo, base, head)? {
+        if let Some(head) = job.head.as_deref() {
+            if let Some(reason) = crate::scope::scope_violation(self.repo, head)? {
                 return self.park_gate(ParkKind::Other, reason);
             }
         }
@@ -209,8 +216,8 @@ impl Engine<'_> {
             if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
                 return self.park_gate(kind, reason);
             }
-            let job = self.job()?;
-            if let (Some(base), Some(head)) = (job.base.clone(), job.head.clone()) {
+            {
+                let (base, head) = self.job_range()?;
                 let whole = self
                     .repo
                     .diff_to_files(&base, &head, &self.job_dir)

@@ -567,17 +567,18 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
             "job {id} has a pending batch commit, use rework to finish it"
         )));
     }
-    // A parked job whose review never ran must not merge unseen, unless the user says so.
-    if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
-        return Err(CliError::Refused(job.review_missing_message()));
-    }
     // A job with files outside the project folder stays parked until the builder removes them.
-    if let (Some(base), Some(head)) = (job.base.as_deref(), job.head.as_deref()) {
-        if let Some(reason) = factory_engine::scope_violation(d.repo(), base, head)? {
+    // This is the real blocker, so it comes before the review check.
+    if let Some(head) = job.head.as_deref() {
+        if let Some(reason) = factory_engine::scope_violation(d.repo(), head)? {
             return Err(CliError::Refused(format!(
                 "job {id} cannot be approved, {reason}; use rework so the builder removes them"
             )));
         }
+    }
+    // A parked job whose review never ran must not merge unseen, unless the user says so.
+    if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
+        return Err(CliError::Refused(job.review_missing_message()));
     }
     // The project lease is held through the merge and released on every exit path.
     let _project = d.hold_project(id)?;

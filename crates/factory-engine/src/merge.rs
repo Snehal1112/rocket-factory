@@ -123,7 +123,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             .clone()
             .ok_or_else(|| EngineError::Msg("job has no recorded base".into()))?;
         // A job that touched files outside the project folder is never merged.
-        if let Some(reason) = crate::scope::scope_violation(repo, &base, &head)? {
+        if let Some(reason) = crate::scope::scope_violation(repo, &head)? {
             return Ok(Step::Park(reason));
         }
         // merge_no_ff does not check that main has not moved, so base_state decides first.
