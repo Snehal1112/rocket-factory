@@ -50,7 +50,7 @@ impl Engine<'_> {
             .repo
             .diff_to_files(&base, &head, &self.job_dir)
             .map_err(git_err)?;
-        let paths = self.repo.changed_paths(&base, &head).map_err(git_err)?;
+        let paths = self.job_changed_paths()?;
 
         let cwd = self.worktree()?;
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();

@@ -233,3 +233,84 @@ fn a_docs_only_job_is_not_stopped_by_the_gates_at_the_end() {
     approve(&fx);
     assert_eq!(fx.job().stage, Stage::Approve);
 }
+
+/// A fixture scoped to the `web` project in `apps/web`, which exists on the base branch.
+fn scoped_fixture() -> Fixture {
+    let mut fx = committing_fixture();
+    common::commit_file(&fx.main, "apps/web/index.txt", "web\n");
+    fx.repo = factory_git::Repo::open(&fx.main)
+        .expect("open")
+        .with_scope("web", std::path::Path::new("apps/web"));
+    fx
+}
+
+fn worktree_of_job(fx: &Fixture) -> std::path::PathBuf {
+    std::path::PathBuf::from(fx.job().worktree.expect("worktree"))
+}
+
+/// A check script that records its working directory. Check commands run without a shell.
+const CHECK_SCRIPT: (&str, &str) = ("check.sh", "pwd > cwd.out\n");
+
+fn pwd_check(fx: &mut Fixture) {
+    fx.config.checks = vec![CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["sh check.sh".into()],
+    }];
+}
+
+#[test]
+fn checks_map_project_relative_paths() {
+    let mut fx = scoped_fixture();
+    only_src_checks(&mut fx);
+    let runner = built(&fx, vec![("src/a.rs", "x\n")]);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    // The `src/**` check ran and failed, so the no-checks gate did not park the job.
+    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+}
+
+#[test]
+fn risk_paths_are_project_relative() {
+    let mut fx = scoped_fixture();
+    fx.config.risk_paths = vec!["migrations/**".into()];
+    let runner = built(&fx, vec![("migrations/1.sql", "x\n")]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let review = fx.engine(&rr).review_stage().expect("review");
+    match review.decision {
+        Decision::NeedsHuman { kind, .. } => assert_eq!(kind, ParkKind::RiskyDiff),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn a_non_risk_path_in_the_project_is_not_risky() {
+    let mut fx = scoped_fixture();
+    fx.config.risk_paths = vec!["migrations/**".into()];
+    let runner = built(&fx, vec![("src/a.rs", "x\n")]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let review = fx.engine(&rr).review_stage().expect("review");
+    assert_eq!(review.decision, Decision::AutoMerge);
+}
+
+#[test]
+fn checks_run_in_the_project_folder() {
+    let mut fx = scoped_fixture();
+    pwd_check(&mut fx);
+    let runner = built(&fx, vec![("src/a.rs", "x\n"), CHECK_SCRIPT]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    let wt = worktree_of_job(&fx);
+    let seen = std::fs::read_to_string(wt.join("apps/web/cwd.out")).expect("cwd.out");
+    let seen = std::fs::canonicalize(seen.trim()).expect("canonical");
+    let want = std::fs::canonicalize(wt.join("apps/web")).expect("canonical");
+    assert_eq!(seen, want);
+}
+
+#[test]
+fn top_folder_project_paths_are_unchanged() {
+    let mut fx = committing_fixture();
+    pwd_check(&mut fx);
+    let runner = built(&fx, vec![("src/a.rs", "x\n"), CHECK_SCRIPT]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    assert!(worktree_of_job(&fx).join("cwd.out").exists());
+}

@@ -77,17 +77,22 @@ impl Engine<'_> {
             .head
             .clone()
             .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
-        let paths = self.repo.changed_paths(&base, &head).map_err(git_err)?;
-        let plan = plan_checks(&paths, &self.config);
-        let report = run_checks(&self.worktree()?, &plan);
+        let raw = self.repo.changed_paths(&base, &head).map_err(git_err)?;
+        let plan = plan_checks(&self.repo.scoped_paths(&raw), &self.config);
+        let report = run_checks(&self.repo.workdir_in(&self.worktree()?), &plan);
         log_check_results(&report);
         write_checks_md(&self.job_dir.join("checks.md"), &report)
             .map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(report)
     }
 
-    /// The paths changed by the whole job diff.
+    /// The paths changed by the whole job diff, relative to the project folder.
     pub(crate) fn job_changed_paths(&self) -> Result<Vec<String>, EngineError> {
+        Ok(self.repo.scoped_paths(&self.job_changed_paths_raw()?))
+    }
+
+    /// The paths changed by the whole job diff, relative to the repo root.
+    pub(crate) fn job_changed_paths_raw(&self) -> Result<Vec<String>, EngineError> {
         let job = self.job()?;
         let base = job
             .base
@@ -132,12 +137,12 @@ impl Engine<'_> {
         to: &str,
         out: &str,
     ) -> Result<Option<ChecksReport>, EngineError> {
-        let paths = self.repo.changed_paths(from, to).map_err(git_err)?;
-        let plan = plan_checks(&paths, &self.config);
+        let raw = self.repo.changed_paths(from, to).map_err(git_err)?;
+        let plan = plan_checks(&self.repo.scoped_paths(&raw), &self.config);
         if plan.commands.is_empty() {
             return Ok(None);
         }
-        let report = run_checks(&self.worktree()?, &plan);
+        let report = run_checks(&self.repo.workdir_in(&self.worktree()?), &plan);
         log_check_results(&report);
         write_checks_md(&self.job_dir.join(out), &report)
             .map_err(|e| EngineError::Check(e.to_string()))?;
