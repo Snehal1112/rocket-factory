@@ -111,6 +111,17 @@ pub(crate) fn git_op<T, E>(op: &str, f: impl FnOnce() -> Result<T, E>) -> Result
     r
 }
 
+/// Takes the repository merge lock, or returns the reason the job must park.
+fn take_merge_lock(driver: &Driver) -> Result<crate::BoardLock, String> {
+    match crate::lock_repo_merge(driver.repo(), driver.merge_lock_wait()) {
+        Ok(lock) => Ok(lock),
+        Err(StoreError::Locked) => Err(
+            "another project is merging into this repository, approve again to retry".to_string(),
+        ),
+        Err(err) => Err(format!("cannot take the merge lock: {err}")),
+    }
+}
+
 fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
     let repo = driver.repo();
     let main = repo.base_branch().to_string();
@@ -147,8 +158,17 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
                 "branch tip {tip} differs from the reviewed head {head}"
             )));
         }
-        if let Preflight::Busy { reason } = git_op("preflight_main", || repo.preflight_main())? {
-            return Ok(Step::Park(format!("{main} busy: {reason}")));
+        if let Preflight::Busy { .. } = git_op("preflight_main", || repo.preflight_main())? {
+            // Another project may be mid-merge, which briefly dirties main. Look again under the lock.
+            let lock = match take_merge_lock(driver) {
+                Ok(lock) => lock,
+                Err(reason) => return Ok(Step::Park(reason)),
+            };
+            let again = git_op("preflight_main", || repo.preflight_main())?;
+            drop(lock);
+            if let Preflight::Busy { reason } = again {
+                return Ok(Step::Park(format!("{main} busy: {reason}")));
+            }
         }
         if check.state == BaseState::MainMoved {
             match sync_stage(driver, id)? {
@@ -159,17 +179,9 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         let message = driver.commit_message(id, MessageKind::Merge)?;
         // Projects of one repo share main, so only one merges at a time. The lock is held until the
         // end of this iteration, and a merge never runs without it.
-        let _merge_lock = match crate::lock_repo_merge(repo, driver.merge_lock_wait()) {
+        let _merge_lock = match take_merge_lock(driver) {
             Ok(lock) => lock,
-            Err(StoreError::Locked) => {
-                return Ok(Step::Park(
-                    "another project is merging into this repository, approve again to retry"
-                        .to_string(),
-                ));
-            }
-            Err(err) => {
-                return Ok(Step::Park(format!("cannot take the merge lock: {err}")));
-            }
+            Err(reason) => return Ok(Step::Park(reason)),
         };
         // The message run can take a while, so main is checked again before the merge.
         let again = git_op("base_state", || repo.base_state(&base, &head))?;

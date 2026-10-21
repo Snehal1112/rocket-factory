@@ -350,6 +350,42 @@ fn merge_parks_when_the_lock_wait_runs_out() {
     handle.join().expect("holder");
 }
 
+#[test]
+fn busy_checkout_that_clears_under_the_lock_does_not_park() {
+    let mut fx = common::approved_job();
+    fx.driver
+        .set_merge_lock_wait(std::time::Duration::from_secs(5));
+    // The holder plays a project mid-merge: it dirties main under the lock, then cleans up.
+    let (tx, taken) = std::sync::mpsc::channel();
+    let main = fx.main.clone();
+    let holder = std::thread::spawn(move || {
+        let repo = factory_git::Repo::open(&main).expect("open");
+        let _lock =
+            factory_engine::lock_repo_merge(&repo, std::time::Duration::ZERO).expect("lock");
+        std::fs::write(main.join("README.md"), "dirty").expect("dirty");
+        tx.send(()).expect("signal");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::fs::write(main.join("README.md"), "hello\n").expect("restore");
+    });
+    taken.recv().expect("main is dirty");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
+    holder.join().expect("holder");
+}
+
+#[test]
+fn really_dirty_checkout_still_parks() {
+    let fx = common::approved_job();
+    std::fs::write(fx.main.join("README.md"), "dirty").expect("write");
+    let before = common::main_tip(&fx.main);
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.starts_with("main busy")),
+        "got {r:?}"
+    );
+    assert_eq!(common::main_tip(&fx.main), before);
+}
+
 /// A scoped driver with its own state and worktree folders, over the shared repo at `main`.
 fn scoped_driver(
     tmp: &std::path::Path,
