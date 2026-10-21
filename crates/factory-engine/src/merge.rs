@@ -2,7 +2,9 @@ use factory_core::{ParkKind, ParkRecord, Stage};
 use factory_git::{BaseState, MergeOutcome, Preflight};
 
 use crate::park::write_record;
-use crate::{now_secs, sync_stage, tick_plan, Driver, EngineError, MessageKind, SyncOutcome};
+use crate::{
+    now_secs, sync_stage, tick_plan, Driver, EngineError, MessageKind, StoreError, SyncOutcome,
+};
 
 pub const MAX_SYNCS: u32 = 2;
 
@@ -155,6 +157,20 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             }
         }
         let message = driver.commit_message(id, MessageKind::Merge)?;
+        // Projects of one repo share main, so only one merges at a time. The lock is held until the
+        // end of this iteration, and a merge never runs without it.
+        let _merge_lock = match crate::lock_repo_merge(repo, driver.merge_lock_wait()) {
+            Ok(lock) => lock,
+            Err(StoreError::Locked) => {
+                return Ok(Step::Park(
+                    "another project is merging into this repository, approve again to retry"
+                        .to_string(),
+                ));
+            }
+            Err(err) => {
+                return Ok(Step::Park(format!("cannot take the merge lock: {err}")));
+            }
+        };
         // The message run can take a while, so main is checked again before the merge.
         let again = git_op("base_state", || repo.base_state(&base, &head))?;
         match again.state {

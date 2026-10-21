@@ -69,6 +69,8 @@ pub struct Driver {
     runner_for: RunnerFactory,
     lease_owner: Option<String>,
     lock_wait: Duration,
+    /// How long a merge waits for the repository merge lock.
+    merge_lock_wait: Duration,
     agent_files: Vec<factory_core::AgentFile>,
     /// How many `ProjectGuard`s are alive. While one is, `run_job` keeps the project lease.
     project_holds: AtomicU32,
@@ -225,6 +227,7 @@ impl Driver {
             runner_for,
             lease_owner: None,
             lock_wait: DEFAULT_LOCK_WAIT,
+            merge_lock_wait: crate::MERGE_LOCK_WAIT,
             agent_files: Vec::new(),
             project_holds: AtomicU32::new(0),
             lease_ttl: LEASE_TTL_SECS,
@@ -251,6 +254,15 @@ impl Driver {
         self.store = BoardStore::new(&self.layout.board_file(), wait);
         self.lock_wait = wait;
         self
+    }
+
+    /// Changes how long a merge waits for the repository merge lock.
+    pub fn set_merge_lock_wait(&mut self, wait: Duration) {
+        self.merge_lock_wait = wait;
+    }
+
+    pub(crate) fn merge_lock_wait(&self) -> Duration {
+        self.merge_lock_wait
     }
 
     pub fn layout(&self) -> &Layout {
