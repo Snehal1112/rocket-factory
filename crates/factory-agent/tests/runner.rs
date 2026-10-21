@@ -224,6 +224,27 @@ fn no_result_is_failed() {
 }
 
 #[test]
+fn noresult_message_names_the_program() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let run = runner(EventSink::null("001")).run(&spec("noresult", tmp.path()));
+    let err = run.error.expect("error text");
+    assert!(err.contains("claude exited without a result"), "{err}");
+}
+
+#[test]
+fn spawn_error_names_the_program() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let r = ClaudeRunner::new(
+        "no-such-claude-binary",
+        Caps::default(),
+        EventSink::null("001"),
+    );
+    let run = r.run(&spec("ok", tmp.path()));
+    let err = run.error.expect("error text");
+    assert!(err.contains("cannot start no-such-claude-binary"), "{err}");
+}
+
+#[test]
 fn missing_program_is_failed_not_a_panic() {
     let tmp = tempfile::tempdir().expect("tmp");
     let r = ClaudeRunner::new(
