@@ -50,6 +50,28 @@ fn a_blocking_untracked_file_parks_the_job_and_leaves_main_alone() {
 }
 
 #[test]
+fn merge_refuses_an_out_of_scope_head() {
+    let fx = common::approved_scoped_job(&["apps/web/ok.txt", "README.md"]);
+    let before = common::main_tip(&fx.main);
+    let MergeResult::Parked(reason) = merge_stage(&fx.driver, &fx.id).expect("stage") else {
+        panic!("expected a park");
+    };
+    assert_eq!(reason, "the job changed files outside apps/web: README.md");
+    assert_eq!(common::main_tip(&fx.main), before);
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+}
+
+#[test]
+fn an_in_scope_head_merges() {
+    let fx = common::approved_scoped_job(&["apps/web/ok.txt"]);
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("stage"),
+        MergeResult::Merged(_)
+    ));
+}
+
+#[test]
 fn a_moved_branch_tip_parks_without_merging() {
     let fx = common::approved_job();
     common::commit_file(&common::worktree_of(&fx), "late.txt", "x");

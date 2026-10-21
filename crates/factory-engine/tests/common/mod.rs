@@ -385,6 +385,68 @@ pub fn approved_job_config(
     }
 }
 
+/// Like `approved_job`, for the `web` project in `apps/web`. The job branch commits each of `files`, repo-relative.
+pub fn approved_scoped_job(files: &[&str]) -> MergeFixture {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let main = tmp.path().join("repo");
+    init_repo(&main);
+    commit_file(&main, "apps/web/index.txt", "web\n");
+    let mut layout = factory_core::Layout::in_repo(&main);
+    layout.scope = Some(factory_core::Scope {
+        project: "web".into(),
+        subpath: PathBuf::from("apps/web"),
+    });
+    let runner = approving_runner(3);
+    let rf = runner.clone();
+    let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| rf.clone());
+    let driver = factory_engine::Driver::new(layout, Config::default(), factory).expect("driver");
+    let wt = driver
+        .repo()
+        .create_worktree(&factory_git::JobRef {
+            id: "001".into(),
+            slug: "hello".into(),
+            project: Some("web".into()),
+        })
+        .expect("worktree");
+    let mut head = String::new();
+    for file in files {
+        head = commit_file(&wt.path, file, "x\n");
+    }
+    let mut job = Job::new(
+        "001",
+        "2026-10-13-001-hello",
+        "hello",
+        "2026-10-13",
+        "say hello",
+        0.0,
+    );
+    job.worktree = Some(wt.path.to_string_lossy().to_string());
+    job.branch = wt.branch.clone();
+    job.base = Some(wt.base.clone());
+    job.head = Some(head.clone());
+    job.set_stage(factory_core::Stage::Approve, None, false, 1.0)
+        .expect("stage");
+    let dir = driver.job_dir(&job);
+    std::fs::create_dir_all(&dir).expect("job dir");
+    std::fs::write(dir.join("plan.md"), "- [ ] Task 1: hello\n").expect("plan");
+    driver.ledger(&job).create("# SDD ledger").expect("ledger");
+    driver
+        .store()
+        .update(|b| {
+            b.jobs.push(job);
+            Ok(())
+        })
+        .expect("board");
+    MergeFixture {
+        tmp,
+        main,
+        driver,
+        runner,
+        id: "001".into(),
+        head,
+    }
+}
+
 /// The job worktree path from the board.
 pub fn worktree_of(fx: &MergeFixture) -> PathBuf {
     PathBuf::from(

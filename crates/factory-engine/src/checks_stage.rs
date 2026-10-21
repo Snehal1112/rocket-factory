@@ -194,6 +194,13 @@ impl Engine<'_> {
 
     /// Runs the checks. On a failure the job goes back to `build` with the trimmed output.
     pub fn checks_stage(&self) -> Result<StageOutcome, EngineError> {
+        // Files outside the project folder park the job before any check runs.
+        let job = self.job()?;
+        if let (Some(base), Some(head)) = (job.base.as_deref(), job.head.as_deref()) {
+            if let Some(reason) = crate::scope::scope_violation(self.repo, base, head)? {
+                return self.park_gate(ParkKind::Other, reason);
+            }
+        }
         let report = self.run_checks_now()?;
         let round = self.job()?.round;
         if report.all_passed() {

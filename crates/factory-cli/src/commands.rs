@@ -571,6 +571,14 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
     if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
         return Err(CliError::Refused(job.review_missing_message()));
     }
+    // A job with files outside the project folder stays parked until the builder removes them.
+    if let (Some(base), Some(head)) = (job.base.as_deref(), job.head.as_deref()) {
+        if let Some(reason) = factory_engine::scope_violation(d.repo(), base, head)? {
+            return Err(CliError::Refused(format!(
+                "job {id} cannot be approved, {reason}; use rework so the builder removes them"
+            )));
+        }
+    }
     // The project lease is held through the merge and released on every exit path.
     let _project = d.hold_project(id)?;
     // The driver takes the job lease and its heartbeat renews it until the guard below releases it.

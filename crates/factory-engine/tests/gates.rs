@@ -314,3 +314,102 @@ fn top_folder_project_paths_are_unchanged() {
     fx.engine(&runner).checks_stage().expect("checks");
     assert!(worktree_of_job(&fx).join("cwd.out").exists());
 }
+
+#[test]
+fn out_of_scope_edit_parks_at_checks() {
+    let mut fx = scoped_fixture();
+    pwd_check(&mut fx);
+    let runner = built(
+        &fx,
+        vec![
+            ("src/a.rs", "x\n"),
+            ("../../README.md", "x\n"),
+            CHECK_SCRIPT,
+        ],
+    );
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    match out {
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("apps/web") && r.contains("README.md"), "{r}")
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(fx.job().stage, Stage::NeedsHuman);
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::Other);
+    // No check ran, so the check script never wrote its output.
+    assert!(!worktree_of_job(&fx).join("apps/web/cwd.out").exists());
+}
+
+#[test]
+fn a_root_src_path_parks_before_any_scoped_check_mapping() {
+    let mut fx = scoped_fixture();
+    only_src_checks(&mut fx);
+    let runner = built(&fx, vec![("../../src/a.rs", "x\n")]);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    match out {
+        StageOutcome::NeedsHuman(r) => assert!(r.contains("src/a.rs"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::Other);
+}
+
+#[test]
+fn rename_across_the_boundary_is_out_of_scope() {
+    let mut fx = committing_fixture();
+    common::commit_file(&fx.main, "apps/web/a.rs", "fn a() {}\n");
+    common::commit_file(&fx.main, "apps/api/keep.txt", "k\n");
+    fx.repo = factory_git::Repo::open(&fx.main)
+        .expect("open")
+        .with_scope("web", std::path::Path::new("apps/web"));
+    let mover: Effect = Box::new(|spec| {
+        let root = spec.cwd.join("../..");
+        std::fs::rename(root.join("apps/web/a.rs"), root.join("apps/api/a.rs")).expect("move");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![mover]);
+    fx.engine(&runner).build_stage().expect("build");
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    match out {
+        StageOutcome::NeedsHuman(r) => {
+            // The old path is inside the project, so only the new path is named.
+            assert!(r.contains("apps/api/a.rs"), "{r}")
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn more_than_ten_out_of_scope_paths_are_counted() {
+    let fx = scoped_fixture();
+    let files: Vec<(&'static str, &'static str)> = vec![
+        ("../../o1.txt", "x\n"),
+        ("../../o2.txt", "x\n"),
+        ("../../o3.txt", "x\n"),
+        ("../../o4.txt", "x\n"),
+        ("../../o5.txt", "x\n"),
+        ("../../o6.txt", "x\n"),
+        ("../../o7.txt", "x\n"),
+        ("../../o8.txt", "x\n"),
+        ("../../o9.txt", "x\n"),
+        ("../../o10.txt", "x\n"),
+        ("../../o11.txt", "x\n"),
+        ("../../o12.txt", "x\n"),
+    ];
+    let runner = built(&fx, files);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    match out {
+        StageOutcome::NeedsHuman(r) => assert!(r.ends_with("and 2 more"), "{r}"),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn top_folder_project_has_no_scope_check() {
+    let mut fx = committing_fixture();
+    only_src_checks(&mut fx);
+    let runner = built(&fx, vec![("README.md", "x\n")]);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+}
