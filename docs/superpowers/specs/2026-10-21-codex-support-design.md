@@ -55,10 +55,10 @@ New `crates/factory-agent/src/codex.rs` with `CodexRunner::new(program, sink)`, 
 Command line, fresh run (the prompt goes to stdin as `-`, the child runs in `spec.cwd`):
 
 ```
-codex exec --json --ignore-user-config -m <model> -c sandbox_mode="<mode>" [-c sandbox_workspace_write.writable_roots=[...]] -
+codex exec --json --ignore-user-config --skip-git-repo-check -m <model> -c sandbox_mode="<mode>" [-c sandbox_workspace_write.writable_roots=[...]] -
 ```
 
-Resume: `codex exec resume <thread_id> --json --ignore-user-config -m <model> -c ... -`. The run is never `--ephemeral`, because resume needs the saved session. `--ignore-user-config` keeps the user's own `config.toml` (stale models, profiles) out; the login still works, as the probe showed.
+Resume: `codex exec resume <thread_id> --json --ignore-user-config --skip-git-repo-check -m <model> -c ... -`. The run is never `--ephemeral`, because resume needs the saved session. `--ignore-user-config` keeps the user's own `config.toml` (stale models, profiles) out; the login still works, as the probe showed.
 
 ### 3. The Codex stream
 
