@@ -82,6 +82,12 @@ pub struct AgentSpec {
     pub add_dirs: Vec<PathBuf>,
     /// Called once with the session id when the stream reports it, while the run still goes on. Only task builders set it.
     pub on_session: Option<SessionHook>,
+    /// Sandbox mode for the Codex runner. `None` means `read-only`. Claude ignores it.
+    pub sandbox: Option<String>,
+    /// Extra writable directories for the Codex runner. Claude ignores them.
+    pub writable_roots: Vec<PathBuf>,
+    /// Allows network access in the Codex workspace-write sandbox. Claude ignores it.
+    pub network: bool,
 }
 
 impl AgentSpec {
@@ -107,6 +113,9 @@ impl AgentSpec {
             tools: None,
             add_dirs: Vec::new(),
             on_session: None,
+            sandbox: None,
+            writable_roots: Vec::new(),
+            network: false,
         }
     }
 
@@ -168,5 +177,18 @@ impl AgentSpec {
             (Some(text), false) => format!("{text}\n\n{}", self.prompt),
             _ => self.prompt.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_spec_has_no_sandbox_roots_or_network() {
+        let s = AgentSpec::new("001", "builder", "/w", "p");
+        assert_eq!(s.sandbox, None);
+        assert!(s.writable_roots.is_empty());
+        assert!(!s.network);
     }
 }

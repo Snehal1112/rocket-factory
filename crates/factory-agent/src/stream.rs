@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use crate::child::AgentStream;
 use crate::usage::Usage;
 
-const MAX_COMMAND: usize = 80;
+pub(crate) const MAX_COMMAND: usize = 80;
 const MAX_TARGET: usize = 300;
 
 /// Something the runner reacts to while reading the stream.
@@ -39,7 +40,7 @@ pub struct StreamState {
     last_usage: Option<Usage>,
 }
 
-fn trim_chars(s: &str, max: usize) -> String {
+pub(crate) fn trim_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
@@ -216,5 +217,44 @@ impl StreamState {
 
     pub fn has_result(&self) -> bool {
         self.result_text.is_some()
+    }
+}
+
+impl AgentStream for StreamState {
+    fn feed(&mut self, line: &str) -> Vec<StreamEvent> {
+        StreamState::feed(self, line)
+    }
+    fn usage(&self) -> Usage {
+        StreamState::usage(self)
+    }
+    fn final_usage(&self) -> Usage {
+        StreamState::final_usage(self)
+    }
+    fn turns(&self) -> u32 {
+        StreamState::turns(self)
+    }
+    fn has_result(&self) -> bool {
+        StreamState::has_result(self)
+    }
+    fn result_text(&self) -> Option<String> {
+        self.result_text.clone()
+    }
+    fn result_is_error(&self) -> bool {
+        self.result_is_error
+    }
+    fn result_subtype(&self) -> Option<String> {
+        self.result_subtype.clone()
+    }
+    fn session_id(&self) -> Option<String> {
+        self.session_id.clone()
+    }
+    fn start_ctx(&self) -> u64 {
+        StreamState::start_ctx(self)
+    }
+    fn end_ctx(&self) -> u64 {
+        StreamState::end_ctx(self)
+    }
+    fn start_cache(&self) -> (u64, u64) {
+        StreamState::start_cache(self)
     }
 }

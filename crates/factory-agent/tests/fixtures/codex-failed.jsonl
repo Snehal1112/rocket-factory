@@ -1,0 +1,3 @@
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Codex is ignoring 2 unrecognized configuration settings. ..."}}
+{"type":"error","message":"{\"type\":\"invalid_request_error\",\"status\":400,\"detail\":\"unsupported model\"}"}
+{"type":"turn.failed","error":{"message":"{\"type\":\"invalid_request_error\",\"status\":400,\"detail\":\"unsupported model\"}"}}
