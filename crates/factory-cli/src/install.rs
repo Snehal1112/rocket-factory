@@ -26,7 +26,9 @@ pub fn run(dir: Option<&Path>, force: bool) -> Result<String, CliError> {
     )?;
     let codex_folder = codex_skills_dir(&home).join(SKILL_DIR_NAME);
     let codex_target = codex_folder.join(SKILL_FILE_NAME);
-    let skill = codex_skill();
+    let skill = codex_skill().map_err(|error| {
+        CliError::Refused(format!("{claude}\nCodex skill install failed: {error}"))
+    })?;
     if !force {
         match std::fs::read_to_string(&codex_target) {
             Ok(existing) if existing != skill => {
@@ -74,7 +76,7 @@ pub fn upgrade_codex_skill(commands_dir: &Path, dry_run: bool) -> Result<Option<
     Ok(Some(upgrade_file(
         &codex_skills_dir(home).join(SKILL_DIR_NAME),
         SKILL_FILE_NAME,
-        &codex_skill(),
+        &codex_skill()?,
         dry_run,
     )?))
 }
@@ -92,11 +94,25 @@ fn user_home() -> Result<PathBuf, CliError> {
     Ok(PathBuf::from(home))
 }
 
-fn codex_skill() -> String {
-    let body = GLOBAL_COMMAND
+fn codex_skill() -> Result<String, CliError> {
+    build_codex_skill(GLOBAL_COMMAND)
+}
+
+fn replace_required(body: String, from: &str, to: &str) -> Result<String, CliError> {
+    if !body.contains(from) {
+        let head: String = from.chars().take(60).collect();
+        return Err(CliError::Refused(format!(
+            "global command text changed: {head}"
+        )));
+    }
+    Ok(body.replace(from, to))
+}
+
+fn build_codex_skill(command: &str) -> Result<String, CliError> {
+    let body = command
         .split_once("\n---\n")
         .map(|(_, body)| body.trim_start())
-        .unwrap_or(GLOBAL_COMMAND);
+        .unwrap_or(command);
     let mut body = body
         .strip_prefix("# Factory\n\nArguments: $ARGUMENTS\n")
         .unwrap_or(body)
@@ -163,18 +179,15 @@ fn codex_skill() -> String {
             "When the run ends (the command tool returns a final result, the harness notifies you that a live session ended, the user asks, or the dashboard shows it),",
         ),
     ] {
-        assert!(body.contains(claude), "global command text changed: {claude}");
-        body = body.replace(claude, codex);
+        body = replace_required(body, claude, codex)?;
     }
     let opus_instruction = "A feature may start or end with the single token `--opus`. Remove that token from the text and pass `--model opus` to `<factory> --project <name> new`. It may likewise start or end with the single token `--one-job`, in any order together with `--opus` (either token may be at the start or the end), handled the same way: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`.";
-    assert!(body.contains(opus_instruction), "global command model instruction changed");
-    body = body.replace(opus_instruction, "`--opus` is a Claude-only option. If it appears at the start or end of a feature request, explain that this Codex skill does not accept it and ask the user to select a Codex model in the project configuration; stop before creating a draft or job. A feature may start or end with the single token `--one-job`: remove it from the feature text and slug, and pass `--one-job` to `<factory> --project <name> new`.");
+    body = replace_required(body, opus_instruction, "`--opus` is a Claude-only option. If it appears at the start or end of a feature request, explain that this Codex skill does not accept it and ask the user to select a Codex model in the project configuration; stop before creating a draft or job. A feature may start or end with the single token `--one-job`: remove it from the feature text and slug, and pass `--one-job` to `<factory> --project <name> new`.")?;
     let new_instruction = "adding `--model opus` when `--opus` was given and `--one-job` when `--one-job` was given";
-    assert!(body.contains(new_instruction), "global command new instruction changed");
-    body = body.replace(new_instruction, "adding `--one-job` when `--one-job` was given");
-    format!(
+    body = replace_required(body, new_instruction, "adding `--one-job` when `--one-job` was given")?;
+    Ok(format!(
         "---\nname: factory\ndescription: {SKILL_DESCRIPTION}\n---\n\n# Factory\n\nUse the user's accompanying request as the factory arguments.\n\n{body}"
-    )
+    ))
 }
 
 fn install_file(
@@ -243,5 +256,26 @@ fn upgrade_file(
             "cannot read {}: {e}",
             target.display()
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_command_builds_a_codex_skill() {
+        let skill = codex_skill().expect("skill");
+        assert!(skill.contains("name: factory"));
+    }
+
+    #[test]
+    fn codex_skill_reports_a_changed_command() {
+        let error = build_codex_skill("# Factory\n\nnothing the rewrite expects\n")
+            .expect_err("changed command must be an error");
+        assert!(
+            error.to_string().contains("global command text changed"),
+            "{error}"
+        );
     }
 }
