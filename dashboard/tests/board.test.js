@@ -932,9 +932,22 @@ test("a state without drafts still renders the board", () => {
 test("a job spec warning shows on the card", () => {
   const html = board.renderCard(makeJob({ spec_warning: "no <decision> recorded" }), 200, []);
   assert.match(html, /<details class="spec-warning">/);
-  assert.match(html, /<summary>Warnings<\/summary>/);
+  assert.match(html, /<summary>Spec warnings \(1\)<\/summary>/);
   assert.match(html, /no &lt;decision&gt; recorded/);
   assert.doesNotMatch(board.renderCard(makeJob(), 200, []), /spec-warning/);
+});
+
+test("a_needs_human_card_shows_its_spec_warning_open", () => {
+  const html = board.renderCard(makeJob({ stage: "needs-human", reason: "x", spec_warning: "a; b" }), 200, []);
+  assert.match(html, /<details class="spec-warning" open>/);
+  assert.match(html, /<summary>Spec warnings \(2\)<\/summary>/);
+});
+
+test("a_build_card_keeps_its_spec_warning_collapsed", () => {
+  const html = board.renderCard(makeJob({ stage: "build", spec_warning: "a; b" }), 200, []);
+  assert.match(html, /<details class="spec-warning">/);
+  assert.doesNotMatch(html, /spec-warning" open/);
+  assert.match(html, /<summary>Spec warnings \(2\)<\/summary>/);
 });
 
 test("the summary notes drafts and stale drafts", () => {
