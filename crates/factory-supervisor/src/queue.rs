@@ -142,6 +142,45 @@ pub fn list(home: &Home) -> Vec<QueueItem> {
         .collect()
 }
 
+/// Like `list`, but reports queue directory and entry read errors. A missing
+/// queue directory is an empty queue. Bad files stay `QueueItem::Bad`.
+pub fn try_list(home: &Home) -> Result<Vec<QueueItem>, QueueError> {
+    let dir = home.queue_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(CoreError::io(&dir, e).into()),
+    };
+    let mut good = Vec::new();
+    let mut bad = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| CoreError::io(&dir, e))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let result = match name.strip_suffix(&format!(".{EXT}")) {
+            Some(stem) => read_item(&path, stem),
+            None => Err("not a .json file".to_string()),
+        };
+        match result {
+            Ok(req) => good.push(req),
+            Err(reason) => bad.push((name, reason)),
+        }
+    }
+    good.sort_by(|a, b| a.ts_ms.cmp(&b.ts_ms).then_with(|| a.id.cmp(&b.id)));
+    bad.sort();
+    Ok(good
+        .into_iter()
+        .map(QueueItem::Ok)
+        .chain(
+            bad.into_iter()
+                .map(|(file, reason)| QueueItem::Bad { file, reason }),
+        )
+        .collect())
+}
+
 /// Deletes a queued request by id. An unknown id is an error.
 pub fn remove(home: &Home, id: &str) -> Result<(), QueueError> {
     validate_id_chars(id)?;
@@ -168,6 +207,39 @@ mod tests {
 
     fn req(p: &str, ts: u64) -> Request {
         Request::new(p, Action::Run, "1", false, ts).expect("request")
+    }
+
+    #[test]
+    fn try_list_returns_empty_for_missing_queue_directory() {
+        let (_tmp, home) = home();
+        assert_eq!(try_list(&home).expect("missing queue is empty"), Vec::new());
+    }
+
+    #[test]
+    fn try_list_returns_bad_items_for_malformed_requests() {
+        let (_tmp, home) = home();
+        let good = req("a", 1);
+        enqueue(&home, &good).expect("enqueue valid request");
+        std::fs::write(home.queue_dir().join("junk.json"), "{not json").expect("write bad request");
+
+        let items = try_list(&home).expect("scan queue");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], QueueItem::Ok(good));
+        match &items[1] {
+            QueueItem::Bad { file, reason } => {
+                assert_eq!(file, "junk.json");
+                assert!(!reason.is_empty());
+            }
+            QueueItem::Ok(request) => panic!("unexpected valid request: {request:?}"),
+        }
+    }
+
+    #[test]
+    fn try_list_reports_queue_directory_read_errors() {
+        let (_tmp, home) = home();
+        std::fs::create_dir_all(&home.dir).expect("create home");
+        std::fs::write(home.queue_dir(), "not a directory").expect("make queue path a file");
+        assert!(matches!(try_list(&home), Err(QueueError::Core(_))));
     }
 
     #[test]
