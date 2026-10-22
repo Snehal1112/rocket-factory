@@ -122,12 +122,12 @@ pub fn plan_header(plan: &str) -> String {
 }
 
 /// True for the `## Review Focus` heading line.
-fn is_focus_heading(line: &str) -> bool {
+pub(crate) fn is_focus_heading(line: &str) -> bool {
     line.trim_end() == "## Review Focus"
 }
 
 /// True for a `# ` or `## ` heading line, which ends a header section.
-fn ends_section(line: &str) -> bool {
+pub(crate) fn ends_section(line: &str) -> bool {
     line.starts_with("# ") || line.starts_with("## ")
 }
 
@@ -141,7 +141,11 @@ pub fn review_focus(plan: &str) -> Option<String> {
     let body: Vec<&str> = lines[start + 1..]
         .iter()
         .take_while(|(l, fenced)| {
-            *fenced || (!ends_section(l) && !is_task_heading(l) && !l.starts_with("Next plan:"))
+            *fenced
+                || (!ends_section(l)
+                    && !is_task_heading(l)
+                    && parse_checkbox_tasks(l).is_empty()
+                    && !l.starts_with("Next plan:"))
         })
         .map(|(l, _)| *l)
         .collect();
@@ -163,6 +167,12 @@ mod late_review_focus_tests {
         assert!(!task_section(plan, 1)
             .expect("task")
             .contains("Review Focus"));
+    }
+
+    #[test]
+    fn review_focus_before_checkbox_tasks_stops_at_the_first_task() {
+        let plan = "# P\n\n## Review Focus\n\n1. Empty input works.\n\n- [ ] Task 1: work\n";
+        assert_eq!(review_focus(plan).as_deref(), Some("1. Empty input works."));
     }
 
     #[test]

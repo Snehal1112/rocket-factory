@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::tasks::{
-    lines_with_fence, parse_checkbox_tasks, parse_tasks, plan_header, plan_title, review_focus,
+    ends_section, is_focus_heading, lines_with_fence, parse_checkbox_tasks, parse_tasks, plan_header, plan_title, review_focus,
     task_section,
 };
 
@@ -247,8 +247,20 @@ fn split_plan(text: &str, as_headings: bool) -> Split {
         .collect::<Vec<_>>()
         .join("\n");
     let mut sections: Vec<(u32, Vec<&str>)> = Vec::new();
+    let mut in_focus = false;
     for (line, fenced) in &lines[start..] {
         if !fenced && line.starts_with("Next plan:") {
+            continue;
+        }
+        let is_task = task_of(line, *fenced).is_some();
+        if !fenced && is_focus_heading(line) {
+            in_focus = true;
+            continue;
+        }
+        if in_focus && !fenced && (ends_section(line) || is_task) {
+            in_focus = false;
+        }
+        if in_focus {
             continue;
         }
         match task_of(line, *fenced).filter(|n| sections.iter().all(|(old, _)| old != n)) {
@@ -449,6 +461,16 @@ fn section_items(body: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn late_focus_in_a_checkbox_plan_is_not_in_the_last_task() {
+        let text = "# P\n\n- [ ] Task 1: work\n  - do it\n\n## Review Focus\n\n1. Root returns 200.\n";
+        let out = combine_plans(&[("a.md".to_string(), text.to_string())]);
+        assert_eq!(out.text.matches("Root returns 200.").count(), 1, "{}", out.text);
+        let task = out.text.split("- [ ] Task 1").nth(1).expect("task block");
+        assert!(!task.contains("Review Focus"), "{}", out.text);
+    }
+
 
     /// Builds a plan text in the shape the planner writes.
     fn plan(
