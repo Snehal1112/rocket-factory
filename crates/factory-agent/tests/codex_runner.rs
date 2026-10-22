@@ -67,6 +67,15 @@ fn error_only_stream_fails_with_the_error_text() {
 }
 
 #[test]
+fn error_only_stream_with_nonzero_exit_fails_with_the_error_text() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let run = runner(EventSink::null("001")).run(&spec("error-only-nonzero", tmp.path()));
+    assert_eq!(run.stop_reason, StopReason::Failed);
+    let err = run.error.expect("error text");
+    assert!(err.contains("provider unavailable"), "{err}");
+}
+
+#[test]
 fn spawn_error_names_the_program() {
     let tmp = tempfile::tempdir().expect("tmp");
     let run =

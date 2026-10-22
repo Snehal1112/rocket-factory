@@ -259,8 +259,8 @@ not touched by `factory upgrade`, so rebuild it with the last command.
 
 `factory upgrade` prints, in order:
 
-- the command line: the `/factory` command is updated, and the old file is kept as `factory.md.bak`.
-- the Codex integration: `SKILL.md` is installed or upgraded under `~/.agents/skills/factory/`, and the old file is kept as `SKILL.md.bak`.
+- the command line: the `/factory` command is updated. A replaced file is saved to the first free name of `factory.md.bak`, `factory.md.bak.1`, `factory.md.bak.2`, and so on, so an existing backup is never overwritten.
+- the Codex integration: `SKILL.md` under `~/.agents/skills/factory/` is refreshed only when it already exists; upgrade never creates a missing one, and `factory install` is what installs the Codex skill in the first place. A replaced `SKILL.md` is backed up the same way, as `SKILL.md.bak`, `SKILL.md.bak.1`, and so on.
 - the preset lines, as in `factory presets refresh`, and a note that refused files stay as they are. To
   overwrite them, run `factory presets refresh --force`.
 - `shadowed: <project> <project-layer|repo-layer> <file>` lines and `skipped: <project> (<reason>)` lines.

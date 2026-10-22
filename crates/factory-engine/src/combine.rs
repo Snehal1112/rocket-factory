@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use crate::tasks::{
-    ends_section, is_focus_heading, lines_with_fence, parse_checkbox_tasks, parse_tasks, plan_header, plan_title, review_focus,
-    task_section,
+    ends_section, is_focus_heading, lines_with_fence, parse_checkbox_tasks, parse_tasks,
+    plan_header, plan_title, review_focus, task_section,
 };
 
 const CONSTRAINTS: &str = "## Global Constraints";
@@ -175,7 +175,8 @@ pub fn combine_plans(plans: &[(String, String)]) -> CombinedPlan {
         out.push(format!("{FOCUS}\n\n{}", focus.join("\n\n")));
     }
     // With several plans the combined File Structure sits where plan 1 has its heading, else after the focus.
-    let combined = (!files.is_empty()).then(|| format!("{FILE_STRUCTURE}\n\n{}", files.join("\n\n")));
+    let combined =
+        (!files.is_empty()).then(|| format!("{FILE_STRUCTURE}\n\n{}", files.join("\n\n")));
     let at_first = first_parts
         .sections
         .iter()
@@ -490,13 +491,18 @@ mod tests {
 
     #[test]
     fn late_focus_in_a_checkbox_plan_is_not_in_the_last_task() {
-        let text = "# P\n\n- [ ] Task 1: work\n  - do it\n\n## Review Focus\n\n1. Root returns 200.\n";
+        let text =
+            "# P\n\n- [ ] Task 1: work\n  - do it\n\n## Review Focus\n\n1. Root returns 200.\n";
         let out = combine_plans(&[("a.md".to_string(), text.to_string())]);
-        assert_eq!(out.text.matches("Root returns 200.").count(), 1, "{}", out.text);
+        assert_eq!(
+            out.text.matches("Root returns 200.").count(),
+            1,
+            "{}",
+            out.text
+        );
         let task = out.text.split("- [ ] Task 1").nth(1).expect("task block");
         assert!(!task.contains("Review Focus"), "{}", out.text);
     }
-
 
     /// Builds a plan text in the shape the planner writes.
     fn plan(
@@ -713,12 +719,20 @@ mod tests {
     #[test]
     fn combining_keeps_every_plans_file_structure() {
         let with = |p: String, file: &str| {
-            p.replace("---\n\n", &format!("## File Structure\n\n- `{file}`\n\n---\n\n"))
+            p.replace(
+                "---\n\n",
+                &format!("## File Structure\n\n- `{file}`\n\n---\n\n"),
+            )
         };
         let a = with(plan("Core", "g", &[], &[], &["a one", "a two"]), "core.rs");
         let b = with(plan("Engine", "g", &[], &[], &["b one"]), "engine.rs");
         let got = combine_plans(&two(&a, &b));
-        assert_eq!(got.text.matches("## File Structure").count(), 1, "{}", got.text);
+        assert_eq!(
+            got.text.matches("## File Structure").count(),
+            1,
+            "{}",
+            got.text
+        );
         let body = got.text.split("## File Structure").nth(1).expect("section");
         let body = body.split("\n---").next().unwrap_or_default();
         let first = body.find("`core.rs`").expect("plan 1 file");
@@ -746,7 +760,12 @@ mod tests {
         let a = plan("Core", "g", &[], &[], &["a one"])
             .replace("---\n\n", "## File Structure\n\n---\n\n");
         let got = combine_plans(&[("plans/plan-01.md".to_string(), a)]);
-        assert_eq!(got.text.matches("## File Structure").count(), 1, "{}", got.text);
+        assert_eq!(
+            got.text.matches("## File Structure").count(),
+            1,
+            "{}",
+            got.text
+        );
     }
 
     #[test]

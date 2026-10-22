@@ -194,8 +194,13 @@ fn build_codex_skill(command: &str) -> Result<String, CliError> {
     }
     let opus_instruction = "A feature may start or end with the single token `--opus`. Remove that token from the text and pass `--model opus` to `<factory> --project <name> new`. It may likewise start or end with the single token `--one-job`, in any order together with `--opus` (either token may be at the start or the end), handled the same way: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`.";
     body = replace_required(body, opus_instruction, "`--opus` is a Claude-only option. If it appears at the start or end of a feature request, explain that this Codex skill does not accept it and ask the user to select a Codex model in the project configuration; stop before creating a draft or job. A feature may start or end with the single token `--one-job`: remove it from the feature text and slug, and pass `--one-job` to `<factory> --project <name> new`.")?;
-    let new_instruction = "adding `--model opus` when `--opus` was given and `--one-job` when `--one-job` was given";
-    body = replace_required(body, new_instruction, "adding `--one-job` when `--one-job` was given")?;
+    let new_instruction =
+        "adding `--model opus` when `--opus` was given and `--one-job` when `--one-job` was given";
+    body = replace_required(
+        body,
+        new_instruction,
+        "adding `--one-job` when `--one-job` was given",
+    )?;
     Ok(format!(
         "---\nname: factory\ndescription: {SKILL_DESCRIPTION}\n---\n\n# Factory\n\nUse the user's accompanying request as the factory arguments.\n\n{body}"
     ))

@@ -336,7 +336,10 @@ mod tests {
     fn codex_args_set_the_approval_policy() {
         for sandbox in ["workspace-write", "read-only"] {
             let a = codex_args(&args_spec(sandbox));
-            for pair in ["approval_policy=\"on-request\"", "approvals_reviewer=\"auto_review\""] {
+            for pair in [
+                "approval_policy=\"on-request\"",
+                "approvals_reviewer=\"auto_review\"",
+            ] {
                 let i = a.iter().position(|x| x == pair).expect(pair);
                 assert_eq!(a[i - 1], "-c");
             }
@@ -348,7 +351,10 @@ mod tests {
         let mut s = args_spec("read-only");
         s.resume = Some("abc".to_string());
         let a = codex_args(&s);
-        assert_eq!(&a[..4], &strs(&["exec", "resume", "--json", "--ignore-user-config"])[..]);
+        assert_eq!(
+            &a[..4],
+            &strs(&["exec", "resume", "--json", "--ignore-user-config"])[..]
+        );
         assert_eq!(a[a.len() - 2], "abc");
         assert!(a.contains(&"approvals_reviewer=\"auto_review\"".to_string()));
         assert_eq!(a.last().map(String::as_str), Some("-"));
@@ -516,6 +522,16 @@ mod tests {
         s.feed(r#"{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}"#);
         assert!(!s.result_is_error());
         assert_eq!(s.result_subtype().as_deref(), Some("success"));
+    }
+
+    #[test]
+    fn error_event_then_turn_failed_is_an_error_with_the_failure_message() {
+        let mut s = CodexStream::default();
+        s.feed(r#"{"type":"error","message":"Reconnecting... 2/5"}"#);
+        s.feed(r#"{"type":"turn.failed","error":{"message":"turn rejected"}}"#);
+        assert!(s.has_result());
+        assert!(s.result_is_error());
+        assert!(s.result_text().unwrap().contains("turn rejected"));
     }
 
     #[test]

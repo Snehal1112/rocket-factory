@@ -42,6 +42,10 @@ fn main() {
             std::process::exit(7);
         }
         "error-only" => emit(r#"{"type":"error","message":"provider unavailable"}"#),
+        "error-only-nonzero" => {
+            emit(r#"{"type":"error","message":"provider unavailable"}"#);
+            std::process::exit(3);
+        }
         "noresult" => emit(THREAD),
         "silent" => {
             emit(THREAD);
