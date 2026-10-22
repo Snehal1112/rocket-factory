@@ -47,13 +47,9 @@ pub fn run(dir: Option<&Path>, force: bool) -> Result<String, CliError> {
             }
         }
     }
-    let codex = install_file(
-        &codex_folder,
-        SKILL_FILE_NAME,
-        &skill,
-        force,
-    )
-    .map_err(|error| CliError::Refused(format!("{claude}\nCodex skill install failed: {error}")))?;
+    let codex = install_file(&codex_folder, SKILL_FILE_NAME, &skill, force).map_err(|error| {
+        CliError::Refused(format!("{claude}\nCodex skill install failed: {error}"))
+    })?;
     Ok(format!("{claude}\n{codex}"))
 }
 

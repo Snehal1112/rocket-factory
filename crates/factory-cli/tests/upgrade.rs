@@ -118,9 +118,18 @@ fn codex_skill_backup_failure_does_not_block_claude_upgrade() {
         .to_string();
     assert!(err.contains("Claude upgrade completed"), "{err}");
     assert!(err.contains("Codex skill not upgraded"), "{err}");
-    assert_eq!(std::fs::read_to_string(claude).expect("Claude command"), GLOBAL_COMMAND);
-    assert_eq!(std::fs::read_to_string(skill).expect("Codex skill"), "custom Codex skill");
-    assert_eq!(read_marker(&e.home).expect("marker").as_deref(), Some(FACTORY_VERSION));
+    assert_eq!(
+        std::fs::read_to_string(claude).expect("Claude command"),
+        GLOBAL_COMMAND
+    );
+    assert_eq!(
+        std::fs::read_to_string(skill).expect("Codex skill"),
+        "custom Codex skill"
+    );
+    assert_eq!(
+        read_marker(&e.home).expect("marker").as_deref(),
+        Some(FACTORY_VERSION)
+    );
 }
 
 #[test]
