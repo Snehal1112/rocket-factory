@@ -541,9 +541,18 @@ fn cleanup_of_a_merged_job_keeps_its_card() {
     assert_eq!(board_ids(&fx), vec!["001".to_string()]);
 }
 
-#[test]
-fn cleanup_keeps_the_card_of_a_cancelled_series_member_with_a_sibling() {
-    let fx = Fixture::with_risk_path("docs/**");
+#[derive(Clone, Copy)]
+enum Sibling {
+    Queued,
+    Merged,
+    Review,
+    Cancelled,
+}
+
+/// Jobs 001 and 002 in series S3, 001 cancelled and 002 in the given state. The fixture also gets a
+/// registered home and project name `p`.
+fn series_pair(sibling: Sibling) -> (Fixture, factory_core::Home) {
+    let mut fx = Fixture::with_risk_path("docs/**");
     parked_and_cancelled(&fx, "hello");
     parked_and_cancelled(&fx, "other");
     let store = factory_engine::BoardStore::new(
@@ -559,19 +568,173 @@ fn cleanup_keeps_the_card_of_a_cancelled_series_member_with_a_sibling() {
                     total: 2,
                     id: Some("S3".into()),
                 });
+                if n == 1 {
+                    let stage = match sibling {
+                        Sibling::Merged => Some(factory_core::Stage::Merged),
+                        Sibling::Review => Some(factory_core::Stage::Review),
+                        _ => None,
+                    };
+                    if let Some(stage) = stage {
+                        j.set_stage(stage, None, false, factory_engine::now_secs())
+                            .expect("stage");
+                    }
+                }
             }
             Ok(())
         })
         .expect("series");
     fx.run(&["cancel", "1"]).expect("cancel");
-    let out = fx
-        .run(&["cleanup", "1", "--discard-commits"])
-        .expect("cleanup");
-    assert!(
-        out.ends_with("; card kept on the board: job is part of series S3"),
-        "{out}"
-    );
-    assert_eq!(board_ids(&fx), vec!["001".to_string(), "002".to_string()]);
+    if matches!(sibling, Sibling::Cancelled) {
+        fx.run(&["cancel", "2"]).expect("cancel sibling");
+    }
+    let home = factory_core::Home::at(fx.tmp.path().join("home"));
+    fx.ctx.home = Some(home.clone());
+    fx.ctx.project_name = Some("p".to_string());
+    (fx, home)
+}
+
+fn queue_request(
+    home: &factory_core::Home,
+    project: &str,
+    action: factory_supervisor::Action,
+    job: &str,
+    series: bool,
+) -> factory_supervisor::Request {
+    let request =
+        factory_supervisor::Request::new(project, action, job, series, 1).expect("request");
+    factory_supervisor::queue::enqueue(home, &request).expect("enqueue");
+    request
+}
+
+fn both_ids() -> Vec<String> {
+    vec!["001".to_string(), "002".to_string()]
+}
+
+fn only_second() -> Vec<String> {
+    vec!["002".to_string()]
+}
+
+fn cleanup_one(fx: &Fixture) -> String {
+    fx.run(&["cleanup", "1", "--discard-commits"])
+        .expect("cleanup")
+}
+
+#[test]
+fn cleanup_removes_cancelled_card_when_series_sibling_is_merged() {
+    let (fx, _home) = series_pair(Sibling::Merged);
+    let out = cleanup_one(&fx);
+    assert!(out.ends_with("; card removed from the board"), "{out}");
+    assert_eq!(board_ids(&fx), only_second());
+}
+
+#[test]
+fn cleanup_removes_cancelled_card_when_series_sibling_is_cancelled() {
+    let (fx, _home) = series_pair(Sibling::Cancelled);
+    let out = cleanup_one(&fx);
+    assert!(out.ends_with("; card removed from the board"), "{out}");
+    assert_eq!(board_ids(&fx), only_second());
+}
+
+#[test]
+fn cleanup_keeps_the_card_of_a_cancelled_series_member_with_a_sibling() {
+    let (fx, _home) = series_pair(Sibling::Queued);
+    let out = cleanup_one(&fx);
+    assert!(out.contains("series S3 still has active jobs"), "{out}");
+    assert_eq!(board_ids(&fx), both_ids());
+}
+
+#[test]
+fn cleanup_keeps_cancelled_card_when_series_sibling_is_in_review() {
+    let (fx, _home) = series_pair(Sibling::Review);
+    let out = cleanup_one(&fx);
+    assert!(out.contains("series S3 still has active jobs"), "{out}");
+    assert_eq!(board_ids(&fx), both_ids());
+}
+
+#[test]
+fn cleanup_blocks_a_queued_request_for_a_zero_padded_series_member() {
+    let (fx, home) = series_pair(Sibling::Merged);
+    let request =
+        factory_supervisor::Request::new("p", factory_supervisor::Action::Run, "2", true, 1)
+            .expect("request");
+    factory_supervisor::queue::enqueue(&home, &request).expect("enqueue");
+    let out = cleanup_one(&fx);
+    assert!(out.contains("series S3 has queued requests"), "{out}");
+    assert_eq!(board_ids(&fx), both_ids());
+}
+
+#[test]
+fn cleanup_blocks_an_approve_request_for_series_member() {
+    let (fx, home) = series_pair(Sibling::Merged);
+    queue_request(&home, "p", factory_supervisor::Action::Approve, "2", false);
+    let out = cleanup_one(&fx);
+    assert!(out.contains("series S3 has queued requests"), "{out}");
+    assert_eq!(board_ids(&fx), both_ids());
+}
+
+#[test]
+fn cleanup_ignores_unrelated_project_and_job_queue_requests() {
+    let (fx, home) = series_pair(Sibling::Merged);
+    queue_request(&home, "other", factory_supervisor::Action::Run, "2", true);
+    queue_request(&home, "p", factory_supervisor::Action::Run, "3", true);
+    let out = cleanup_one(&fx);
+    assert!(out.ends_with("; card removed from the board"), "{out}");
+    assert_eq!(board_ids(&fx), only_second());
+}
+
+#[test]
+fn cleanup_fails_closed_when_registered_project_queue_is_unreadable() {
+    let (fx, home) = series_pair(Sibling::Merged);
+    std::fs::create_dir_all(&home.dir).expect("home dir");
+    std::fs::write(home.queue_dir(), "not a directory").expect("queue file");
+    let out = cleanup_one(&fx);
+    assert!(out.contains("queued work could not be checked"), "{out}");
+    assert_eq!(board_ids(&fx), both_ids());
+}
+
+#[test]
+fn cleanup_ignores_malformed_queue_request() {
+    let (fx, home) = series_pair(Sibling::Merged);
+    std::fs::create_dir_all(home.queue_dir()).expect("queue dir");
+    std::fs::write(home.queue_dir().join("junk.json"), "{not json").expect("junk");
+    let out = cleanup_one(&fx);
+    assert!(out.ends_with("; card removed from the board"), "{out}");
+    assert_eq!(board_ids(&fx), only_second());
+}
+
+#[test]
+fn cleanup_can_remove_card_when_retried_after_queue_request_finishes() {
+    let (fx, home) = series_pair(Sibling::Merged);
+    let request = queue_request(&home, "p", factory_supervisor::Action::Run, "2", true);
+    let out = cleanup_one(&fx);
+    assert!(out.contains("series S3 has queued requests"), "{out}");
+    factory_supervisor::queue::remove(&home, &request.id).expect("remove");
+    let out = cleanup_one(&fx);
+    assert!(out.ends_with("; card removed from the board"), "{out}");
+    assert_eq!(board_ids(&fx), only_second());
+}
+
+#[test]
+fn cleanup_keeps_card_for_single_cancelled_job_with_matching_queue_request() {
+    let mut fx = Fixture::with_risk_path("docs/**");
+    parked_and_cancelled(&fx, "hello");
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let home = factory_core::Home::at(fx.tmp.path().join("home"));
+    fx.ctx.home = Some(home.clone());
+    fx.ctx.project_name = Some("p".to_string());
+    queue_request(&home, "p", factory_supervisor::Action::Run, "1", false);
+    let out = cleanup_one(&fx);
+    assert!(out.contains("job 001 has a queued request"), "{out}");
+    assert_eq!(board_ids(&fx), vec!["001".to_string()]);
+}
+
+#[test]
+fn cleanup_without_registered_context_uses_board_and_lease_guards() {
+    let fx = Fixture::with_risk_path("docs/**");
+    parked_and_cancelled(&fx, "hello");
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let out = cleanup_one(&fx);
+    assert!(out.ends_with("; card removed from the board"), "{out}");
 }
 
 #[test]

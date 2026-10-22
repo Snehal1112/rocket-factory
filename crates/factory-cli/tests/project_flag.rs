@@ -374,3 +374,11 @@ fn a_missing_project_folder_is_refused() {
     let err = e.ctx().err().expect("refused").to_string();
     assert!(err.contains("project folder is missing"), "{err}");
 }
+
+#[test]
+fn registered_project_context_carries_queue_identity() {
+    let e = setup(&[]);
+    let ctx = e.ctx().expect("ctx");
+    assert_eq!(ctx.home.as_ref(), Some(&e.home));
+    assert_eq!(ctx.project_name.as_deref(), Some("p"));
+}

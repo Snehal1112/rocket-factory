@@ -55,6 +55,10 @@ pub struct CliCtx {
     pub notes: Vec<String>,
     /// An injected issue tracker. `None` means the real `gh` one. Tests use it.
     pub tracker: Option<Arc<dyn factory_engine::Tracker>>,
+    /// The factory home of a registered project. `None` for a repository-local context.
+    pub home: Option<Home>,
+    /// The registered project name, used to match queued requests. `None` for a repository-local context.
+    pub project_name: Option<String>,
 }
 
 impl CliCtx {
@@ -75,6 +79,8 @@ impl CliCtx {
             blocked: None,
             notes: Vec::new(),
             tracker: None,
+            home: None,
+            project_name: None,
         }
     }
 
@@ -109,6 +115,8 @@ impl CliCtx {
             blocked: None,
             notes: Vec::new(),
             tracker: None,
+            home: None,
+            project_name: None,
         })
     }
 
@@ -171,6 +179,8 @@ impl CliCtx {
             blocked,
             notes: resolved.notes,
             tracker: None,
+            home: Some(home.clone()),
+            project_name: Some(name.to_string()),
         };
         Ok(ctx)
     }
@@ -723,13 +733,86 @@ fn remove_cancelled_card(ctx: &CliCtx, id: &str) -> Result<Option<String>, CliEr
         if lease_is_live(job, now_secs()) {
             return Ok(Some(format!("job {id} has a live lease")));
         }
-        if let Some(sid) = board.series_with_siblings(&job.id) {
-            return Ok(Some(format!("job is part of series {sid}")));
+        if !series_is_finished(board, &job.id) {
+            let sid = series_id_of(board, &job.id).unwrap_or_default();
+            return Ok(Some(format!("series {sid} still has active jobs")));
+        }
+        if let (Some(home), Some(project)) = (&ctx.home, &ctx.project_name) {
+            let members = member_ids(board, &job.id);
+            let series = series_id_of(board, &job.id);
+            match factory_supervisor::queue::try_list(home) {
+                Err(e) => {
+                    return Ok(Some(format!("queued work could not be checked: {e}")));
+                }
+                Ok(items) => {
+                    let queued = items.iter().any(|item| match item {
+                        factory_supervisor::QueueItem::Ok(r) => {
+                            queued_request_matches_series(r, project, &members)
+                        }
+                        factory_supervisor::QueueItem::Bad { .. } => false,
+                    });
+                    if queued {
+                        return Ok(Some(match series {
+                            Some(sid) => format!("series {sid} has queued requests"),
+                            None => format!("job {} has a queued request", job.id),
+                        }));
+                    }
+                }
+            }
         }
         board.remove_job(id)?;
         Ok(None)
     })?;
     Ok(kept)
+}
+
+fn series_id_of(board: &factory_core::Board, target_id: &str) -> Option<String> {
+    board
+        .jobs
+        .iter()
+        .find(|j| j.id == target_id)
+        .and_then(|j| j.series.as_ref())
+        .and_then(|p| p.id.clone())
+}
+
+/// The ids of the board members of the target's series, or just the target when it has no series id.
+fn member_ids(board: &factory_core::Board, target_id: &str) -> Vec<String> {
+    match series_id_of(board, target_id) {
+        Some(sid) => board
+            .jobs
+            .iter()
+            .filter(|j| j.series.as_ref().and_then(|p| p.id.as_ref()) == Some(&sid))
+            .map(|j| j.id.clone())
+            .collect(),
+        None => vec![target_id.to_string()],
+    }
+}
+
+/// True when the target has no series id or no other member, or every member is merged or cancelled.
+fn series_is_finished(board: &factory_core::Board, target_id: &str) -> bool {
+    let Some(sid) = series_id_of(board, target_id) else {
+        return true;
+    };
+    board
+        .jobs
+        .iter()
+        .filter(|j| j.series.as_ref().and_then(|p| p.id.as_ref()) == Some(&sid))
+        .all(|j| j.stage == Stage::Merged || j.cancelled)
+}
+
+/// True when a queued request is for this project and one of the member ids, after normalizing its job id.
+fn queued_request_matches_series(
+    request: &factory_supervisor::Request,
+    project: &str,
+    member_ids: &[String],
+) -> bool {
+    if request.project != project {
+        return false;
+    }
+    match factory_core::normalize_id(&request.job) {
+        Ok(job) => member_ids.iter().any(|m| *m == job),
+        Err(_) => false,
+    }
 }
 
 /// Removes the worktree, the branch and any leftover folder. Returns what was done, in words.
