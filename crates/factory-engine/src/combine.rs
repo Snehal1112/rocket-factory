@@ -9,6 +9,7 @@ use crate::tasks::{
 
 const CONSTRAINTS: &str = "## Global Constraints";
 const FOCUS: &str = "## Review Focus";
+const FILE_STRUCTURE: &str = "## File Structure";
 
 /// One plan text made from the plans of a spec.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,7 @@ pub fn combine_plans(plans: &[(String, String)]) -> CombinedPlan {
     let mut warnings = Vec::new();
     let mut constraints: Vec<String> = Vec::new();
     let mut focus: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
     let mut goals: Vec<String> = Vec::new();
     let mut task_blocks: Vec<String> = Vec::new();
     let mut first_parts: Option<HeaderParts> = None;
@@ -114,6 +116,14 @@ pub fn combine_plans(plans: &[(String, String)]) -> CombinedPlan {
                 focus.push(body);
             }
         }
+        let structure = parts.section(FILE_STRUCTURE);
+        if plans.len() > 1 && !structure.trim().is_empty() {
+            files.push(format!(
+                "From plan {} ({}):\n\n{structure}",
+                i + 1,
+                task_range(next, split.sections.len())
+            ));
+        }
         if i > 0 {
             let goal = goal_line(&split.header).unwrap_or_else(|| plan_title(text));
             goals.push(format!("Plan {} goal: {goal}", i + 1));
@@ -164,8 +174,24 @@ pub fn combine_plans(plans: &[(String, String)]) -> CombinedPlan {
     if !focus.is_empty() {
         out.push(format!("{FOCUS}\n\n{}", focus.join("\n\n")));
     }
+    // With several plans the combined File Structure sits where plan 1 has its heading, else after the focus.
+    let combined = (!files.is_empty()).then(|| format!("{FILE_STRUCTURE}\n\n{}", files.join("\n\n")));
+    let at_first = first_parts
+        .sections
+        .iter()
+        .any(|(h, _)| h.trim_end() == FILE_STRUCTURE);
+    if !at_first {
+        out.extend(combined.clone());
+    }
     for (heading, body) in &first_parts.sections {
-        if heading.trim_end() != CONSTRAINTS && heading.trim_end() != FOCUS {
+        let h = heading.trim_end();
+        if h == FILE_STRUCTURE {
+            if let Some(c) = &combined {
+                out.push(c.clone());
+                continue;
+            }
+        }
+        if h != CONSTRAINTS && h != FOCUS {
             out.push(format!("{heading}\n\n{body}").trim().to_string());
         }
     }
@@ -682,6 +708,45 @@ mod tests {
         let focus = review_focus(&got.text).expect("combined review focus");
         assert!(focus.contains("Check the lease after a retry."), "{focus}");
         assert!(focus.contains("Check the board after merge."), "{focus}");
+    }
+
+    #[test]
+    fn combining_keeps_every_plans_file_structure() {
+        let with = |p: String, file: &str| {
+            p.replace("---\n\n", &format!("## File Structure\n\n- `{file}`\n\n---\n\n"))
+        };
+        let a = with(plan("Core", "g", &[], &[], &["a one", "a two"]), "core.rs");
+        let b = with(plan("Engine", "g", &[], &[], &["b one"]), "engine.rs");
+        let got = combine_plans(&two(&a, &b));
+        assert_eq!(got.text.matches("## File Structure").count(), 1, "{}", got.text);
+        let body = got.text.split("## File Structure").nth(1).expect("section");
+        let body = body.split("\n---").next().unwrap_or_default();
+        let first = body.find("`core.rs`").expect("plan 1 file");
+        let label = body
+            .find("From plan 2 (now Task 3):\n\n- `engine.rs`")
+            .expect("plan 2 file with label");
+        assert!(first < label, "{body}");
+    }
+
+    #[test]
+    fn one_plan_keeps_file_structure_in_its_place() {
+        let a = plan("Core", "g", &[], &[], &["a one"]).replace(
+            "---\n\n",
+            "## Architecture\n\nLayers.\n\n## File Structure\n\n- `core.rs`\n\n---\n\n",
+        );
+        let got = combine_plans(&[("plans/plan-01.md".to_string(), a)]);
+        let arch = got.text.find("## Architecture").expect("architecture");
+        let files = got.text.find("## File Structure").expect("file structure");
+        assert!(arch < files, "{}", got.text);
+        assert!(!got.text.contains("From plan"), "{}", got.text);
+    }
+
+    #[test]
+    fn one_plan_with_an_empty_file_structure_keeps_the_heading() {
+        let a = plan("Core", "g", &[], &[], &["a one"])
+            .replace("---\n\n", "## File Structure\n\n---\n\n");
+        let got = combine_plans(&[("plans/plan-01.md".to_string(), a)]);
+        assert_eq!(got.text.matches("## File Structure").count(), 1, "{}", got.text);
     }
 
     #[test]
