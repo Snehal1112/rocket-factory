@@ -32,6 +32,10 @@ pub trait AgentStream {
     fn start_ctx(&self) -> u64;
     fn end_ctx(&self) -> u64;
     fn start_cache(&self) -> (u64, u64);
+    /// Extra text for the no-result error, such as a non-fatal error event.
+    fn diagnostic(&self) -> Option<String> {
+        None
+    }
 }
 
 /// What differs between the runners: the command line and a few switches.
@@ -196,10 +200,13 @@ pub(crate) fn drive<S: AgentStream>(
     let (stop_reason, error) = match stop {
         Some(reason) => (reason, None),
         None if !state.has_result() => {
-            let msg = format!(
+            let mut msg = format!(
                 "{label} exited without a result (exit {exit_code:?}): {}",
                 stderr_tail.trim()
             );
+            if let Some(diag) = state.diagnostic().filter(|d| !d.trim().is_empty()) {
+                msg.push_str(&format!(" [{}]", diag.trim()));
+            }
             (StopReason::Failed, Some(msg))
         }
         None if state.result_is_error() => {

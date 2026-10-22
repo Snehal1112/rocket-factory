@@ -140,6 +140,7 @@ pub struct CodexStream {
     total: Usage,
     seen_tools: BTreeSet<String>,
     has_result: bool,
+    last_error: Option<String>,
     pub skipped_lines: u64,
 }
 
@@ -239,8 +240,8 @@ impl AgentStream for CodexStream {
                 self.fail(msg, &mut out);
             }
             "error" => {
-                let msg = text_of(&value, "message");
-                self.fail(msg, &mut out);
+                // Non-fatal (retries, notices); only turn.failed ends a run in failure.
+                self.last_error = Some(text_of(&value, "message"));
             }
             _ => {}
         }
@@ -255,6 +256,9 @@ impl AgentStream for CodexStream {
     }
     fn turns(&self) -> u32 {
         self.messages
+    }
+    fn diagnostic(&self) -> Option<String> {
+        self.last_error.clone()
     }
     fn has_result(&self) -> bool {
         self.has_result
@@ -478,26 +482,30 @@ mod tests {
     }
 
     #[test]
-    fn failure_followed_by_completion_stays_failed_and_keeps_diagnostic() {
-        for failure in [
-            r#"{"type":"error","message":"provider unavailable"}"#,
-            r#"{"type":"turn.failed","error":{"message":"turn rejected"}}"#,
-        ] {
-            let mut s = CodexStream::default();
-            s.feed(failure);
-            s.feed(r#"{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}"#);
-            assert!(s.result_is_error());
-            assert_eq!(s.result_subtype().as_deref(), Some("turn_failed"));
-            assert!(s
-                .result_text()
-                .unwrap()
-                .contains(if failure.contains("provider") {
-                    "provider unavailable"
-                } else {
-                    "turn rejected"
-                }));
-            assert_eq!(s.final_usage().input_tokens, 2);
-        }
+    fn turn_failed_then_completed_stays_failed() {
+        let mut s = CodexStream::default();
+        s.feed(r#"{"type":"turn.failed","error":{"message":"turn rejected"}}"#);
+        s.feed(r#"{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}"#);
+        assert!(s.result_is_error());
+        assert_eq!(s.result_subtype().as_deref(), Some("turn_failed"));
+        assert!(s.result_text().unwrap().contains("turn rejected"));
+        assert_eq!(s.final_usage().input_tokens, 2);
+    }
+
+    #[test]
+    fn error_event_then_completed_is_a_success() {
+        let mut s = CodexStream::default();
+        s.feed(r#"{"type":"error","message":"Reconnecting... 2/5"}"#);
+        s.feed(r#"{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}"#);
+        assert!(!s.result_is_error());
+        assert_eq!(s.result_subtype().as_deref(), Some("success"));
+    }
+
+    #[test]
+    fn error_event_alone_is_not_a_result() {
+        let mut s = CodexStream::default();
+        s.feed(r#"{"type":"error","message":"provider unavailable"}"#);
+        assert!(!s.has_result());
     }
 
     #[test]

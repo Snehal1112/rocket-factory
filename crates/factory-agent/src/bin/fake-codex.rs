@@ -41,6 +41,7 @@ fn main() {
             eprintln!("codex transport failed after completion");
             std::process::exit(7);
         }
+        "error-only" => emit(r#"{"type":"error","message":"provider unavailable"}"#),
         "noresult" => emit(THREAD),
         "silent" => {
             emit(THREAD);
