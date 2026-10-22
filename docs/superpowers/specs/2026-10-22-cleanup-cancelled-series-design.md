@@ -52,7 +52,7 @@ Flow sketch: `cleanup(cancelled job)` → remove checkout debris and mark cleane
 - For registered project contexts, expose the `Home` and project name to cancelled-card cleanup so it can inspect supervisor requests through `factory_supervisor::queue::try_list`. Add the CLI dependency on `factory-supervisor`; the supervisor does not depend on the CLI.
 - Add `home: Option<Home>` and `project_name: Option<String>` to `CliCtx`. `CliCtx::for_project` sets both values; `CliCtx::new`, `with_layout`, and `from_env` set both to `None`. This keeps existing test and repository-local context construction explicit.
 - Add `queue::try_list(home: &Home) -> Result<Vec<QueueItem>, QueueError>`. A missing queue directory returns an empty list; other directory or entry-read failures return `QueueError::Core`. Keep `queue::list`'s existing best-effort behavior for its current supervisor and dashboard callers.
-- A valid queued request blocks card removal when `request.project` matches the current registered project and `request.job` names any board member in the target's series. Both `Run` and `Approve` actions count. Requests for other projects or jobs do not count. A `series` run request is matched by its explicit job field; it does not protect unrelated series.
+- A valid queued request blocks card removal when `request.project` matches the current registered project and `factory_core::normalize_id(&request.job)` matches any board member in the target's series. Queue requests store the user's numeric ID spelling (for example, `2`), while board IDs are zero-padded (for example, `002`), so normalize before comparing. Both `Run` and `Approve` actions count. Requests for other projects or jobs do not count. A `series` run request is matched by its explicit job field; it does not protect unrelated series.
 - If a matching request exists, retain the target card and report `series <id> has queued requests` (for a job without a series ID, report `job <id> has a queued request`). Do not remove queue files.
 - When no registered project context is available, preserve current repository-local behavior and evaluate only board and lease guards; there is no reliable project name with which to filter a shared factory queue.
 - If reading the queue directory fails for a registered project, `try_list` returns an error; fail closed by keeping the card and report that queued work could not be checked. A malformed request that the queue reader reports as `QueueItem::Bad` is ignored because it cannot be safely attributed to this project and job.
@@ -126,7 +126,7 @@ Flow sketch: `cleanup(cancelled job)` → remove checkout debris and mark cleane
 - Cleanup of a cancelled job never deletes the job directory, events, ledger, or usage history.
 - Merged job cards remain on the board.
 - A cancelled card is removable only when every series member is merged or cancelled, there is no live lease protecting the relevant work, and no matching queued request protects a series member.
-- Queue matching is scoped by exact registered project name and exact job ID.
+- Queue matching is scoped by exact registered project name and normalized numeric job ID.
 - A blocked cleanup attempt does not remove requests or automatically retry later.
 - Existing repository-local CLI and test contexts remain usable without a registered project or factory home.
 - A missing queue directory is an empty queue; other queue directory read errors block removal only for registered project contexts.
@@ -139,6 +139,7 @@ Flow sketch: `cleanup(cancelled job)` → remove checkout debris and mark cleane
 - Cleanup retains a cancelled card while a member of its series has a live lease.
 - Cleanup retains a cancelled card while a matching valid queued run or approve request exists for any member of the series.
 - Queue requests for another project or an unrelated job do not prevent cleanup.
+- A queued request with job `2` protects the board member `002` in the matching series.
 - A registered project's unreadable queue directory causes cleanup to retain the card and report that queued work could not be checked.
 - A missing queue directory does not block cleanup, and malformed queue files do not block it unless a valid matching request is also present.
 - After a guard clears, a later cleanup command removes the cancelled card without deleting the job folder.
