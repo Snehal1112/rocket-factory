@@ -537,8 +537,9 @@ fn upgrade_into_replaces_a_different_command_and_keeps_a_bak() {
     let dir = cmds_dir(tmp.path());
     let target = dir.join("factory.md");
     std::fs::write(&target, "# old\n").expect("write");
-    let bak = dir.join("factory.md.bak");
-    std::fs::write(&bak, "# older bak\n").expect("write bak");
+    let bak = dir.join("factory.md.bak.1");
+    let first = dir.join("factory.md.bak");
+    std::fs::write(&first, "# older bak\n").expect("write bak");
     let line = install::upgrade_into(&dir, false).expect("upgrade");
     assert_eq!(
         line,
@@ -549,6 +550,10 @@ fn upgrade_into_replaces_a_different_command_and_keeps_a_bak() {
         )
     );
     assert_eq!(std::fs::read_to_string(&bak).expect("read bak"), "# old\n");
+    assert_eq!(
+        std::fs::read_to_string(&first).expect("first bak"),
+        "# older bak\n"
+    );
     assert_eq!(
         std::fs::read_to_string(&target).expect("read"),
         GLOBAL_COMMAND

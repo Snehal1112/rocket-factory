@@ -73,8 +73,19 @@ pub fn upgrade_codex_skill(commands_dir: &Path, dry_run: bool) -> Result<Option<
     if claude_commands_dir(home).as_path() != commands_dir {
         return Ok(None);
     }
+    let folder = codex_skills_dir(home).join(SKILL_DIR_NAME);
+    match std::fs::metadata(folder.join(SKILL_FILE_NAME)) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(CliError::Refused(format!(
+                "cannot read {}: {e}",
+                folder.join(SKILL_FILE_NAME).display()
+            )))
+        }
+    }
     Ok(Some(upgrade_file(
-        &codex_skills_dir(home).join(SKILL_DIR_NAME),
+        &folder,
         SKILL_FILE_NAME,
         &codex_skill()?,
         dry_run,
@@ -220,6 +231,18 @@ fn install_file(
     Ok(format!("installed {}", target.display()))
 }
 
+/// First of `<file>.bak`, `.bak.1`, `.bak.2`, ... that is not an existing file, so the first backup survives.
+/// A non-file at a candidate path is returned as is and fails on write.
+fn free_backup_path(folder: &Path, file_name: &str) -> PathBuf {
+    let mut backup = folder.join(format!("{file_name}.bak"));
+    let mut n = 1u32;
+    while backup.is_file() {
+        backup = folder.join(format!("{file_name}.bak.{n}"));
+        n += 1;
+    }
+    backup
+}
+
 fn upgrade_file(
     folder: &Path,
     file_name: &str,
@@ -227,7 +250,7 @@ fn upgrade_file(
     dry_run: bool,
 ) -> Result<String, CliError> {
     let target = folder.join(file_name);
-    let backup = folder.join(format!("{file_name}.bak"));
+    let backup = free_backup_path(folder, file_name);
     let prefix = if dry_run { "would " } else { "" };
     match std::fs::read(&target) {
         Ok(existing) if existing == content.as_bytes() => {

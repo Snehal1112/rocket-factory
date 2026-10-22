@@ -415,3 +415,40 @@ fn upgrade_without_home_fails_before_any_change() {
     assert!(!e.home.version_file().exists());
     assert!(!e.home.presets_dir().exists());
 }
+
+#[test]
+fn upgrade_does_not_create_the_codex_skill() {
+    let e = env();
+    let commands = factory_core::claude_commands_dir(&e.home.dir);
+    std::fs::create_dir_all(&commands).expect("commands folder");
+    std::fs::write(commands.join("factory.md"), "# old\n").expect("old command");
+
+    upgrade::run(&e.home, &commands, false).expect("upgrade");
+
+    assert!(!factory_core::codex_skills_dir(&e.home.dir).exists());
+}
+
+#[test]
+fn upgrade_keeps_the_first_backup() {
+    let e = env();
+    let commands = factory_core::claude_commands_dir(&e.home.dir);
+    let skill = factory_core::codex_skills_dir(&e.home.dir)
+        .join("factory")
+        .join("SKILL.md");
+    std::fs::create_dir_all(skill.parent().expect("skill dir")).expect("mkdir");
+    std::fs::write(&skill, "original").expect("skill");
+
+    upgrade::run(&e.home, &commands, false).expect("first upgrade");
+    std::fs::write(&skill, "second").expect("second");
+    let dry = upgrade::run(&e.home, &commands, true).expect("dry run");
+    let bak1 = skill.with_file_name("SKILL.md.bak.1");
+    assert!(dry.contains(&bak1.display().to_string()), "{dry}");
+    assert!(!bak1.exists());
+    upgrade::run(&e.home, &commands, false).expect("second upgrade");
+
+    assert_eq!(
+        std::fs::read_to_string(skill.with_file_name("SKILL.md.bak")).expect("bak"),
+        "original"
+    );
+    assert_eq!(std::fs::read_to_string(bak1).expect("bak.1"), "second");
+}
