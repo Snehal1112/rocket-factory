@@ -104,6 +104,7 @@ impl CodexRunner {
                 CODEX_API_VARS.to_vec()
             },
             honor_max_turns: false,
+            fail_on_exit_after_result: true,
             mid_run_budget: false,
         };
         drive(&cfg, spec, &self.sink, CodexStream::default())

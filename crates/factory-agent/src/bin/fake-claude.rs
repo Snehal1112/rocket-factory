@@ -106,6 +106,11 @@ fn main() {
             result("", true, "error_during_execution");
             std::process::exit(1);
         }
+        "result-then-exit3" => {
+            init("fake-1");
+            result("finished", false, "success");
+            std::process::exit(3);
+        }
         "noresult" => {
             init("fake-1");
             eprintln!("fake claude crashed: boom");

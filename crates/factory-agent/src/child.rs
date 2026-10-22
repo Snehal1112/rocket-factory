@@ -49,6 +49,8 @@ pub(crate) struct ChildConfig {
     /// Variables removed from the child after the spec env is applied.
     pub remove_env: Vec<&'static str>,
     pub honor_max_turns: bool,
+    /// Fail a run whose CLI exits nonzero after it already printed a result.
+    pub fail_on_exit_after_result: bool,
     pub mid_run_budget: bool,
 }
 
@@ -197,6 +199,14 @@ pub(crate) fn drive<S: AgentStream>(
     let exit_code = status.code();
     let result_text = state.result_text().unwrap_or_default();
     let label = &cfg.label;
+    let shown_result = {
+        let t = result_text.trim();
+        if t.chars().count() > 500 {
+            format!("{}...", t.chars().take(500).collect::<String>())
+        } else {
+            t.to_string()
+        }
+    };
     let (stop_reason, error) = match stop {
         Some(reason) => (reason, None),
         None if !state.has_result() => {
@@ -223,15 +233,11 @@ pub(crate) fn drive<S: AgentStream>(
             };
             (reason, Some(format!("{label} reported {subtype}{detail}")))
         }
-        None if !status.success() => (
+        None if cfg.fail_on_exit_after_result && !status.success() => (
             StopReason::Failed,
             Some(format!(
                 "{label} exited unsuccessfully (exit {exit_code:?}) after a result: {}{}",
-                if result_text.is_empty() {
-                    ""
-                } else {
-                    result_text.trim()
-                },
+                shown_result,
                 if stderr_tail.trim().is_empty() {
                     String::new()
                 } else {

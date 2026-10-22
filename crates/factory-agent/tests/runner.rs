@@ -214,6 +214,15 @@ fn a_missing_session_resume_is_classified_as_failed() {
 }
 
 #[test]
+fn claude_success_then_nonzero_exit_is_done() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let run = runner(EventSink::null("001")).run(&spec("result-then-exit3", tmp.path()));
+    assert_eq!(run.stop_reason, StopReason::Done);
+    assert_eq!(run.exit_code, Some(3));
+    assert!(run.error.is_none());
+}
+
+#[test]
 fn no_result_is_failed() {
     let tmp = tempfile::tempdir().expect("tmp");
     let run = runner(EventSink::null("001")).run(&spec("noresult", tmp.path()));

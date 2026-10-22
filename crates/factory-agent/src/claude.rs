@@ -65,6 +65,7 @@ impl ClaudeRunner {
                 API_BILLING_VARS.to_vec()
             },
             honor_max_turns: true,
+            fail_on_exit_after_result: false,
             mid_run_budget: true,
         };
         drive(&cfg, spec, &self.sink, StreamState::default())
