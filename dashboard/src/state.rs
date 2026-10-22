@@ -214,15 +214,53 @@ fn has_park(paths: &Paths, job: &Job) -> bool {
     job.park_kind.is_some() && crate::park::park_path(paths, &job.dir).is_some_and(|p| p.is_file())
 }
 
+/// True when one warning part is a finding the old full-header rules raise on a compact plan.
+fn is_old_finding(part: &str) -> bool {
+    let Some((_, finding)) = part.split_once(".md ") else {
+        return false;
+    };
+    let old_header = [
+        "header has no Goal",
+        "header has no Architecture",
+        "header has no Tech Stack",
+        "header has no Spec",
+        "header has no Global Constraints",
+        "header has no Review Focus",
+        "does not name superpowers:subagent-driven-development as its executor",
+    ]
+    .contains(&finding);
+    let old_files = finding
+        .strip_prefix("task ")
+        .and_then(|rest| rest.split_once(" has no **Files:**"))
+        .is_some_and(|(number, tail)| tail.is_empty() && number.parse::<u32>().is_ok());
+    old_header || old_files
+}
+
+/// True when any part of the warning is an old-header or old-files finding. Lint texts never
+/// contain "; ", so the split is safe.
+fn has_old_finding(warning: &str) -> bool {
+    warning.split("; ").any(is_old_finding)
+}
+
 /// Old jobs retain the warnings from their creation. The compact factory plan format is now
 /// accepted, so hide only the findings caused by applying the old full-header rules to it.
 fn visible_spec_warning(paths: &Paths, job: &Job) -> Option<String> {
     let warning = job.spec_warning.as_ref()?;
+    if !has_old_finding(warning) {
+        return Some(warning.clone());
+    }
     let plan = std::fs::read_to_string(paths.sdd.join(&job.dir).join("plan.md")).ok();
     let compact = plan.as_deref().is_some_and(|text| {
-        text.contains("**Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review.")
-            && text.contains("> **Spec:**")
-            && text.contains("## File Structure")
+        // Only the part before the first task counts as the header.
+        let end = [text.find("### Task "), text.find("- [ ]")]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(text.len());
+        let header = &text[..end];
+        header.contains("**Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review.")
+            && header.contains("> **Spec:**")
+            && header.contains("## File Structure")
             && text.contains("**Interfaces:**")
             && text.contains("## Review Focus")
     });
@@ -231,26 +269,7 @@ fn visible_spec_warning(paths: &Paths, job: &Job) -> Option<String> {
     }
     let remaining: Vec<&str> = warning
         .split("; ")
-        .filter(|part| {
-            let Some((_, finding)) = part.split_once(".md ") else {
-                return true;
-            };
-            let old_header = [
-                "header has no Goal",
-                "header has no Architecture",
-                "header has no Tech Stack",
-                "header has no Spec",
-                "header has no Global Constraints",
-                "header has no Review Focus",
-                "does not name superpowers:subagent-driven-development as its executor",
-            ]
-            .contains(&finding);
-            let old_files = finding
-                .strip_prefix("task ")
-                .and_then(|rest| rest.split_once(" has no **Files:**"))
-                .is_some_and(|(number, tail)| tail.is_empty() && number.parse::<u32>().is_ok());
-            !old_header && !old_files
-        })
+        .filter(|part| !is_old_finding(part))
         .collect();
     (!remaining.is_empty()).then(|| remaining.join("; "))
 }
@@ -1115,5 +1134,41 @@ mod tests {
         let view = build_state(&board, &Registry::new(), 10.0, None, &paths);
         assert_eq!(view.jobs[0].job.spec_warning, None);
         Ok(())
+    }
+
+    #[test]
+    fn a_prose_mention_does_not_make_a_plan_compact() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let paths = Paths::for_root(root.path());
+        let dir = "2026-10-22-003-prose";
+        std::fs::create_dir_all(paths.sdd.join(dir))?;
+        std::fs::write(
+            paths.sdd.join(dir).join("plan.md"),
+            "# Plan\n\n### Task 1: quote\n**Interfaces:**\n- x\n\nThe text says > **Spec:** and **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review.\n\n## File Structure\n## Review Focus\n",
+        )?;
+        let mut old = job("003", "build", 0.0);
+        old.dir = dir.to_string();
+        old.spec_warning = Some("x.md header has no Goal".to_string());
+        let board = Board {
+            jobs: vec![old],
+            ..Board::default()
+        };
+        let view = build_state(&board, &Registry::new(), 10.0, None, &paths);
+        assert_eq!(
+            view.jobs[0].job.spec_warning.as_deref(),
+            Some("x.md header has no Goal")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_plan_file_is_read_without_an_old_header_finding() {
+        assert!(!has_old_finding("x.md has no Review Focus"));
+        assert!(!has_old_finding("no decision was answered by the user"));
+        assert!(!has_old_finding("x.md task 1 has no **Interfaces:**"));
+        assert!(has_old_finding("x.md header has no Goal"));
+        assert!(has_old_finding(
+            "no decision; x.md task 12 has no **Files:**"
+        ));
     }
 }

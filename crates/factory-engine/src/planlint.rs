@@ -268,4 +268,18 @@ mod tests {
         let fenced = format!("{GOOD}\n```\ngit commit -m x\n### Task 7: x\n```\n");
         assert_eq!(lint_plan(&fenced, "p.md"), PlanLint::default());
     }
+
+    #[test]
+    fn lint_texts_the_dashboard_filters_on() {
+        // dashboard/src/state.rs filters on these texts, update both together.
+        let lint = lint_plan("# P\n\n### Task 1: t\n\nbody\n", "x.md");
+        let mut expected: Vec<String> = HEADER_FIELDS
+            .iter()
+            .map(|f| format!("x.md header has no {f}"))
+            .collect();
+        expected.push(format!("x.md does not name {EXECUTOR} as its executor"));
+        expected.push("x.md task 1 has no **Files:**".to_string());
+        expected.push("x.md task 1 has no **Interfaces:**".to_string());
+        assert_eq!(lint.warnings, expected);
+    }
 }
