@@ -140,7 +140,11 @@ fn render_jobs(board: &Board, cfg: &Config) -> String {
         out.push_str(&format!(
             "{:<4} {:<12} {:<6} {:<15} {:<9} {:<7} {}\n",
             job.id,
-            stage_name(job.stage),
+            if job.cancelled {
+                "cancelled"
+            } else {
+                stage_name(job.stage)
+            },
             job.round,
             reviews_text(job),
             format!("{} ({pct}%)", human(weighted)),
@@ -155,6 +159,21 @@ fn render_jobs(board: &Board, cfg: &Config) -> String {
 mod tests {
     use super::*;
     use factory_core::{ParkKind, ParkPart};
+
+    #[test]
+    fn status_shows_cancelled_instead_of_needs_human() {
+        let mut board = factory_core::Board::default();
+        let mut job = factory_core::Job::new("002", "d-002-x", "cleanup", "2026-10-22", "f", 0.0);
+        job.set_stage(Stage::NeedsHuman, Some("cancelled: done"), false, 1.0)
+            .expect("needs human stage");
+        job.cancelled = true;
+        board.jobs.push(job);
+
+        let text = render_status(&board, &factory_core::Config::default());
+        let row = text.lines().nth(1).expect("job row");
+        assert!(row.contains("cancelled"), "{row}");
+        assert!(!row.contains("needs-human"), "{row}");
+    }
 
     #[test]
     fn status_shows_stage_round_reviews_tokens_and_series_position() {
