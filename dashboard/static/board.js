@@ -583,7 +583,7 @@
           `<p class="hint">${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
     const warning = job.spec_warning
-      ? `<p class="reason spec-warning">Spec warning: ${escapeHtml(job.spec_warning)}</p>`
+      ? `<details class="spec-warning"><summary>Warnings</summary><p class="reason">${escapeHtml(job.spec_warning)}</p></details>`
       : "";
     const showAge = job.stage !== "merged" && job.stage !== "needs-human";
     // A plan that has not started has no time, tokens, agents or branch yet, so those sections stay out.

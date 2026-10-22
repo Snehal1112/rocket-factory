@@ -215,6 +215,149 @@ fn install_defaults_to_the_claude_commands_folder_under_home() {
     install_args(&[]).expect("install");
     let expected = factory_core::claude_commands_dir(tmp.path()).join("factory.md");
     assert!(expected.is_file());
+    assert_eq!(
+        std::fs::read_to_string(expected).expect("Claude command"),
+        GLOBAL_COMMAND
+    );
+    let skill = factory_core::codex_skills_dir(tmp.path())
+        .join("factory")
+        .join("SKILL.md");
+    let text = std::fs::read_to_string(skill).expect("Codex skill");
+    assert!(
+        text.starts_with("---\nname: factory\ndescription: "),
+        "{text}"
+    );
+    assert!(text.contains("$factory"), "{text}");
+    assert!(
+        text.contains("Use the user's accompanying request as the factory arguments."),
+        "{text}"
+    );
+    for needed in [
+        "Keep a visible task list for steps 1 to 6 and update it at each milestone.",
+        "Interview the user about the design before writing the spec.",
+        "Write the plans using the rules below.",
+        "git commit --only -- <spec path>",
+        "git commit --only -- <plan paths>",
+        "git diff --cached --name-only",
+        "stage the spec path",
+        "stage the plan paths",
+        "lists only that path",
+        "lists only them",
+        "wait for an explicit approval",
+        "Do not write any plan before that approval",
+        "Do not run `<factory> --project <name> new` before that approval",
+        "Report every `warning:` line",
+        "report every `note:` line",
+        "Report that refusal as it is",
+        "ask whether to go ahead over the budget",
+        "as a long-running command using the available command execution tool",
+        "keep the handle for harness notification",
+        "Do not poll, do not sleep, do not read logs",
+    ] {
+        assert!(text.contains(needed), "missing {needed:?} in Codex skill");
+    }
+    for unsupported in [
+        "TaskCreate",
+        "TaskUpdate",
+        "dev-workflow-skills:1-git-commit",
+        "run_in_background",
+        "superpowers:brainstorming",
+        "superpowers:writing-plans",
+        "superpowers:subagent-driven-development",
+    ] {
+        assert!(
+            !text.contains(unsupported),
+            "unsupported {unsupported:?} in Codex skill"
+        );
+    }
+}
+
+#[test]
+fn custom_codex_skill_does_not_block_claude_install() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _g = EnvVarGuard::set("HOME", Some(s(tmp.path())));
+    let skill = factory_core::codex_skills_dir(tmp.path())
+        .join("factory")
+        .join("SKILL.md");
+    std::fs::create_dir_all(skill.parent().expect("skill folder")).expect("mkdir");
+    std::fs::write(&skill, "custom Codex skill").expect("write skill");
+
+    let out = install_args(&[]).expect("Claude install succeeds");
+    assert!(out.contains("Codex skill not installed"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(factory_core::claude_commands_dir(tmp.path()).join("factory.md"))
+            .expect("Claude command"),
+        GLOBAL_COMMAND
+    );
+    assert_eq!(
+        std::fs::read_to_string(&skill).expect("custom skill survives"),
+        "custom Codex skill"
+    );
+}
+
+#[test]
+fn codex_io_failure_is_reported_after_claude_install() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _g = EnvVarGuard::set("HOME", Some(s(tmp.path())));
+    let skills = factory_core::codex_skills_dir(tmp.path());
+    std::fs::create_dir_all(&skills).expect("skills folder");
+    std::fs::write(skills.join("factory"), "blocking file").expect("block skill folder");
+
+    let err = install_args(&[])
+        .expect_err("Codex I/O failure must not report success")
+        .to_string();
+    assert!(err.contains("Codex skill install failed"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(factory_core::claude_commands_dir(tmp.path()).join("factory.md"))
+            .expect("Claude command"),
+        GLOBAL_COMMAND
+    );
+}
+
+#[test]
+fn codex_skill_does_not_select_a_claude_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _g = EnvVarGuard::set("HOME", Some(s(tmp.path())));
+    install_args(&[]).expect("install");
+    let skill = factory_core::codex_skills_dir(tmp.path())
+        .join("factory")
+        .join("SKILL.md");
+    let text = std::fs::read_to_string(skill).expect("Codex skill");
+    assert!(!text.contains("--model opus"), "{text}");
+    assert!(text.contains("`--opus` is a Claude-only option"), "{text}");
+}
+
+#[test]
+fn codex_skill_reports_direct_run_results_from_the_command_result() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _g = EnvVarGuard::set("HOME", Some(s(tmp.path())));
+    install_args(&[]).expect("install");
+    let skill = factory_core::codex_skills_dir(tmp.path())
+        .join("factory")
+        .join("SKILL.md");
+    let text = std::fs::read_to_string(skill).expect("Codex skill");
+    let (_, run_steps) = text.split_once("5. Start the run.").expect("run steps");
+    let (start, after_start) = run_steps
+        .split_once("6. When the run ends")
+        .expect("step 6");
+    let status = after_start
+        .split_once("The driver never asks questions")
+        .expect("end of step 6")
+        .0;
+
+    assert!(start.contains("factoryd enqueue --project <name> --job <id> --series"));
+    assert!(start.contains("then run `factoryd status` once"));
+    assert!(start.contains("If it returns a still-running session or process handle"));
+    assert!(start.contains("keep the handle for harness notification"));
+    assert!(start.contains("Do not poll, do not sleep, do not read logs"));
+    assert!(start.contains("If it returns a final exit/completion result"));
+    assert!(start.contains("continue to step 6 immediately"));
+    assert!(start.contains("Do not report a completed or failed process as running"));
+    assert!(status.contains("run `<factory> --project <name> status` once"));
+    assert!(status.contains("report the line for this job"));
+    assert!(status.contains("If it is `needs-human`"));
+    assert!(status.contains("$factory approve <id> --without-review"));
+    assert!(status.contains("$factory rework <id> <note>"));
 }
 
 #[test]

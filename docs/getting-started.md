@@ -437,6 +437,7 @@ nohup factoryd run >> ~/.factory/factoryd.log 2>&1 &
 
 ## 17. Where to read more
 
+- `docs/factory-admin-manual.md`: developer and administrator command examples, supported flags, and supervisor operations.
 - `README.md`: every command, setting and file in detail.
 - `docs/software-factory.md`: the pipeline, job model, merge rules and dashboard.
 - `dashboard/README.md`: dashboard modes and security.

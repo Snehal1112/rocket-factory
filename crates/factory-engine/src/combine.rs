@@ -95,7 +95,7 @@ pub fn combine_plans(plans: &[(String, String)]) -> CombinedPlan {
             .enumerate()
             .map(|(k, s)| (s.old, next + k as u32))
             .collect();
-        if let Some(body) = review_focus(&split.header) {
+        if let Some(body) = review_focus(text) {
             let body = without_rules(&body);
             if i > 0 {
                 for m in stale_mentions(&body, &numbers) {
@@ -644,6 +644,22 @@ mod tests {
         let lease = focus.find("1. Check the lease.").expect("plan 1 item");
         let board = focus.find("1. Check the board.").expect("plan 2 item");
         assert!(first < lease && lease < second && second < board, "{focus}");
+    }
+
+    #[test]
+    fn late_review_focus_survives_combining_two_plans() {
+        let a = plan("Core", "g", &[], &[], &["a one"]).replace(
+            "Next plan: none",
+            "## Review Focus\n\n1. Check the lease after a retry.\n\nNext plan: plan-02.md",
+        );
+        let b = plan("Engine", "g", &[], &[], &["b one"]).replace(
+            "Next plan: none",
+            "## Review Focus\n\n1. Check the board after merge.\n\nNext plan: none",
+        );
+        let got = combine_plans(&two(&a, &b));
+        let focus = review_focus(&got.text).expect("combined review focus");
+        assert!(focus.contains("Check the lease after a retry."), "{focus}");
+        assert!(focus.contains("Check the board after merge."), "{focus}");
     }
 
     #[test]

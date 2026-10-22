@@ -18,7 +18,10 @@ fn agent_file(name: &str, marker: Option<&str>) -> AgentFile {
 
 /// Replaces the fixture's temp dir and every commit sha with fixed names, so the prompt is stable.
 fn norm(fx: &Fixture, prompt: &str) -> String {
-    let text = prompt.replace(&fx.tmp.path().to_string_lossy().into_owned(), "<TMP>");
+    let canonical = fx.tmp.path().canonicalize().expect("canonical temp dir");
+    let text = prompt
+        .replace(&canonical.to_string_lossy().into_owned(), "<TMP>")
+        .replace(&fx.tmp.path().to_string_lossy().into_owned(), "<TMP>");
     let mut out = String::new();
     let mut run = String::new();
     let flush = |run: &mut String, out: &mut String| {

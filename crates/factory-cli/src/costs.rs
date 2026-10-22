@@ -86,18 +86,32 @@ pub fn render_costs(jobs: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> 
         }
     }
     if let Some(all) = groups.get("all") {
-        let roles: Vec<String> = all.roles.iter().map(|(r, p)| format!("{r} {p}%")).collect();
-        out.push_str(&format!(
-            "\nROLES (share of weighted tokens)\n  {}\n",
-            roles.join("  ")
-        ));
         if all.providers.len() >= 2 {
+            out.push_str("\nROLES (share of weighted tokens by provider)\n");
+            let mut by_provider: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+            for (pair, percent) in &all.provider_roles {
+                if let Some((provider, role)) = pair.split_once(':') {
+                    by_provider
+                        .entry(provider)
+                        .or_default()
+                        .push(format!("{role} {percent}%"));
+                }
+            }
+            for (provider, roles) in by_provider {
+                out.push_str(&format!("  {provider}: {}\n", roles.join("  ")));
+            }
             let providers: Vec<String> = all
                 .providers
                 .iter()
                 .map(|(r, p)| format!("{r} {p}%"))
                 .collect();
             out.push_str(&format!("PROVIDERS  {}\n", providers.join("  ")));
+        } else {
+            let roles: Vec<String> = all.roles.iter().map(|(r, p)| format!("{r} {p}%")).collect();
+            out.push_str(&format!(
+                "\nROLES (share of weighted tokens)\n  {}\n",
+                roles.join("  ")
+            ));
         }
     }
     out
@@ -182,6 +196,10 @@ mod tests {
             approx,
             roles,
             providers: BTreeMap::from([("claude".to_string(), weighted)]),
+            provider_roles: BTreeMap::from([
+                ("claude:builder".to_string(), weighted * 6 / 10),
+                ("claude:reviewer".to_string(), weighted - weighted * 6 / 10),
+            ]),
         }
     }
 
@@ -191,9 +209,19 @@ mod tests {
         a.providers = BTreeMap::from([("claude".to_string(), 700)]);
         let mut b = cost("2", Some(SizeGroup::Small), "merged", 300, false, 1);
         b.providers = BTreeMap::from([("codex".to_string(), 300)]);
+        b.provider_roles = BTreeMap::from([
+            ("codex:builder".to_string(), 180),
+            ("codex:reviewer".to_string(), 120),
+        ]);
         let jobs = vec![a, b];
         let text = render_costs(&jobs, &stats(&jobs));
         assert!(text.contains("PROVIDERS  claude 70%  codex 30%"), "{text}");
+        assert!(
+            text.contains("ROLES (share of weighted tokens by provider)"),
+            "{text}"
+        );
+        assert!(text.contains("claude: builder 42%  reviewer 28%"), "{text}");
+        assert!(text.contains("codex: builder 18%  reviewer 12%"), "{text}");
     }
 
     #[test]

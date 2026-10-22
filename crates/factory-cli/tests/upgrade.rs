@@ -100,6 +100,30 @@ fn old_command(e: &Env) -> PathBuf {
 }
 
 #[test]
+fn codex_skill_backup_failure_does_not_block_claude_upgrade() {
+    let e = env();
+    let commands = factory_core::claude_commands_dir(e.tmp.path());
+    std::fs::create_dir_all(&commands).expect("commands folder");
+    let claude = commands.join("factory.md");
+    std::fs::write(&claude, "# old Claude command\n").expect("old Claude command");
+    let skill = factory_core::codex_skills_dir(e.tmp.path())
+        .join("factory")
+        .join("SKILL.md");
+    std::fs::create_dir_all(skill.parent().expect("skill folder")).expect("skill folder");
+    std::fs::write(&skill, "custom Codex skill").expect("skill");
+    std::fs::create_dir(skill.with_file_name("SKILL.md.bak")).expect("block backup");
+
+    let err = upgrade::run(&e.home, &commands, false)
+        .expect_err("partial upgrade reports Codex failure")
+        .to_string();
+    assert!(err.contains("Claude upgrade completed"), "{err}");
+    assert!(err.contains("Codex skill not upgraded"), "{err}");
+    assert_eq!(std::fs::read_to_string(claude).expect("Claude command"), GLOBAL_COMMAND);
+    assert_eq!(std::fs::read_to_string(skill).expect("Codex skill"), "custom Codex skill");
+    assert_eq!(read_marker(&e.home).expect("marker").as_deref(), Some(FACTORY_VERSION));
+}
+
+#[test]
 fn upgrade_reports_shadowing_overrides() {
     let e = env();
     demo_with_overrides(&e);
@@ -157,6 +181,49 @@ fn upgrade_updates_the_command_and_keeps_a_bak() {
             .map(str::trim),
         Some(FACTORY_VERSION)
     );
+}
+
+#[test]
+fn upgrade_updates_the_codex_skill_with_a_backup_under_the_standard_home() {
+    let e = env();
+    let commands = factory_core::claude_commands_dir(&e.home.dir);
+    let skill = factory_core::codex_skills_dir(&e.home.dir)
+        .join("factory")
+        .join("SKILL.md");
+    std::fs::create_dir_all(skill.parent().expect("skill dir")).expect("mkdir");
+    std::fs::write(&skill, "# old Codex skill\n").expect("old skill");
+
+    let dry = upgrade::run(&e.home, &commands, true).expect("dry run");
+    assert!(
+        dry.contains(&format!("would updated {}", skill.display())),
+        "{dry}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&skill).expect("old remains"),
+        "# old Codex skill\n"
+    );
+
+    let out = upgrade::run(&e.home, &commands, false).expect("upgrade");
+
+    let backup = skill.with_file_name("SKILL.md.bak");
+    assert!(
+        out.contains(&format!(
+            "updated {} (old copy saved as {})",
+            skill.display(),
+            backup.display()
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(backup).expect("backup"),
+        "# old Codex skill\n"
+    );
+    let text = std::fs::read_to_string(skill).expect("new skill");
+    assert!(
+        text.starts_with("---\nname: factory\ndescription: "),
+        "{text}"
+    );
+    assert!(text.contains("$factory"), "{text}");
 }
 
 #[test]

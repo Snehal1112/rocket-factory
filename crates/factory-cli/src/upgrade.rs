@@ -39,6 +39,14 @@ fn tip_for(home: &Home) -> impl Fn(&str) -> Result<Box<dyn BaseTipFiles>, String
 pub fn run(home: &Home, commands_dir: &Path, dry_run: bool) -> Result<String, CliError> {
     version::check(home, FACTORY_VERSION)?;
     let mut lines = vec![install::upgrade_into(commands_dir, dry_run)?];
+    let codex_error = match install::upgrade_codex_skill(commands_dir, dry_run) {
+        Ok(Some(line)) => {
+            lines.push(line);
+            None
+        }
+        Ok(None) => None,
+        Err(error) => Some(error),
+    };
 
     let report = if dry_run {
         preset::plan_refresh(&home.presets_dir())?
@@ -79,5 +87,12 @@ pub fn run(home: &Home, commands_dir: &Path, dry_run: bool) -> Result<String, Cl
     } else {
         lines.push(format!("version marker: {FACTORY_VERSION}"));
     }
-    Ok(lines.join("\n"))
+    let report = lines.join("\n");
+    if let Some(error) = codex_error {
+        let completed = if dry_run { "preview" } else { "upgrade" };
+        return Err(CliError::Refused(format!(
+            "{report}\nClaude {completed} completed; Codex skill not upgraded: {error}"
+        )));
+    }
+    Ok(report)
 }

@@ -34,6 +34,8 @@ impl Engine<'_> {
     /// Runs the builder, then records the new head. With a task list in `plan.md` it runs one task agent per
     /// call and stays in Build until the last task has a commit. Fix rounds resume the last session.
     pub fn build_stage(&self) -> Result<StageOutcome, EngineError> {
+        // Provider changes must clear old session ids before this stage copies them into specs.
+        self.sync_provider()?;
         let job = self.job()?;
         let tasks = parse_tasks(&std::fs::read_to_string(&self.plan_file).unwrap_or_default());
         // A pending batch commit resumes before any builder runs.

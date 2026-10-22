@@ -22,10 +22,12 @@ const HEADER_FIELDS: [&str; 6] = [
 
 /// The executor the plan header must name.
 const EXECUTOR: &str = "superpowers:subagent-driven-development";
+const FACTORY_EXECUTOR: &str =
+    "**Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review.";
 
 /// True when a header line names the field as `**Field:**`, `Field:` or a heading.
 fn names_field(line: &str, field: &str) -> bool {
-    let t = line.trim();
+    let t = line.trim().trim_start_matches('>').trim();
     let bare = t.trim_start_matches('#').trim_start_matches("**").trim();
     bare.strip_prefix(field).is_some_and(|rest| {
         let rest = rest.trim_start_matches("**");
@@ -78,7 +80,13 @@ pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
     }
     let header = plan_header(plan);
     let header_lines = lines_with_fence(&header);
-    for field in HEADER_FIELDS {
+    let compact = header.contains(FACTORY_EXECUTOR);
+    let required: &[&str] = if compact {
+        &["Spec", "File Structure"]
+    } else {
+        &HEADER_FIELDS
+    };
+    for field in required {
         if !header_lines
             .iter()
             .any(|(l, fenced)| !fenced && names_field(l, field))
@@ -86,13 +94,25 @@ pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
             lint.warnings.push(format!("{name} header has no {field}"));
         }
     }
-    if !header.contains(EXECUTOR) {
+    if compact
+        && !lines_with_fence(plan)
+            .iter()
+            .any(|(l, fenced)| !fenced && names_field(l, "Review Focus"))
+    {
+        lint.warnings.push(format!("{name} has no Review Focus"));
+    }
+    if !header.contains(EXECUTOR) && !compact {
         lint.warnings
             .push(format!("{name} does not name {EXECUTOR} as its executor"));
     }
     for task in parse_tasks(plan) {
         let section = task_section(plan, task.n).unwrap_or_default();
-        for marker in ["**Files:**", "**Interfaces:**"] {
+        let markers: &[&str] = if compact {
+            &["**Interfaces:**"]
+        } else {
+            &["**Files:**", "**Interfaces:**"]
+        };
+        for marker in markers {
             if !has_outside_fence(&section, marker) {
                 lint.warnings
                     .push(format!("{name} task {} has no {marker}", task.n));
@@ -153,6 +173,12 @@ mod tests {
     #[test]
     fn a_complete_plan_in_this_repos_format_has_no_warnings() {
         assert_eq!(lint_plan(GOOD, "p.md"), PlanLint::default());
+    }
+
+    #[test]
+    fn a_codex_factory_plan_with_a_file_map_and_late_review_focus_has_no_warnings() {
+        let plan = "# Plan 01: smoke test\n\n> **Spec:** docs/superpowers/specs/smoke-design.md\n> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.\n\n## File Structure\n\n- `spec/health_spec.rb` — request coverage.\n\n### Task 1: health route\n\n**Interfaces:**\n\n- Request: `GET /`.\n\n## Review Focus\n\n1. Root requests return HTTP 200.\n\nNext plan: none\n";
+        assert_eq!(lint_plan(plan, "plan-01-smoke.md"), PlanLint::default());
     }
 
     #[test]

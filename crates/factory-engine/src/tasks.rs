@@ -131,21 +131,48 @@ fn ends_section(line: &str) -> bool {
     line.starts_with("# ") || line.starts_with("## ")
 }
 
-/// The body of the plan header's `## Review Focus` section, up to the next `# ` or `## ` heading outside
-/// a fenced block. `None` when the header has no such section or its body is empty.
+/// The body of the plan's `## Review Focus` section, up to the next top-level heading or
+/// `Next plan:` line outside a fenced block. `None` when the section is absent or empty.
 pub fn review_focus(plan: &str) -> Option<String> {
-    let header = plan_header(plan);
-    let lines = lines_with_fence(&header);
+    let lines = lines_with_fence(plan);
     let start = lines
         .iter()
         .position(|(l, fenced)| !fenced && is_focus_heading(l))?;
     let body: Vec<&str> = lines[start + 1..]
         .iter()
-        .take_while(|(l, fenced)| *fenced || !ends_section(l))
+        .take_while(|(l, fenced)| {
+            *fenced || (!ends_section(l) && !is_task_heading(l) && !l.starts_with("Next plan:"))
+        })
         .map(|(l, _)| *l)
         .collect();
     let body = body.join("\n").trim().to_string();
     (!body.is_empty()).then_some(body)
+}
+
+#[cfg(test)]
+mod late_review_focus_tests {
+    use super::*;
+
+    #[test]
+    fn review_focus_after_the_last_task_reaches_the_reviewer() {
+        let plan = "# Plan\n\n### Task 1: work\n\n**Interfaces:**\n- Request: GET /.\n\n## Review Focus\n\n1. Root requests return HTTP 200.\n\nNext plan: none\n";
+        assert_eq!(
+            review_focus(plan).as_deref(),
+            Some("1. Root requests return HTTP 200.")
+        );
+        assert!(!task_section(plan, 1)
+            .expect("task")
+            .contains("Review Focus"));
+    }
+
+    #[test]
+    fn review_focus_before_tasks_stops_at_the_first_task() {
+        let plan = "# Plan\n\n## Review Focus\n\n1. Root requests return HTTP 200.\n\n### Task 1: work\n\n**Interfaces:**\n- Request: GET /.\n";
+        assert_eq!(
+            review_focus(plan).as_deref(),
+            Some("1. Root requests return HTTP 200.")
+        );
+    }
 }
 
 /// The plan header without its `## Review Focus` section, then each `### Task N:` heading line.
@@ -191,7 +218,9 @@ pub fn task_section(plan: &str, n: u32) -> Option<String> {
     })?;
     let mut out = vec![lines[start].0];
     for (line, fenced) in &lines[start + 1..] {
-        if !fenced && (is_task_heading(line) || line.starts_with("Next plan:")) {
+        if !fenced
+            && (is_task_heading(line) || is_focus_heading(line) || line.starts_with("Next plan:"))
+        {
             break;
         }
         out.push(line);
@@ -538,10 +567,10 @@ mod tests {
             review_focus("# P\n\n## Review Focus\n\n## Other\n\n### Task 1: a\n"),
             None
         );
-        // A section after the first task heading is not part of the header.
+        // Compact factory plans place Review Focus after their tasks.
         assert_eq!(
             review_focus("# P\n\n### Task 1: a\n\n## Review Focus\n\nlate\n"),
-            None
+            Some("late".to_string())
         );
     }
 

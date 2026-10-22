@@ -15,6 +15,11 @@ pub fn claude_commands_dir(user_home: &Path) -> PathBuf {
     user_home.join(".claude").join("commands")
 }
 
+/// The folder where Codex looks for user-wide skills: `<user home>/.agents/skills`.
+pub fn codex_skills_dir(user_home: &Path) -> PathBuf {
+    user_home.join(".agents").join("skills")
+}
+
 /// True for `factory-<a-z, 0-9, ->.md`, the only names the exclude line covers and the engine writes.
 pub fn is_agent_file_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("factory-") else {

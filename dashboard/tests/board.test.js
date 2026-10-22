@@ -931,8 +931,9 @@ test("a state without drafts still renders the board", () => {
 
 test("a job spec warning shows on the card", () => {
   const html = board.renderCard(makeJob({ spec_warning: "no <decision> recorded" }), 200, []);
-  assert.match(html, /class="reason spec-warning"/);
-  assert.match(html, /Spec warning: no &lt;decision&gt; recorded/);
+  assert.match(html, /<details class="spec-warning">/);
+  assert.match(html, /<summary>Warnings<\/summary>/);
+  assert.match(html, /no &lt;decision&gt; recorded/);
   assert.doesNotMatch(board.renderCard(makeJob(), 200, []), /spec-warning/);
 });
 

@@ -216,6 +216,22 @@ pub(crate) fn drive<S: AgentStream>(
             };
             (reason, Some(format!("{label} reported {subtype}{detail}")))
         }
+        None if !status.success() => (
+            StopReason::Failed,
+            Some(format!(
+                "{label} exited unsuccessfully (exit {exit_code:?}) after a result: {}{}",
+                if result_text.is_empty() {
+                    ""
+                } else {
+                    result_text.trim()
+                },
+                if stderr_tail.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("; {}", stderr_tail.trim())
+                }
+            )),
+        ),
         None => (StopReason::Done, None),
     };
 

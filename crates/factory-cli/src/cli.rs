@@ -100,9 +100,9 @@ pub enum Command {
         #[command(subcommand)]
         cmd: PresetsCmd,
     },
-    /// Install the global /factory slash command for the current user.
+    /// Install the global /factory command for Claude and the factory skill for Codex.
     Install {
-        /// The folder to write factory.md into. Defaults to the Claude commands folder under $HOME.
+        /// The folder to write factory.md into. By default installs for Claude and Codex under $HOME.
         #[arg(long)]
         dir: Option<PathBuf>,
         /// Replace an existing factory.md that differs.

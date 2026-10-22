@@ -75,6 +75,8 @@ pub struct UsageSummary {
     pub roles: BTreeMap<String, u64>,
     /// Weighted tokens per provider. A line without a string `provider` counts as `claude`.
     pub providers: BTreeMap<String, u64>,
+    /// Weighted tokens by provider and role, keyed as `provider:role`.
+    pub provider_roles: BTreeMap<String, u64>,
 }
 
 /// Sums the lines of `job`. Lines of other jobs and lines that are not JSON are skipped.
@@ -106,9 +108,14 @@ pub fn usage_summary(text: &str, job: &str) -> UsageSummary {
             s.approx = true;
         }
         let role = v["role"].as_str().unwrap_or("unknown").to_string();
-        let slot = s.roles.entry(role).or_insert(0);
+        let slot = s.roles.entry(role.clone()).or_insert(0);
         *slot = slot.saturating_add(weighted);
         let provider = v["provider"].as_str().unwrap_or("claude").to_string();
+        let joint = s
+            .provider_roles
+            .entry(format!("{provider}:{role}"))
+            .or_insert(0);
+        *joint = joint.saturating_add(weighted);
         let slot = s.providers.entry(provider).or_insert(0);
         *slot = slot.saturating_add(weighted);
     }
@@ -144,6 +151,7 @@ pub struct JobCost {
     pub approx: bool,
     pub roles: BTreeMap<String, u64>,
     pub providers: BTreeMap<String, u64>,
+    pub provider_roles: BTreeMap<String, u64>,
 }
 
 impl JobCost {
@@ -175,6 +183,9 @@ pub struct GroupStats {
     /// Share of the weighted tokens per provider, in whole percent.
     #[serde(default)]
     pub providers: BTreeMap<String, u32>,
+    /// Share of weighted tokens per provider and role, keyed as `provider:role`.
+    #[serde(default)]
+    pub provider_roles: BTreeMap<String, u32>,
     /// The same figures over jobs that are not approximate, or `None` when there are none.
     pub corrected: Option<Spread>,
 }
@@ -217,6 +228,7 @@ fn group_stats(jobs: &[&JobCost]) -> GroupStats {
     };
     let roles = shares(jobs.iter().map(|j| &j.roles));
     let providers = shares(jobs.iter().map(|j| &j.providers));
+    let provider_roles = shares(jobs.iter().map(|j| &j.provider_roles));
     GroupStats {
         n: s.n,
         n_approx: jobs.iter().filter(|j| j.approx).count() as u32,
@@ -225,6 +237,7 @@ fn group_stats(jobs: &[&JobCost]) -> GroupStats {
         high: s.high,
         roles,
         providers,
+        provider_roles,
         corrected,
     }
 }
@@ -441,6 +454,10 @@ mod tests {
             approx,
             roles,
             providers: BTreeMap::from([("claude".to_string(), weighted)]),
+            provider_roles: BTreeMap::from([
+                ("claude:builder".to_string(), builder),
+                ("claude:reviewer".to_string(), weighted - builder),
+            ]),
         }
     }
 
@@ -462,9 +479,40 @@ mod tests {
         a.providers = BTreeMap::from([("claude".to_string(), 500)]);
         let mut b = job("2", SizeGroup::Small, "merged", 500, false);
         b.providers = BTreeMap::from([("claude".to_string(), 200), ("codex".to_string(), 300)]);
+        a.provider_roles = BTreeMap::from([("claude:builder".to_string(), 500)]);
+        b.provider_roles = BTreeMap::from([
+            ("claude:reviewer".to_string(), 200),
+            ("codex:builder".to_string(), 300),
+        ]);
         let all = &stats(&[a, b])["all"];
         assert_eq!(all.providers["claude"], 70);
         assert_eq!(all.providers["codex"], 30);
+        assert_eq!(all.provider_roles["claude:builder"], 50);
+        assert_eq!(all.provider_roles["claude:reviewer"], 20);
+        assert_eq!(all.provider_roles["codex:builder"], 30);
+    }
+
+    #[test]
+    fn provider_role_distribution_is_preserved_when_provider_totals_match() {
+        let mut builder_heavy = job("1", SizeGroup::Small, "merged", 1000, false);
+        builder_heavy.providers = BTreeMap::from([("claude".into(), 500), ("codex".into(), 500)]);
+        builder_heavy.provider_roles = BTreeMap::from([
+            ("claude:builder".into(), 500),
+            ("codex:reviewer".into(), 500),
+        ]);
+        let mut reviewer_heavy = job("2", SizeGroup::Small, "merged", 1000, false);
+        reviewer_heavy.providers = builder_heavy.providers.clone();
+        reviewer_heavy.provider_roles = BTreeMap::from([
+            ("claude:reviewer".into(), 500),
+            ("codex:builder".into(), 500),
+        ]);
+        let first = stats(&[builder_heavy])["all"].provider_roles.clone();
+        let second = stats(&[reviewer_heavy])["all"].provider_roles.clone();
+        assert_eq!(first["claude:builder"], 50);
+        assert_eq!(first["codex:reviewer"], 50);
+        assert_eq!(second["claude:reviewer"], 50);
+        assert_eq!(second["codex:builder"], 50);
+        assert_ne!(first, second);
     }
 
     #[test]

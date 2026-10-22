@@ -888,9 +888,13 @@ fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     let pct = (weighted * 100).checked_div(budget).unwrap_or(0);
     let records = crate::tokens::load_usage(&d.job_dir(&job).join("usage.jsonl"), id)?;
     let report = crate::tokens::render(id, &crate::tokens::aggregate(&records));
+    let heading = format!("tokens for job {id}");
+    let body = report
+        .strip_prefix(&format!("{heading}\n"))
+        .unwrap_or(report.as_str());
     let mut text = format!(
-        "input {}\ncache_creation {}\noutput {}\ncache_read {}\nweighted {weighted} ({pct}% of {budget})\n{}",
-        t.input, t.cache_creation, t.output, t.cache_read, report.trim_end()
+        "{heading}\n  totals\n    input           {}\n    cache_creation  {}\n    output          {}\n    cache_read      {}\n    weighted        {weighted} ({pct}% of {budget})\n\n{body}",
+        t.input, t.cache_creation, t.output, t.cache_read
     );
     let detail = crate::tokens::render_detail(&records);
     if !detail.is_empty() {

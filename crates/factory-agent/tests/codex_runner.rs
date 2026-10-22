@@ -25,6 +25,21 @@ fn ok_run_collects_session_usage_and_result() {
 }
 
 #[test]
+fn completed_turn_with_nonzero_exit_is_failed_and_keeps_diagnostics() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let run = runner(EventSink::null("001")).run(&spec("completed-nonzero", tmp.path()));
+    assert_eq!(run.stop_reason, StopReason::Failed);
+    assert_eq!(run.result_text, "OK");
+    assert_eq!(run.exit_code, Some(7));
+    let err = run.error.expect("error");
+    assert!(err.contains("exit Some(7)"), "{err}");
+    assert!(
+        err.contains("codex transport failed after completion"),
+        "{err}"
+    );
+}
+
+#[test]
 fn turn_failed_ends_failed_with_the_message() {
     let tmp = tempfile::tempdir().expect("tmp");
     let run = runner(EventSink::null("001")).run(&spec("failed", tmp.path()));

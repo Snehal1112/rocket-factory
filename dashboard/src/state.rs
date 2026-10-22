@@ -214,6 +214,47 @@ fn has_park(paths: &Paths, job: &Job) -> bool {
     job.park_kind.is_some() && crate::park::park_path(paths, &job.dir).is_some_and(|p| p.is_file())
 }
 
+/// Old jobs retain the warnings from their creation. The compact factory plan format is now
+/// accepted, so hide only the findings caused by applying the old full-header rules to it.
+fn visible_spec_warning(paths: &Paths, job: &Job) -> Option<String> {
+    let warning = job.spec_warning.as_ref()?;
+    let plan = std::fs::read_to_string(paths.sdd.join(&job.dir).join("plan.md")).ok();
+    let compact = plan.as_deref().is_some_and(|text| {
+        text.contains("**Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review.")
+            && text.contains("> **Spec:**")
+            && text.contains("## File Structure")
+            && text.contains("**Interfaces:**")
+            && text.contains("## Review Focus")
+    });
+    if !compact {
+        return Some(warning.clone());
+    }
+    let remaining: Vec<&str> = warning
+        .split("; ")
+        .filter(|part| {
+            let Some((_, finding)) = part.split_once(".md ") else {
+                return true;
+            };
+            let old_header = [
+                "header has no Goal",
+                "header has no Architecture",
+                "header has no Tech Stack",
+                "header has no Spec",
+                "header has no Global Constraints",
+                "header has no Review Focus",
+                "does not name superpowers:subagent-driven-development as its executor",
+            ]
+            .contains(&finding);
+            let old_files = finding
+                .strip_prefix("task ")
+                .and_then(|rest| rest.split_once(" has no **Files:**"))
+                .is_some_and(|(number, tail)| tail.is_empty() && number.parse::<u32>().is_ok());
+            !old_header && !old_files
+        })
+        .collect();
+    (!remaining.is_empty()).then(|| remaining.join("; "))
+}
+
 pub fn build_state(
     board: &Board,
     registry: &Registry,
@@ -225,7 +266,11 @@ pub fn build_state(
         .jobs
         .iter()
         .map(|job| JobView {
-            job: job.clone(),
+            job: {
+                let mut visible = job.clone();
+                visible.spec_warning = visible_spec_warning(paths, job);
+                visible
+            },
             agents: Vec::new(),
             seconds_in_stage: (now - job.stage_since).max(0.0),
             plan: load_plan(
@@ -1029,6 +1074,46 @@ mod tests {
             json["jobs"][1].get("spec_warning").is_none(),
             "a bad value is dropped"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn an_existing_compact_plan_drops_obsolete_lint_warnings_from_its_card() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let paths = Paths::for_root(root.path());
+        let dir = "2026-10-22-002-codex-factory-smoke-test";
+        std::fs::create_dir_all(paths.sdd.join(dir))?;
+        std::fs::write(
+            paths.sdd.join(dir).join("plan.md"),
+            "# Plan\n\n> **Spec:** docs/superpowers/specs/smoke-design.md\n> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review.\n\n## File Structure\n- `spec/health_spec.rb` — tests.\n\n### Task 1: health\n**Interfaces:**\n- GET /\n\n## Review Focus\n1. Root route remains public.\nNext plan: none\n",
+        )?;
+        let mut old = job("002", "build", 0.0);
+        old.dir = dir.to_string();
+        old.spec_warning = Some("plan-01-smoke.md header has no Goal; plan-01-smoke.md header has no Architecture; plan-01-smoke.md header has no Tech Stack; plan-01-smoke.md header has no Spec; plan-01-smoke.md header has no Global Constraints; plan-01-smoke.md header has no Review Focus; plan-01-smoke.md does not name superpowers:subagent-driven-development as its executor; plan-01-smoke.md task 1 has no **Files:**; no decision was answered by the user".to_string());
+        let board = Board {
+            jobs: vec![old.clone()],
+            ..Board::default()
+        };
+        let view = build_state(&board, &Registry::new(), 10.0, None, &paths);
+        assert_eq!(
+            view.jobs[0].job.spec_warning.as_deref(),
+            Some("no decision was answered by the user")
+        );
+        assert_eq!(
+            board.jobs[0].spec_warning, old.spec_warning,
+            "board data stays intact"
+        );
+        old.spec_warning = Some(
+            old.spec_warning
+                .expect("warning")
+                .replace("; no decision was answered by the user", ""),
+        );
+        let board = Board {
+            jobs: vec![old],
+            ..Board::default()
+        };
+        let view = build_state(&board, &Registry::new(), 10.0, None, &paths);
+        assert_eq!(view.jobs[0].job.spec_warning, None);
         Ok(())
     }
 }

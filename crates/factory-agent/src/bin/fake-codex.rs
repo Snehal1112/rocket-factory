@@ -36,6 +36,11 @@ fn main() {
             FAILED.lines().for_each(emit);
             std::process::exit(1);
         }
+        "completed-nonzero" => {
+            SESSION.lines().for_each(emit);
+            eprintln!("codex transport failed after completion");
+            std::process::exit(7);
+        }
         "noresult" => emit(THREAD),
         "silent" => {
             emit(THREAD);

@@ -20,9 +20,8 @@ const CODEX_API_VARS: [&str; 2] = ["OPENAI_API_KEY", "CODEX_API_KEY"];
 /// Builds the `codex exec` argument list. The prompt goes to stdin, marked by the last `-`.
 pub fn codex_args(spec: &AgentSpec) -> Vec<String> {
     let mut a: Vec<String> = vec!["exec".to_string()];
-    if let Some(id) = &spec.resume {
+    if spec.resume.is_some() {
         a.push("resume".to_string());
-        a.push(id.clone());
     }
     for flag in ["--json", "--ignore-user-config", "--skip-git-repo-check"] {
         a.push(flag.to_string());
@@ -35,6 +34,8 @@ pub fn codex_args(spec: &AgentSpec) -> Vec<String> {
         a.push("-c".to_string());
         a.push(value);
     };
+    config("approval_policy=\"on-request\"".to_string());
+    config("approvals_reviewer=\"auto_review\"".to_string());
     let mode = spec.sandbox.as_deref().unwrap_or("read-only");
     config(format!("sandbox_mode=\"{mode}\""));
     if !spec.writable_roots.is_empty() {
@@ -50,6 +51,9 @@ pub fn codex_args(spec: &AgentSpec) -> Vec<String> {
     }
     if spec.network {
         config("sandbox_workspace_write.network_access=true".to_string());
+    }
+    if let Some(id) = &spec.resume {
+        a.push(id.clone());
     }
     a.push("-".to_string());
     a
@@ -214,6 +218,9 @@ impl AgentStream for CodexStream {
                 if let Some(u) = value.get("usage") {
                     self.total = self.total.add(&codex_usage(u));
                 }
+                if self.result_is_error {
+                    return Vec::new();
+                }
                 let text = self.last_message.clone().unwrap_or_default();
                 self.result_text = Some(text.clone());
                 self.result_is_error = false;
@@ -305,6 +312,10 @@ mod tests {
                 "-m",
                 "gpt-5.6-luna",
                 "-c",
+                "approval_policy=\"on-request\"",
+                "-c",
+                "approvals_reviewer=\"auto_review\"",
+                "-c",
                 "sandbox_mode=\"workspace-write\"",
                 "-"
             ])
@@ -316,7 +327,9 @@ mod tests {
         let mut s = args_spec("read-only");
         s.resume = Some("abc".to_string());
         let a = codex_args(&s);
-        assert_eq!(&a[..4], &strs(&["exec", "resume", "abc", "--json"])[..]);
+        assert_eq!(&a[..4], &strs(&["exec", "resume", "--json", "--ignore-user-config"])[..]);
+        assert_eq!(a[a.len() - 2], "abc");
+        assert!(a.contains(&"approvals_reviewer=\"auto_review\"".to_string()));
         assert_eq!(a.last().map(String::as_str), Some("-"));
     }
 
@@ -462,6 +475,29 @@ mod tests {
         assert!(s.result_is_error());
         assert_eq!(s.result_subtype().as_deref(), Some("turn_failed"));
         assert!(s.result_text().expect("text").contains("unsupported model"));
+    }
+
+    #[test]
+    fn failure_followed_by_completion_stays_failed_and_keeps_diagnostic() {
+        for failure in [
+            r#"{"type":"error","message":"provider unavailable"}"#,
+            r#"{"type":"turn.failed","error":{"message":"turn rejected"}}"#,
+        ] {
+            let mut s = CodexStream::default();
+            s.feed(failure);
+            s.feed(r#"{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}"#);
+            assert!(s.result_is_error());
+            assert_eq!(s.result_subtype().as_deref(), Some("turn_failed"));
+            assert!(s
+                .result_text()
+                .unwrap()
+                .contains(if failure.contains("provider") {
+                    "provider unavailable"
+                } else {
+                    "turn rejected"
+                }));
+            assert_eq!(s.final_usage().input_tokens, 2);
+        }
     }
 
     #[test]

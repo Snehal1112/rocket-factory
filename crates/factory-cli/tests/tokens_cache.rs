@@ -114,6 +114,6 @@ fn tokens_for_one_job_is_unchanged() {
     new_job(&fx, "a");
     std::fs::write(job_folder(&fx, "001").join("usage.jsonl"), USAGE).expect("write usage");
     let out = fx.run(&["tokens", "1"]).expect("tokens");
-    let expected = "input 0\ncache_creation 0\noutput 0\ncache_read 0\nweighted 0 (0% of 1000000)\ntokens for job 001\n  builder    runs 2   raw 16120      weighted 7120\n  total      runs 2   raw 16120 weighted 7120\n  0.3% of job 001 baseline weighted (2170000 weighted, 12750000 raw, orchestrator 53.6%)\n  runs\n  1   builder    claude   round 1 turns 0 weighted 1960\n  2   builder    claude   round 2 resumed turns 0 weighted 5160";
+    let expected = "tokens for job 001\n  totals\n    input           0\n    cache_creation  0\n    output          0\n    cache_read      0\n    weighted        0 (0% of 1000000)\n\n  by role\n    builder    runs 2   raw 16120      weighted 7120\n    total      runs 2   raw 16120      weighted 7120\n  0.3% of job 001 baseline weighted (2170000 weighted, 12750000 raw, orchestrator 53.6%)\n\n  runs\n    #   role       provider round turns  weighted  details\n    1   builder    claude   round 1  turns 0    weighted 1960      \n    2   builder    claude   round 2  turns 0    weighted 5160      resumed";
     assert_eq!(out, expected);
 }

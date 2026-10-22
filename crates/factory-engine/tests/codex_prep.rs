@@ -241,6 +241,73 @@ fn a_provider_switch_clears_saved_session_ids_once() {
 }
 
 #[test]
+fn provider_switch_clears_task_resume_before_build_task_selects_a_session() {
+    let fx = codex(committing_fixture());
+    let wt = fx
+        .repo
+        .create_worktree(&factory_git::JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+            project: None,
+        })
+        .expect("worktree");
+    let tip = fx.repo.tip(&wt.branch).expect("tip");
+    set_job(&fx, |j| {
+        j.provider = Some("claude".into());
+        j.worktree = Some(wt.path.to_string_lossy().into_owned());
+        j.branch = wt.branch.clone();
+        j.base = Some(wt.base.clone());
+        j.head = Some(tip.clone());
+        j.task_session = Some(factory_core::TaskSession {
+            task: 1,
+            id: "claude-task-session".into(),
+            tip,
+        });
+    });
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(spec.resume, None);
+    assert_eq!(fx.job().task_session, None);
+    assert_eq!(fx.job().provider.as_deref(), Some("codex"));
+}
+
+#[test]
+fn provider_switch_clears_legacy_resume_before_findings_are_required() {
+    let fx = codex(committing_fixture());
+    let wt = fx
+        .repo
+        .create_worktree(&factory_git::JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+            project: None,
+        })
+        .expect("worktree");
+    let tip = fx.repo.tip(&wt.branch).expect("tip");
+    set_job(&fx, |j| {
+        j.provider = Some("claude".into());
+        j.builder_id = Some("claude-legacy-session".into());
+        j.worktree = Some(wt.path.to_string_lossy().into_owned());
+        j.branch = wt.branch.clone();
+        j.base = Some(wt.base.clone());
+        j.head = Some(tip);
+    });
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build after switch");
+    assert_eq!(
+        runner.last_spec_for("builder").expect("builder").resume,
+        None
+    );
+    assert_eq!(fx.job().provider.as_deref(), Some("codex"));
+}
+
+#[test]
 fn an_old_job_counts_as_claude() {
     let fx = committing_fixture();
     set_job(&fx, |j| {

@@ -260,10 +260,14 @@ not touched by `factory upgrade`, so rebuild it with the last command.
 `factory upgrade` prints, in order:
 
 - the command line: the `/factory` command is updated, and the old file is kept as `factory.md.bak`.
+- the Codex integration: `SKILL.md` is installed or upgraded under `~/.agents/skills/factory/`, and the old file is kept as `SKILL.md.bak`.
 - the preset lines, as in `factory presets refresh`, and a note that refused files stay as they are. To
   overwrite them, run `factory presets refresh --force`.
 - `shadowed: <project> <project-layer|repo-layer> <file>` lines and `skipped: <project> (<reason>)` lines.
 - the marker line.
+
+If the Codex skill update fails, the Claude command, presets and version marker still finish updating;
+`factory upgrade` then exits with a partial-upgrade error naming the Codex failure.
 
 Project-layer and repo-layer agent files do not follow preset changes. A `shadowed:` line means that override
 still holds the old text of an agent file the upgrade updated, so merge the change by hand.
@@ -300,10 +304,14 @@ writes when `FACTORY_HOME` names an empty folder, keep your own edits, then run 
 
 ### The global /factory command
 
-`factory install [--dir <path>] [--force]` writes the `/factory` slash command (embedded in the binary) as
-`factory.md` into `<--dir>`, else into the Claude commands folder under `$HOME`; without `--dir` an unset or
-empty `$HOME` is an error. The folder is created when absent and the write is atomic. A file with the same
-content is left alone (`already installed`); a file that differs is an error naming it, unless `--force`.
+`factory install [--dir <path>] [--force]` writes the `/factory` slash command for Claude and a `factory`
+skill for Codex. Without `--dir`, these go to `~/.claude/commands/factory.md` and
+`~/.agents/skills/factory/SKILL.md`; without `--dir` an unset or empty `$HOME` is an error. With `--dir`,
+only the Claude `factory.md` is written to that folder. Missing folders are created and each write is atomic.
+Identical files are left alone (`already installed`). A differing Claude file causes an error unless `--force`;
+a differing Codex skill is kept with a note so Claude installation still succeeds. Other Codex write failures
+return an error after the Claude command has been installed. Restart Codex after installation, then invoke
+`$factory` or select it from `/skills`.
 
 In a repository, `/factory` runs `factory project which` to find the project, then passes `--project <name>`
 on every `factory` call (`$FACTORY_BIN`, else `factory` on PATH). It runs the brainstorm interview and writes

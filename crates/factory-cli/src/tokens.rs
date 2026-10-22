@@ -125,15 +125,15 @@ pub fn aggregate(records: &[UsageRecord]) -> TokenReport {
 }
 
 pub fn render(job: &str, report: &TokenReport) -> String {
-    let mut out = format!("tokens for job {job}\n");
+    let mut out = format!("tokens for job {job}\n  by role\n");
     for (role, t) in &report.by_role {
         out.push_str(&format!(
-            "  {role:<10} runs {:<3} raw {:<10} weighted {}\n",
+            "    {role:<10} runs {:<3} raw {:<10} weighted {}\n",
             t.runs, t.raw, t.weighted
         ));
     }
     out.push_str(&format!(
-        "  total      runs {:<3} raw {} weighted {}\n",
+        "    total      runs {:<3} raw {:<10} weighted {}\n",
         report.total.runs, report.total.raw, report.total.weighted
     ));
     let percent = report.total.weighted as f64 * 100.0 / BASELINE.weighted as f64;
@@ -154,18 +154,25 @@ pub fn render_detail(records: &[UsageRecord]) -> String {
     if records.is_empty() {
         return String::new();
     }
-    let mut out = String::from("  runs\n");
+    let mut out =
+        String::from("  runs\n    #   role       provider round turns  weighted  details\n");
     for (i, r) in records.iter().enumerate() {
-        let task = r.tasks_done.map_or(String::new(), |n| format!(" done {n}"));
-        let resumed = if r.resumed { " resumed" } else { "" };
+        let mut details = Vec::new();
+        if let Some(n) = r.tasks_done {
+            details.push(format!("done {n}"));
+        }
+        if r.resumed {
+            details.push("resumed".to_string());
+        }
         out.push_str(&format!(
-            "  {:<3} {:<10} {:<8} round {}{task}{resumed} turns {} weighted {}\n",
+            "    {:<3} {:<10} {:<8} round {:<2} turns {:<4} weighted {:<9} {}\n",
             i + 1,
             r.role,
             provider_cell(&r.provider),
             r.round.max(1),
             r.turns,
-            weighted(r)
+            weighted(r),
+            details.join(", ")
         ));
     }
     out
@@ -1265,7 +1272,7 @@ mod tests {
         let mut codex = rec("builder", 1, 0, 0, 0);
         codex.provider = "codex".into();
         let text = render_detail(&[codex, rec("reviewer", 1, 0, 0, 0)]);
-        let rows: Vec<&str> = text.lines().skip(1).collect();
+        let rows: Vec<&str> = text.lines().skip(2).collect();
         assert!(rows[0].contains("builder    codex    round"), "{text}");
         assert!(rows[1].contains("reviewer   claude   round"), "{text}");
     }
