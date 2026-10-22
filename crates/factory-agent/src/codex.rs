@@ -18,6 +18,11 @@ use crate::usage::Usage;
 const CODEX_API_VARS: [&str; 2] = ["OPENAI_API_KEY", "CODEX_API_KEY"];
 
 /// Builds the `codex exec` argument list. The prompt goes to stdin, marked by the last `-`.
+///
+/// Approval flags: `approval_policy="on-request"` with `approvals_reviewer="auto_review"`
+/// routes approval requests to automatic review, so a headless run never waits on a person.
+/// Probed with codex-cli 0.163.0 (read-only sandbox, `curl -sI https://example.com`): exit 0
+/// in 12s, no hang, the command was declined with a message the model saw.
 pub fn codex_args(spec: &AgentSpec) -> Vec<String> {
     let mut a: Vec<String> = vec!["exec".to_string()];
     if spec.resume.is_some() {
@@ -324,6 +329,17 @@ mod tests {
                 "-"
             ])
         );
+    }
+
+    #[test]
+    fn codex_args_set_the_approval_policy() {
+        for sandbox in ["workspace-write", "read-only"] {
+            let a = codex_args(&args_spec(sandbox));
+            for pair in ["approval_policy=\"on-request\"", "approvals_reviewer=\"auto_review\""] {
+                let i = a.iter().position(|x| x == pair).expect(pair);
+                assert_eq!(a[i - 1], "-c");
+            }
+        }
     }
 
     #[test]
