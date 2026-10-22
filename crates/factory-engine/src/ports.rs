@@ -210,11 +210,16 @@ impl Engine<'_> {
 
     /// Clears every saved session id once when the project's provider differs from the job's.
     /// A job with no provider counts as `claude`.
-    pub(crate) fn sync_provider(&self) -> Result<(), EngineError> {
+    #[doc(hidden)]
+    pub fn sync_provider(&self) -> Result<(), EngineError> {
+        if self.provider_synced.get() {
+            return Ok(());
+        }
         let want = self.config.agent_cli().to_string();
         let board = Board::load(&self.board_path).map_err(core_err)?;
         let stored = board.find(&self.job_id).map_err(core_err)?.provider.clone();
         if stored.as_deref() == Some(want.as_str()) {
+            self.provider_synced.set(true);
             return Ok(());
         }
         let switched = stored.as_deref().unwrap_or("claude") != want;
@@ -226,7 +231,9 @@ impl Engine<'_> {
             }
             j.provider = Some(want.clone());
             Ok(())
-        })
+        })?;
+        self.provider_synced.set(true);
+        Ok(())
     }
 
     /// Appends one usage line per agent run to `usage.jsonl` in the job folder, for `factory tokens`.

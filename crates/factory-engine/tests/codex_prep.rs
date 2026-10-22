@@ -360,3 +360,26 @@ fn fallback_commit_runs_when_a_codex_committer_fails() {
         "{out:?}"
     );
 }
+
+#[test]
+fn provider_sync_runs_once_per_engine() {
+    let fx = codex(committing_fixture());
+    let runner = scripted_auto(vec![]);
+    let engine = fx.engine(&runner);
+    set_job(&fx, |j| j.provider = None);
+    engine.sync_provider().expect("first sync");
+    assert_eq!(fx.job().provider.as_deref(), Some("codex"));
+    set_job(&fx, |j| {
+        j.provider = None;
+        j.task_session = Some(factory_core::TaskSession {
+            task: 1,
+            id: "keep".to_string(),
+            tip: "t".to_string(),
+        });
+    });
+    engine.sync_provider().expect("second sync");
+    assert!(fx.job().task_session.is_some());
+    let fresh = fx.engine(&runner);
+    fresh.sync_provider().expect("fresh sync");
+    assert_eq!(fx.job().task_session, None);
+}

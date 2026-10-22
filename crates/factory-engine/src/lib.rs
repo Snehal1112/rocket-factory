@@ -137,6 +137,9 @@ pub struct Engine<'a> {
     pub commit_context: Option<PathBuf>,
     /// Agent files written into each new job worktree. Empty by default.
     pub agent_files: Vec<AgentFile>,
+    /// Set once the job's provider matches the config, so later calls skip the board read.
+    /// An engine lives for one driver call and its config never changes, so it cannot go stale.
+    pub provider_synced: std::cell::Cell<bool>,
 }
 
 impl<'a> Engine<'a> {
@@ -164,6 +167,7 @@ impl<'a> Engine<'a> {
             lock_wait: DEFAULT_LOCK_WAIT,
             commit_context: None,
             agent_files: Vec::new(),
+            provider_synced: std::cell::Cell::new(false),
         })
     }
 
