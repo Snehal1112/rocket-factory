@@ -10,7 +10,7 @@
 # --dry-run runs every check (clean tree, CI gate, version math, tag check,
 # signing setup) and stops before the first step that changes anything.
 #
-# See docs/releasing.md for the full release process.
+# See docs/operations/releasing.md for the full release process.
 
 set -euo pipefail
 
@@ -211,7 +211,7 @@ check_signing() {
     if ! gpg --list-keys --with-colons "$signing_key" 2>/dev/null \
             | awk -F: '$1 == "uid" { print $10 }' | grep -qiF "<${email}>"; then
         echo -e "${YELLOW}Warning: user.email '${email}' is not a UID on key ${signing_key}.${NC}"
-        echo -e "${YELLOW}The tag will verify locally but GitHub will show it as Unverified. See docs/releasing.md.${NC}"
+        echo -e "${YELLOW}The tag will verify locally but GitHub will show it as Unverified. See docs/operations/releasing.md.${NC}"
     fi
     echo -e "${GREEN}Signing key ${signing_key} found for ${email}.${NC}"
 }

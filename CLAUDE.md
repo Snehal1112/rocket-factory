@@ -2,8 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is rocket-factory, the standalone software factory: a Rust driver workspace at the repo root and a local dashboard in `dashboard/` (its own workspace). It was extracted from Rocket's `tools/factory` and `tools/factory-server` with history. Read `docs/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here. Every `project.toml` setting, with defaults and examples, is in `docs/project-toml-reference.md`. A new user starts with `docs/getting-started.md` (build, PATH, install, register, first run). The design for the standalone version is `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`.
-Releases go through `scripts/release.sh` and `docs/releasing.md`; never tag by hand.
+This is rocket-factory, the standalone software factory: a Rust driver workspace at the repo root and a local dashboard in `dashboard/` (its own workspace). It was extracted from Rocket's `tools/factory` and `tools/factory-server` with history. Read `docs/reference/software-factory.md` first for the pipeline, job model, merge rules and dashboard. Do not repeat it here. Every `project.toml` setting, with defaults and examples, is in `docs/reference/project-toml-reference.md`. A new user starts with `docs/guides/getting-started.md` (build, PATH, install, register, first run). The design for the standalone version is `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`.
+`docs/README.md` indexes every doc by purpose and says which one to read for which question. Start there, then open only the doc you need.
+Releases go through `scripts/release.sh` and `docs/operations/releasing.md`; never tag by hand.
 
 ## Commands
 
@@ -54,4 +55,4 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 ## Carried over from Rocket
 
-These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), the Rocket copy `commands/factory.md` was removed, so the only command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7), and `factory-cli/tests/agent_lint.rs` pins its text. The prose docs `software-factory.md` and `getting-started.md` live in `docs/`.
+These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), the Rocket copy `commands/factory.md` was removed, so the only command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7), and `factory-cli/tests/agent_lint.rs` pins its text. The prose docs `software-factory.md` and `getting-started.md` live in `docs/reference/` and `docs/guides/`.

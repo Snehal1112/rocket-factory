@@ -37,7 +37,7 @@ jobs:
       matrix:
         include:
           # Each runner builds its own host triple natively, no cross-compilation.
-          # No Windows leg: factoryd is not supported there (docs/getting-started.md).
+          # No Windows leg: factoryd is not supported there (docs/guides/getting-started.md).
           - os: ubuntu-latest
             os_name: linux
             arch: amd64
@@ -120,7 +120,7 @@ jobs:
 
       # Detached minisign signatures over the archives. They prove an archive
       # came from whoever holds RELEASE_SIGNING_KEY, on top of the sha256 files,
-      # which only catch transit corruption. See docs/releasing.md.
+      # which only catch transit corruption. See docs/operations/releasing.md.
       - name: Sign release artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}

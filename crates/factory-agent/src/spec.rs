@@ -28,7 +28,7 @@ impl fmt::Debug for SessionHook {
     }
 }
 
-/// Which optional `claude` flags exist. Defaults come from the probe report in `docs/software-factory.md`.
+/// Which optional `claude` flags exist. Defaults come from the probe report in `docs/reference/software-factory.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Caps {
     pub agent: bool,

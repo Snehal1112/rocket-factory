@@ -473,7 +473,7 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
 
 #[test]
 fn docs_describe_the_new_design() -> TestResult {
-    let doc = read("docs/software-factory.md")?;
+    let doc = read("docs/reference/software-factory.md")?;
     require_all(
         &doc,
         "software-factory.md",
@@ -514,13 +514,13 @@ fn docs_describe_the_new_design() -> TestResult {
         ],
     )?;
     let root_doc = read("CLAUDE.md")?;
-    require_all(&root_doc, "CLAUDE.md", &["docs/software-factory.md"])?;
+    require_all(&root_doc, "CLAUDE.md", &["docs/reference/software-factory.md"])?;
     forbid_all(&root_doc, "CLAUDE.md", &["factory-ctl"])
 }
 
 #[test]
 fn reference_documents_the_builder_permission_keys() -> TestResult {
-    let doc = read("docs/project-toml-reference.md")?;
+    let doc = read("docs/reference/project-toml-reference.md")?;
     require_all(
         &doc,
         "project-toml-reference.md",
@@ -560,7 +560,7 @@ fn spec_matches_the_builder_permission_fixes() -> TestResult {
 
 #[test]
 fn software_factory_doc_describes_builder_permissions() -> TestResult {
-    let doc = read("docs/software-factory.md")?;
+    let doc = read("docs/reference/software-factory.md")?;
     require_all(
         &doc,
         "software-factory.md",
@@ -645,7 +645,7 @@ fn readme_documents_the_job_lease_and_resume() -> TestResult {
 
 #[test]
 fn getting_started_upgrades_with_one_command() -> TestResult {
-    let doc = read("docs/getting-started.md")?;
+    let doc = read("docs/guides/getting-started.md")?;
     require_all(
         &doc,
         "getting-started.md",
@@ -662,8 +662,8 @@ fn readme_points_to_builder_permissions() -> TestResult {
         "README.md",
         &[
             "`builder_permissions`",
-            "docs/project-toml-reference.md",
-            "docs/software-factory.md",
+            "docs/reference/project-toml-reference.md",
+            "docs/reference/software-factory.md",
             "check_hints",
         ],
     )?;
@@ -903,7 +903,7 @@ fn the_marker_version_matches_the_engine_constant() -> TestResult {
 
 #[test]
 fn docs_describe_the_builder_carry() -> TestResult {
-    for path in ["README.md", "docs/software-factory.md"] {
+    for path in ["README.md", "docs/reference/software-factory.md"] {
         require_all(
             &read(path)?,
             path,

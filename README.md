@@ -10,7 +10,7 @@ A standalone software factory. A Rust driver builds, checks, reviews and merges 
 - Design: `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`
 - Build plans: `docs/superpowers/plans/2026-10-16-standalone-software-factory/`
 - Contributor rules and commands: `CLAUDE.md`
-- Releasing: `docs/releasing.md` (signed tags with `scripts/release.sh`, CI, signed archives)
+- Releasing: `docs/operations/releasing.md` (signed tags with `scripts/release.sh`, CI, signed archives)
 
 Status: extracted and tested. It still behaves like Rocket's in-repo factory. The standalone work is described in the plan index.
 
@@ -18,25 +18,25 @@ Status: extracted and tested. It still behaves like Rocket's in-repo factory. Th
 
 How one job moves from the `/factory` command to a merge. Yellow steps spend LLM tokens, teal steps are the Rust driver, which spends none, and orange marks a stop for a human.
 
-![One job, start to merge](docs/images/factory-lifecycle.svg)
+![One job, start to merge](docs/assets/images/factory-lifecycle.svg)
 
 The order of the gates a job passes, and what each one does when it fails:
 
-![What can stop a merge, in order](docs/images/factory-gates.svg)
+![What can stop a merge, in order](docs/assets/images/factory-gates.svg)
 
 The processes behind a job:
 
-![Who talks to whom](docs/images/factory-processes.svg)
+![Who talks to whom](docs/assets/images/factory-processes.svg)
 
 How the driver starts one agent (`claude -p`), the five ways a run ends and the five roles it starts. Only the builder and the KB refresher can start subagents, and the builder's limit of 2 helpers is a line in its prompt, not driver code:
 
-![How an agent is started](docs/images/factory-agents.svg)
+![How an agent is started](docs/assets/images/factory-agents.svg)
 
 The agent runs of one job in order: a fresh builder per task, one batch commit, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. With 3 tasks and the defaults the worst case is 16 agent runs, 18 with a sync message, and the job budget stops a run before that:
 
-![Agent turns in one job](docs/images/factory-turns.svg)
+![Agent turns in one job](docs/assets/images/factory-turns.svg)
 
-The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a private Claude artifact, so only its owner can open it). The page source is `docs/factory-workflow.html` and the images are in `docs/images/`.
+The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a private Claude artifact, so only its owner can open it). The page source is `docs/assets/factory-workflow.html` and the images are in `docs/assets/images/`.
 
 ## Features ported from Rocket
 
@@ -77,14 +77,14 @@ effect.
 
 ## Logging
 
-The driver writes a JSON log to `<state_dir>/log.jsonl` and `factoryd` to `<home>/factoryd.log.jsonl`. `factory log [--job <id>] [--level <lvl>] [--tail <n>]` reads it. `log_level` in `project.toml` and `FACTORY_LOG` set the level; see `docs/software-factory.md` (Logging).
+The driver writes a JSON log to `<state_dir>/log.jsonl` and `factoryd` to `<home>/factoryd.log.jsonl`. `factory log [--job <id>] [--level <lvl>] [--tail <n>]` reads it. `log_level` in `project.toml` and `FACTORY_LOG` set the level; see `docs/reference/software-factory.md` (Logging).
 
 ## Builder permissions
 
 Each builder run gets permission mode `acceptEdits`, a tool allowlist and deny rules on the job folder, so a job rarely waits on a prompt and no repository needs a settings file. The allowlist is not a sandbox.
 The allowlist is a fixed base plus the programs of your `checks` and `check_hints`, plus `builder_allow`.
 Set `builder_permissions` to `false` in the config to give builders the old arguments.
-Keys, allowlist rules and limits: `docs/project-toml-reference.md` and `docs/software-factory.md` (Builder permissions).
+Keys, allowlist rules and limits: `docs/reference/project-toml-reference.md` and `docs/reference/software-factory.md` (Builder permissions).
 
 ## Ticket hygiene
 
@@ -141,7 +141,7 @@ after the spec's own warning, and the job still runs.
 
 ## Using Codex
 
-`agent_cli = "codex"` in `project.toml` (or `factory project add <path> --agent-cli codex`) runs every agent through `codex exec --json`. Unset or `"claude"` changes nothing. The limits: no `max_turns`; no mid-run budget stop (the run total is added after the run); no `cache_ttl`; no cold-start data; `builder_permissions` and `builder_allow` are ignored in favour of a per-role sandbox (builders `workspace-write` with network, reviewers `read-only`); `builder_carry_session` is off; runs use `--ignore-user-config`. The provider shows in `factory tokens`, `tokens --cache`, `costs` and on the dashboard card. The real smoke test is `#[ignore]`. See `docs/software-factory.md` ("Using Codex") and `docs/project-toml-reference.md`.
+`agent_cli = "codex"` in `project.toml` (or `factory project add <path> --agent-cli codex`) runs every agent through `codex exec --json`. Unset or `"claude"` changes nothing. The limits: no `max_turns`; no mid-run budget stop (the run total is added after the run); no `cache_ttl`; no cold-start data; `builder_permissions` and `builder_allow` are ignored in favour of a per-role sandbox (builders `workspace-write` with network, reviewers `read-only`); `builder_carry_session` is off; runs use `--ignore-user-config`. The provider shows in `factory tokens`, `tokens --cache`, `costs` and on the dashboard card. The real smoke test is `#[ignore]`. See `docs/reference/software-factory.md` ("Using Codex") and `docs/reference/project-toml-reference.md`.
 
 ## Cache report
 

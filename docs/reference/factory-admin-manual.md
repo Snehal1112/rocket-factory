@@ -12,7 +12,7 @@ Build from the repository root (Rust builds in this repository use `-j4`):
 cargo build -j4 -p factory-cli -p factory-supervisor
 ```
 
-The binaries are `target/debug/factory` and `target/debug/factoryd`. Put them on your `PATH`, or invoke those paths directly. Set `FACTORY_HOME` to use a different home; otherwise both commands use `~/.factory`. Register a Git repository before creating a draft or job. See [Getting started](getting-started.md) for installation and the first run, and [project.toml reference](project-toml-reference.md) for project settings, checks, agent provider, and model defaults.
+The binaries are `target/debug/factory` and `target/debug/factoryd`. Put them on your `PATH`, or invoke those paths directly. Set `FACTORY_HOME` to use a different home; otherwise both commands use `~/.factory`. Register a Git repository before creating a draft or job. See [Getting started](../guides/getting-started.md) for installation and the first run, and [project.toml reference](project-toml-reference.md) for project settings, checks, agent provider, and model defaults.
 
 ## 2. Developer workflow
 
