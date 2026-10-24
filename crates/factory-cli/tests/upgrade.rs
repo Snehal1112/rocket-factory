@@ -180,7 +180,7 @@ fn upgrade_updates_the_command_and_keeps_a_bak() {
     assert_eq!(std::fs::read_to_string(&bak).expect("bak"), "# old\n");
     assert_eq!(std::fs::read_to_string(&cmd).expect("cmd"), GLOBAL_COMMAND);
     assert!(
-        out.contains("24 written, 0 updated, 0 unchanged, 0 refused"),
+        out.contains("30 written, 0 updated, 0 unchanged, 0 refused"),
         "{out}"
     );
     assert_eq!(
@@ -322,7 +322,7 @@ fn a_second_upgrade_changes_nothing() {
         )
     );
     assert!(
-        out.contains("0 written, 0 updated, 24 unchanged, 0 refused"),
+        out.contains("0 written, 0 updated, 30 unchanged, 0 refused"),
         "{out}"
     );
     assert!(!out.contains("shadowed:"), "{out}");
