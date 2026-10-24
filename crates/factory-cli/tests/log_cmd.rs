@@ -23,7 +23,7 @@ fn log_prints_a_jobs_lines() {
         line("info", "001", 3),
     );
     let (_t, ctx) = ctx_with_log(Some(&[&a, &b, &c]));
-    let out = run_log(&ctx, Some("001"), None, 100).expect("log");
+    let out = run_log(&ctx, Some("001"), None, None, 100).expect("log");
     assert_eq!(out, format!("{a}\n{c}"));
 }
 
@@ -35,7 +35,7 @@ fn log_level_filter() {
         line("error", "001", 3),
     );
     let (_t, ctx) = ctx_with_log(Some(&[&a, &b, &c]));
-    let out = run_log(&ctx, None, Some("warn"), 100).expect("log");
+    let out = run_log(&ctx, None, Some("warn"), None, 100).expect("log");
     assert_eq!(out, format!("{b}\n{c}"));
 }
 
@@ -48,11 +48,11 @@ fn log_tail_keeps_the_last_n() {
     );
     let (_t, ctx) = ctx_with_log(Some(&[&a, &b, &c]));
     assert_eq!(
-        run_log(&ctx, None, None, 2).expect("log"),
+        run_log(&ctx, None, None, None, 2).expect("log"),
         format!("{b}\n{c}")
     );
     assert_eq!(
-        run_log(&ctx, None, None, 0).expect("log"),
+        run_log(&ctx, None, None, None, 0).expect("log"),
         format!("{a}\n{b}\n{c}")
     );
 }
@@ -61,21 +61,45 @@ fn log_tail_keeps_the_last_n() {
 fn log_unknown_job_prints_nothing() {
     let a = line("info", "001", 1);
     let (_t, ctx) = ctx_with_log(Some(&[&a]));
-    assert_eq!(run_log(&ctx, Some("999"), None, 100).expect("log"), "");
+    assert_eq!(
+        run_log(&ctx, Some("999"), None, None, 100).expect("log"),
+        ""
+    );
 }
 
 #[test]
 fn no_log_yet_exits_zero() {
     let (_t, ctx) = ctx_with_log(None);
-    assert_eq!(run_log(&ctx, None, None, 100).expect("log"), "no log yet");
+    assert_eq!(
+        run_log(&ctx, None, None, None, 100).expect("log"),
+        "no log yet"
+    );
 }
 
 #[test]
 fn log_rejects_an_unknown_level() {
     let a = line("info", "001", 1);
     let (_t, ctx) = ctx_with_log(Some(&[&a]));
-    let err = run_log(&ctx, None, Some("loud"), 100).expect_err("bad level");
+    let err = run_log(&ctx, None, Some("loud"), None, 100).expect_err("bad level");
     assert!(matches!(err, CliError::Refused(_)), "{err}");
+}
+
+#[test]
+fn log_event_empty_is_refused() {
+    let a = line("info", "001", 1);
+    let (_t, ctx) = ctx_with_log(Some(&[&a]));
+    let err = run_log(&ctx, None, None, Some(""), 100).expect_err("empty event");
+    assert!(matches!(err, CliError::Refused(_)), "{err}");
+}
+
+#[test]
+fn log_event_filters_by_prefix() {
+    let a = r#"{"event":"task.start","job_id":"001","level":"info"}"#;
+    let b = r#"{"event":"task.end","job_id":"001","level":"info"}"#;
+    let c = r#"{"event":"agent.end","job_id":"001","level":"info"}"#;
+    let (_t, ctx) = ctx_with_log(Some(&[a, b, c]));
+    let out = run_log(&ctx, None, None, Some("task"), 100).expect("log");
+    assert_eq!(out, format!("{a}\n{b}"));
 }
 
 #[test]

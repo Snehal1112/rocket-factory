@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 pub struct LogFilter {
     pub job: Option<String>,
     pub min_level: Option<String>,
+    /// An event name or a dotted prefix, such as `task` or `agent.end`.
+    pub event: Option<String>,
     pub tail: usize,
 }
 
@@ -44,6 +46,15 @@ pub fn read_log(path: &Path, filter: &LogFilter) -> Result<Vec<String>, Telemetr
             if let Some(job) = &filter.job {
                 if v["job_id"].as_str() != Some(job.as_str()) {
                     continue;
+                }
+            }
+            if let Some(want) = &filter.event {
+                match v["event"].as_str() {
+                    Some(e)
+                        if e == want
+                            || e.strip_prefix(want.as_str())
+                                .is_some_and(|rest| rest.starts_with('.')) => {}
+                    _ => continue,
                 }
             }
             if let Some(min) = min {
@@ -88,6 +99,7 @@ mod tests {
         let f = LogFilter {
             job: Some("001".into()),
             min_level: Some("warn".into()),
+            event: None,
             tail: 0,
         };
         let got = read_log(&dir.path().join("log.jsonl"), &f).expect("read");
@@ -119,6 +131,97 @@ mod tests {
             read_log(&p, &f).expect("read"),
             vec![line("info", "a", 2), line("info", "a", 3)]
         );
+    }
+
+    fn event_line(event: &str, job: &str, level: &str) -> String {
+        format!(r#"{{"event":"{event}","job_id":"{job}","level":"{level}"}}"#)
+    }
+
+    fn event_filter(event: &str) -> LogFilter {
+        LogFilter {
+            event: Some(event.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn event_filter_matches_exact_and_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("log.jsonl");
+        let lines = [
+            event_line("task.start", "a", "info"),
+            event_line("task.end", "a", "info"),
+            event_line("agent.end", "a", "info"),
+            event_line("agent.endless", "a", "info"),
+            event_line("agent.start", "a", "info"),
+        ];
+        write(dir.path(), "log.jsonl", &lines);
+        assert_eq!(
+            read_log(&p, &event_filter("task")).expect("read"),
+            lines[..2].to_vec()
+        );
+        assert_eq!(
+            read_log(&p, &event_filter("agent.end")).expect("read"),
+            vec![lines[2].clone()]
+        );
+    }
+
+    #[test]
+    fn event_filter_ignores_a_partial_word() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("log.jsonl");
+        write(
+            dir.path(),
+            "log.jsonl",
+            &[event_line("task.start", "a", "info")],
+        );
+        assert!(read_log(&p, &event_filter("tas")).expect("read").is_empty());
+    }
+
+    #[test]
+    fn event_filter_combines_with_job_and_level() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("log.jsonl");
+        let keep = event_line("task.end", "a", "warn");
+        write(
+            dir.path(),
+            "log.jsonl",
+            &[
+                event_line("task.end", "b", "warn"),
+                event_line("task.end", "a", "info"),
+                event_line("agent.end", "a", "warn"),
+                keep.clone(),
+            ],
+        );
+        let f = LogFilter {
+            job: Some("a".into()),
+            min_level: Some("warn".into()),
+            event: Some("task".into()),
+            tail: 0,
+        };
+        assert_eq!(read_log(&p, &f).expect("read"), vec![keep]);
+    }
+
+    #[test]
+    fn event_filter_then_tail() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path().join("log.jsonl");
+        let last = event_line("task.end", "a", "info");
+        write(
+            dir.path(),
+            "log.jsonl",
+            &[
+                event_line("task.start", "a", "info"),
+                last.clone(),
+                event_line("agent.end", "a", "info"),
+            ],
+        );
+        let f = LogFilter {
+            event: Some("task".into()),
+            tail: 1,
+            ..Default::default()
+        };
+        assert_eq!(read_log(&p, &f).expect("read"), vec![last]);
     }
 
     #[test]

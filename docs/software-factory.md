@@ -133,15 +133,17 @@ The driver and `factoryd` write one JSON line per event, next to `events.jsonl`,
 | `scope` | `cli` or `factoryd` |
 | `project` | omitted when the checkout is not registered |
 | `job_id`, `stage` | omitted outside a job |
-| `event` | dotted name: `job.created`, `stage.change`, `agent.start`, `agent.end`, `check.run`, `git.op` (debug), `decide`, `merge.done`, `park`, `step.error`, `sup.start`, `sup.finish`, `sup.reject`, `sup.notice`, `sup.warn`, `sup.error` |
+| `event` | dotted name: `job.created`, `stage.change`, `agent.start`, `agent.end`, `check.run`, `git.op` (debug), `task.start`, `task.end`, `commit.done`, `operator.approve`, `operator.rework`, `operator.cancel`, `decide`, `merge.done`, `park`, `step.error`, `sup.start`, `sup.finish`, `sup.reject`, `sup.notice`, `sup.warn`, `sup.error` |
 | `msg` | at most 300 characters |
 | other | event fields, such as `from`, `to`, `sha`, `role` |
+
+`agent.end` also carries `input`, `cache_creation`, `cache_read`, `output`, `turns`, `resumed`, `round`, `start_ctx`, `end_ctx` and `session_id`. `operator.approve` has `without_review`, `operator.rework` has `note` and `operator.cancel` has `reason` and `force`; they are logged only after the command succeeds.
 
 Rotation: a file over 10 MiB is renamed to `.1`, with `.1` and `.2` moved to `.2` and `.3`; the old `.3` is dropped. Writers append one line at a time, so concurrent processes lose no line.
 
 Redaction: a field whose name contains `token`, `key`, `secret` or `password` (any case) is written as `[redacted]`, except the count `weighted_tokens`. In a check command, the value of a `--name=value` flag with such a name is redacted. Environment variables, prompts and command output are never logged.
 
-`factory log [--job <id>] [--level <lvl>] [--tail <n>]` prints the matching lines of the log and its rotated files, oldest first. `--level` keeps that level and above, `--tail` defaults to 100 (0 means all), and `--project <name>` reads that project's file. A missing file prints `no log yet`.
+`factory log [--job <id>] [--level <lvl>] [--event <name-or-prefix>] [--tail <n>]` prints the matching lines of the log and its rotated files, oldest first. `--level` keeps that level and above, `--event` keeps a line whose event equals the value or starts with the value and a dot (`agent` matches `agent.end`, `tas` matches nothing; an empty value is refused), `--tail` defaults to 100 (0 means all), and `--project <name>` reads that project's file. A missing file prints `no log yet`.
 
 ## Draft cards
 

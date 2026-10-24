@@ -12,8 +12,14 @@ pub fn run_log(
     ctx: &CliCtx,
     job: Option<&str>,
     level: Option<&str>,
+    event: Option<&str>,
     tail: usize,
 ) -> Result<String, CliError> {
+    if event == Some("") {
+        return Err(CliError::Refused(
+            "empty event, use a name such as task or agent.end".to_string(),
+        ));
+    }
     if let Some(l) = level {
         if !LEVELS.contains(&l.to_ascii_lowercase().as_str()) {
             return Err(CliError::Refused(format!(
@@ -33,6 +39,7 @@ pub fn run_log(
     let filter = LogFilter {
         job: job.map(str::to_string),
         min_level: level.map(str::to_string),
+        event: event.map(str::to_string),
         tail,
     };
     let lines = read_log(&path, &filter)

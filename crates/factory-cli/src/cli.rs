@@ -130,6 +130,9 @@ pub enum Command {
         /// Only lines at this level or above (error, warn, info, debug, trace).
         #[arg(long)]
         level: Option<String>,
+        /// Only lines whose event is this name or starts with it plus a dot.
+        #[arg(long)]
+        event: Option<String>,
         /// Keep the last N lines; 0 means all.
         #[arg(long, default_value_t = 100)]
         tail: usize,
@@ -369,7 +372,16 @@ mod tests {
         .expect("parses");
         assert!(matches!(
             cli.command,
-            Command::Log { job: Some(ref j), level: Some(ref l), tail: 5 } if j == "003" && l == "warn"
+            Command::Log { job: Some(ref j), level: Some(ref l), event: None, tail: 5 } if j == "003" && l == "warn"
+        ));
+    }
+
+    #[test]
+    fn log_parses_event_flag() {
+        let cli = Cli::try_parse_from(["factory", "log", "--event", "task"]).expect("parses");
+        assert!(matches!(
+            cli.command,
+            Command::Log { event: Some(ref e), .. } if e == "task"
         ));
     }
 
@@ -381,6 +393,7 @@ mod tests {
             Command::Log {
                 job: None,
                 level: None,
+                event: None,
                 tail: 100
             }
         ));

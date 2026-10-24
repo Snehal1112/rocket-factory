@@ -159,7 +159,7 @@ factory upgrade
 | `tokens <id>` | No command-specific flags | `factory --project rocket-api tokens 001` prints token usage by agent role for that job. |
 | `tokens --cache` | `--days <positive-integer>` | `factory --project rocket-api tokens --cache --days 7` prints project cache, resumed-run, and cold-start figures for seven days. `--days` requires `--cache`; ID and `--cache` are exclusive. |
 | `costs` | No command-specific flags | `factory --project rocket-api costs` prints job and size-group figures and writes `costs.json`. |
-| `log` | `--job <id>`; `--level <error\|warn\|info\|debug\|trace>`; `--tail <unsigned-integer>` | `factory --project rocket-api log --job 001 --level warn --tail 50` reads structured logs. Level is case insensitive. The default tail is 100; `--tail 0` reads all lines. |
+| `log` | `--job <id>`; `--level <error\|warn\|info\|debug\|trace>`; `--event <name-or-prefix>`; `--tail <unsigned-integer>` | `factory --project rocket-api log --job 001 --level warn --tail 50` reads structured logs. `factory --project rocket-api log --event task` keeps `task.start` and `task.end`: an event matches when it equals the value or starts with it plus a dot, and an empty value is refused. The filters combine, and `--tail` applies last. Level is case insensitive. The default tail is 100; `--tail 0` reads all lines. |
 | `tickets <id>` | `--dry-run` | `factory --project rocket-api tickets 001 --dry-run` previews GitHub follow-up issues and parent updates. Without the flag, it makes those changes using `gh` for an eligible merged last-plan job. |
 | `kb-refresh` | Required `--job <id>` | `factory --project rocket-api kb-refresh --job 001` manually refreshes the knowledge base for a merged job. |
 

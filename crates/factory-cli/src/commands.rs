@@ -386,9 +386,18 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Upgrade { .. } => Err(CliError::Refused(
             "upgrade needs no repository, run it through upgrade::run".into(),
         )),
-        Command::Log { job, level, tail } => {
-            crate::log::run_log(ctx, job.as_deref(), level.as_deref(), tail)
-        }
+        Command::Log {
+            job,
+            level,
+            event,
+            tail,
+        } => crate::log::run_log(
+            ctx,
+            job.as_deref(),
+            level.as_deref(),
+            event.as_deref(),
+            tail,
+        ),
         Command::Tickets { id, dry_run } => tickets(ctx, &norm(&id)?, dry_run),
         Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
@@ -608,6 +617,11 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
     d.store().update_job(id, |j| {
         factory_engine::set_stage_logged(j, Stage::Approve, None, false, now)
     })?;
+    tracing::info!(
+        event = "operator.approve",
+        without_review,
+        msg = "approved by the user"
+    );
     let ruling = if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
         "approved by the user without a review"
     } else {
@@ -645,6 +659,11 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
         j.cancelled = false;
         Ok(())
     })?;
+    tracing::info!(
+        event = "operator.rework",
+        note = %factory_telemetry::cap_message(note),
+        msg = "rework requested"
+    );
     Ok(format!("job {id} back to build, round reset to 0"))
 }
 
@@ -670,6 +689,12 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
         j.builder_last = None;
         Ok(())
     })?;
+    tracing::info!(
+        event = "operator.cancel",
+        reason = %factory_telemetry::cap_message(reason),
+        force,
+        msg = "job cancelled"
+    );
     // The reason is folded into one line, because the ledger takes one line.
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     d.ledger(&job).ruling(&one_line)?;
