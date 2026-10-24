@@ -10,7 +10,7 @@ use factory_git::{CommitInfo, Worktree};
 use crate::carry::{carry_decision, carry_idle_limit, Carry, CarryInput};
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
 use crate::park::{builder_blocked_parts, builder_stop_parts, part_from_file};
-use crate::ports::{git_err, now, short_sha, JobView};
+use crate::ports::{git_err, now, one_line, short_sha, JobView};
 use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
 use crate::{BoardStore, Engine, EngineError, StageOutcome};
 
@@ -508,6 +508,7 @@ impl Engine<'_> {
         let Some(task) = tasks.get(job.task_index as usize) else {
             return Err(EngineError::Msg("task index is past the plan".into()));
         };
+        let started = std::time::Instant::now();
         let fresh = job.worktree.is_none();
         let (cwd, base, branch) = if fresh {
             self.start_worktree(job)?
@@ -548,6 +549,15 @@ impl Engine<'_> {
             TaskState::Dispatched,
             &format!("BASE {base}, {}, {how}", self.config.builder_model),
         )?;
+        tracing::info!(
+            event = "task.start",
+            task = task.n,
+            title = %factory_telemetry::cap_message(&one_line(&task.title)),
+            how = %how,
+            model = %self.config.builder_model,
+            of = tasks.len() as u32,
+            msg = %format!("task {} started", task.n)
+        );
         let carried = match &carry {
             Carry::Yes { id } if saved.is_none() => Some(id.clone()),
             _ => None,
@@ -662,9 +672,18 @@ impl Engine<'_> {
                     Vec::new(),
                 );
             }
-            self.repo
+            let sha = self
+                .repo
                 .commit_staged(&wt, &snapshot_subject(task.n, &task.title))
-                .map_err(git_err)?
+                .map_err(git_err)?;
+            tracing::info!(
+                event = "commit.done",
+                kind = "snapshot",
+                sha = %sha,
+                fallback = false,
+                "snapshot commit made"
+            );
+            sha
         } else {
             let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
             let new_tip =
@@ -687,6 +706,14 @@ impl Engine<'_> {
         let short = short_sha(&new_tip).to_string();
         self.note_task_checks(task.n, &tip, &new_tip)?;
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
+        tracing::info!(
+            event = "task.end",
+            task = task.n,
+            sha = %new_tip,
+            of = tasks.len() as u32,
+            duration_ms = started.elapsed().as_millis() as u64,
+            msg = %format!("task {} done", task.n)
+        );
         self.note_builder_words(task.n, &run.result_text)?;
         let session = run.session_id.clone().or(job.session_id.clone());
         let builder_last = session.clone().map(|id| factory_core::BuilderLast {

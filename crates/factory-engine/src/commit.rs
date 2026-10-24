@@ -290,6 +290,24 @@ impl Engine<'_> {
         wt: &Worktree,
         req: &CommitRequest<'_>,
     ) -> Result<CommitOutcome, EngineError> {
+        let out = self.commit_step_inner(wt, req)?;
+        if let CommitOutcome::Committed { tip, fallback } = &out {
+            tracing::info!(
+                event = "commit.done",
+                kind = req.kind.as_str(),
+                sha = %tip,
+                fallback = *fallback,
+                "commit made"
+            );
+        }
+        Ok(out)
+    }
+
+    fn commit_step_inner(
+        &self,
+        wt: &Worktree,
+        req: &CommitRequest<'_>,
+    ) -> Result<CommitOutcome, EngineError> {
         let staged = self.repo.stage_all(wt).map_err(git_err)?;
         if staged.is_empty() {
             return Ok(CommitOutcome::NothingStaged);

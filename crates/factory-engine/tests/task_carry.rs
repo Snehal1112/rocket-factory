@@ -64,6 +64,25 @@ fn task_two_continues_the_session_when_gap_and_context_allow() {
 }
 
 #[test]
+fn the_carried_builder_logs_agent_end_resumed() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_carry_session = true;
+    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.build_stage().expect("task 1");
+        e.build_stage().expect("task 2");
+    });
+    let ends: Vec<_> = lines
+        .iter()
+        .filter(|l| l["event"] == "agent.end" && l["role"] == "builder")
+        .collect();
+    assert_eq!(ends.len(), 2, "{lines:?}");
+    assert_eq!(ends[0]["resumed"], false);
+    assert_eq!(ends[1]["resumed"], true);
+}
+
+#[test]
 fn the_setting_off_starts_every_task_fresh() {
     let fx = two_task_fixture();
     let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
@@ -348,6 +367,30 @@ fn the_batch_snapshot_and_reset_work_with_a_carry() {
 }
 
 #[test]
+fn batch_snapshot_logs_commit_done_with_kind_snapshot() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_carry_session = true;
+    fx.config.commit_batch = true;
+    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.build_stage().expect("task 1");
+        e.build_stage().expect("task 2");
+    });
+    let snaps: Vec<_> = lines
+        .iter()
+        .filter(|l| l["event"] == "commit.done" && l["kind"] == "snapshot")
+        .collect();
+    assert_eq!(snaps.len(), 2, "{lines:?}");
+    for s in snaps {
+        assert_eq!(s["fallback"], false);
+        let sha = s["sha"].as_str().expect("sha");
+        assert_eq!(sha.len(), 40);
+        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
 fn a_checkbox_only_plan_runs_one_whole_plan_builder_and_never_carries() {
     // The task loop reads `### Task N:` headings only, so a checkbox plan never reaches the carry.
     let mut fx = two_task_fixture();
@@ -372,4 +415,104 @@ fn builder_last_survives_a_carried_advance() {
     let last = job.builder_last.expect("builder_last");
     assert_eq!(last.task, 2);
     assert_eq!(last.id, "sess-2");
+}
+
+fn events<'a>(lines: &'a [serde_json::Value], name: &str) -> Vec<&'a serde_json::Value> {
+    lines.iter().filter(|l| l["event"] == name).collect()
+}
+
+#[test]
+fn task_start_and_end_are_logged_per_task() {
+    let fx = two_task_fixture();
+    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.build_stage().expect("task 1");
+        e.build_stage().expect("task 2");
+    });
+    let starts = events(&lines, "task.start");
+    assert_eq!(starts.len(), 2, "{lines:?}");
+    assert_eq!(starts[0]["task"], 1);
+    assert_eq!(starts[1]["task"], 2);
+    assert_eq!(starts[0]["title"], "first thing");
+    assert_eq!(starts[1]["title"], "second thing");
+    assert_eq!(starts[0]["of"], 2);
+    assert_eq!(starts[0]["how"], "fresh");
+    assert_eq!(starts[0]["model"], fx.config.builder_model.as_str());
+    let ends = events(&lines, "task.end");
+    assert_eq!(ends.len(), 2, "{lines:?}");
+    for end in &ends {
+        assert_eq!(end["of"], 2);
+        let sha = end["sha"].as_str().expect("sha");
+        assert_eq!(sha.len(), 40);
+        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(!end["duration_ms"].is_null());
+    }
+    assert_ne!(ends[0]["sha"], ends[1]["sha"]);
+    // The batch committer may rewrite the tip afterwards, so the ledger short sha is the anchor.
+    let ledger = fx.ledger();
+    for end in &ends {
+        let sha = end["sha"].as_str().expect("sha");
+        assert!(ledger.contains(&sha[..7]), "{ledger}");
+    }
+}
+
+#[test]
+fn parked_task_has_no_task_end() {
+    let fx = two_task_fixture();
+    let effects: Vec<Effect> = vec![Box::new(|_| "did nothing".to_string())];
+    let runner = Tagged::new(scripted_auto(effects), 30_000);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.build_stage().expect("task 1");
+    });
+    assert_eq!(events(&lines, "task.start").len(), 1, "{lines:?}");
+    assert!(events(&lines, "task.end").is_empty(), "{lines:?}");
+    assert_eq!(events(&lines, "park").len(), 1, "{lines:?}");
+}
+
+#[test]
+fn task_start_repeats_when_the_task_is_re_entered() {
+    let fx = two_task_fixture();
+    let effects: Vec<Effect> = vec![
+        Box::new(|_| "did nothing".to_string()),
+        change_effect("a.txt", 3),
+    ];
+    let runner = Tagged::new(scripted_auto(effects), 30_000);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.build_stage().expect("parks");
+        let mut board = Board::load(&fx.board_path).expect("load");
+        board
+            .find_mut("001")
+            .expect("job")
+            .set_stage(Stage::Build, None, true, 2.0)
+            .expect("stage");
+        board.save(&fx.board_path).expect("save");
+        e.build_stage().expect("task 1 again");
+    });
+    let starts = events(&lines, "task.start");
+    assert_eq!(starts.len(), 2, "{lines:?}");
+    assert!(starts.iter().all(|s| s["task"] == 1));
+    assert_eq!(events(&lines, "task.end").len(), 1, "{lines:?}");
+}
+
+#[test]
+fn task_start_title_is_one_line_and_capped() {
+    let fx = two_task_fixture();
+    std::fs::write(
+        &fx.plan_file,
+        format!("# P\n\n### Task 1: {}\n\nx\n", "x".repeat(400)),
+    )
+    .expect("plan");
+    let runner = Tagged::new(scripted_auto(vec![change_effect("a.txt", 3)]), 30_000);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.build_stage().expect("task 1");
+    });
+    let starts = events(&lines, "task.start");
+    assert_eq!(starts.len(), 1, "{lines:?}");
+    let title = starts[0]["title"].as_str().expect("title");
+    assert!(!title.contains('\n'));
+    assert!(title.chars().count() <= 300, "{}", title.len());
 }

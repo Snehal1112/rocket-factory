@@ -159,6 +159,66 @@ fn one_valid_commit_is_accepted_and_the_run_is_trimmed_and_capped() {
     assert!(spec.prompt.contains("new file:   a.txt"));
 }
 
+fn commit_done_lines(lines: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    lines
+        .iter()
+        .filter(|l| l["event"] == "commit.done")
+        .collect()
+}
+
+#[test]
+fn commit_done_is_logged_for_an_agent_commit() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let runner = scripted(vec![effect(|dir| {
+        commit_paths(dir, &["a.txt"], GOOD);
+        "done".to_string()
+    })]);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.commit_step(&wt, &request(&wt.base)).expect("step");
+    });
+    let done = commit_done_lines(&lines);
+    assert_eq!(done.len(), 1, "{lines:?}");
+    assert_eq!(done[0]["kind"], "task");
+    assert_eq!(done[0]["fallback"], false);
+    assert_eq!(
+        done[0]["sha"].as_str().expect("sha"),
+        fx.repo.tip(&wt.branch).expect("tip")
+    );
+}
+
+#[test]
+fn commit_done_marks_the_fallback() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let runner = scripted(vec![nothing(), nothing()]);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.commit_step(&wt, &request(&wt.base)).expect("step");
+    });
+    let done = commit_done_lines(&lines);
+    assert_eq!(done.len(), 1, "{lines:?}");
+    assert_eq!(done[0]["fallback"], true);
+}
+
+#[test]
+fn no_commit_done_when_nothing_is_staged() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    let runner = scripted(vec![]);
+    let e = fx.engine(&runner);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        e.commit_step(&wt, &request(&wt.base)).expect("step");
+    });
+    assert!(commit_done_lines(&lines).is_empty(), "{lines:?}");
+}
+
 #[test]
 fn a_split_into_two_commits_is_accepted() {
     let fx = Fixture::new();
