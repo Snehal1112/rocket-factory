@@ -1,0 +1,542 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Light: the panel floats on paper.
+ *
+ * This started as the base-luma "mist" scale copied verbatim from
+ * ../web/src/index.css. That scale put --background and --card both at pure
+ * white, so a panel was drawn by nothing but a 1.25:1 hairline and the page
+ * had no depth at all -- the whole surface read as one flat sheet. Dark had
+ * been given a real strategy (see .dark below); light was still the import.
+ *
+ * So light now has one too, and it is the inverse of dark's. Dark separates
+ * with edges because it cannot lower a panel below an already-dark ground.
+ * Light can: the ground drops to an off-white and the panels stay pure white
+ * on top of it, which is the step doing the work. Edges then reinforce rather
+ * than carry -- --border is up to 1.45:1, enough to draw a region.
+ *
+ * Every chrome token sits on one hue (225) at chroma <= 0.008. That ceiling
+ * is the lesson from an earlier pass that grounded the page in a green-cast
+ * paper and fought the component library on every surface: at this chroma the
+ * ground reads as cool paper and never as a colour. Saturation is spent only
+ * on the three things that mean something -- teal for identity, green for
+ * passed, red for failed.
+ *
+ * Contrast is measured, not eyeballed. Every pairing that actually occurs in
+ * the components clears WCAG AA: body text >= 4.5:1, control boundaries and
+ * state indicators >= 3:1. --input is deliberately much darker than --border
+ * because it is the only one of the two that bounds a control.
+ *
+ * The four text tokens are also matched *across* the themes, which is why
+ * their lightnesses are the odd numbers they are rather than round ones. The
+ * two scales used to be inverted against each other: primary text ran 19.11:1
+ * in light but 15.75:1 in dark, while secondary ran 5.98:1 light and 6.22:1
+ * dark -- so dark's body copy was weaker than light's and its secondary copy
+ * stronger, which is a large part of why the themes did not read as the same
+ * page. Each pair now lands on one figure, measured against --card:
+ *
+ *     --foreground / --card        17.34 light   17.33 dark
+ *     --muted-foreground / --card   6.10 light    6.10 dark
+ *     --term-foreground / --term   14.35 light   14.39 dark
+ *     --term-muted / --term         6.57 light    6.56 dark
+ *
+ * --card is the anchor because panels carry nearly all the text on this page.
+ * Contrast against --background then differs slightly per theme, unavoidably:
+ * light's card sits above its ground and dark's sits above a darker one, so
+ * the same ink cannot match on both surfaces at once.
+ *
+ * Run scripts/check-contrast.mjs after touching any of these. If you change
+ * one theme's value, change its partner, or the inversion comes back.
+ */
+:root {
+  /* Paper. --card sits above this; that step is the surface hierarchy. */
+  --background: oklch(0.984 0.0025 225);
+  --foreground: oklch(0.219 0.008 240);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.219 0.008 240);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.219 0.008 240);
+  /* Brand deep teal, for white text on a filled control. 6.5:1 on --card. */
+  --primary: oklch(0.47 0.085 190);
+  --primary-foreground: oklch(0.99 0 0);
+  /* Was hue 286 -- a stray violet the registry shipped, out of family with
+     every other token here. Folded into the 225 chrome hue. */
+  --secondary: oklch(0.955 0.003 225);
+  --secondary-foreground: oklch(0.25 0.01 235);
+  --muted: oklch(0.955 0.003 225);
+  /* The most-used token on the page. Darkened so it clears 4.5:1 on --muted
+     and --accent too, not just on the ground -- inline code chips and the
+     focused row both put it on a tinted surface. */
+  --muted-foreground: oklch(0.495 0.016 235);
+  --accent: oklch(0.945 0.006 225);
+  --accent-foreground: oklch(0.24 0.01 235);
+  --destructive: oklch(0.51 0.2 27);
+  /* Decorative: panel and table edges. Reinforces the surface step. */
+  --border: oklch(0.876 0.005 225);
+  /* Structural: the boundary of a control (search field, toggle groups).
+     WCAG 1.4.11 wants 3:1 for that, which is much darker than a panel edge
+     should ever be -- hence two tokens where the registry effectively had
+     one value in both. */
+  --input: oklch(0.657 0.008 225);
+  --ring: oklch(0.55 0.09 195);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.972 0.003 225);
+  --sidebar-foreground: oklch(0.219 0.008 240);
+  --sidebar-primary: oklch(0.47 0.085 190);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.945 0.006 225);
+  --sidebar-accent-foreground: oklch(0.24 0.01 235);
+  --sidebar-border: oklch(0.876 0.005 225);
+  --sidebar-ring: oklch(0.55 0.09 195);
+
+  /*
+   * Three additions the registry does not ship, all sitting on the same scale.
+   *
+   * --success pairs with the stock --destructive so a run has two verdicts
+   * that read the way every other product's do: green passed, red failed.
+   * They are the only saturated colour on the page apart from --primary, and
+   * they are never used for chrome -- no tinted borders, no tinted headings.
+   */
+  /* Darkened from 0.596. It has to clear 4.5:1 as *text* -- the "passed"
+     numeral, and the Pass pill's label sitting on its own 12%/20% wash --
+     which the registry green never did. As a tick fill it is simply a
+     deeper green, which loses nothing. */
+  --success: oklch(0.47 0.13 160);
+  --success-foreground: oklch(0.99 0 0);
+  /* Was 0.9, which is 1.35:1 on white -- the run strip read as an empty band
+     in light mode until something was recorded. Dark enough now to show the
+     shape of the run, while still clearly the absence of a verdict. */
+  --untested: oklch(0.78 0.006 225);
+
+  /*
+   * How much of the masthead stays standing once it pins -- its run strip and
+   * figures, everything above them having scrolled away. Written here by
+   * `usePinnedReadout` in masthead.tsx, and read by everything that has to
+   * clear it: the checks toolbar, the rail, and every `scroll-mt` anchor.
+   *
+   * 0px is the honest default rather than a guess at the real figure. It is
+   * what holds for one frame before the layout effect measures, and what
+   * holds for good below sm, where the masthead does not pin. A guess here
+   * would push every anchor down by a band that is not there.
+   */
+  --pin-h: 0px;
+
+  /*
+   * Shell transcripts. These used to be inverted -- a near-black block in
+   * light mode, on the argument that a tester is comparing them against a real
+   * terminal. In practice it was the one thing on the page that did not belong
+   * to the theme: a hole punched through white paper, twenty-odd times per
+   * screen, with its own edge treatment and its own idea of what ink is.
+   *
+   * So light gets a real light transcript, built the same way every other
+   * surface here is. The block is a *well*: where a panel steps up off the
+   * ground to pure white, a transcript steps down off the panel. That is the
+   * inverse of the surface move one level out, so the page reads as three
+   * consistent depths -- paper, panel, well -- rather than two plus an
+   * exception.
+   *
+   * It stays on the 225-ish chrome hue at chroma <= 0.008 like the rest of
+   * the chrome, so it is a cool grey and never a colour. The border is
+   * stronger than --border because this edge has to survive at 12.5px inside
+   * an already-bordered card, where a hairline would dissolve.
+   *
+   * Ink is near-full-strength foreground for a command and a genuinely muted
+   * grey for output, so the two tones stay as far apart as they were on the
+   * dark block -- that distinction is what tells a tester what they type from
+   * what they should see back.
+   */
+  --term: oklch(0.958 0.005 228);
+  --term-foreground: oklch(0.245 0.012 240);
+  --term-muted: oklch(0.45 0.014 235);
+  --term-border: oklch(0.842 0.008 228);
+
+  --scrollbar-thumb: oklch(0.79 0.007 225);
+  --scrollbar-thumb-hover: oklch(0.63 0.012 225);
+}
+
+/*
+ * Dark is not the light scale inverted, and it is deliberately not the shape
+ * this file shipped with first. That version put --card a full 0.070 lightness
+ * above --background with borders at 10% white, so every panel was a pale grey
+ * slab and the edges did nothing -- the flat, washed look of a dated dark mode.
+ *
+ * This one separates with edges instead of fill. Panels sit 0.02 above the
+ * ground, the border is strong enough to actually draw the region, and a
+ * transcript sits at ground level rather than punching a black hole through a
+ * lighter card. The whole surface reads like a terminal the page is part of.
+ */
+.dark {
+  --background: oklch(0.145 0.004 220);
+  --foreground: oklch(0.968 0.004 197);
+  --card: oklch(0.174 0.005 220);
+  --card-foreground: oklch(0.968 0.004 197);
+  --popover: oklch(0.192 0.006 220);
+  --popover-foreground: oklch(0.968 0.004 197);
+  /* Brand teal #0FA89A, carrying ink text the way the mark does. */
+  --primary: oklch(0.72 0.121 180);
+  --primary-foreground: oklch(0.166 0.02 190);
+  --secondary: oklch(0.232 0.006 220);
+  --secondary-foreground: oklch(0.968 0.004 197);
+  --muted: oklch(0.222 0.006 220);
+  --muted-foreground: oklch(0.659 0.011 213);
+  --accent: oklch(0.246 0.007 220);
+  --accent-foreground: oklch(0.965 0.003 197);
+  --destructive: oklch(0.706 0.166 20);
+  /* The load-bearing value of this theme: strong enough that a panel is
+     drawn by its outline, not by being paler than what is behind it. */
+  --border: oklch(1 0 0 / 14%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.72 0.121 180);
+  --sidebar: oklch(0.174 0.005 220);
+  --sidebar-foreground: oklch(0.968 0.004 197);
+  --sidebar-primary: oklch(0.72 0.121 180);
+  --sidebar-primary-foreground: oklch(0.166 0.02 190);
+  --sidebar-accent: oklch(0.246 0.007 220);
+  --sidebar-accent-foreground: oklch(0.965 0.003 197);
+  --sidebar-border: oklch(1 0 0 / 14%);
+  --sidebar-ring: oklch(0.72 0.121 180);
+
+  --success: oklch(0.782 0.166 162);
+  --success-foreground: oklch(0.19 0.035 165);
+  --untested: oklch(0.315 0.007 220);
+
+  /* Level with --background, not below it. A transcript is the natural
+     ground of this page rather than a hole cut into a lighter panel; the
+     border is what tells you where it starts. */
+  --term: oklch(0.145 0.004 220);
+  --term-foreground: oklch(0.893 0.005 197);
+  --term-muted: oklch(0.667 0.011 213);
+  --term-border: oklch(1 0 0 / 13%);
+
+  --scrollbar-thumb: oklch(1 0 0 / 20%);
+  --scrollbar-thumb-hover: oklch(1 0 0 / 34%);
+}
+
+@theme inline {
+  /*
+   * One family for the whole page. JetBrains Mono carries the prose as well as
+   * the commands, so a heading, a note and the transcript under it all sit on
+   * the same advance width and the page reads as one surface with the terminal
+   * it describes.
+   *
+   * Both tokens deliberately resolve to the same stack. `font-sans` and
+   * `font-mono` are kept as separate names because the vendored components in
+   * src/components/ui/ reference them and must stay byte-identical to the
+   * registry -- they are synonyms here, not two faces.
+   */
+  --font-sans: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, "Menlo",
+    monospace;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular,
+    "Menlo", monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-untested: var(--untested);
+
+  --color-term: var(--term);
+  --color-term-foreground: var(--term-foreground);
+  --color-term-muted: var(--term-muted);
+  --color-term-border: var(--term-border);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  /*
+   * outline-ring, not outline-ring/50. This is the fallback focus outline for
+   * anything that does not style its own, and at half strength it measured
+   * about 1.5:1 against the page -- under the 3:1 WCAG asks of a focus
+   * indicator, and in practice invisible. Full strength is 4.4:1.
+   */
+  * {
+    @apply border-border outline-ring;
+  }
+  /*
+   * Every journey link on the page is a plain `<a href="#suite-K">`, in the
+   * rail and in the run strip, so the browser owns that scroll and the only
+   * place to ask for it to be animated is here. Without this the page hard
+   * cuts, which on a document this tall reads as a different page rather than
+   * a move within one -- there is no shared landmark between check 12 and
+   * check 190 to tell you which way you went.
+   *
+   * The reduced-motion block at the end of this file resets it to `auto`, so
+   * this is the one motion declaration on the page that needs no guard of its
+   * own. Section targets carry their own `scroll-mt`, which already clears the
+   * pinned masthead, so no `scroll-padding-top` belongs here.
+   */
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    /*
+     * Grayscale antialiasing, pinned for both themes rather than left to the
+     * browser.
+     *
+     * Dark mode gets reported as looking heavier than light. Measured, nothing
+     * in the page differs: across eleven elements every computed font value
+     * (family, size, weight, stretch, tracking, variation settings, smoothing)
+     * is identical between themes, rendered advances match, and the glyph core
+     * pixel counts for the same paragraph come out 57,177 light vs 56,877 dark
+     * -- half a percent apart, i.e. the same rasterisation. The apparent weight
+     * is halation: light strokes bloom on a dark ground on an emissive display.
+     *
+     * This declaration is therefore a precaution, not a measured fix. Headless
+     * Chrome disables LCD subpixel text, so the one difference it could not
+     * rule out is a real display where light mode gets subpixel antialiasing
+     * and dark mode does not -- which would genuinely change apparent weight.
+     * Pinning grayscale removes that possibility for the cost of a sliver of
+     * weight in light. Keep it unscoped: applying it only to .dark would make
+     * the themes differ deliberately instead of accidentally.
+     */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Redundant against a fixed-advance face, but kept so the rule survives
+       any future fallback down the stack to a proportional system font. */
+    font-variant-numeric: tabular-nums;
+    /*
+     * Ligatures are off for the whole document, not just for code. Now that
+     * the page is set in JetBrains Mono throughout, an `->` or a `!=` in a
+     * heading or a note would be composed into a glyph the tester cannot type
+     * back, exactly as it would inside a transcript.
+     */
+    font-variant-ligatures: none;
+    /*
+     * JetBrains Mono runs wide. A touch of negative tracking pulls a line of
+     * prose back toward a readable measure without shrinking the type, which
+     * matters here because a tester reads a lot of `notes`.
+     */
+    letter-spacing: -0.011em;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  /*
+   * JetBrains Mono ships coding ligatures on by default, and `body` above
+   * switches them off document-wide. These selectors are restated so a nested
+   * rule that re-enables ligatures can never reach the elements that actually
+   * carry a command or an error message -- there, the glyphs have to match the
+   * characters a tester will type or read back, and `!=` must stay two.
+   *
+   * They also reset the prose tracking: an expected line is compared column
+   * for column against a terminal, so it is set at the face's natural width.
+   */
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono {
+    font-variant-ligatures: none;
+    letter-spacing: normal;
+  }
+
+  /*
+   * Scrollbars: a thin rounded thumb that stays invisible until you are
+   * actually over the region that scrolls.
+   *
+   * The gutter is always reserved and only the thumb's colour changes, so
+   * nothing reflows when it appears -- a scrollbar that takes up space on
+   * hover would shift a whole table sideways under the reader's cursor.
+   *
+   * The transparent border plus `background-clip: content-box` is what makes
+   * the thumb narrower than the track it sits in, which is the difference
+   * between this and a plain thin scrollbar.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  *:hover,
+  *:focus-within {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+  :hover > ::-webkit-scrollbar-thumb,
+  :hover::-webkit-scrollbar-thumb,
+  :focus-within::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}
+
+@layer components {
+  /*
+   * The structural layer: anything that is an identifier or a label rather
+   * than language -- journey letters, case ids, counts, surface tags, the
+   * small captions over a transcript, rail section headings.
+   *
+   * Sentence case, never all-caps. Shouting them as well would be two devices
+   * doing one job, and a tracked-out caps eyebrow over every heading is the
+   * single most generic move available here.
+   *
+   * The page is now set in one face throughout, so a label is no longer marked
+   * out by its family. Size and the positive tracking do that work instead:
+   * these run small and slightly open against body prose set at -0.011em.
+   */
+  .label {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.015em;
+    font-variant-ligatures: none;
+  }
+
+  /*
+   * Shell transcripts. JetBrains Mono has a tall x-height and generous
+   * sidebearings, so it wants more leading than a 1.5 default -- 1.7 keeps
+   * stacked output lines from crowding without turning a 12-line curl block
+   * into a scroll.
+   *
+   * `font-variant-ligatures: none` is deliberate. JetBrains Mono ships coding
+   * ligatures on by default, which would render `!=` and `->` as glyphs that
+   * do not exist in the text a tester is comparing against their terminal.
+   * Expected output has to be transcribable character for character.
+   */
+  .transcript {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.7;
+    font-variant-ligatures: none;
+    font-variant-numeric: normal;
+    /* Undo the prose tracking. Output is compared column for column against a
+       real terminal, so it is set at the face's natural advance width. */
+    letter-spacing: normal;
+    tab-size: 2;
+  }
+
+  /*
+   * One block per logical line, so a line too long for the column wraps with
+   * a hanging indent instead of either scrolling out of view or folding back
+   * to column zero where it reads as a new command. 123 of the 703 lines in
+   * this playbook are over 78 characters, so this is the common case, not an
+   * edge one. `pre-wrap` keeps each line's own leading whitespace intact.
+   *
+   * IMPORTANT: this belongs on an inner element that carries no padding
+   * utilities, never on the same element as `.transcript`. The hang is a
+   * padding/text-indent pair, and Tailwind utilities sit in a later cascade
+   * layer -- a `px-*` alongside it wins the padding half, keeps the negative
+   * text-indent, and drags the first line clean out of the box.
+   */
+  .transcript-line {
+    display: block;
+    white-space: pre-wrap;
+    padding-left: 3ch;
+    text-indent: -3ch;
+    overflow-wrap: break-word;
+  }
+
+  /*
+   * The one piece of non-user-triggered motion on the page: a gutter segment
+   * swells as it fills, so recording a verdict from the keyboard is visible
+   * even when your eyes are on the terminal rather than the cursor.
+   */
+  .verdict-settle {
+    animation: verdict-settle 260ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  }
+
+  /*
+   * The focus ring for hand-rolled buttons -- the 208 case disclosures, the
+   * reference-panel triggers, Copy, Back to top. The registry components ship
+   * their own focus treatment; these did not, so their only cue was the
+   * browser default tinted by the rule above.
+   *
+   * A real `outline` rather than a ring utility: it follows the element's own
+   * shape, needs no offset colour to match whichever surface it sits on, and
+   * unlike a box-shadow it survives forced-colors mode.
+   */
+  .focus-ring {
+    outline: none;
+  }
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+@keyframes verdict-settle {
+  0% {
+    transform: scaleY(0.4);
+    opacity: 0.5;
+  }
+  60% {
+    transform: scaleY(1.12);
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .verdict-settle {
+    animation: none;
+  }
+  /* biome-ignore-start lint/complexity/noImportantStyles: Tailwind's own
+     transition and animation utilities live in a later cascade layer than
+     anything declarable here, so !important is the only way a base-layer
+     reduced-motion reset can win. This is the documented pattern. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* biome-ignore-end lint/complexity/noImportantStyles: see above. */
+}
