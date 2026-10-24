@@ -54,7 +54,7 @@ The factory runs on Linux and macOS (see the note at the end). It is built from 
 
 If you have no Rust yet, install it with `rustup` from https://rustup.rs and open a new terminal.
 
-How the factory logs in to Claude: it runs `claude` as you, with your normal Claude login (subscription). It removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the agent environment, so a key in your shell does not silently bill the API. To allow API billing on purpose, set `FACTORY_ALLOW_API_KEY=1`.
+How the factory logs in to Claude: it runs `claude` as you, with your normal Claude login (subscription). It removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the agent environment, so a key in your shell does not silently bill the API. To allow API billing on purpose for every project, set `FACTORY_ALLOW_API_KEY=1`. To do it for one project, set `allow_api_key = true` in its `project.toml` (the key comes from `ANTHROPIC_API_KEY`), or set `api_key_file = "~/.factory/keys/<name>.key"` to give that project its own key. Make the file readable only by you with `chmod 600`. `allow_api_key = false` keeps a project on the login even when `FACTORY_ALLOW_API_KEY=1` is set.
 
 Check that `claude` works on its own before you go on:
 
@@ -124,7 +124,7 @@ You do not need to set any of these for a normal setup. They exist for special c
 |---|---|---|
 | `FACTORY_HOME` | `~/.factory` | Moves the factory home. Set it to try the factory in a scratch folder. |
 | `FACTORY_BIN` | the `factory` file next to `factoryd` | Tells `factoryd` and the `/factory` command where the `factory` binary is. |
-| `FACTORY_ALLOW_API_KEY` | off | Set to `1` to let agents use `ANTHROPIC_API_KEY` (API billing). |
+| `FACTORY_ALLOW_API_KEY` | off | Set to `1` to let agents use `ANTHROPIC_API_KEY` (API billing). A project's `allow_api_key` and `api_key_file` settings override it. |
 | `FACTORY_LOCK_WAIT` | 15 | Seconds a command waits for a busy lock before it gives up. |
 
 Example, to try the factory without touching your real home:

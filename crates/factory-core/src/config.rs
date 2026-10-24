@@ -100,6 +100,12 @@ pub struct Config {
     pub cache_ttl: Option<String>,
     /// The agent CLI for every run, `claude` or `codex`. `None` means `claude`.
     pub agent_cli: Option<String>,
+    /// Let this project's Claude agents bill the API key from the environment. `Some(false)`
+    /// always strips the key. `None` leaves the choice to `FACTORY_ALLOW_API_KEY`.
+    pub allow_api_key: Option<bool>,
+    /// A file that holds the Anthropic API key for this project only. Absolute or `~/`. The key
+    /// itself is never stored in the config.
+    pub api_key_file: Option<String>,
     /// File log level: error, warn, info, debug or trace. `None` means info.
     pub log_level: Option<String>,
     /// Give builder runs their own permission mode and tool allowlist. On by default.
@@ -152,6 +158,8 @@ impl Default for Config {
             require_tests: false,
             cache_ttl: None,
             agent_cli: None,
+            allow_api_key: None,
+            api_key_file: None,
             log_level: None,
             builder_permissions: true,
             builder_allow: Vec::new(),
@@ -251,6 +259,25 @@ impl Config {
                 "agent_cli must be \"claude\" or \"codex\" when it is set".into(),
             ));
         }
+        if let Some(file) = cfg.api_key_file.as_deref() {
+            if !(file.starts_with("~/") || Path::new(file).is_absolute()) {
+                return Err(CoreError::Config(
+                    "api_key_file must be an absolute path or start with ~/".into(),
+                ));
+            }
+            if cfg.allow_api_key == Some(false) {
+                return Err(CoreError::Config(
+                    "api_key_file cannot be set while allow_api_key is false".into(),
+                ));
+            }
+        }
+        if cfg.agent_cli() == "codex"
+            && (cfg.allow_api_key == Some(true) || cfg.api_key_file.is_some())
+        {
+            return Err(CoreError::Config(
+                "allow_api_key and api_key_file need agent_cli = \"claude\"".into(),
+            ));
+        }
         if cfg
             .log_level
             .as_deref()
@@ -290,6 +317,13 @@ impl Config {
     pub fn try_load(path: &Path) -> Result<Config, CoreError> {
         let text = std::fs::read_to_string(path).map_err(|e| CoreError::io(path, e))?;
         Config::parse(&text)
+    }
+
+    /// The API key file with a leading `~` expanded. `None` when `api_key_file` is unset, or when `~` is used and `HOME` is unset or empty.
+    /// It does not check that the file exists.
+    pub fn api_key_path(&self) -> Option<PathBuf> {
+        let path = self.api_key_file.as_deref()?;
+        expand_home(path, std::env::var("HOME").ok().as_deref())
     }
 
     /// The KB folder with a leading `~` expanded. `None` when `kb_path` is unset, or when `~` is used and `HOME` is unset or empty.
@@ -693,6 +727,59 @@ mod tests {
             let err = Config::parse(text).expect_err("must fail");
             assert!(err.to_string().contains("agent_cli must be"), "{err}");
         }
+    }
+
+    #[test]
+    fn api_key_settings_are_unset_by_default() {
+        let cfg = Config::default();
+        assert_eq!(cfg.allow_api_key, None);
+        assert_eq!(cfg.api_key_file, None);
+        assert_eq!(cfg.api_key_path(), None);
+    }
+
+    #[test]
+    fn api_key_settings_parse() {
+        let cfg = Config::parse("allow_api_key = true").expect("flag parses");
+        assert_eq!(cfg.allow_api_key, Some(true));
+        let cfg = Config::parse("allow_api_key = false").expect("flag parses");
+        assert_eq!(cfg.allow_api_key, Some(false));
+        let cfg = Config::parse("api_key_file = \"/keys/rocket.key\"").expect("file parses");
+        assert_eq!(cfg.api_key_path(), Some(PathBuf::from("/keys/rocket.key")));
+        let cfg = Config::parse("api_key_file = \"~/keys/rocket.key\"").expect("tilde parses");
+        assert!(cfg.api_key_file.is_some());
+    }
+
+    #[test]
+    fn api_key_file_must_be_an_absolute_or_home_path() {
+        for text in [
+            "api_key_file = \"\"",
+            "api_key_file = \"  \"",
+            "api_key_file = \"keys/rocket.key\"",
+        ] {
+            let err = Config::parse(text).expect_err("must fail");
+            assert!(err.to_string().contains("api_key_file must be"), "{err}");
+        }
+    }
+
+    #[test]
+    fn api_key_file_conflicts_with_a_denied_key() {
+        let err = Config::parse("allow_api_key = false\napi_key_file = \"/k\"")
+            .expect_err("contradiction");
+        assert!(err.to_string().contains("api_key_file"), "{err}");
+        Config::parse("allow_api_key = true\napi_key_file = \"/k\"").expect("agrees");
+    }
+
+    #[test]
+    fn api_key_settings_are_claude_only() {
+        for text in [
+            "agent_cli = \"codex\"\nallow_api_key = true",
+            "agent_cli = \"codex\"\napi_key_file = \"/k\"",
+        ] {
+            let err = Config::parse(text).expect_err("codex has no Anthropic key");
+            assert!(err.to_string().contains("agent_cli = \"claude\""), "{err}");
+        }
+        Config::parse("agent_cli = \"codex\"\nallow_api_key = false").expect("denying is fine");
+        Config::parse("agent_cli = \"claude\"\nallow_api_key = true").expect("claude is fine");
     }
 
     #[test]

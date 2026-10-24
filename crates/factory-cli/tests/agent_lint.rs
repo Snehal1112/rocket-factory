@@ -514,8 +514,39 @@ fn docs_describe_the_new_design() -> TestResult {
         ],
     )?;
     let root_doc = read("CLAUDE.md")?;
-    require_all(&root_doc, "CLAUDE.md", &["docs/reference/software-factory.md"])?;
+    require_all(
+        &root_doc,
+        "CLAUDE.md",
+        &["docs/reference/software-factory.md"],
+    )?;
     forbid_all(&root_doc, "CLAUDE.md", &["factory-ctl"])
+}
+
+#[test]
+fn docs_describe_the_per_project_api_key() -> TestResult {
+    let reference = read("docs/reference/project-toml-reference.md")?;
+    require_all(
+        &reference,
+        "project-toml-reference.md",
+        &[
+            "`allow_api_key`",
+            "`api_key_file`",
+            "chmod 600",
+            "never falls back",
+        ],
+    )?;
+    let readme = read("README.md")?;
+    require_all(
+        &readme,
+        "README.md",
+        &["`allow_api_key = true`", "`api_key_file"],
+    )?;
+    let pipeline = read("docs/reference/software-factory.md")?;
+    require_all(
+        &pipeline,
+        "software-factory.md",
+        &["`allow_api_key = true`", "`api_key_file`"],
+    )
 }
 
 #[test]

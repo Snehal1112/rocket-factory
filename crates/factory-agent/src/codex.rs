@@ -103,6 +103,7 @@ impl CodexRunner {
             } else {
                 CODEX_API_VARS.to_vec()
             },
+            set_env: Vec::new(),
             honor_max_turns: false,
             fail_on_exit_after_result: true,
             mid_run_budget: false,

@@ -1,6 +1,7 @@
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
-use crate::child::{drive, ChildConfig};
+use crate::child::{drive, ChildConfig, Secret};
 use crate::events::EventSink;
 use crate::run::AgentRun;
 use crate::runner::AgentRunner;
@@ -15,6 +16,9 @@ pub enum AgentError {
     Pipe,
     #[error("waiting for the agent process failed: {0}")]
     Wait(std::io::Error),
+    /// The text never holds the key itself.
+    #[error("{0}")]
+    ApiKey(String),
 }
 
 /// Variables that make `claude` bill an API account instead of the subscription login.
@@ -27,6 +31,51 @@ fn api_key_allowed_by_env() -> bool {
     std::env::var(ALLOW_API_KEY_VAR).is_ok_and(|v| v == "1")
 }
 
+/// Where a project's Claude agents get their API credentials from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ApiKeySource {
+    /// The subscription login, unless `FACTORY_ALLOW_API_KEY=1` is set in the environment.
+    #[default]
+    Default,
+    /// Always the subscription login. The key variables are removed.
+    Deny,
+    /// The key from the environment. The run fails when there is none.
+    Env,
+    /// The key in this file, for this project's agents only.
+    File(PathBuf),
+}
+
+/// The variables to remove from the child and the ones to set.
+type KeyEnv = (Vec<&'static str>, Vec<(&'static str, Secret)>);
+
+/// Reads one key from `path`. The errors name the file, never the key.
+fn read_key_file(path: &Path) -> Result<Secret, AgentError> {
+    let shown = path.display();
+    let meta = std::fs::metadata(path)
+        .map_err(|e| AgentError::ApiKey(format!("cannot read api_key_file {shown}: {e}")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err(AgentError::ApiKey(format!(
+                "api_key_file {shown} is readable by group or others, run chmod 600 on it"
+            )));
+        }
+    }
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| AgentError::ApiKey(format!("cannot read api_key_file {shown}: {e}")))?;
+    let key = text.trim();
+    if key.is_empty() {
+        return Err(AgentError::ApiKey(format!("api_key_file {shown} is empty")));
+    }
+    if key.contains(char::is_whitespace) {
+        return Err(AgentError::ApiKey(format!(
+            "api_key_file {shown} must hold a single line"
+        )));
+    }
+    Ok(Secret(key.to_string()))
+}
+
 /// Runs headless `claude -p` and reads its stream-json output.
 #[derive(Debug)]
 pub struct ClaudeRunner {
@@ -34,6 +83,7 @@ pub struct ClaudeRunner {
     caps: Caps,
     sink: EventSink,
     allow_api_key: bool,
+    key_source: ApiKeySource,
 }
 
 impl ClaudeRunner {
@@ -43,6 +93,44 @@ impl ClaudeRunner {
             caps,
             sink,
             allow_api_key: api_key_allowed_by_env(),
+            key_source: ApiKeySource::Default,
+        }
+    }
+
+    /// Sets where this runner's agents get their credentials. The default follows the environment.
+    #[must_use]
+    pub fn with_api_key_source(mut self, source: ApiKeySource) -> ClaudeRunner {
+        self.key_source = source;
+        self
+    }
+
+    /// The variables to remove from the child and the ones to set, for this run.
+    fn key_env(&self, spec: &AgentSpec) -> Result<KeyEnv, AgentError> {
+        match &self.key_source {
+            ApiKeySource::Default if self.allow_api_key => Ok((Vec::new(), Vec::new())),
+            ApiKeySource::Default | ApiKeySource::Deny => {
+                Ok((API_BILLING_VARS.to_vec(), Vec::new()))
+            }
+            ApiKeySource::Env => {
+                let has_credential = API_BILLING_VARS.iter().any(|var| {
+                    let in_spec = spec.env.iter().any(|(k, v)| k == var && !v.is_empty());
+                    in_spec || std::env::var(var).is_ok_and(|v| !v.is_empty())
+                });
+                if !has_credential {
+                    return Err(AgentError::ApiKey(
+                        "allow_api_key is on but ANTHROPIC_API_KEY is not set in the environment"
+                            .to_string(),
+                    ));
+                }
+                Ok((Vec::new(), Vec::new()))
+            }
+            ApiKeySource::File(path) => {
+                let key = read_key_file(path)?;
+                Ok((
+                    vec!["ANTHROPIC_AUTH_TOKEN"],
+                    vec![("ANTHROPIC_API_KEY", key)],
+                ))
+            }
         }
     }
 
@@ -54,16 +142,14 @@ impl ClaudeRunner {
     }
 
     fn run_inner(&self, spec: &AgentSpec) -> Result<AgentRun, AgentError> {
+        let (remove_env, set_env) = self.key_env(spec)?;
         let cfg = ChildConfig {
             program: self.program.clone(),
             args: spec.args(&self.caps),
             stdin: spec.stdin_prompt(&self.caps),
             label: "claude".to_string(),
-            remove_env: if self.allow_api_key {
-                Vec::new()
-            } else {
-                API_BILLING_VARS.to_vec()
-            },
+            remove_env,
+            set_env,
             honor_max_turns: true,
             fail_on_exit_after_result: false,
             mid_run_budget: true,

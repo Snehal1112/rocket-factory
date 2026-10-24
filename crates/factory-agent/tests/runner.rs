@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use factory_agent::{
-    AgentRun, AgentRunner, AgentSpec, Caps, ClaudeRunner, EventSink, FakeRunner, SessionHook,
-    StopReason,
+    AgentRun, AgentRunner, AgentSpec, ApiKeySource, Caps, ClaudeRunner, EventSink, FakeRunner,
+    SessionHook, StopReason,
 };
 
 /// A hook that records every id it gets.
@@ -416,4 +416,130 @@ fn api_key_reaches_the_child_only_when_allowed_on_purpose() {
 fn other_variables_still_reach_the_child() {
     let got = env_report("HARNESS_GATE", &[("HARNESS_GATE", "0")], false);
     assert_eq!(got, "0");
+}
+
+fn key_report(
+    source: ApiKeySource,
+    var: &str,
+    spec_env: &[(&str, &str)],
+) -> factory_agent::AgentRun {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let mut s = AgentSpec::new("001", "builder", tmp.path(), &format!("env\n{var}"));
+    s.env = spec_env
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    runner(EventSink::null("001"))
+        .with_api_key_source(source)
+        .run(&s)
+}
+
+fn key_file(dir: &std::path::Path, text: &str, mode: u32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("anthropic.key");
+    std::fs::write(&path, text).expect("write key");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    path
+}
+
+#[test]
+fn a_denied_key_never_reaches_the_child() {
+    let run = key_report(
+        ApiKeySource::Deny,
+        "ANTHROPIC_API_KEY",
+        &[("ANTHROPIC_API_KEY", "sk-test")],
+    );
+    assert_eq!(run.result_text, "<unset>");
+}
+
+#[test]
+fn the_env_source_passes_the_key_through() {
+    let run = key_report(
+        ApiKeySource::Env,
+        "ANTHROPIC_API_KEY",
+        &[("ANTHROPIC_API_KEY", "sk-test")],
+    );
+    assert_eq!(run.stop_reason, StopReason::Done);
+    assert_eq!(run.result_text, "sk-test");
+}
+
+#[test]
+fn the_env_source_fails_closed_without_a_key() {
+    if std::env::var_os("ANTHROPIC_API_KEY").is_some()
+        || std::env::var_os("ANTHROPIC_AUTH_TOKEN").is_some()
+    {
+        return;
+    }
+    let run = key_report(ApiKeySource::Env, "ANTHROPIC_API_KEY", &[]);
+    assert_eq!(run.stop_reason, StopReason::Failed);
+    let err = run.error.expect("error");
+    assert!(
+        err.contains("allow_api_key") && err.contains("ANTHROPIC_API_KEY"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_key_file_sets_the_key_for_this_run_only() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = key_file(tmp.path(), "sk-file\n", 0o600);
+    let run = key_report(ApiKeySource::File(path), "ANTHROPIC_API_KEY", &[]);
+    assert_eq!(run.stop_reason, StopReason::Done);
+    assert_eq!(run.result_text, "sk-file");
+}
+
+#[test]
+fn a_key_file_beats_a_key_in_the_spec_env_and_drops_the_auth_token() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = key_file(tmp.path(), "sk-file", 0o400);
+    let spec_env = [
+        ("ANTHROPIC_API_KEY", "sk-other"),
+        ("ANTHROPIC_AUTH_TOKEN", "tok"),
+    ];
+    let run = key_report(
+        ApiKeySource::File(path.clone()),
+        "ANTHROPIC_API_KEY",
+        &spec_env,
+    );
+    assert_eq!(run.result_text, "sk-file");
+    let run = key_report(ApiKeySource::File(path), "ANTHROPIC_AUTH_TOKEN", &spec_env);
+    assert_eq!(run.result_text, "<unset>");
+}
+
+#[test]
+fn a_bad_key_file_fails_the_run_without_leaking_the_key() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let missing = tmp.path().join("nope.key");
+    let wide = key_file(tmp.path(), "sk-secret-value", 0o644);
+    let empty = {
+        let dir = tempfile::tempdir().expect("tmp2");
+        let p = key_file(dir.path(), "  \n", 0o600);
+        (dir, p)
+    };
+    let multi = {
+        let dir = tempfile::tempdir().expect("tmp3");
+        let p = key_file(dir.path(), "sk-one\nsk-two\n", 0o600);
+        (dir, p)
+    };
+    let cases = [
+        (missing, "cannot read"),
+        (wide, "chmod 600"),
+        (empty.1.clone(), "is empty"),
+        (multi.1.clone(), "single line"),
+    ];
+    for (path, want) in cases {
+        let run = key_report(ApiKeySource::File(path), "ANTHROPIC_API_KEY", &[]);
+        assert_eq!(run.stop_reason, StopReason::Failed, "{want}");
+        let err = run.error.expect("error");
+        assert!(err.contains(want), "{err}");
+        assert!(!err.contains("sk-"), "{err}");
+    }
+}
+
+#[test]
+fn the_runner_debug_output_holds_no_key() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let path = key_file(tmp.path(), "sk-secret-value", 0o600);
+    let r = runner(EventSink::null("001")).with_api_key_source(ApiKeySource::File(path));
+    assert!(!format!("{r:?}").contains("sk-secret-value"));
 }

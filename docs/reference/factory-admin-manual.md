@@ -220,7 +220,7 @@ Do not run two supervisors against one home. A changed daily budget is read on t
 | `FACTORY_BIN` | Explicit `factory` binary for child runs started by `factoryd`. |
 | `FACTORY_LOG` | Override the configured log level. |
 | `FACTORY_LOCK_WAIT` | Seconds to wait for a project lock; default `15`. |
-| `FACTORY_ALLOW_API_KEY=1` | Allow agent API-key billing instead of requiring the normal logged-in session. |
+| `FACTORY_ALLOW_API_KEY=1` | Allow agent API-key billing instead of requiring the normal logged-in session. A project's `allow_api_key` and `api_key_file` settings override it. |
 | `<home>/config.toml` | Supervisor concurrency, listener, and daily budget. |
 | `<home>/projects/<name>/project.toml` | Repository registration, agent provider, models, checks, and project settings. |
 | `<home>/projects/<name>/state/` | Board, jobs, events, and job ledgers. |

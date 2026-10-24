@@ -38,6 +38,15 @@ pub trait AgentStream {
     }
 }
 
+/// A value that must never be printed, so its `Debug` output hides it.
+pub(crate) struct Secret(pub(crate) String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(<redacted>)")
+    }
+}
+
 /// What differs between the runners: the command line and a few switches.
 #[derive(Debug)]
 pub(crate) struct ChildConfig {
@@ -48,6 +57,8 @@ pub(crate) struct ChildConfig {
     pub label: String,
     /// Variables removed from the child after the spec env is applied.
     pub remove_env: Vec<&'static str>,
+    /// Variables set on the child after the removals, such as a key read from a file.
+    pub set_env: Vec<(&'static str, Secret)>,
     pub honor_max_turns: bool,
     /// Fail a run whose CLI exits nonzero after it already printed a result.
     pub fail_on_exit_after_result: bool,
@@ -90,6 +101,9 @@ pub(crate) fn drive<S: AgentStream>(
     // Removed after the spec env, so nothing can bring the variables back by accident.
     for var in &cfg.remove_env {
         command.env_remove(var);
+    }
+    for (var, value) in &cfg.set_env {
+        command.env(var, &value.0);
     }
     let mut child = command
         .spawn()

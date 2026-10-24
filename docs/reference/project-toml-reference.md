@@ -61,6 +61,8 @@ Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factor
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `agent_cli` | `"claude"` or `"codex"` | unset, which means `"claude"` | The CLI that runs every agent of the project. `"codex"` runs them through `codex exec --json`, with the limits in "Using Codex" in `docs/reference/software-factory.md`. Any other value makes the config invalid. `factory project add <path> --agent-cli codex` writes it with `gpt-5.6-luna` for the four model keys and no `cache_ttl`. |
+| `allow_api_key` | bool | unset, which follows `FACTORY_ALLOW_API_KEY` | Whether this project's Claude agents may bill the API key in the environment. `true` passes `ANTHROPIC_API_KEY` through and fails the run when none is set. `false` always removes the key, even when `FACTORY_ALLOW_API_KEY=1`. Needs `agent_cli = "claude"`. |
+| `api_key_file` | path | unset | A file that holds the Anthropic API key for this project only, so projects can use different keys. Absolute or starting with `~/`. The driver reads it at the start of every agent run and sets `ANTHROPIC_API_KEY` for that run. It implies `allow_api_key = true` and conflicts with `allow_api_key = false` and with `agent_cli = "codex"`. The file holds one line, and group and others must not be able to read it (`chmod 600`). A missing, empty, multi-line or readable-by-others file fails the run; it never falls back to the login. The key is never stored in `project.toml`, the log, the events or the ledger. |
 | `builder_model` | string | `"sonnet"` | `--model` for every builder run. Not blank. |
 | `reviewer_model` | string | `"sonnet"` | Reviewer model. Not blank. |
 | `reviewer_model_large` | string | unset | A stronger reviewer. Used when the diff is risky, or the round's changed lines are strictly above `reviewer_large_over_lines`. Unset turns the switch off. Not blank when set. |
@@ -239,7 +241,7 @@ Any problem in the layers gives a config where every path is risky and `degraded
   | `daily_budget_weighted` | none | above 0, a UTC-day total over all projects |
   | `draft_stale_hours` | 24 | above 0 |
 
-- Environment variables: `FACTORY_HOME`, `FACTORY_LOCK_WAIT` (seconds, default 15), `FACTORY_BIN` (the `factory` binary `factoryd` starts), `FACTORY_ALLOW_API_KEY=1` (let agents bill an API key instead of the login).
+- Environment variables: `FACTORY_HOME`, `FACTORY_LOCK_WAIT` (seconds, default 15), `FACTORY_BIN` (the `factory` binary `factoryd` starts), `FACTORY_ALLOW_API_KEY=1` (let agents bill an API key instead of the login; the `allow_api_key` setting overrides it per project).
 - Fixed in code, not configurable: turn limits (builder 120, reviewer 40, committer 40, KB 80), the tool allowlists, the series cap of 6 plans, the lease timings (30 minute TTL, 60 second heartbeat).
 
 ## Examples

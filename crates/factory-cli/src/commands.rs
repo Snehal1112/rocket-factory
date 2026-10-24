@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use factory_agent::{AgentRunner, Caps, ClaudeRunner, CodexRunner, EventSink};
+use factory_agent::{AgentRunner, ApiKeySource, Caps, ClaudeRunner, CodexRunner, EventSink};
 use factory_core::{
     outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage,
 };
@@ -232,9 +232,10 @@ impl CliCtx {
                 };
                 match runner_kind(cfg) {
                     AgentCli::Codex => Arc::new(CodexRunner::new("codex", sink)),
-                    AgentCli::Claude => {
-                        Arc::new(ClaudeRunner::new("claude", Caps::default(), sink))
-                    }
+                    AgentCli::Claude => Arc::new(
+                        ClaudeRunner::new("claude", Caps::default(), sink)
+                            .with_api_key_source(api_key_source(cfg)),
+                    ),
                 }
             }
         }
@@ -278,6 +279,22 @@ pub fn runner_kind(cfg: Option<&Config>) -> AgentCli {
     match cfg {
         Some(c) if c.agent_cli() == "codex" => AgentCli::Codex,
         _ => AgentCli::Claude,
+    }
+}
+
+/// Where the Claude agents of a config get their API credentials. No config means the default.
+pub fn api_key_source(cfg: Option<&Config>) -> ApiKeySource {
+    let Some(cfg) = cfg else {
+        return ApiKeySource::Default;
+    };
+    if let Some(raw) = cfg.api_key_file.as_deref() {
+        // A path that cannot be expanded stays as written, so the run fails instead of falling back.
+        return ApiKeySource::File(cfg.api_key_path().unwrap_or_else(|| PathBuf::from(raw)));
+    }
+    match cfg.allow_api_key {
+        Some(true) => ApiKeySource::Env,
+        Some(false) => ApiKeySource::Deny,
+        None => ApiKeySource::Default,
     }
 }
 
@@ -1026,6 +1043,23 @@ mod tests {
         assert_eq!(runner_kind(Some(&cfg)), AgentCli::Claude);
         cfg.agent_cli = Some("codex".to_string());
         assert_eq!(runner_kind(Some(&cfg)), AgentCli::Codex);
+    }
+
+    #[test]
+    fn api_key_source_follows_the_config() {
+        assert_eq!(api_key_source(None), ApiKeySource::Default);
+        let mut cfg = Config::default();
+        assert_eq!(api_key_source(Some(&cfg)), ApiKeySource::Default);
+        cfg.allow_api_key = Some(true);
+        assert_eq!(api_key_source(Some(&cfg)), ApiKeySource::Env);
+        cfg.allow_api_key = Some(false);
+        assert_eq!(api_key_source(Some(&cfg)), ApiKeySource::Deny);
+        cfg.allow_api_key = None;
+        cfg.api_key_file = Some("/keys/rocket.key".to_string());
+        assert_eq!(
+            api_key_source(Some(&cfg)),
+            ApiKeySource::File(PathBuf::from("/keys/rocket.key"))
+        );
     }
 
     #[test]
