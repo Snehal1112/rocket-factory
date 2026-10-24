@@ -1,0 +1,31 @@
+# Preset: Node.js or React project (Bun). Edit this file in ~/.factory/presets/node/ to change every project that uses it.
+risk_paths = [
+  "package.json",
+  "**/package.json",
+  "tsconfig*.json",
+  "**/tsconfig*.json",
+  "vite.config.*",
+  "**/vite.config.*",
+  "next.config.*",
+  "**/next.config.*",
+  ".env*",
+  "**/.env*",
+  "**/*auth*",
+  "**/*secret*",
+  "**/*credential*",
+  "**/Dockerfile",
+  ".github/**",
+]
+read_first = ["CLAUDE.md"]
+builder_rules = [
+  "Use `bun install --frozen-lockfile` and the project's own `package.json` scripts. If the project lacks the standard `typecheck`, `lint` and `test` scripts, add them first.",
+  "In React code, follow the rules of hooks, never use `any`, write accessible markup and test behaviour, not implementation.",
+]
+check_hints = ["bun run typecheck", "bun run lint", "bun test"]
+reviewer_rules = [
+  "Judge correctness, error handling (no unhandled promise rejections), type safety (no `any`), the rules of hooks, accessible markup, test quality and the project's own rules in CLAUDE.md.",
+]
+
+[[checks]]
+paths = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
+commands = ["bun run typecheck", "bun run lint", "bun test"]
