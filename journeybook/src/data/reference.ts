@@ -62,7 +62,7 @@ export const glossary: GlossaryRow[] = [
   },
   {
     term: "preset",
-    meaning: "A starter rule set for a language: `rust`, `go`, `ruby` or `csharp`.",
+    meaning: "A starter rule set for a language: `rust`, `go`, `ruby`, `csharp` or `node`.",
   },
   {
     term: "project",
