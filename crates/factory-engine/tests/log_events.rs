@@ -132,6 +132,76 @@ fn agent_run_logs_start_and_end() {
     assert!(pos("agent.start") < pos("agent.end"));
 }
 
+struct UsageRunner(common::ScriptedRunner, bool);
+
+impl factory_agent::AgentRunner for UsageRunner {
+    fn run(&self, spec: &factory_agent::AgentSpec) -> factory_agent::AgentRun {
+        let mut run = self.0.run(spec);
+        if spec.role == "builder" {
+            run.usage = factory_agent::Usage {
+                input_tokens: 10,
+                cache_creation_input_tokens: 34_419,
+                cache_read_input_tokens: 151_613,
+                output_tokens: 1_790,
+                cache_creation_1h_input_tokens: 0,
+            };
+            run.turns = 5;
+            run.start_ctx = 30_748;
+            run.end_ctx = 42_784;
+            if self.1 {
+                run.session_id = None;
+            }
+        }
+        run
+    }
+}
+
+#[test]
+fn agent_end_carries_usage_fields() {
+    let fx = common::Fixture::new();
+    // The engine counts rounds from 1, a new job starts at 0.
+    let round = fx.job().round.max(1);
+    let runner = UsageRunner(common::scripted_auto(builder_effects()), false);
+    let (res, lines) = factory_telemetry::capture("info", || fx.engine(&runner).build_stage());
+    res.expect("build");
+    let ends = events_named(&lines, "agent.end");
+    let end = ends
+        .iter()
+        .find(|l| l["role"] == "builder")
+        .expect("builder end");
+    assert_eq!(end["input"], 10);
+    assert_eq!(end["cache_creation"], 34_419);
+    assert_eq!(end["cache_read"], 151_613);
+    assert_eq!(end["output"], 1_790);
+    assert_eq!(end["turns"], 5);
+    assert_eq!(end["resumed"], false);
+    assert_eq!(end["start_ctx"], 30_748);
+    assert_eq!(end["end_ctx"], 42_784);
+    assert_eq!(end["session_id"], "sess-1");
+    assert_eq!(end["round"], round);
+    let redacted = end
+        .as_object()
+        .expect("object")
+        .values()
+        .any(|v| v == "[redacted]");
+    assert!(!redacted, "{end:?}");
+}
+
+#[test]
+fn agent_end_session_id_is_empty_without_a_session() {
+    let fx = common::Fixture::new();
+    let runner = UsageRunner(common::scripted_auto(builder_effects()), true);
+    let (res, lines) = factory_telemetry::capture("info", || fx.engine(&runner).build_stage());
+    res.expect("build");
+    let ends = events_named(&lines, "agent.end");
+    let end = ends
+        .iter()
+        .find(|l| l["role"] == "builder")
+        .expect("builder end");
+    assert!(end.get("session_id").is_some(), "{end:?}");
+    assert_eq!(end["session_id"], "");
+}
+
 #[test]
 fn failed_agent_run_logs_agent_end() {
     let fx = common::Fixture::new();

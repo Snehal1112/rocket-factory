@@ -192,7 +192,17 @@ impl Engine<'_> {
             model = spec.model.as_deref().unwrap_or(""),
             stop_reason = ?run.stop_reason,
             weighted_tokens = run.weighted,
-            duration_ms = started.elapsed().as_millis() as u64
+            duration_ms = started.elapsed().as_millis() as u64,
+            input = run.usage.input_tokens,
+            cache_creation = run.usage.cache_creation_input_tokens,
+            cache_read = run.usage.cache_read_input_tokens,
+            output = run.usage.output_tokens,
+            turns = run.turns,
+            resumed = spec.resume.is_some(),
+            round = self.job().map_or(1, |j| j.round),
+            start_ctx = run.start_ctx,
+            end_ctx = run.end_ctx,
+            session_id = run.session_id.as_deref().unwrap_or("")
         );
         let u = run.usage;
         self.update(|j| {
