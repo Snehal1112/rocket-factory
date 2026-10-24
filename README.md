@@ -182,7 +182,7 @@ The config key `base_branch` is the branch jobs start from and merge into. The d
 The factory keeps its own files in a home folder: `$FACTORY_HOME`, or `~/.factory` when it is not set.
 
 ```
-<home>/presets/<preset>/{config.toml,commit-context.md,agents/}   seeded from the built-in presets (rust, go, ruby, csharp)
+<home>/presets/<preset>/{config.toml,commit-context.md,agents/}   seeded from the built-in presets (rust, go, ruby, csharp, node)
 <home>/projects/<name>/{project.toml,agents/,state/,worktrees/}    one folder per registered project
 ```
 

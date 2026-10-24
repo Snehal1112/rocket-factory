@@ -28,7 +28,7 @@ Words used below:
 |---|---|
 | home | The folder where the factory keeps its data. `~/.factory` unless you set `FACTORY_HOME`. |
 | project | One of your git repositories, registered once with the factory. |
-| preset | A starter set of rules for a language (checks, risky paths, agent prompts). `rust`, `go`, `ruby` and `csharp` ship. |
+| preset | A starter set of rules for a language (checks, risky paths, agent prompts). `rust`, `go`, `ruby`, `csharp` and `node` ship. |
 | job | One plan being built. Ids look like `001`, `002`. |
 | series | The chain of jobs made from a multi-plan feature. Plan 2 starts after plan 1 merges. |
 | `factory` | The command line tool. |
@@ -50,6 +50,7 @@ The factory runs on Linux and macOS (see the note at the end). It is built from 
 | `cargo` on the machine, only for Rust projects | The `rust` preset checks run `cargo check` and `cargo test` in your project. | `cargo --version` |
 | `bundle` on the machine, only for Ruby projects | The `ruby` preset checks run `bundle exec rubocop` and `bundle exec rspec`. | `bundle --version` |
 | `dotnet` on the machine, only for C# projects | The `csharp` preset checks run `dotnet build` and `dotnet test`. | `dotnet --version` |
+| `bun` on the machine, only for Node and React projects | The `node` preset checks run the project's `typecheck`, `lint` and `test` scripts through Bun. | `bun --version` |
 
 If you have no Rust yet, install it with `rustup` from https://rustup.rs and open a new terminal.
 
@@ -156,7 +157,7 @@ git branch --show-current          # for example: main
 factory project add . --preset rust
 ```
 
-Use `--preset go` for a Go repo, `--preset ruby` for a Ruby repo and `--preset csharp` for a C# repo. Useful options:
+Use `--preset go` for a Go repo, `--preset ruby` for a Ruby repo, `--preset csharp` for a C# repo and `--preset node` for a Node or React repo. Useful options:
 
 - `--base <branch>`: the branch to merge into. It defaults to the branch you are on.
 - `--name <name>`: the project name. It defaults to the folder name, lower case. Names use `a-z`, `0-9` and `-`, up to 40 characters.
@@ -328,7 +329,7 @@ Safety rules the driver follows, so you can trust it with your repo:
 
 Settings come in three layers. A later layer overrides an earlier one.
 
-1. **Preset**: `~/.factory/presets/<preset>/config.toml`. The defaults for `rust`, `go`, `ruby` or `csharp`. Do not edit these, a refresh would then refuse to update them.
+1. **Preset**: `~/.factory/presets/<preset>/config.toml`. The defaults for `rust`, `go`, `ruby`, `csharp` or `node`. Do not edit these, a refresh would then refuse to update them.
 2. **Project**: the `[settings]` table in `~/.factory/projects/<name>/project.toml`. A key here replaces the whole key from the preset.
 3. **Repo**: `.factory/override.toml` in your repo, read from the tip of the base branch (so it must be committed and merged). It may only set `risk_paths` and `checks`, and both add to the lower layers.
 
@@ -373,7 +374,7 @@ Fail-closed rule: if any layer is broken or has an unknown key, the project is t
 ~/.factory/                      the home ($FACTORY_HOME)
   config.toml                    supervisor limits (you create it, optional)
   api.token                      API token, created by factoryd, mode 0600
-  presets/<rust|go|ruby|csharp>/             seeded defaults and agent prompts
+  presets/<rust|go|ruby|csharp|node>/             seeded defaults and agent prompts
   projects/<name>/
     project.toml                 repo path, preset, your settings
     agents/                      per-project agent overrides
