@@ -173,6 +173,8 @@ fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
         vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()]
     );
     assert_eq!(spec.tools, Some("Read,Grep,Glob".to_string()));
+    // The reviewer has no Skill tool, so the skill list would only cost tokens.
+    assert!(spec.disable_slash_commands);
     assert_eq!(spec.agent, Some("factory-code-reviewer".to_string()));
     assert_eq!(spec.budget_weighted, Some(fx.config.budget_weighted));
     assert!(spec.prompt.contains("offset"));

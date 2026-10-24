@@ -76,6 +76,8 @@ pub struct AgentSpec {
     pub env: Vec<(String, String)>,
     /// Adds `--strict-mcp-config`, so the run loads no MCP servers from settings.
     pub strict_mcp: bool,
+    /// Adds `--disable-slash-commands`, so the run loads no skill list. Only for roles without the Skill tool.
+    pub disable_slash_commands: bool,
     /// Value for `--tools`, a comma separated tool list such as `Bash,Read,Skill`.
     pub tools: Option<String>,
     /// Extra directories the agent may read, one `--add-dir` flag each.
@@ -110,6 +112,7 @@ impl AgentSpec {
             stall_after: None,
             env: Vec::new(),
             strict_mcp: false,
+            disable_slash_commands: false,
             tools: None,
             add_dirs: Vec::new(),
             on_session: None,
@@ -132,6 +135,9 @@ impl AgentSpec {
             .collect();
         if self.strict_mcp {
             a.push("--strict-mcp-config".to_string());
+        }
+        if self.disable_slash_commands {
+            a.push("--disable-slash-commands".to_string());
         }
         let mut push = |flag: &str, value: &str| {
             a.push(flag.to_string());
@@ -190,5 +196,21 @@ mod tests {
         assert_eq!(s.sandbox, None);
         assert!(s.writable_roots.is_empty());
         assert!(!s.network);
+    }
+
+    #[test]
+    fn slash_commands_stay_on_by_default() {
+        let s = AgentSpec::new("001", "builder", "/w", "p");
+        assert!(!s.disable_slash_commands);
+        let args = s.args(&Caps::default());
+        assert!(!args.contains(&"--disable-slash-commands".to_string()));
+    }
+
+    #[test]
+    fn disable_slash_commands_adds_the_flag() {
+        let mut s = AgentSpec::new("001", "reviewer", "/w", "p");
+        s.disable_slash_commands = true;
+        let args = s.args(&Caps::default());
+        assert!(args.contains(&"--disable-slash-commands".to_string()));
     }
 }
