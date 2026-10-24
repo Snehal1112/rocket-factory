@@ -214,6 +214,28 @@ mod tests {
         Config::parse(text).expect("preset parses")
     }
 
+    fn node_preset() -> Config {
+        let text = factory_core::preset::embedded("node")
+            .expect("node preset")
+            .config;
+        Config::parse(text).expect("preset parses")
+    }
+
+    #[test]
+    fn the_node_preset_runs_three_scripts_for_a_tsx_change() {
+        let plan = plan_checks(&paths(&["src/App.tsx", "src/App.test.tsx"]), &node_preset());
+        assert_eq!(
+            plan.commands,
+            ["bun run typecheck", "bun run lint", "bun test"]
+        );
+    }
+
+    #[test]
+    fn the_node_preset_runs_nothing_for_a_lockfile() {
+        let plan = plan_checks(&paths(&["bun.lock"]), &node_preset());
+        assert!(plan.commands.is_empty());
+    }
+
     #[test]
     fn the_rust_preset_checks_a_single_crate_repo() {
         let c = rust_preset();
