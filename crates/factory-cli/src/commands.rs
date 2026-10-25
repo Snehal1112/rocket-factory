@@ -852,7 +852,7 @@ fn queued_request_matches_series(
         return false;
     }
     match factory_core::normalize_id(&request.job) {
-        Ok(job) => member_ids.iter().any(|m| *m == job),
+        Ok(job) => member_ids.contains(&job),
         Err(_) => false,
     }
 }
