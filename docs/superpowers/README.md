@@ -27,6 +27,7 @@ This index lists each spec with its plans. It does not track whether a series me
 | Cleanup of cancelled series | `specs/2026-10-22-cleanup-cancelled-series-design.md` | `plans/2026-10-22-cleanup-cancelled-series/` |
 | Codex support audit | `specs/2026-10-22-codex-support-audit-design.md` | `plans/2026-10-22-codex-support-audit.md` |
 | Structured logging gaps | `specs/2026-10-24-structured-logging-design.md` | `plans/2026-10-24-structured-logging/` |
+| Act on review findings | `specs/2026-10-29-act-on-review-findings-design.md` | `plans/2026-10-29-act-on-review-findings/` |
 
 Plans with no spec of their own:
 
