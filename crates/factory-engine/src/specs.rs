@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use factory_agent::AgentSpec;
+use factory_core::rules_marker;
 
 use crate::ports::{short_sha, JobView};
 use crate::tasks::{plan_header, spec_excerpt, task_section, PlanTask};
@@ -36,32 +37,6 @@ const NOT_CONTROLLER: &str =
 
 /// The rules version this engine knows. Agent files carry `<!-- factory-rules: N -->` with the same number.
 pub const RULES_VERSION: u32 = 1;
-
-#[cfg(test)]
-mod marker_tests {
-    use super::rules_marker;
-
-    #[test]
-    fn rules_marker_reads_only_exact_lines() {
-        assert_eq!(
-            rules_marker("---\n---\n<!-- factory-rules: 3 -->\n"),
-            Some(3)
-        );
-        assert_eq!(rules_marker("x <!-- factory-rules: 3 -->"), None);
-        assert_eq!(rules_marker("<!-- factory-rules: x -->"), None);
-        assert_eq!(rules_marker(""), None);
-    }
-}
-
-/// The number of the first line that is exactly `<!-- factory-rules: N -->`.
-pub(crate) fn rules_marker(text: &str) -> Option<u32> {
-    text.lines().find_map(|line| {
-        let n = line
-            .strip_prefix("<!-- factory-rules: ")?
-            .strip_suffix(" -->")?;
-        n.parse::<u32>().ok()
-    })
-}
 
 impl Engine<'_> {
     /// True when the worktree's agent file carries a rules marker at or above `RULES_VERSION`.

@@ -1,4 +1,5 @@
 //! Board model, ledger, config, risk, verdict and budget rules for the factory driver.
+pub mod agent_drift;
 pub mod board;
 pub mod budget;
 pub mod commitmsg;
@@ -28,6 +29,7 @@ pub mod version;
 /// The global `/factory` slash command that `factory install` writes.
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
 
+pub use agent_drift::{agent_drift, rules_marker};
 pub use board::{
     Board, BuilderLast, Draft, Job, JobTokens, LastReview, Lease, ReviewState, SeriesPos,
     StageEntry, TaskSession, DRAFT_STAGES,
