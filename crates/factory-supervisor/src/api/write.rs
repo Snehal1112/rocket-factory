@@ -43,6 +43,7 @@ struct ReworkBody {
 #[serde(deny_unknown_fields)]
 struct ApproveBody {
     without_review: Option<bool>,
+    waive_reason: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -222,11 +223,15 @@ fn enqueue(
     job: &str,
     series: bool,
     without_review: bool,
+    waive_reason: Option<&str>,
 ) -> Result<String, ApiResponse> {
     let mut req = Request::new(name, action, job, series, (deps.now_ms)())
         .map_err(|e| bad(&e.to_string()))?;
     if without_review {
         req = req.without_review().map_err(|e| bad(&e.to_string()))?;
+    }
+    if let Some(reason) = waive_reason {
+        req = req.waive(reason).map_err(|e| bad(&e.to_string()))?;
     }
     queue::enqueue(home, &req).map_err(queue_error)?;
     Ok(req.id)
@@ -305,6 +310,7 @@ fn create_inner(
                 &job,
                 b.series.unwrap_or(true),
                 false,
+                None,
             )
             .map_err(|e| {
                 let why = e.body["error"]["message"]
@@ -350,6 +356,9 @@ fn approve_inner(
         parse(body)?
     };
     let without_review = b.without_review.unwrap_or(false);
+    if let Some(reason) = &b.waive_reason {
+        one_line(reason, "waive reason")?;
+    }
     let board = Board::load(&layout.board_file()).map_err(|e| {
         error_response(
             500,
@@ -378,12 +387,10 @@ fn approve_inner(
         ));
     }
     // The child would refuse this, and nobody reads a child's refusal, so answer here.
-    if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
-        return Err(error_response(
-            409,
-            "conflict",
-            &job.review_missing_message(),
-        ));
+    if job.stage == Stage::NeedsHuman {
+        if let Some(why) = job.approve_refusal(without_review, b.waive_reason.is_some()) {
+            return Err(error_response(409, "conflict", &why));
+        }
     }
     let request_id = enqueue(
         home,
@@ -393,6 +400,7 @@ fn approve_inner(
         &id,
         false,
         without_review,
+        b.waive_reason.as_deref(),
     )?;
     Ok(ApiResponse {
         status: 202,
@@ -838,22 +846,50 @@ mod tests {
     }
 
     #[test]
-    fn approve_of_a_job_in_stage_approve_or_with_a_verdict_does_not_need_the_flag() {
+    fn approve_of_a_job_in_stage_approve_or_with_a_pass_does_not_need_the_flag() {
         let f = fx();
         board_with_review(&f, "approve", false, "pending");
         assert_eq!(post(&f, "/projects/good/jobs/1/approve", b"").status, 202);
-        for verdict in ["pass", "changes"] {
-            let f = fx();
-            board_with_review(&f, "needs-human", false, verdict);
-            assert_eq!(
-                post(&f, "/projects/good/jobs/1/approve", b"").status,
-                202,
-                "{verdict}"
-            );
-            match &crate::queue::list(&f.home)[0] {
-                crate::QueueItem::Ok(req) => assert!(!req.without_review),
-                other => panic!("{other:?}"),
+        let f = fx();
+        board_with_review(&f, "needs-human", false, "pass");
+        assert_eq!(post(&f, "/projects/good/jobs/1/approve", b"").status, 202);
+        match &crate::queue::list(&f.home)[0] {
+            crate::QueueItem::Ok(req) => assert!(!req.without_review),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn approve_with_open_changes_needs_a_waive_reason() {
+        let f = fx();
+        let job = job_json("001", "001-first").replace(
+            r#""stage":"build""#,
+            r#""stage":"needs-human","last_review":{"round":2,"verdict":"changes","blockers":2,"file":"review-2.md","source":"review"}"#,
+        );
+        write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
+        for body in [&b"{}"[..], br#"{"without_review":true}"#] {
+            let r = post(&f, "/projects/good/jobs/1/approve", body);
+            assert_eq!(code(&r), (409, "conflict".to_string()));
+        }
+        assert_eq!(queued(&f), 0);
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            br#"{"waive_reason":"a\nb"}"#,
+        );
+        assert_eq!(code(&r).0, 400);
+        assert_eq!(queued(&f), 0);
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            br#"{"waive_reason":"known flake"}"#,
+        );
+        assert_eq!(r.status, 202, "{}", r.body);
+        match &crate::queue::list(&f.home)[0] {
+            crate::QueueItem::Ok(req) => {
+                assert_eq!(req.waive_reason.as_deref(), Some("known flake"));
             }
+            other => panic!("{other:?}"),
         }
     }
 
