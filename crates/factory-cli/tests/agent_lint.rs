@@ -930,6 +930,30 @@ fn builder_files_carry_the_quality_bar() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn reviewer_files_check_edge_cases_reuse_and_efficiency() -> TestResult {
+    for path in [
+        ".claude/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
+    ] {
+        require_all(
+            &read(path)?,
+            path,
+            &[
+                "edge cases and error paths:",
+                "reuse and simplicity:",
+                "efficiency:",
+                "Grade a reuse, simplicity or efficiency finding `[minor]`",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 // The `.claude/agents` copies are marked by the maintainer, so they are not listed here.
 const MARKED: [&str; 10] = [
     "crates/factory-core/presets/rust/agents/factory-builder.md",

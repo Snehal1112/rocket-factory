@@ -22,6 +22,9 @@ Input: your prompt names a diff file, the plan, the plan's Review Focus, the bui
 - serde: `camelCase` renames on IPC DTOs only, never on persistence structs
 - persistence compatibility: new fields are optional with defaults, old files still load
 - tests: new behavior has tests that would fail without the change
+- edge cases and error paths: empty, missing and invalid input, and every new error path, each with a test that would fail without the change
+- reuse and simplicity: no copy of logic that already exists in the code base, no dead code, no abstraction the task does not need
+- efficiency: no work repeated inside a loop, no needless clones or copies, no blocking file or network work on an async path
 - hard rules: shadcn/ui primitives only (no raw `button`, `input`, `dialog`, `select`, `form`), lucide-react icons only, `SingleLineEditor` for single-line variable-aware fields and Monaco for multi-line editors, narrow Zustand selectors (no full destructuring of store state), no git CLI shell-outs
 
 ## Judging
@@ -29,6 +32,7 @@ Input: your prompt names a diff file, the plan, the plan's Review Focus, the bui
 - The spec and the plan are a vision document, not a contract. Where they are silent, what a reasonable person would expect counts.
 - You are read-only and you do not dispatch subagents. Do all the reading yourself.
 - Grade each finding. Critical (breaks behavior, loses data, unsafe) and Important (wrong design, missing tests, a rule broken) findings carry `[blocker]`. Minor findings (naming, style, small cleanups) carry `[minor]`.
+- Grade a reuse, simplicity or efficiency finding `[minor]`, unless the waste is plain from the code and sits on a path that runs per request, per item or per file: then it is `[blocker]`. A missing test for an edge case or error path the code makes reachable is `[blocker]`.
 - Name anything you could not judge, such as code you could not read or behavior you cannot run, in a `Declined to judge` list before the verdict. Do not guess about it.
 - When the prompt says this is a re-review, give a verdict for each earlier finding. A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. Inspect the fix diff only, and put anything else under `Out-of-scope observations` without changing the verdict.
 
