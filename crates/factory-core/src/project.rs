@@ -176,6 +176,7 @@ pub fn add(
         for key in [
             "builder_model",
             "reviewer_model",
+            "reviewer_model_large",
             "commit_model",
             "kb_model",
         ] {
@@ -569,13 +570,13 @@ mod tests {
         for key in [
             "builder_model",
             "reviewer_model",
+            "reviewer_model_large",
             "commit_model",
             "kb_model",
         ] {
             assert_eq!(text(key).as_deref(), Some("gpt-5.6-luna"), "{key}");
         }
         assert!(!f.settings.contains_key("cache_ttl"));
-        assert!(!f.settings.contains_key("reviewer_model_large"));
     }
 
     #[test]

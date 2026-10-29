@@ -106,7 +106,7 @@ Record that number here, then adjust `kb_budget_weighted`. Measured `kb` cost: n
 
 ## Ticket hygiene
 
-The reviewer can use a stronger model on risky or large diffs. `reviewer_model_large` (default unset, off) names it, and `reviewer_large_over_lines` (default 800, above zero) is the threshold on the round diff's changed lines. A risky job diff always uses it, a diff exactly at the threshold does not, and the choice is written to the ledger as `review model: <name> (<reason>)`. The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
+The reviewer can use a stronger model on risky or large diffs. `reviewer_model_large` (default `"opus"`; the same name as `reviewer_model` turns it off) names it, and `reviewer_large_over_lines` (default 800, above zero) is the threshold on the round diff's changed lines. A risky job diff always uses it, a diff exactly at the threshold does not, and the choice is written to the ledger as `review model: <name> (<reason>)`. The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
 
 The driver can file the leftover work of a ticket and close the ticket after the last plan of a job merges. It reaches GitHub only through `gh`, behind the `Tracker` port in `factory-engine/src/tracker.rs`. The command is `factory tickets <id> [--dry-run]`, and the config key `tickets_on_merge` (default `false`) runs the same step at the end of `merge_stage`.
 

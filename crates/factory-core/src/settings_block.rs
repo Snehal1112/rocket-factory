@@ -39,10 +39,7 @@ const GROUPS: &[(&str, &[Key])] = &[
             ),
             ("builder_model", None),
             ("reviewer_model", None),
-            (
-                "reviewer_model_large",
-                Some("\"opus\"  # Unset turns the stronger reviewer off."),
-            ),
+            ("reviewer_model_large", None),
             ("reviewer_large_over_lines", None),
             ("commit_model", None),
             ("kb_model", None),

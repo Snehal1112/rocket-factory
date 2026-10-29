@@ -205,7 +205,7 @@ fn show_prints_every_setting_with_its_value_and_source() {
         "  builder_carry_max_ctx = 45000 (default)",
         "  read_first = [\"CLAUDE.md\"] (preset)",
         "  base_branch = \"main\" (project)",
-        "  reviewer_model_large = unset (default)",
+        "  reviewer_model_large = \"opus\" (default)",
         "  checks = 2 rules (preset)",
         "  builder_rules = 3 entries (preset)",
     ] {

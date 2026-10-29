@@ -50,7 +50,7 @@ pub struct Config {
     pub stall_minutes: u32,
     pub builder_model: String,
     pub reviewer_model: String,
-    /// A stronger reviewer model for risky or large diffs. `None` turns the switch off.
+    /// A stronger reviewer model for risky or large diffs. The same name as `reviewer_model` turns the switch off.
     pub reviewer_model_large: Option<String>,
     /// A round diff with more changed lines than this uses `reviewer_model_large`.
     pub reviewer_large_over_lines: u32,
@@ -141,7 +141,7 @@ impl Default for Config {
             stall_minutes: 10,
             builder_model: "sonnet".to_string(),
             reviewer_model: "sonnet".to_string(),
-            reviewer_model_large: None,
+            reviewer_model_large: Some("opus".to_string()),
             reviewer_large_over_lines: 800,
             commit_model: "sonnet".to_string(),
             commit_subagents: false,
@@ -218,7 +218,16 @@ impl Config {
     }
 
     pub fn parse(text: &str) -> Result<Config, CoreError> {
-        let cfg: Config = toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
+        let mut cfg: Config =
+            toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
+        // The "opus" default is a Claude model, so a Codex config without the key gets no large reviewer.
+        if cfg.agent_cli() == "codex" {
+            let table: toml::Table =
+                toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
+            if !table.contains_key("reviewer_model_large") {
+                cfg.reviewer_model_large = None;
+            }
+        }
         if cfg.diff_cap_lines == 0 || cfg.budget_weighted == 0 {
             return Err(CoreError::Config(
                 "diff_cap_lines and budget_weighted must be above zero".into(),
@@ -913,11 +922,35 @@ mod tests {
     }
 
     #[test]
-    fn the_large_reviewer_model_is_off_by_default() {
+    fn the_large_reviewer_model_defaults_to_opus() {
         let cfg = Config::default();
-        assert_eq!(cfg.reviewer_model_large, None);
+        assert_eq!(cfg.reviewer_model_large.as_deref(), Some("opus"));
         assert_eq!(cfg.reviewer_large_over_lines, 800);
-        assert_eq!(Config::parse("").expect("parse").reviewer_model_large, None);
+        assert_eq!(
+            Config::parse("")
+                .expect("parse")
+                .reviewer_model_large
+                .as_deref(),
+            Some("opus")
+        );
+        assert_eq!(
+            Config::parse("reviewer_model_large = \"sonnet\"")
+                .expect("parse")
+                .reviewer_model_large
+                .as_deref(),
+            Some("sonnet")
+        );
+    }
+
+    #[test]
+    fn a_codex_config_without_the_key_has_no_large_reviewer() {
+        let codex = Config::parse("agent_cli = \"codex\"").expect("parse");
+        assert_eq!(codex.reviewer_model_large, None);
+        let set = Config::parse("agent_cli = \"codex\"\nreviewer_model_large = \"gpt-big\"")
+            .expect("parse");
+        assert_eq!(set.reviewer_model_large.as_deref(), Some("gpt-big"));
+        let claude = Config::parse("agent_cli = \"claude\"").expect("parse");
+        assert_eq!(claude.reviewer_model_large.as_deref(), Some("opus"));
     }
 
     #[test]

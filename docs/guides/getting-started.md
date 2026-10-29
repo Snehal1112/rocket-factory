@@ -359,7 +359,7 @@ Keys you may want, with defaults:
 | `diff_cap_lines` | 4000 | Bigger diffs park for you. |
 | `stall_minutes` | 10 | A silent agent counts as stalled after this long. |
 | `builder_model`, `reviewer_model`, `commit_model` | `sonnet` | Models for each role. |
-| `reviewer_model_large` | off | A stronger reviewer for risky or big diffs. |
+| `reviewer_model_large` | `opus` | A stronger reviewer for risky or big diffs. Set it to the same name as `reviewer_model` to turn it off. |
 | `risk_paths` | from the preset | Globs that make a diff risky and force your review. |
 | `read_first` | `CLAUDE.md` | Files the builder reads first. |
 | `tickets_on_merge` | false | File follow-up GitHub issues and close the parent issue after a merge (needs `gh`). |
