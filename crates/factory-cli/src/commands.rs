@@ -1110,6 +1110,10 @@ fn cache_tokens(ctx: &CliCtx, days: Option<u32>) -> Result<String, CliError> {
             &job.id,
         )?);
     }
+    jobs.push(crate::tokens::load_usage(
+        &d.layout().spec_review_usage_file(),
+        "spec-review",
+    )?);
     let report = crate::tokens::cache_report(&jobs, days, now_secs() as u64);
     Ok(crate::tokens::render_cache(&report))
 }

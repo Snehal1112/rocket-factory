@@ -382,7 +382,13 @@ pub(crate) fn validate_series(
             driver.config(),
         ) {
             Some(reason) => Some(crate::spec_check::SpecRefusal::NoUserDecision(reason)),
-            None => crate::spec_check::review_spec(driver, &spec, &plan_paths).err(),
+            None => crate::spec_check::review_spec_with(
+                driver,
+                &spec,
+                &plan_paths,
+                accept_spec.is_some(),
+            )
+            .err(),
         };
         if let Some(refusal) = refusal {
             match accept_spec {

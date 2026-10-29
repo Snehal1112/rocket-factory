@@ -93,7 +93,12 @@ fn a_changes_verdict_refuses_and_names_the_file() {
     assert!(text.contains("--accept-spec"), "{text}");
     assert_eq!(jobs(&fx), 0);
     let dir = fx.driver.layout().spec_reviews_dir();
-    assert_eq!(std::fs::read_dir(dir).expect("dir").count(), 1);
+    let reviews = std::fs::read_dir(dir)
+        .expect("dir")
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+        .count();
+    assert_eq!(reviews, 1);
 }
 
 #[test]
@@ -156,4 +161,111 @@ fn accept_spec_on_a_clean_spec_records_nothing() {
     let ledger =
         std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).unwrap_or_default();
     assert!(!ledger.contains("spec accepted"), "{ledger}");
+}
+
+#[test]
+fn accept_spec_after_a_changes_review_makes_no_new_call() {
+    let fx = fixture(vec![reviewer(CHANGES)], Config::default());
+    new(&fx, None).expect_err("refused");
+    let dir = fx.driver.layout().spec_reviews_dir();
+    let saved = || {
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir")
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+            .collect();
+        files.sort_by_key(|e| e.file_name());
+        std::fs::read_to_string(files[0].path()).expect("review")
+    };
+    let before = saved();
+    let job = new(&fx, Some("read the findings")).expect("created");
+    assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 1);
+    assert_eq!(saved(), before, "the findings are kept");
+    assert!(job
+        .spec_warning
+        .expect("warning")
+        .contains("read the findings"));
+}
+
+#[test]
+fn a_single_plan_one_job_with_accept_spec_reviews_once() {
+    let fx = fixture(vec![reviewer(CHANGES)], Config::default());
+    let made = factory_engine::create_one_job_accepting(
+        &fx.driver,
+        "demo",
+        "f",
+        &fx.plan,
+        Some(&fx.spec),
+        None,
+        false,
+        Some("checked"),
+    )
+    .expect("created");
+    assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 1);
+    let warning = made.job.spec_warning.expect("warning");
+    assert_eq!(warning.matches("spec accepted by the user").count(), 1);
+}
+
+#[test]
+fn the_review_run_is_logged_for_the_token_reports() {
+    let fx = fixture(vec![reviewer(APPROVE)], Config::default());
+    new(&fx, None).expect("created");
+    let log = std::fs::read_to_string(fx.driver.layout().spec_review_usage_file()).expect("log");
+    let line: serde_json::Value =
+        serde_json::from_str(log.lines().next().expect("line")).expect("json");
+    assert_eq!(line["role"], "spec-reviewer");
+    assert_eq!(line["job"], "spec-review");
+    let costs = factory_engine::gather_costs(&fx.driver).expect("costs");
+    let rec = costs
+        .iter()
+        .find(|c| c.id == "spec-review")
+        .expect("record");
+    assert_eq!(rec.runs, 1);
+}
+
+fn with_agent_file(fx: Fx) -> Fx {
+    let file = factory_core::AgentFile {
+        name: "factory-spec-reviewer.md".to_string(),
+        content: "---\nname: factory-spec-reviewer\n---\n<!-- factory-rules: 1 -->\nbody\n"
+            .to_string(),
+    };
+    Fx {
+        driver: fx.driver.with_agent_files(vec![file]),
+        ..fx
+    }
+}
+
+#[test]
+fn the_agent_file_is_written_into_the_main_checkout() {
+    let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
+    new(&fx, None).expect("created");
+    let path = fx
+        .driver
+        .root()
+        .join(".claude/agents/factory-spec-reviewer.md");
+    assert!(path.is_file());
+}
+
+#[test]
+fn a_symlinked_claude_folder_is_not_written_through() {
+    let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
+    let outside = fx._tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).expect("outside");
+    std::fs::create_dir_all(fx.driver.root().join(".claude")).expect("claude");
+    std::os::unix::fs::symlink(&outside, fx.driver.root().join(".claude/agents")).expect("link");
+    new(&fx, None).expect("created");
+    assert!(!outside.join("factory-spec-reviewer.md").exists());
+}
+
+#[test]
+fn an_untracked_file_without_the_marker_is_left_alone() {
+    let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
+    let dir = fx.driver.root().join(".claude/agents");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("factory-spec-reviewer.md"), "my own text\n").expect("mine");
+    new(&fx, None).expect("created");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("factory-spec-reviewer.md")).expect("read"),
+        "my own text\n"
+    );
 }

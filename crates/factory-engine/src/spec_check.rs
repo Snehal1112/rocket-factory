@@ -3,6 +3,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use factory_agent::{AgentRun, AgentSpec};
 use factory_core::{classify_paths, Config, DiffClass, AGENT_EXCLUDE_PATTERN};
 use sha2::{Digest, Sha256};
 
@@ -46,12 +47,16 @@ impl fmt::Display for SpecRefusal {
     }
 }
 
-/// The hex SHA-256 of the spec text followed by each plan text, in order.
-fn review_key(spec: &str, plans: &[String]) -> String {
+/// The hex SHA-256 over the spec, each plan and the reviewer's agent file. Every part has an 8 byte
+/// length prefix, so moving text from one part to the next changes the key.
+fn review_key(spec: &str, plans: &[String], agent: &str) -> String {
     let mut hash = Sha256::new();
-    hash.update(spec.as_bytes());
-    for plan in plans {
-        hash.update(plan.as_bytes());
+    for part in std::iter::once(spec)
+        .chain(plans.iter().map(String::as_str))
+        .chain(std::iter::once(agent))
+    {
+        hash.update((part.len() as u64).to_le_bytes());
+        hash.update(part.as_bytes());
     }
     hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -65,14 +70,45 @@ fn last_line(text: &str) -> &str {
         .trim()
 }
 
-/// Puts the spec reviewer's agent file in the main checkout when the repo does not track its own.
-/// A failure is ignored: the run then gives no verdict, and a missing verdict refuses.
+/// The spec reviewer's agent file text from the resolved agent files, empty when there is none.
+fn reviewer_file_text(driver: &Driver) -> &str {
+    let name = format!("{SPEC_REVIEWER_AGENT}.md");
+    driver
+        .agent_files()
+        .iter()
+        .find(|f| f.name == name)
+        .map_or("", |f| f.content.as_str())
+}
+
+/// Puts the spec reviewer's agent file in the main checkout, with the guards `write_agent_files` applies.
+/// It stays out when the repo tracks its own file, when `.claude` or `.claude/agents` is a symlink, when
+/// the folder is not a git checkout, and when an untracked file there carries no rules marker (the
+/// user's own). A failure is ignored: the run then gives no verdict, and a missing verdict refuses.
 fn write_reviewer_file(driver: &Driver) {
     let name = format!("{SPEC_REVIEWER_AGENT}.md");
-    let Some(file) = driver.agent_files().iter().find(|f| f.name == name) else {
+    let content = reviewer_file_text(driver);
+    if content.is_empty() || !factory_core::is_agent_file_name(&name) {
         return;
-    };
-    let rel = factory_core::agent_files_rel_dir().join(&name);
+    }
+    let root = driver.root();
+    if !root.join(".git").exists() {
+        return;
+    }
+    let rel_dir = factory_core::agent_files_rel_dir();
+    let dir = root.join(&rel_dir);
+    let top = root.join(
+        rel_dir
+            .components()
+            .next()
+            .map(|c| c.as_os_str())
+            .unwrap_or_default(),
+    );
+    for p in [&top, &dir] {
+        if std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()) {
+            return;
+        }
+    }
+    let rel = rel_dir.join(&name);
     let tracked = driver
         .repo()
         .is_tracked_at_branch(driver.repo().base_branch(), &rel.to_string_lossy())
@@ -82,40 +118,64 @@ fn write_reviewer_file(driver: &Driver) {
             .repo()
             .exclude_paths(&[AGENT_EXCLUDE_PATTERN])
             .is_err()
+        || std::fs::create_dir_all(&dir).is_err()
     {
         return;
     }
-    let path = driver.root().join(&rel);
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    let path = dir.join(&name);
+    match std::fs::symlink_metadata(&path) {
+        Ok(m) if m.file_type().is_symlink() => {
+            let _ = std::fs::remove_file(&path);
+        }
+        Ok(m) if m.is_file() => {
+            let old = std::fs::read_to_string(&path).unwrap_or_default();
+            if old == content {
+                return;
+            }
+            // A file without the marker is the user's own, so it stays.
+            if factory_core::rules_marker(&old).is_none() {
+                return;
+            }
+            // Remove first, so a hard link to a file outside is never written through.
+            if std::fs::remove_file(&path).is_err() {
+                return;
+            }
+        }
+        Ok(_) => return,
+        Err(_) => {}
     }
-    let _ = std::fs::write(path, &file.content);
+    let _ = std::fs::write(&path, content);
 }
 
-/// Runs the spec reviewer on the spec and the plans, unless an APPROVE review of the same text is on file.
-/// The review is saved under the spec reviews folder, and its path is in every refusal.
-pub fn review_spec(driver: &Driver, spec: &Path, plans: &[PathBuf]) -> Result<(), SpecRefusal> {
-    if !driver.config().spec_review {
-        return Ok(());
+/// Appends one usage line for the review run to `usage.jsonl` in the spec reviews folder.
+/// No job owns the run, so this file is the only record of its tokens. A write error is ignored.
+fn log_review_usage(driver: &Driver, agent: &AgentSpec, run: &AgentRun, secs: u64) {
+    use std::io::Write;
+    let line = crate::ports::usage_line(
+        SPEC_REVIEW_JOB,
+        agent,
+        run,
+        1,
+        0,
+        crate::clock::now_secs().max(0.0) as u64,
+        secs,
+        driver.config().agent_cli(),
+    );
+    if std::fs::create_dir_all(driver.layout().spec_reviews_dir()).is_err() {
+        return;
     }
-    let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
-    let plan_texts: Vec<String> = plans.iter().map(|p| read(p)).collect();
-    let key = review_key(&read(spec), &plan_texts);
-    let file = driver.layout().spec_reviews_dir().join(format!("{key}.md"));
-    if last_line(&read(&file)) == "VERDICT: APPROVE" {
-        return Ok(());
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(driver.layout().spec_review_usage_file());
+    if let Ok(mut f) = file {
+        let _ = writeln!(f, "{line}");
     }
-    write_reviewer_file(driver);
-    let agent = driver.spec_reviewer_spec(driver.root(), spec, plans);
-    let run = driver.run_agent_for(SPEC_REVIEW_JOB, &agent);
-    let mut text = run.result_text.trim_end().to_string();
-    text.push('\n');
-    if let Some(dir) = file.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    // An unsaved review still refuses with its path, so the write result is not checked.
-    let _ = std::fs::write(&file, &text);
-    match last_line(&text) {
+}
+
+/// Maps the last line of a review to a result.
+fn verdict_of(text: &str, file: PathBuf) -> Result<(), SpecRefusal> {
+    match last_line(text) {
         "VERDICT: APPROVE" => Ok(()),
         "VERDICT: CHANGES" => Err(SpecRefusal::ReviewChanges {
             file,
@@ -123,6 +183,46 @@ pub fn review_spec(driver: &Driver, spec: &Path, plans: &[PathBuf]) -> Result<()
         }),
         _ => Err(SpecRefusal::ReviewMissing { file }),
     }
+}
+
+/// Runs the spec reviewer on the spec and the plans, unless an APPROVE review of the same text is on file.
+/// The review is saved under the spec reviews folder, and its path is in every refusal.
+pub fn review_spec(driver: &Driver, spec: &Path, plans: &[PathBuf]) -> Result<(), SpecRefusal> {
+    review_spec_with(driver, spec, plans, false)
+}
+
+/// Like `review_spec`. With `reuse_saved`, a review on file for the same text gives its verdict whatever
+/// it is, so the user who overrides a refusal does not pay for a second run or lose the findings they read.
+pub(crate) fn review_spec_with(
+    driver: &Driver,
+    spec: &Path,
+    plans: &[PathBuf],
+    reuse_saved: bool,
+) -> Result<(), SpecRefusal> {
+    if !driver.config().spec_review {
+        return Ok(());
+    }
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+    let plan_texts: Vec<String> = plans.iter().map(|p| read(p)).collect();
+    let key = review_key(&read(spec), &plan_texts, reviewer_file_text(driver));
+    let file = driver.layout().spec_reviews_dir().join(format!("{key}.md"));
+    let saved = read(&file);
+    if last_line(&saved) == "VERDICT: APPROVE" || (reuse_saved && !saved.is_empty()) {
+        return verdict_of(&saved, file);
+    }
+    write_reviewer_file(driver);
+    let agent = driver.spec_reviewer_spec(driver.root(), spec, plans);
+    let started = std::time::Instant::now();
+    let run = driver.run_agent_for(SPEC_REVIEW_JOB, &agent);
+    log_review_usage(driver, &agent, &run, started.elapsed().as_secs());
+    let mut text = run.result_text.trim_end().to_string();
+    text.push('\n');
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // An unsaved review still refuses with its path, so the write result is not checked.
+    let _ = std::fs::write(&file, &text);
+    verdict_of(&text, file)
 }
 
 /// The backticked paths on the `- Create:`, `- Modify:` and `- Test:` lines under each `**Files:**` block.
@@ -249,10 +349,16 @@ mod tests {
 
     #[test]
     fn the_review_key_changes_with_a_plan() {
-        let a = review_key("spec", &["p1".into()]);
+        let a = review_key("spec", &["p1".into()], "agent");
         assert_eq!(a.len(), 64);
-        assert_eq!(a, review_key("spec", &["p1".into()]));
-        assert_ne!(a, review_key("spec", &["p2".into()]));
+        assert_eq!(a, review_key("spec", &["p1".into()], "agent"));
+        assert_ne!(a, review_key("spec", &["p2".into()], "agent"));
+        assert_ne!(a, review_key("spec", &["p1".into()], "agent 2"));
+        // Text moved from one part to the next is a different input.
+        assert_ne!(
+            review_key("ab", &["c".into()], ""),
+            review_key("a", &["bc".into()], "")
+        );
     }
 
     #[test]

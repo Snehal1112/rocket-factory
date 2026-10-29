@@ -88,6 +88,11 @@ impl Layout {
         self.state_dir.join("spec-reviews")
     }
 
+    /// The usage log of the spec reviews. No job owns those runs, so their tokens are logged here.
+    pub fn spec_review_usage_file(&self) -> PathBuf {
+        self.spec_reviews_dir().join("usage.jsonl")
+    }
+
     pub fn events_file(&self) -> PathBuf {
         self.state_dir.join("events.jsonl")
     }
