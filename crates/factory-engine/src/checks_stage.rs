@@ -1,4 +1,8 @@
-use factory_checks::{plan_checks, run_checks, write_checks_md, ChecksReport};
+use std::path::Path;
+
+use factory_checks::{
+    append_notes, plan_checks_in, run_checks, write_checks_md, CheckPlan, ChecksReport, Workspace,
+};
 use factory_core::{
     classify_paths, code_paths_of, has_test_marker, has_test_path, Config, DiffClass, ParkKind,
     ParkPart, Stage,
@@ -70,11 +74,13 @@ impl Engine<'_> {
     pub(crate) fn run_checks_now(&self) -> Result<ChecksReport, EngineError> {
         let (base, head) = self.job_range()?;
         let raw = self.repo.changed_paths(&base, &head).map_err(git_err)?;
-        let plan = plan_checks(&self.repo.scoped_paths(&raw), &self.config);
-        let report = run_checks(&self.repo.workdir_in(&self.worktree()?), &plan);
+        let workdir = self.repo.workdir_in(&self.worktree()?);
+        let plan = self.plan_for(&self.repo.scoped_paths(&raw), &workdir);
+        let report = run_checks(&workdir, &plan);
         log_check_results(&report);
-        write_checks_md(&self.job_dir.join("checks.md"), &report)
-            .map_err(|e| EngineError::Check(e.to_string()))?;
+        let md = self.job_dir.join("checks.md");
+        write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
+        append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(report)
     }
 
@@ -153,15 +159,39 @@ impl Engine<'_> {
         out: &str,
     ) -> Result<Option<ChecksReport>, EngineError> {
         let raw = self.repo.changed_paths(from, to).map_err(git_err)?;
-        let plan = plan_checks(&self.repo.scoped_paths(&raw), &self.config);
+        let workdir = self.repo.workdir_in(&self.worktree()?);
+        let plan = self.plan_for(&self.repo.scoped_paths(&raw), &workdir);
         if plan.commands.is_empty() {
             return Ok(None);
         }
-        let report = run_checks(&self.repo.workdir_in(&self.worktree()?), &plan);
+        let report = run_checks(&workdir, &plan);
         log_check_results(&report);
-        write_checks_md(&self.job_dir.join(out), &report)
-            .map_err(|e| EngineError::Check(e.to_string()))?;
+        let md = self.job_dir.join(out);
+        write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
+        append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(Some(report))
+    }
+
+    /// Plans the checks. The cargo workspace map is loaded only when a command needs it, and a
+    /// failed load falls back to the folder rule with a note in `checks.md`.
+    fn plan_for(&self, scoped: &[String], workdir: &Path) -> CheckPlan {
+        let needs_map = self.config.checks.iter().any(|r| {
+            r.commands
+                .iter()
+                .any(|c| c.contains("{crate}") || c.contains("{dependents}"))
+        });
+        if !needs_map || !workdir.join("Cargo.toml").is_file() {
+            return plan_checks_in(scoped, &self.config, None);
+        }
+        match Workspace::load(workdir) {
+            Ok(ws) => plan_checks_in(scoped, &self.config, Some(&ws)),
+            Err(e) => {
+                let mut plan = plan_checks_in(scoped, &self.config, None);
+                plan.notes
+                    .push(format!("NOTE workspace map unavailable: {e}"));
+                plan
+            }
+        }
     }
 
     /// Starts a fix round with `findings`, or parks the job when the rounds are used up.

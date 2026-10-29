@@ -27,6 +27,8 @@ const GROUPS: &[(&str, &[Key])] = &[
                 Some("2  # Unset means the same as fix_rounds."),
             ),
             ("stall_minutes", None),
+            ("dependents_cap", None),
+            ("unchecked_paths", None),
         ],
     ),
     (

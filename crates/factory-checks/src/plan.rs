@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use factory_core::Config;
 
+use crate::workspace::Workspace;
 use crate::CheckError;
 
 /// Default time limit for one check command.
@@ -13,6 +14,8 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(900);
 pub struct CheckPlan {
     pub commands: Vec<String>,
     pub timeout: Duration,
+    /// Lines for `checks.md` that explain what the plan left out.
+    pub notes: Vec<String>,
 }
 
 /// Rejects a cargo command that lacks `-j4` or uses `--workspace` or `--all`.
@@ -66,23 +69,50 @@ fn crate_of(path: &str) -> Option<String> {
 
 /// Chooses the check commands for a set of changed paths.
 pub fn plan_checks(changed_paths: &[String], cfg: &Config) -> CheckPlan {
+    plan_checks_in(changed_paths, cfg, None)
+}
+
+/// Chooses the check commands, taking `{crate}` and `{dependents}` from the workspace map when there is one.
+pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Workspace>) -> CheckPlan {
     let mut seen = BTreeSet::new();
     let mut commands = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
     for rule in &cfg.checks {
         let matched: Vec<&String> = changed_paths.iter().filter(|p| rule.matches(p)).collect();
         if matched.is_empty() {
             continue;
         }
-        let crates: BTreeSet<String> = matched.iter().filter_map(|p| crate_of(p)).collect();
+        let crates: BTreeSet<String> = match ws {
+            Some(ws) => matched
+                .iter()
+                .filter_map(|p| ws.owner(p))
+                .map(str::to_string)
+                .collect(),
+            None => matched.iter().filter_map(|p| crate_of(p)).collect(),
+        };
+        let mut dependents = ws.map(|ws| ws.dependents(&crates)).unwrap_or_default();
+        let cap = cfg.dependents_cap as usize;
+        if dependents.len() > cap {
+            let skipped = dependents.split_off(cap);
+            let note = format!("SKIP dependents over the cap: {}", skipped.join(", "));
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
+        }
         for template in &rule.commands {
-            let expanded: Vec<String> = if template.contains("{crate}") {
-                crates
+            let mut expanded: Vec<String> = vec![template.clone()];
+            if template.contains("{crate}") {
+                expanded = crates
                     .iter()
                     .map(|c| template.replace("{crate}", c))
-                    .collect()
-            } else {
-                vec![template.clone()]
-            };
+                    .collect();
+            }
+            if template.contains("{dependents}") {
+                expanded = expanded
+                    .iter()
+                    .flat_map(|t| dependents.iter().map(|d| t.replace("{dependents}", d)))
+                    .collect();
+            }
             for cmd in expanded {
                 // A command that breaks the cargo rules never runs.
                 if validate_command(&cmd).is_ok() && seen.insert(cmd.clone()) {
@@ -94,6 +124,7 @@ pub fn plan_checks(changed_paths: &[String], cfg: &Config) -> CheckPlan {
     CheckPlan {
         commands,
         timeout: DEFAULT_TIMEOUT,
+        notes,
     }
 }
 
@@ -205,6 +236,47 @@ mod tests {
     fn crate_placeholder_without_a_crate_path_is_skipped() {
         let c = cfg(vec![(&["**"], &["cargo test -j4 -p {crate}"])]);
         assert!(plan_checks(&paths(&["README.md"]), &c).commands.is_empty());
+    }
+
+    fn ws() -> Workspace {
+        let json = r#"{"packages":[
+          {"name":"core","manifest_path":"/r/crates/core/Cargo.toml","dependencies":[]},
+          {"name":"app","manifest_path":"/r/crates/app/Cargo.toml","dependencies":[
+            {"name":"core","path":"/r/crates/core"}]},
+          {"name":"rocket","manifest_path":"/r/src-tauri/Cargo.toml","dependencies":[
+            {"name":"app","path":"/r/crates/app"},{"name":"core","path":"/r/crates/core"}]}]}"#;
+        Workspace::from_metadata(json, std::path::Path::new("/r")).expect("parse")
+    }
+
+    #[test]
+    fn crate_follows_the_package() {
+        let c = cfg(vec![(&["src-tauri/**"], &["cargo test -j4 -p {crate}"])]);
+        let plan = plan_checks_in(&paths(&["src-tauri/src/lib.rs"]), &c, Some(&ws()));
+        assert_eq!(plan.commands, ["cargo test -j4 -p rocket"]);
+    }
+
+    #[test]
+    fn dependents_expand_and_cap() {
+        let mut c = cfg(vec![(&["crates/**"], &["cargo test -j4 -p {dependents}"])]);
+        c.dependents_cap = 1;
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, Some(&ws()));
+        assert_eq!(plan.commands, ["cargo test -j4 -p app"]);
+        assert_eq!(plan.notes, ["SKIP dependents over the cap: rocket"]);
+    }
+
+    #[test]
+    fn root_path_gives_no_crate_command() {
+        let c = cfg(vec![(&["Cargo.lock"], &["cargo test -j4 -p {crate}"])]);
+        let plan = plan_checks_in(&paths(&["Cargo.lock"]), &c, Some(&ws()));
+        assert!(plan.commands.is_empty());
+    }
+
+    #[test]
+    fn no_cargo_falls_back() {
+        let c = cfg(vec![(&["crates/**"], &["cargo test -j4 -p {crate}"])]);
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, None);
+        assert_eq!(plan.commands, ["cargo test -j4 -p core"]);
+        assert!(plan.notes.is_empty());
     }
 
     fn rust_preset() -> Config {

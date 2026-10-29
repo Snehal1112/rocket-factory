@@ -240,6 +240,22 @@ pub fn write_checks_md(path: &Path, report: &ChecksReport) -> Result<(), CheckEr
     write_atomic(path, body.as_bytes()).map_err(|e| CheckError::Write(e.to_string()))
 }
 
+/// Appends plan notes to `checks.md`. Only a `FAIL` line fails the checks, so a note never changes the verdict.
+pub fn append_notes(path: &Path, notes: &[String]) -> Result<(), CheckError> {
+    if notes.is_empty() {
+        return Ok(());
+    }
+    let mut body = std::fs::read_to_string(path).map_err(|e| CheckError::Write(e.to_string()))?;
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    for note in notes {
+        body.push_str(&one_line(note));
+        body.push('\n');
+    }
+    write_atomic(path, body.as_bytes()).map_err(|e| CheckError::Write(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +266,7 @@ mod tests {
         CheckPlan {
             commands: cmds.iter().map(|s| s.to_string()).collect(),
             timeout: Duration::from_secs(secs),
+            notes: Vec::new(),
         }
     }
 
@@ -376,6 +393,20 @@ mod tests {
         assert!(text.contains("\nPASS cargo check -j4 (ok)\n"));
         assert!(text.contains("\nFAIL yarn tsc --noEmit (exit 2 second line)\n"));
         assert!(!text.contains("TS2304"));
+    }
+
+    #[test]
+    fn notes_are_appended_without_a_fail_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("checks.md");
+        write_checks_md(&path, &ChecksReport { results: vec![] }).expect("write");
+        append_notes(&path, &["SKIP dependents over the cap: a, b".to_string()]).expect("append");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(
+            text.ends_with("\nSKIP dependents over the cap: a, b\n"),
+            "{text}"
+        );
+        assert!(!text.contains("FAIL"));
     }
 
     #[test]

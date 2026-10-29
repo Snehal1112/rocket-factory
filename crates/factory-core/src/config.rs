@@ -61,6 +61,10 @@ pub struct Config {
     pub escalation_model: Option<String>,
     /// Fix rounds spent before the next one escalates the builder. At or above `fix_rounds` it never escalates.
     pub escalate_after_fix_rounds: u32,
+    /// Most direct dependents a `{dependents}` check command expands to. The rest are skipped with a note.
+    pub dependents_cap: u32,
+    /// Path globs that no check covers on purpose. They are never reported as uncovered.
+    pub unchecked_paths: Vec<String>,
     pub commit_model: String,
     pub commit_subagents: bool,
     /// Per-run cap on weighted tokens for one committer run.
@@ -157,6 +161,8 @@ impl Default for Config {
             reviewer_large_over_lines: 800,
             escalation_model: Some("claude-opus-5-5".to_string()),
             escalate_after_fix_rounds: 1,
+            dependents_cap: 6,
+            unchecked_paths: Vec::new(),
             commit_model: "claude-sonnet-5-5".to_string(),
             commit_subagents: false,
             commit_budget_weighted: 60_000,
