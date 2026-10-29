@@ -580,23 +580,26 @@ impl Engine<'_> {
         model: &str,
     ) -> AgentSpec {
         let spec_line = self.spec_line();
-        // A later round also gets the findings of the round before, so the reviewer can check they were fixed.
+        // A later round also gets the latest review's findings, so the reviewer can check they were fixed.
         let earlier = self
-            .job_dir
-            .join(format!("review-code-r{}.md", round.saturating_sub(1)));
-        let earlier_line = if round > 1 && earlier.exists() {
-            format!(
-                "The findings of round {} are at {}. Check that each was fixed.\n",
-                round - 1,
-                earlier.display()
-            )
-        } else {
-            String::new()
+            .job()
+            .ok()
+            .and_then(|j| j.last_review)
+            .filter(|last| round > 1 && last.round < round)
+            .map(|last| (last.round, self.job_dir.join(&last.file)))
+            .filter(|(_, path)| path.exists());
+        let earlier_line = match &earlier {
+            Some((r, path)) => format!(
+                "The findings of round {r} are at {}. Check that each was fixed.\n",
+                path.display()
+            ),
+            None => String::new(),
         };
         // Round 2 and later review only the fix, so the reviewer does not reopen settled ground.
-        // It needs earlier findings to judge, so a round after a checks-only fix is a normal review.
-        let rereview = if round > 1 && earlier.exists() {
+        // It needs earlier findings to judge, so a round without a review file is a normal review.
+        let rereview = if earlier.is_some() {
             "This is a scoped re-review. Give a verdict for each earlier finding: fixed, not fixed, or wrong. \
+             A finding that is fixed is tagged `[fixed]` and keeps no other tag. \
              A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. \
              Inspect the fix diff only. Report anything you notice outside it under `Out-of-scope observations`, without changing the verdict.\n"
         } else {

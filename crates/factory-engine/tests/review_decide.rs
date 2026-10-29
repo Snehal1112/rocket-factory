@@ -661,6 +661,25 @@ fn direct_prompt_with(round: u32, extra: &ReviewerExtra, files: &[&str]) -> Stri
     for f in files {
         std::fs::write(fx.job_dir.join(f), "1. [blocker] x\n").expect("write");
     }
+    // The newest review file is the board's last review.
+    let latest = files
+        .iter()
+        .filter_map(|f| {
+            let n = f.strip_prefix("review-code-r")?.strip_suffix(".md")?;
+            Some((n.parse::<u32>().ok()?, *f))
+        })
+        .max();
+    if let Some((round, file)) = latest {
+        let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+        board.find_mut("001").expect("job").last_review = Some(factory_core::LastReview {
+            round,
+            verdict: "changes".into(),
+            blockers: 1,
+            file: file.into(),
+            source: "build".into(),
+        });
+        board.save(&fx.board_path).expect("save");
+    }
     let rr = reviewer("ok\nVERDICT: APPROVE");
     fx.engine(&rr)
         .reviewer_spec(
@@ -725,20 +744,36 @@ fn round_two_still_carries_review_focus() {
 }
 
 #[test]
-fn round_two_without_a_round_one_review_is_a_normal_review() {
+fn round_one_has_no_rereview_line() {
+    let prompt = direct_prompt_with(1, &ReviewerExtra::default(), &[]);
+    assert!(!prompt.contains("scoped re-review"), "{prompt}");
+    assert!(!prompt.contains("Check that each was fixed"), "{prompt}");
+}
+
+#[test]
+fn rereview_uses_the_latest_review_file() {
     let extra = ReviewerExtra {
         focus: Some("Check the lease handling.".into()),
         notes: vec!["builder task 1: kept the old name".into()],
         plan_outline: String::new(),
         no_tests: false,
     };
-    let prompt = direct_prompt_with(2, &extra, &[]);
-    assert!(!prompt.contains("scoped re-review"), "{prompt}");
-    assert!(!prompt.contains("fix diff only"), "{prompt}");
-    assert!(!prompt.contains("Check that each was fixed"), "{prompt}");
+    let prompt = direct_prompt_with(3, &extra, &["review-code-r1.md"]);
+    assert!(prompt.contains("scoped re-review"), "{prompt}");
+    assert!(prompt.contains("The findings of round 1 are at "), "{prompt}");
+    assert!(prompt.contains("review-code-r1.md"), "{prompt}");
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
     assert!(
         prompt.contains("builder task 1: kept the old name"),
+        "{prompt}"
+    );
+}
+
+#[test]
+fn the_rereview_rule_tags_fixed_findings() {
+    let prompt = direct_prompt(2, &ReviewerExtra::default());
+    assert!(
+        prompt.contains("A finding that is fixed is tagged `[fixed]` and keeps no other tag."),
         "{prompt}"
     );
 }

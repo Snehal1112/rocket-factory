@@ -875,6 +875,21 @@ fn reviewer_files_name_the_review_focus_and_the_builder_rulings() -> TestResult 
     Ok(())
 }
 
+#[test]
+fn reviewer_files_tag_fixed_findings() -> TestResult {
+    for path in [
+        ".claude/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
+    ] {
+        require_all(&read(path)?, path, &["[fixed]", "keeps no other tag"])?;
+    }
+    Ok(())
+}
+
 /// The builder follows the implementer rules of subagent-driven-development and never acts as its controller.
 const NOT_CONTROLLER: &str =
     "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";

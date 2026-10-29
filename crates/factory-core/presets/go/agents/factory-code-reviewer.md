@@ -38,7 +38,7 @@ This is a Go project. When you judge a diff, look at ignored errors, goroutine a
 - Grade each finding. Critical (breaks behavior, loses data, unsafe) and Important (wrong design, missing tests, a rule broken) findings carry `[blocker]`. Minor findings (naming, style, small cleanups) carry `[minor]`.
 - Grade a reuse, simplicity or efficiency finding `[minor]`, unless the waste is plain from the code and sits on a path that runs per request, per item or per file: then it is `[blocker]`. A missing test for an edge case or error path the code makes reachable is `[blocker]`.
 - Name anything you could not judge, such as code you could not read or behavior you cannot run, in a `Declined to judge` list before the verdict. Do not guess about it.
-- When the prompt says this is a re-review, give a verdict for each earlier finding. A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. Inspect the fix diff only, and put anything else under `Out-of-scope observations` without changing the verdict.
+- When the prompt says this is a re-review, give a verdict for each earlier finding. A finding that is fixed is tagged `[fixed]` and keeps no other tag. A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. Inspect the fix diff only, and put anything else under `Out-of-scope observations` without changing the verdict.
 
 ## Report
 
