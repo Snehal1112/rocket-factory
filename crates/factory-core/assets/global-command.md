@@ -23,6 +23,7 @@ Match by exact shape only, on the whole argument string:
 - `status` alone
 - `approve <digits>` (nothing after the digits)
 - `approve <digits> --without-review`
+- `approve <digits> --waive "<reason>"`
 - `cancel <digits>` (nothing after the digits)
 - `cancel <slug>`: one kebab-case word, not only digits, that is the slug of a draft listed under `drafts:` by `<factory> --project <name> status` (run it to check). When no draft has that slug, the whole argument is a feature text.
 - `cleanup <digits>` (nothing after the digits)
@@ -38,6 +39,7 @@ Each is one call and a one-line report of the output, nothing more:
 - `status`: `<factory> --project <name> status`
 - `approve <id>`: `<factory> --project <name> approve <id>`. The driver refuses a `needs-human` job whose code review has not run (the checks never passed or the reviewer never ran) and says so. Report that refusal as it is and offer `/factory rework <id> <note>`, or `/factory approve <id> --without-review` to merge unreviewed, which the user must ask for.
 - `approve <id> --without-review`: `<factory> --project <name> approve <id> --without-review`
+- `approve <id> --waive "<reason>"`: `<factory> --project <name> approve <id> --waive=<reason>`. Use the `=` form with the reason as one argument. The reason must be one line, not empty, at most 200 characters. The user must ask for it: it merges a job whose last review asked for changes, records the waiver and files a ticket for each waived blocker. It never combines with `--without-review`.
 - `rework <id> <note>`: `<factory> --project <name> rework <id> '<note>'` (the driver accepts a one-line note of at most 200 characters and refuses anything else)
 - `cancel <id>`: `<factory> --project <name> cancel <id>`
 - `cancel <slug>`: `<factory> --project <name> cancel <slug>` (it removes the draft card and keeps its spec file)

@@ -432,11 +432,15 @@ Use it after you looked at the change and accept it.
 | Option | Meaning |
 |---|---|
 | `--without-review` | Merge a `needs-human` job even though the code review never ran. |
+| `--waive "<reason>"` | Merge a `needs-human` job whose last review asked for changes. The reason is one line, not empty, at most 200 characters. It cannot be combined with `--without-review`. |
 
 ```bash
 factory approve 028
 factory approve 028 --without-review
+factory approve 028 --waive "known flake, fixing in a follow-up"
 ```
+
+A plain approve of a job whose last review asked for changes is refused. `--waive` is the way to merge it anyway. It writes a ledger line, an `operator.approve` event and an entry in `waivers.json` in the job folder, and after the merge it files one ticket for each waived blocker, whether or not `tickets_on_merge` is set. A ticket that cannot be filed never changes the merge result; `factory tickets <id>` retries it. The dashboard asks for the reason in a dialog when you press Approve on such a job.
 
 The job must be in `needs-human` or `approve`. The merge is the same as an automatic one: it merges the reviewed change with a merge commit into your base branch. It never pushes.
 
@@ -447,6 +451,7 @@ Refusals, each exiting with code 1:
 | `job N was cancelled` | Use `rework` to revive it. |
 | `job N is in stage X, approve needs needs-human or approve` | The job is not waiting for you. |
 | `job N has no code review yet ...` | Use `rework`, or `approve --without-review` to merge anyway. |
+| `the review asked for changes ...` | Use `rework`, `cancel`, or `approve --waive "<reason>"` to merge anyway. |
 | `job N cannot be approved, the job changed files outside <sub>` | Monorepo projects only. Use `rework` so the builder removes those changes. |
 | `job N has a pending batch commit, use rework to finish it` | Use `rework`. |
 | `project is blocked: <reason>` | Fix the project settings. |

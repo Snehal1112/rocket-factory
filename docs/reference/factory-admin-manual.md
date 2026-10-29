@@ -92,7 +92,7 @@ Use `--accept-over-budget` only after inspecting the estimate. Its presence perm
 
 | Command | Supported arguments and flags | Example and result |
 |---|---|---|
-| `approve <id>` | `--without-review` | `factory --project rocket-api approve 001` approves an eligible parked job. `--without-review` permits a missing review; other merge guards still apply. |
+| `approve <id>` | `--without-review`; `--waive <reason>` | `factory --project rocket-api approve 001` approves an eligible parked job. `--without-review` permits a missing review; `--waive` permits open review changes and records the reason; other merge guards still apply. |
 | `rework <id> <note>` | No command-specific flags | `factory --project rocket-api rework 001 'Handle an empty query'` records a one-line builder note and returns the job to build. Run or enqueue it afterward. |
 | `cancel <id-or-draft-slug>` | `--reason <text>`; `--force` | `factory --project rocket-api cancel 001 --reason 'Feature withdrawn'` cancels a job. `factory --project rocket-api cancel add-search` removes a draft card while retaining its spec file. |
 | `cleanup <id>` | `--discard-commits` | `factory --project rocket-api cleanup 001` removes a merged or cancelled job's worktree and branch when safe. |
@@ -101,8 +101,11 @@ Use `--accept-over-budget` only after inspecting the estimate. Its presence perm
 
 `cleanup` keeps the job folder and usage history. Merged cards remain; cancelled cards are normally removed, except when series siblings or a live lease require retaining them. It refuses dirty worktrees or unmerged commits by default. `cleanup --discard-commits` discards both, so inspect the worktree and branch first. `approve --without-review` overrides only the missing-review guard; it cannot override a wrong stage, cancelled job, pending batch snapshot, or project-scope failure.
 
+`approve --waive` takes a one-line reason of at most 200 characters and never combines with `--without-review`. It writes a ledger line, an `operator.approve` event with `waived = true` and an entry in the job's `waivers.json`, then files one ticket per waived blocker after the merge, whether or not `tickets_on_merge` is set. Over the API, send `{"waive_reason": "..."}` to `POST /projects/{p}/jobs/{id}/approve`; a missing reason answers 409 with the refusal, and the supervisor passes it to the child as `--waive=<reason>`.
+
 ```sh
 factory --project rocket-api approve 001 --without-review
+factory --project rocket-api approve 001 --waive 'known flake'
 factory --project rocket-api cancel 001 --reason 'Feature withdrawn' --force
 factory --project rocket-api cleanup 001 --discard-commits
 ```
