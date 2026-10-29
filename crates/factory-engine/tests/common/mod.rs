@@ -117,6 +117,8 @@ impl Fixture {
                 paths: vec!["**".into()],
                 commands: vec!["true".into()],
             }],
+            // These tests cover fresh task builders. `task_carry.rs` turns the carry on itself.
+            builder_carry_session: false,
             ..Config::default()
         };
         let repo = Repo::open(&main).expect("open");

@@ -131,7 +131,7 @@ fn an_oversized_context_starts_fresh() {
     e.build_stage().expect("task 2");
     assert_eq!(runner.inner.specs_for("builder")[1].resume, None);
     assert!(
-        dispatched(&fx)[1].ends_with(", fresh (context 150000 over 100000))"),
+        dispatched(&fx)[1].ends_with(", fresh (context 150000 over 45000))"),
         "{:?}",
         dispatched(&fx)
     );

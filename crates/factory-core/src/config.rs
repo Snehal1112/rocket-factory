@@ -171,8 +171,8 @@ impl Default for Config {
             log_level: None,
             builder_permissions: true,
             builder_allow: Vec::new(),
-            builder_carry_session: false,
-            builder_carry_max_ctx: 100_000,
+            builder_carry_session: true,
+            builder_carry_max_ctx: 45_000,
             builder_plugins: vec!["superpowers".to_string()],
             reviewer_plugins: Vec::new(),
             commit_plugins: vec!["dev-workflow-skills".to_string()],
@@ -726,13 +726,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builder_carry_settings_have_off_and_100000_defaults() {
+    fn builder_carry_settings_have_on_and_45000_defaults() {
         let c = Config::default();
-        assert!(!c.builder_carry_session);
-        assert_eq!(c.builder_carry_max_ctx, 100_000);
-        let parsed = Config::parse("builder_carry_session = true\nbuilder_carry_max_ctx = 60000")
+        assert!(c.builder_carry_session);
+        assert_eq!(c.builder_carry_max_ctx, 45_000);
+        let parsed = Config::parse("builder_carry_session = false\nbuilder_carry_max_ctx = 60000")
             .expect("parse");
-        assert!(parsed.builder_carry_session);
+        assert!(!parsed.builder_carry_session);
         assert_eq!(parsed.builder_carry_max_ctx, 60_000);
     }
 

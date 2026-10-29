@@ -85,8 +85,8 @@ The choice of reviewer model is written to the ledger as `review model: ...`. We
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `builder_excerpt` | bool | true | A task builder gets the plan header, its own task and the spec goal and acceptance criteria. It falls back to the whole plan, with a notice event, when the plan has no `### Task N:` section for that task. |
-| `builder_carry_session` | bool | false | Resume the previous task's builder session for the next task of a plan while the prompt cache is alive. |
-| `builder_carry_max_ctx` | integer | 100000 | The largest end-of-task context that may be carried. Must be above 0. |
+| `builder_carry_session` | bool | true | Resume the previous task's builder session for the next task of a plan while the prompt cache is alive. |
+| `builder_carry_max_ctx` | integer | 45000 | The largest end-of-task context that may be carried. Must be above 0. |
 | `read_first` | string list | `[]` | Files or folders the builder is told to read first. They are plain text in the prompt, relative to the job worktree, and the driver does not check them. Used in the first builder prompt and the per-task builder prompt, not in resume or fix prompts and not for the reviewer. |
 | `builder_rules` | string list | `[]` | Joined into one `Rules:` line in the first builder prompt and the per-task builder prompt. Not in the resume prompt. |
 | `check_hints` | string list | `[]` | Example check commands, shown only in the resumed fix-builder prompt, as `Run the relevant checks (for example ...)`. They do not run anything. |
