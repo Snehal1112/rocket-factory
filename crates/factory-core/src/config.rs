@@ -54,9 +54,10 @@ pub struct Config {
     pub reviewer_model_large: Option<String>,
     /// A round diff with more changed lines than this uses `reviewer_model_large`.
     pub reviewer_large_over_lines: u32,
-    /// A stronger builder model for fix rounds after `escalate_after_fix_rounds` failed ones. `None` turns escalation off.
+    /// A stronger builder model for fix rounds after `escalate_after_fix_rounds` failed ones.
+    /// TOML cannot unset it, so `escalate_after_fix_rounds` at or above `fix_rounds` turns escalation off.
     pub escalation_model: Option<String>,
-    /// Fix rounds spent before the next one escalates the builder.
+    /// Fix rounds spent before the next one escalates the builder. At or above `fix_rounds` it never escalates.
     pub escalate_after_fix_rounds: u32,
     pub commit_model: String,
     pub commit_subagents: bool,

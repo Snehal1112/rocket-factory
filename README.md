@@ -134,6 +134,7 @@ after the spec's own warning, and the job still runs.
   lines than the threshold. A diff exactly at the threshold uses `reviewer_model`. The choice is written to the
   ledger as `review model: <name> (<reason>)`.
 - `escalation_model` (default `"claude-opus-5-5"`) is the builder model for a fix round once `escalate_after_fix_rounds` (default `1`) fix rounds were spent without fixing the job. The escalated round starts a fresh session. A job's own `--model` wins.
+- `fix_fresh_over_ctx` (default `60000`) starts a fresh fix builder instead of resuming a session that went idle past the cache limit with a context above it; `0` means always fresh once idle.
 - The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
 
 ## Builder carry
