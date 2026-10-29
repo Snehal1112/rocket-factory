@@ -11,6 +11,7 @@ mod compat;
 mod costs;
 mod decide;
 mod drafts;
+mod escalation;
 mod followups;
 mod kb;
 mod lease;

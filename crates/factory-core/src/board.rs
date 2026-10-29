@@ -122,6 +122,9 @@ pub struct Job {
     /// What started the latest fix round, `checks` or `review`. New in the approve review series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix_source: Option<String>,
+    /// The stronger builder model a later fix round runs on. New in the builder escalation series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalated_model: Option<String>,
     /// A warning about the job's spec, for the dashboard. New in the draft cards series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec_warning: Option<String>,
@@ -235,6 +238,7 @@ impl Job {
             batch_snapshot: None,
             estimate: None,
             fix_source: None,
+            escalated_model: None,
             spec_warning: None,
             task_session: None,
             builder_last: None,
@@ -602,6 +606,18 @@ mod tests {
             m.contains("use rework") && m.contains("approve --without-review"),
             "{m}"
         );
+    }
+
+    #[test]
+    fn escalated_model_is_optional_and_omitted_when_unset() {
+        let mut j = Job::new("001", "d", "s", "2026-10-17", "f", 1.0);
+        assert!(!serde_json::to_string(&j)
+            .expect("json")
+            .contains("escalated_model"));
+        j.escalated_model = Some("opus".to_string());
+        let back: Job =
+            serde_json::from_str(&serde_json::to_string(&j).expect("json")).expect("parse");
+        assert_eq!(back.escalated_model.as_deref(), Some("opus"));
     }
 
     #[test]

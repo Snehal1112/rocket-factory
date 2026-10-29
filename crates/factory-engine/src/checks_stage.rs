@@ -193,13 +193,31 @@ impl Engine<'_> {
         } else {
             "review"
         };
+        let escalate = crate::escalation::escalation_for(
+            used,
+            self.config.escalate_after_fix_rounds,
+            self.config.escalation_model.as_deref(),
+            self.job_model().as_deref(),
+            job.escalated_model.as_deref(),
+        );
+        let newly = escalate
+            .clone()
+            .filter(|m| Some(m) != job.escalated_model.as_ref());
         self.update(|j| {
             j.round = next;
             j.fix_source = Some(fix_source.to_string());
+            if escalate.is_some() {
+                j.escalated_model = escalate;
+            }
             j.reset_reviews();
             crate::ports::set_stage_logged(j, Stage::Build, None, true, now())
         })?;
         self.ruling(&format!("fix round {next}, {reason}"))?;
+        if let Some(model) = newly {
+            self.ruling(&format!(
+                "escalated the builder to {model} (fix round {next}, {reason})"
+            ))?;
+        }
         Ok(StageOutcome::Advanced(Stage::Build))
     }
 

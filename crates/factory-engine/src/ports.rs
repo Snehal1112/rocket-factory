@@ -84,6 +84,8 @@ pub(crate) struct JobView {
     pub issues: Vec<u32>,
     pub batch_snapshot: Option<String>,
     pub fix_source: Option<String>,
+    /// The stronger builder model the job escalated to, if any.
+    pub escalated_model: Option<String>,
     pub review_missing: bool,
     /// The saved builder session of the task that was running, if any.
     pub task_session: Option<factory_core::board::TaskSession>,
@@ -109,6 +111,7 @@ impl Engine<'_> {
             issues: job.issues.clone(),
             batch_snapshot: job.batch_snapshot.clone(),
             fix_source: job.fix_source.clone(),
+            escalated_model: job.escalated_model.clone(),
             review_missing: job.review_missing(),
             task_session: job.task_session.clone(),
             builder_last: job.builder_last.clone(),
