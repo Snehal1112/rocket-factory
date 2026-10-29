@@ -69,6 +69,8 @@ Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factor
 | `reviewer_model` | string | `"claude-sonnet-5-5"` | Reviewer model. Not blank. |
 | `reviewer_model_large` | string | `"claude-opus-5-5"` | A stronger reviewer. Used when the diff is risky, or the round's changed lines are strictly above `reviewer_large_over_lines`. To turn the switch off, set it to the same name as `reviewer_model`. Not blank. `factory project add --agent-cli codex` seeds it with the Codex model. A Codex project whose files do not set it gets no large reviewer, since `"opus"` is a Claude model. |
 | `reviewer_large_over_lines` | integer | 800 | The threshold above. It counts the round diff, not the whole job diff. Above 0. |
+| `escalation_model` | string | `"claude-opus-5-5"` | The builder model for a fix round once `escalate_after_fix_rounds` fix rounds were spent without fixing the job. The escalated round starts a fresh session. A job's own `--model` wins. A Codex project without the key does not escalate. Not blank. |
+| `escalate_after_fix_rounds` | integer | 1 | Fix rounds spent before the next one escalates. `0` escalates the first fix round. At or above `fix_rounds` it never escalates. |
 | `commit_model` | string | `"claude-sonnet-5-5"` | Committer and the merge and sync message agents. Not blank. |
 | `kb_model` | string | `"claude-sonnet-5-5"` | KB refresher. Not blank. |
 

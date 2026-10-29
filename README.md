@@ -133,6 +133,7 @@ after the spec's own warning, and the job still runs.
 - The review uses the large model when the whole job diff is risky, or when this round's diff has more changed
   lines than the threshold. A diff exactly at the threshold uses `reviewer_model`. The choice is written to the
   ledger as `review model: <name> (<reason>)`.
+- `escalation_model` (default `"claude-opus-5-5"`) is the builder model for a fix round once `escalate_after_fix_rounds` (default `1`) fix rounds were spent without fixing the job. The escalated round starts a fresh session. A job's own `--model` wins.
 - The weighted-token figure ignores the model, so a stronger model's extra cost does not show in `factory tokens`.
 
 ## Builder carry

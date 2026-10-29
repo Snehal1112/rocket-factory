@@ -41,6 +41,8 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("reviewer_model", None),
             ("reviewer_model_large", None),
             ("reviewer_large_over_lines", None),
+            ("escalation_model", None),
+            ("escalate_after_fix_rounds", None),
             ("commit_model", None),
             ("kb_model", None),
         ],
@@ -371,7 +373,11 @@ mod tests {
             assert!(out.contains(line), "lost {line:?}");
         }
         assert!(!out.contains("# budget_weighted"), "{out}");
-        assert_eq!(out.matches("fix_rounds").count(), 1, "{out}");
+        let fix_rounds_lines = out
+            .lines()
+            .filter(|l| l.trim_start_matches("# ").starts_with("fix_rounds"))
+            .count();
+        assert_eq!(fix_rounds_lines, 1, "{out}");
         assert!(!out.contains("# checks"), "{out}");
         let block_at = out.find(BLOCK_HEADER).expect("header");
         assert!(

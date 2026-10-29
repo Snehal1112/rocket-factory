@@ -54,6 +54,10 @@ pub struct Config {
     pub reviewer_model_large: Option<String>,
     /// A round diff with more changed lines than this uses `reviewer_model_large`.
     pub reviewer_large_over_lines: u32,
+    /// A stronger builder model for fix rounds after `escalate_after_fix_rounds` failed ones. `None` turns escalation off.
+    pub escalation_model: Option<String>,
+    /// Fix rounds spent before the next one escalates the builder.
+    pub escalate_after_fix_rounds: u32,
     pub commit_model: String,
     pub commit_subagents: bool,
     /// Per-run cap on weighted tokens for one committer run.
@@ -143,6 +147,8 @@ impl Default for Config {
             reviewer_model: "claude-sonnet-5-5".to_string(),
             reviewer_model_large: Some("claude-opus-5-5".to_string()),
             reviewer_large_over_lines: 800,
+            escalation_model: Some("claude-opus-5-5".to_string()),
+            escalate_after_fix_rounds: 1,
             commit_model: "claude-sonnet-5-5".to_string(),
             commit_subagents: false,
             commit_budget_weighted: 60_000,
@@ -219,12 +225,15 @@ impl Config {
 
     pub fn parse(text: &str) -> Result<Config, CoreError> {
         let mut cfg: Config = toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
-        // The default large reviewer is a Claude model, so a Codex config without the key gets none.
+        // The default large reviewer and escalation model are Claude models, so a Codex config without the key gets none.
         if cfg.agent_cli() == "codex" {
             let table: toml::Table =
                 toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
             if !table.contains_key("reviewer_model_large") {
                 cfg.reviewer_model_large = None;
+            }
+            if !table.contains_key("escalation_model") {
+                cfg.escalation_model = None;
             }
         }
         if cfg.diff_cap_lines == 0 || cfg.budget_weighted == 0 {
@@ -251,6 +260,7 @@ impl Config {
             ("builder_model", Some(cfg.builder_model.as_str())),
             ("reviewer_model", Some(cfg.reviewer_model.as_str())),
             ("reviewer_model_large", cfg.reviewer_model_large.as_deref()),
+            ("escalation_model", cfg.escalation_model.as_deref()),
             ("commit_model", Some(cfg.commit_model.as_str())),
             ("kb_model", Some(cfg.kb_model.as_str())),
         ];
@@ -274,6 +284,15 @@ impl Config {
         {
             return Err(CoreError::Config(
                 "reviewer_model_large must not be empty when it is set".into(),
+            ));
+        }
+        if cfg
+            .escalation_model
+            .as_deref()
+            .is_some_and(|m| m.trim().is_empty())
+        {
+            return Err(CoreError::Config(
+                "escalation_model must not be empty when it is set".into(),
             ));
         }
         if cfg.size_small_max_bytes == 0 || cfg.size_small_max_bytes >= cfg.size_medium_max_bytes {
@@ -977,6 +996,7 @@ mod tests {
             "builder_model",
             "reviewer_model",
             "reviewer_model_large",
+            "escalation_model",
             "commit_model",
             "kb_model",
         ] {
@@ -1005,6 +1025,34 @@ mod tests {
             claude.reviewer_model_large.as_deref(),
             Some("claude-opus-5-5")
         );
+    }
+
+    #[test]
+    fn escalation_defaults_to_opus_after_one_fix_round() {
+        let cfg = Config::default();
+        assert_eq!(cfg.escalation_model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(cfg.escalate_after_fix_rounds, 1);
+        let set = Config::parse(
+            "escalation_model = \"claude-sonnet-5-5\"\nescalate_after_fix_rounds = 0",
+        )
+        .expect("parse");
+        assert_eq!(set.escalation_model.as_deref(), Some("claude-sonnet-5-5"));
+        assert_eq!(set.escalate_after_fix_rounds, 0);
+        let err = Config::parse("escalation_model = \" \"").expect_err("blank is refused");
+        assert!(
+            err.to_string()
+                .contains("escalation_model must not be empty when it is set"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_codex_config_without_the_key_does_not_escalate() {
+        let codex = Config::parse("agent_cli = \"codex\"").expect("parse");
+        assert_eq!(codex.escalation_model, None);
+        let set = Config::parse("agent_cli = \"codex\"\nescalation_model = \"gpt-big\"")
+            .expect("parse");
+        assert_eq!(set.escalation_model.as_deref(), Some("gpt-big"));
     }
 
     #[test]
