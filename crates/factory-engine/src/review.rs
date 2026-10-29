@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
 use factory_core::{
-    budget_state, classify_paths, parse_verdict, DiffClass, ParkKind, ReviewState, Stage, Verdict,
+    budget_state, classify_paths, open_blockers, parse_verdict, DiffClass, LastReview, ParkKind,
+    ReviewState, Stage, Verdict,
 };
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
@@ -111,11 +112,25 @@ impl Engine<'_> {
         } else {
             ReviewState::Changes
         };
+        let blockers = open_blockers(&run.result_text).len() as u32;
+        let source = job.fix_source.clone().unwrap_or_else(|| "build".into());
+        let file = format!("review-code-r{}.md", job.round);
+        let last = LastReview {
+            round: job.round,
+            verdict: verdict.as_word().into(),
+            blockers,
+            file,
+            source: source.clone(),
+        };
         self.update(|j| {
             j.set_review("code", state);
+            j.last_review = Some(last.clone());
             Ok(())
         })?;
-        self.ruling(&format!("review round {} verdict {:?}", job.round, verdict))?;
+        self.ruling(&format!(
+            "review round {} ({source}) verdict {verdict:?}, {blockers} blockers",
+            job.round
+        ))?;
 
         let checks_ok = self.latest_checks_ok()?;
         let input = DecideInput {
@@ -136,7 +151,13 @@ impl Engine<'_> {
             Decision::FixRound => "fix",
             Decision::NeedsHuman { .. } => "needs-human",
         };
-        tracing::info!(event = "decide", choice = choice, round = job.round);
+        tracing::info!(
+            event = "decide",
+            choice = choice,
+            round = job.round,
+            verdict = verdict.as_word(),
+            risky = risky
+        );
         Ok(ReviewOutcome {
             verdict,
             review_path,
@@ -160,6 +181,12 @@ impl Engine<'_> {
     pub fn apply_decision(&self, outcome: &ReviewOutcome) -> Result<StageOutcome, EngineError> {
         match &outcome.decision {
             Decision::NeedsHuman { kind, reason } => {
+                // A risky approve still needs the final checks to pass on the exact head.
+                if *kind == ParkKind::RiskyDiff {
+                    if let Some(outcome) = self.final_gate()? {
+                        return Ok(outcome);
+                    }
+                }
                 let round = self.job()?.round;
                 let parts = self.decision_parts(*kind, reason, round);
                 self.park_with(*kind, reason.clone(), parts)
@@ -176,36 +203,46 @@ impl Engine<'_> {
                 )
             }
             Decision::AutoMerge => {
-                let report = self.final_checks()?;
-                if !report.all_passed() {
-                    let findings = format!(
-                        "The final checks failed. Fix these failures only.\n\n{}",
-                        report.failure_text()
-                    );
-                    return self.fix_or_park(
-                        &findings,
-                        "final checks failed",
-                        ParkKind::ChecksFailed,
-                        "checks",
-                    );
+                if let Some(outcome) = self.final_gate()? {
+                    return Ok(outcome);
                 }
-                let paths = self.job_changed_paths()?;
-                if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
-                    return self.park_gate(kind, reason);
-                }
-                let commands: Vec<&str> =
-                    report.results.iter().map(|r| r.command.as_str()).collect();
-                let list = if commands.is_empty() {
-                    "none".to_string()
-                } else {
-                    commands.join(", ")
-                };
-                self.ruling(&format!("checks ran: {list}"))?;
                 self.set_stage(Stage::Approve, None, false)?;
                 self.ruling("auto-merge approved, checks green, reviewer approved")?;
                 Ok(StageOutcome::Advanced(Stage::Approve))
             }
         }
+    }
+
+    /// Re-runs the checks on the final head and applies the gates.
+    /// Returns `Some` when it started a fix round or parked, and `None` when everything passed.
+    fn final_gate(&self) -> Result<Option<StageOutcome>, EngineError> {
+        let report = self.final_checks()?;
+        if !report.all_passed() {
+            let findings = format!(
+                "The final checks failed. Fix these failures only.\n\n{}",
+                report.failure_text()
+            );
+            return self
+                .fix_or_park(
+                    &findings,
+                    "final checks failed",
+                    ParkKind::ChecksFailed,
+                    "checks",
+                )
+                .map(Some);
+        }
+        let paths = self.job_changed_paths()?;
+        if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
+            return self.park_gate(kind, reason).map(Some);
+        }
+        let commands: Vec<&str> = report.results.iter().map(|r| r.command.as_str()).collect();
+        let list = if commands.is_empty() {
+            "none".to_string()
+        } else {
+            commands.join(", ")
+        };
+        self.ruling(&format!("checks ran: {list}"))?;
+        Ok(None)
     }
 }
 

@@ -766,3 +766,135 @@ fn the_rereview_prompt_names_the_builder_reply_when_it_exists() {
     let without = direct_prompt(2, &ReviewerExtra::default());
     assert!(!without.contains("builder-r2.md"), "{without}");
 }
+
+fn ledger_of(fx: &Fixture) -> String {
+    std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default()
+}
+
+const TWO_BLOCKERS: &str =
+    "1. [blocker] src/a.rs:3 bad\n2. [blocker] src/b.rs:9 worse\nVERDICT: CHANGES";
+
+#[test]
+fn review_writes_last_review_and_a_counted_ledger_line() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
+    let rr = reviewer(TWO_BLOCKERS);
+    fx.engine(&rr).review_stage().expect("review");
+    let last = fx.job().last_review.expect("last_review");
+    assert_eq!(last.round, 1);
+    assert_eq!(last.verdict, "changes");
+    assert_eq!(last.blockers, 2);
+    assert_eq!(last.file, "review-code-r1.md");
+    assert_eq!(last.source, "build");
+    let ledger = ledger_of(&fx);
+    assert!(
+        ledger.contains("review round 1 (build) verdict Changes, 2 blockers"),
+        "{ledger}"
+    );
+}
+
+#[test]
+fn last_review_survives_a_fix_round() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
+    let rr = reviewer(TWO_BLOCKERS);
+    let e = fx.engine(&rr);
+    let out = e.review_stage().expect("review");
+    e.apply_decision(&out).expect("apply");
+    assert_eq!(code_review_state(&fx), factory_core::ReviewState::Pending);
+    assert_eq!(
+        fx.job().last_review.expect("last_review").verdict,
+        "changes"
+    );
+}
+
+#[test]
+fn risky_changes_starts_a_fix_round() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
+    let rr = reviewer(TWO_BLOCKERS);
+    let e = fx.engine(&rr);
+    let out = e.review_stage().expect("review");
+    assert_eq!(out.decision, Decision::FixRound);
+    assert_eq!(
+        e.apply_decision(&out).expect("apply"),
+        StageOutcome::Advanced(Stage::Build)
+    );
+    assert!(fx.job_dir.join("changes-r2.md").exists());
+    assert_eq!(fx.job().stage, Stage::Build);
+}
+
+#[test]
+fn risky_approve_with_failing_final_checks_starts_a_fix_round() {
+    let mut fx = committing_fixture();
+    build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let out = fx.engine(&rr).review_stage().expect("review");
+    assert!(matches!(out.decision, Decision::NeedsHuman { .. }));
+    fx.config.checks = failing_check();
+    assert_eq!(
+        fx.engine(&rr).apply_decision(&out).expect("apply"),
+        StageOutcome::Advanced(Stage::Build)
+    );
+    assert_eq!(fx.job().round, 2);
+}
+
+#[test]
+fn decide_event_carries_verdict_and_risky() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
+    let rr = reviewer(TWO_BLOCKERS);
+    let (_, lines) = factory_telemetry::capture("info", || {
+        fx.engine(&rr).review_stage().expect("review");
+    });
+    let found = lines
+        .iter()
+        .find(|l| l["event"] == "decide")
+        .unwrap_or_else(|| panic!("no decide event in {lines:?}"));
+    assert_eq!(found["verdict"], "changes");
+    assert_eq!(found["risky"], true);
+}
+
+fn run_risky_build_with_failing_check(fx: &Fixture) -> StageOutcome {
+    let effects: Vec<Effect> = vec![Box::new(|spec| {
+        std::fs::create_dir_all(spec.cwd.join("src-tauri/src")).expect("mkdir");
+        std::fs::write(spec.cwd.join("src-tauri/src/lib.rs"), "x\n").expect("write");
+        "done".to_string()
+    })];
+    let runner = scripted_auto(effects);
+    fx.engine(&runner).build_stage().expect("build");
+    fx.engine(&runner).checks_stage().expect("checks")
+}
+
+fn failing_check() -> Vec<factory_core::CheckRule> {
+    vec![factory_core::CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["false".into()],
+    }]
+}
+
+#[test]
+fn risky_failing_checks_with_zero_rounds_park_at_once() {
+    let mut fx = committing_fixture();
+    fx.config.checks = failing_check();
+    fx.config.risky_fix_rounds = Some(0);
+    assert!(matches!(
+        run_risky_build_with_failing_check(&fx),
+        StageOutcome::NeedsHuman(_)
+    ));
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::ChecksFailed);
+    let parked_round = fx.job().round;
+    assert!(!fx.job_dir.join("changes-r2.md").exists());
+    assert!(!fx
+        .job_dir
+        .join(format!("changes-r{}.md", parked_round + 1))
+        .exists());
+    let mut fx = committing_fixture();
+    fx.config.checks = failing_check();
+    assert_eq!(
+        run_risky_build_with_failing_check(&fx),
+        StageOutcome::Advanced(Stage::Build)
+    );
+    assert!(fx.job().round > parked_round);
+}

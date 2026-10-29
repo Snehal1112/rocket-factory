@@ -106,6 +106,31 @@ fn a_risky_diff_waits_for_approve_and_then_merges_the_reviewed_sha() -> TestResu
 }
 
 #[test]
+fn a_risky_changes_verdict_runs_a_fix_round_then_waits_for_approve() -> TestResult {
+    let sc = Scenario::new(
+        "",
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+            build(vec![("secrets/token.txt", "fixed\n")], 400),
+            review(APPROVE),
+        ],
+    )?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    assert_eq!(sc.stage("001")?, "needs-human");
+    let layout = factory_core::Layout::in_repo(&sc.root);
+    let dir = layout.job_dir(&sc.job("001")?.dir);
+    assert!(dir.join("review-code-r1.md").exists());
+    assert!(dir.join("review-code-r2.md").exists());
+    let reviewed = sc.job("001")?.head.ok_or("no reviewed head")?;
+    let approved = sc.run(&["approve", "1"])?;
+    assert!(approved.starts_with("merged"), "{approved}");
+    assert_eq!(sc.second_parent_of_last_merge()?, reviewed);
+    Ok(())
+}
+
+#[test]
 fn a_moved_main_is_synced_into_the_branch_and_still_merges() -> TestResult {
     let hook: support::Hook = Box::new(|main| {
         // Spec decision 10: move main between the build and the merge.
