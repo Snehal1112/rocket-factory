@@ -122,6 +122,8 @@ pub struct Config {
     pub builder_carry_session: bool,
     /// The largest end-of-task context, in tokens, that may be carried to the next task.
     pub builder_carry_max_ctx: u64,
+    /// A fix round starts a fresh builder when the last builder's cache expired and its end context was above this.
+    pub fix_fresh_over_ctx: u32,
     /// Claude Code plugins builder runs load, by name or `name@marketplace`. Every other plugin is off.
     pub builder_plugins: Vec<String>,
     /// Claude Code plugins reviewer runs load. Every other plugin is off.
@@ -182,6 +184,7 @@ impl Default for Config {
             builder_allow: Vec::new(),
             builder_carry_session: true,
             builder_carry_max_ctx: 45_000,
+            fix_fresh_over_ctx: 60_000,
             builder_plugins: vec!["superpowers".to_string()],
             reviewer_plugins: Vec::new(),
             commit_plugins: vec!["dev-workflow-skills".to_string()],
@@ -783,6 +786,13 @@ mod tests {
     }
 
     #[test]
+    fn fix_fresh_over_ctx_defaults_to_60000() {
+        assert_eq!(Config::default().fix_fresh_over_ctx, 60_000);
+        let parsed = Config::parse("fix_fresh_over_ctx = 90000").expect("parse");
+        assert_eq!(parsed.fix_fresh_over_ctx, 90_000);
+    }
+
+    #[test]
     fn builder_simplify_is_on_by_default() {
         assert!(Config::default().builder_simplify);
         let off = Config::parse("builder_simplify = false").expect("parse");
@@ -1050,8 +1060,8 @@ mod tests {
     fn a_codex_config_without_the_key_does_not_escalate() {
         let codex = Config::parse("agent_cli = \"codex\"").expect("parse");
         assert_eq!(codex.escalation_model, None);
-        let set = Config::parse("agent_cli = \"codex\"\nescalation_model = \"gpt-big\"")
-            .expect("parse");
+        let set =
+            Config::parse("agent_cli = \"codex\"\nescalation_model = \"gpt-big\"").expect("parse");
         assert_eq!(set.escalation_model.as_deref(), Some("gpt-big"));
     }
 

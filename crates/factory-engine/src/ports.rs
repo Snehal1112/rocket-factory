@@ -91,7 +91,7 @@ pub(crate) struct JobView {
     pub review_missing: bool,
     /// The saved builder session of the task that was running, if any.
     pub task_session: Option<factory_core::board::TaskSession>,
-    /// The last finished task builder, if any.
+    /// The last finished builder, task or fix, if any.
     pub builder_last: Option<factory_core::board::BuilderLast>,
 }
 

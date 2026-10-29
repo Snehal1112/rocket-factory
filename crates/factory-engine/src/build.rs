@@ -38,9 +38,27 @@ fn needs_fresh_session(job: &JobView) -> bool {
     }
 }
 
+/// The ruling when the last builder's session is cold and large, so a fix round should not resume it.
+fn cold_session(
+    last: Option<&factory_core::BuilderLast>,
+    idle_limit: u64,
+    max_ctx: u64,
+    now: u64,
+) -> Option<String> {
+    let last = last?;
+    let idle = now.saturating_sub(last.ended_at);
+    (idle > idle_limit && last.end_ctx > max_ctx).then(|| {
+        format!(
+            "fresh fix builder (idle {idle}s over {idle_limit}s, context {} over {max_ctx})",
+            last.end_ctx
+        )
+    })
+}
+
 impl Engine<'_> {
     /// Runs the builder, then records the new head. With a task list in `plan.md` it runs one task agent per
-    /// call and stays in Build until the last task has a commit. Fix rounds resume the last session.
+    /// call and stays in Build until the last task has a commit. Fix rounds resume the last session unless it is
+    /// escalated, or cold and large.
     pub fn build_stage(&self) -> Result<StageOutcome, EngineError> {
         // Provider changes must clear old session ids before this stage copies them into specs.
         self.sync_provider()?;
@@ -57,7 +75,19 @@ impl Engine<'_> {
         }
         let fresh = job.worktree.is_none();
         // A fix round on a model other than the stored session's starts a fresh session.
-        let fresh_fix = !fresh && job.round > 1 && needs_fresh_session(&job);
+        let escalated = !fresh && job.round > 1 && needs_fresh_session(&job);
+        // A resume of a session whose cache expired and whose context is large starts a fresh session too.
+        let cold = if !fresh && !escalated && job.session_id.is_some() {
+            cold_session(
+                job.builder_last.as_ref(),
+                carry_idle_limit(self.config.cache_ttl.as_deref()),
+                u64::from(self.config.fix_fresh_over_ctx),
+                now().max(0.0) as u64,
+            )
+        } else {
+            None
+        };
+        let fresh_fix = escalated || cold.is_some();
         let new_work = !fresh_fix && (fresh || job.session_id.is_none());
         let (cwd, base, previous_head, branch) = if fresh {
             let (cwd, base, branch) = self.start_worktree(&job)?;
@@ -72,6 +102,9 @@ impl Engine<'_> {
             (cwd, base, job.head.clone(), job.branch.clone())
         };
         self.write_agent_files(&cwd)?;
+        if let Some(text) = &cold {
+            self.ruling(text)?;
+        }
         let spec = match &job.session_id {
             _ if fresh_fix => {
                 let findings = self.fix_findings(&job)?;
@@ -92,9 +125,18 @@ impl Engine<'_> {
             // The builder has seen the note, so it must not be sent again. A missing file is fine.
             let _ = std::fs::remove_file(self.job_dir.join("rework-note.md"));
         }
+        // The time is read when the builder run returns, so the next round can tell if its cache expired.
+        let ended_at = now().max(0.0) as u64;
         let session = run.session_id.clone().or(job.session_id.clone());
+        let builder_last = session.clone().map(|id| factory_core::BuilderLast {
+            task: job.builder_last.as_ref().map_or(job.task_index, |l| l.task),
+            id,
+            ended_at,
+            end_ctx: run.end_ctx,
+        });
         let session_model = self.session_model(&run, job.builder_session_model.clone());
         self.update(|j| {
+            j.builder_last = builder_last;
             j.builder_id = session;
             j.builder_session_model = session_model;
             Ok(())

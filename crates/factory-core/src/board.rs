@@ -142,7 +142,7 @@ pub struct Job {
     pub provider: Option<String>,
 }
 
-/// The last finished task builder of the job, used to decide a carry.
+/// The last finished builder of the job, a task or fix builder, used to decide a carry or a fresh fix builder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuilderLast {
     /// The plan task number, as in `### Task N`.

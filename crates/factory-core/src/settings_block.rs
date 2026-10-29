@@ -62,6 +62,7 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("builder_simplify", None),
             ("builder_carry_session", None),
             ("builder_carry_max_ctx", None),
+            ("fix_fresh_over_ctx", None),
             ("read_first", None),
             ("builder_rules", None),
             ("check_hints", None),
