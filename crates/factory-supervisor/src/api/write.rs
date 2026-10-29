@@ -4,9 +4,10 @@
 //! The stage rules stay in factory-cli, which runs as a child. Only the approve pre-check reads the board.
 
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use factory_core::project::{self, ProjectFile};
-use factory_core::{normalize_id, slugify, Board, Home, Layout, Stage};
+use factory_core::{normalize_id, slugify, Board, Config, Home, Layout, Stage};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -31,6 +32,7 @@ struct CreateBody {
     run: Option<bool>,
     series: Option<bool>,
     slug: Option<String>,
+    accept_spec: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,6 +250,24 @@ fn created_id(stdout: &str) -> Option<String> {
     Some(id.to_string())
 }
 
+/// How long the create call may run: the project's `stall_minutes` plus two minutes, because
+/// `factory new` runs the spec reviewer. Settings that cannot be read give the default.
+fn create_timeout(home: &Home, name: &str) -> Duration {
+    let stall = project::get(home, name)
+        .ok()
+        .and_then(|file| {
+            let base = file
+                .base_branch()
+                .unwrap_or_else(|| Config::default().base_branch);
+            let repo = factory_git::Repo::open_top(&file.repo)
+                .ok()?
+                .with_base_branch(&base);
+            factory_core::resolve(home, name, &factory_engine::RepoTip(&repo)).ok()
+        })
+        .map_or(Config::default().stall_minutes, |r| r.config.stall_minutes);
+    Duration::from_secs((u64::from(stall) + 2) * 60)
+}
+
 /// The text that every `factory new` spec refusal carries.
 const SPEC_REFUSAL_HINT: &str = "--accept-spec";
 
@@ -283,6 +303,9 @@ fn create_inner(
     };
     let feature = b.feature.clone().unwrap_or_else(|| slug.clone());
     one_line(&feature, "feature")?;
+    if let Some(reason) = &b.accept_spec {
+        one_line(reason, "accept-spec reason")?;
+    }
     // Options go first and values are joined to their flag, so no value can pass for an option.
     let mut args = vec![
         "new".to_string(),
@@ -292,8 +315,13 @@ fn create_inner(
     if let Some(m) = &b.model {
         args.push(format!("--model={m}"));
     }
+    if let Some(reason) = &b.accept_spec {
+        args.push(format!("--accept-spec={reason}"));
+    }
     args.extend(["--".to_string(), slug, feature]);
-    let run = deps.cli.run(name, &args);
+    let run = deps
+        .cli
+        .run_with_timeout(name, &args, create_timeout(home, name));
     // A spec refusal names `--accept-spec`, so it is a conflict the caller can resolve.
     let refused = matches!(&run, Ok(o) if o.code == 1
         && (o.stderr.contains(SPEC_REFUSAL_HINT) || o.stdout.contains(SPEC_REFUSAL_HINT)));
@@ -394,11 +422,10 @@ fn approve_inner(
             ),
         ));
     }
-    // The child would refuse this, and nobody reads a child's refusal, so answer here.
-    if job.stage == Stage::NeedsHuman {
-        if let Some(why) = job.approve_refusal(without_review, b.waive_reason.is_some()) {
-            return Err(error_response(409, "conflict", &why));
-        }
+    // The child would refuse this, and nobody reads a child's refusal, so answer here. The review
+    // rules inside apply to needs-human only, the open-changes rule to both stages.
+    if let Some(why) = job.approve_refusal(without_review, b.waive_reason.is_some()) {
+        return Err(error_response(409, "conflict", &why));
     }
     let request_id = enqueue(
         home,
@@ -902,6 +929,19 @@ mod tests {
     }
 
     #[test]
+    fn approve_of_a_job_in_stage_approve_with_open_changes_is_a_conflict() {
+        let f = fx();
+        let job = job_json("001", "001-first").replace(
+            r#""stage":"build""#,
+            r#""stage":"approve","last_review":{"round":1,"verdict":"changes","blockers":1,"file":"review-1.md","source":"build"}"#,
+        );
+        write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
+        let r = post(&f, "/projects/good/jobs/1/approve", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
     fn approve_checks_the_job_id() {
         let f = fx();
         board_with(&f, "approve", false);
@@ -954,6 +994,78 @@ mod tests {
     }
 
     #[test]
+    fn create_waits_for_the_spec_review_longer_than_other_commands() {
+        let f = fx();
+        f.cli.reply_stdout("created job 001 in x\n");
+        let mut body = create_body(&f);
+        body["run"] = json!(false);
+        let r = post(&f, "/projects/good/jobs", body.to_string().as_bytes());
+        assert_eq!(r.status, 201, "{}", r.body);
+        // The default stall_minutes is 10, and the create call gets two minutes more.
+        assert_eq!(
+            f.cli.timeouts(),
+            vec![Some(std::time::Duration::from_secs(12 * 60))]
+        );
+    }
+
+    #[test]
+    fn create_timeout_follows_the_project_stall_minutes() {
+        let f = fx();
+        // The settings resolve only with the preset in place, else they fail closed to the default.
+        factory_core::preset::seed(&f.home.presets_dir()).expect("presets");
+        // The base branch needs a commit, so its tip files can be read.
+        let repo = git2::Repository::open(f._t.path().join("repo")).expect("repo");
+        let sig = git2::Signature::now("t", "t@example.com").expect("sig");
+        let tree = repo
+            .find_tree(repo.index().expect("index").write_tree().expect("tree"))
+            .expect("tree");
+        repo.commit(Some("refs/heads/trunk"), &sig, &sig, "init", &tree, &[])
+            .expect("commit");
+        let file = f.home.project_dir("good").join("project.toml");
+        let text = std::fs::read_to_string(&file).expect("project.toml");
+        std::fs::write(&file, format!("{text}stall_minutes = 3\n")).expect("write");
+        f.cli.reply_stdout("created job 001 in x\n");
+        let mut body = create_body(&f);
+        body["run"] = json!(false);
+        let r = post(&f, "/projects/good/jobs", body.to_string().as_bytes());
+        assert_eq!(r.status, 201, "{}", r.body);
+        assert_eq!(
+            f.cli.timeouts(),
+            vec![Some(std::time::Duration::from_secs(5 * 60))]
+        );
+    }
+
+    #[test]
+    fn create_passes_accept_spec_joined_to_its_flag() {
+        let f = fx();
+        f.cli.reply_stdout("created job 001 in x\n");
+        let mut body = create_body(&f);
+        body["run"] = json!(false);
+        body["accept_spec"] = json!("--checked by hand");
+        let r = post(&f, "/projects/good/jobs", body.to_string().as_bytes());
+        assert_eq!(r.status, 201, "{}", r.body);
+        let args = &f.cli.calls()[0].1;
+        let at = args
+            .iter()
+            .position(|a| a == "--accept-spec=--checked by hand")
+            .expect("accept-spec arg");
+        let dashes = args.iter().position(|a| a == "--").expect("--");
+        assert!(at < dashes, "{args:?}");
+    }
+
+    #[test]
+    fn create_refuses_a_bad_accept_spec_reason() {
+        let f = fx();
+        for reason in ["a\nb".to_string(), "".to_string(), "x".repeat(201)] {
+            let mut body = create_body(&f);
+            body["accept_spec"] = json!(reason);
+            let r = post(&f, "/projects/good/jobs", body.to_string().as_bytes());
+            assert_eq!(code(&r), (400, "bad_request".to_string()), "{reason:?}");
+        }
+        assert!(f.cli.calls().is_empty());
+    }
+
+    #[test]
     fn rework_sends_the_note_as_one_argument() {
         let f = fx();
         f.cli
@@ -979,6 +1091,8 @@ mod tests {
                 note.to_string()
             ]
         );
+        // Only the create call has its own time limit.
+        assert_eq!(f.cli.timeouts(), vec![None]);
     }
 
     #[test]

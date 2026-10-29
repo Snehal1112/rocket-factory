@@ -44,3 +44,14 @@ fn a_missing_binary_is_a_start_error() {
         Err(CliSpawnError::Start { .. })
     ));
 }
+
+#[test]
+fn run_with_timeout_stops_the_child_at_its_own_limit() {
+    let t = tempfile::tempdir().expect("tempdir");
+    let bin = script(t.path(), "sleep 5");
+    let cli = ProcessFactoryCli::new(bin, PathBuf::from("/h"));
+    let began = std::time::Instant::now();
+    let r = cli.run_with_timeout("p", &[], std::time::Duration::from_secs(1));
+    assert!(matches!(r, Err(CliSpawnError::Timeout(1))), "{r:?}");
+    assert!(began.elapsed() < std::time::Duration::from_secs(4));
+}
