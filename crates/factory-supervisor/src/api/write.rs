@@ -215,6 +215,7 @@ fn queue_error(e: QueueError) -> ApiResponse {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enqueue(
     home: &Home,
     deps: &ApiDeps,

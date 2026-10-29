@@ -760,7 +760,10 @@ fn rereview_uses_the_latest_review_file() {
     };
     let prompt = direct_prompt_with(3, &extra, &["review-code-r1.md"]);
     assert!(prompt.contains("scoped re-review"), "{prompt}");
-    assert!(prompt.contains("The findings of round 1 are at "), "{prompt}");
+    assert!(
+        prompt.contains("The findings of round 1 are at "),
+        "{prompt}"
+    );
     assert!(prompt.contains("review-code-r1.md"), "{prompt}");
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
     assert!(
