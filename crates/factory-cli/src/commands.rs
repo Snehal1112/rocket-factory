@@ -682,6 +682,7 @@ fn approve(
                 at: now.max(0.0) as u64,
                 tickets: vec![None; count],
                 blockers,
+                superseded: false,
             },
         )?;
         tracing::info!(
@@ -745,7 +746,14 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
             let text = d.rework_findings(id, note)?;
             let file = format!("changes-r{new_round}.md");
             std::fs::write(d.job_dir(&job).join(file), text)?;
+            // A stale mid-task note must never shadow the findings of the new round.
+            let _ = std::fs::remove_file(d.job_dir(&job).join("rework-note.md"));
             d.ledger(&job).ruling(&format!("rework note: {note}"))?;
+            // A waived approve that never merged is replaced by this round, so its blockers get no tickets.
+            if factory_engine::supersede_waivers(&d.job_dir(&job))? > 0 {
+                d.ledger(&job)
+                    .ruling(&format!("waiver superseded by rework round {new_round}"))?;
+            }
             d.store().update_job(id, |j| {
                 factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
                 j.round = new_round;

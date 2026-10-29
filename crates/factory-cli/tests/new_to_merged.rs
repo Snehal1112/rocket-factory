@@ -901,6 +901,73 @@ fn approve_with_waive_merges_and_records_the_waiver() -> TestResult {
     Ok(())
 }
 
+/// A tracker that counts created issues and answers every other call.
+#[derive(Default)]
+struct CountCreates(std::sync::atomic::AtomicU32);
+
+impl factory_engine::Tracker for CountCreates {
+    fn repo_name(&self) -> Result<String, String> {
+        Ok("o/r".into())
+    }
+    fn labels_of(&self, _: u32) -> Result<Vec<String>, String> {
+        Ok(vec![])
+    }
+    fn is_closed(&self, _: u32) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn create(&self, _: &str, _: &str, _: &[String]) -> Result<u32, String> {
+        Ok(300 + self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+    }
+    fn comment(&self, _: u32, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn close(&self, _: u32) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_rework_supersedes_a_waiver_that_never_merged() -> TestResult {
+    let tracker = std::sync::Arc::new(CountCreates::default());
+    let sc = reworkable(
+        0,
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+            build(vec![("secrets/token.txt", "y\n")], 400),
+            review(APPROVE),
+        ],
+    )?
+    .with_tracker(tracker.clone());
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    // A dirty main parks the waived approve as main busy.
+    std::fs::write(sc.root.join("README.md"), "dirty\n")?;
+    let out = sc.run(&["approve", "1", "--waive", "accepted for now"])?;
+    assert!(out.contains("main busy"), "{out}");
+    std::fs::write(sc.root.join("README.md"), "demo\n")?;
+    // A stale rework note must not shadow the round's findings.
+    std::fs::write(job_file(&sc, "rework-note.md"), "stale")?;
+    assert_eq!(
+        sc.run(&["rework", "1", "fix the helper"])?,
+        "job 001 back to build, round 2"
+    );
+    assert!(!job_file(&sc, "rework-note.md").exists());
+    let waivers: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(job_file(&sc, "waivers.json"))?)?;
+    assert_eq!(waivers[0]["superseded"], true, "{waivers}");
+    let ledger = std::fs::read_to_string(job_file(&sc, "progress.md"))?;
+    assert!(
+        ledger.contains("waiver superseded by rework round 2"),
+        "{ledger}"
+    );
+    let end = sc.run(&["run", "1"])?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    assert!(sc.run(&["approve", "1"])?.starts_with("merged"));
+    assert_eq!(tracker.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
+}
+
 /// A risky job with `fix_rounds` fix rounds, scripted by `steps`.
 fn reworkable(
     fix_rounds: u32,

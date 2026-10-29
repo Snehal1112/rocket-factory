@@ -1,8 +1,8 @@
 mod common;
 use common::{approved_job, with_tracker, FakeTracker, MergeFixture};
 use factory_engine::{
-    merge_stage, read_waivers, record_waiver, waived_blockers, waiver_tickets_step, MergeResult,
-    Waiver,
+    merge_stage, read_waivers, record_waiver, supersede_waivers, waived_blockers,
+    waiver_tickets_step, MergeResult, Waiver,
 };
 
 fn waiver(file: &str, blockers: &[&str]) -> Waiver {
@@ -14,6 +14,7 @@ fn waiver(file: &str, blockers: &[&str]) -> Waiver {
         at: 10,
         blockers: blockers.iter().map(|b| b.to_string()).collect(),
         tickets: blockers.iter().map(|_| None).collect(),
+        superseded: false,
     }
 }
 
@@ -117,5 +118,81 @@ fn waiver_tickets_retry_through_factory_tickets() {
     assert_eq!(
         read_waivers(&job_dir(&fx))[0].tickets,
         vec![Some(201), Some(202)]
+    );
+}
+
+#[test]
+fn a_superseded_waiver_files_no_ticket() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    record_waiver(&job_dir(&fx), two_blockers()).expect("record");
+    assert_eq!(supersede_waivers(&job_dir(&fx)).expect("supersede"), 1);
+    // A second call finds nothing pending.
+    assert_eq!(supersede_waivers(&job_dir(&fx)).expect("again"), 0);
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    assert_eq!(t.count("create"), 0);
+    assert!(read_waivers(&job_dir(&fx))[0].superseded);
+}
+
+#[test]
+fn a_waiver_without_the_superseded_flag_reads_as_live() {
+    let text = r#"[{"head":"h","round":1,"file":"f","reason":"r","at":1,"blockers":["b"],"tickets":[null]}]"#;
+    let list: Vec<Waiver> = serde_json::from_str(text).expect("parse");
+    assert!(!list[0].superseded);
+    let back = serde_json::to_string(&list).expect("json");
+    assert!(!back.contains("superseded"), "{back}");
+}
+
+#[test]
+fn a_multi_line_untagged_reply_gives_a_one_line_title() {
+    let t = FakeTracker::new("o/r");
+    let reply = "\n\n  The helper   is wrong.  \nIt drops the last item.\nVERDICT: CHANGES";
+    let fx = merged(
+        vec![waiver(
+            "review-code-r1.md",
+            &waived_blockers(reply)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        )],
+        &t,
+    );
+    let s = t.state.lock().expect("lock");
+    let (title, body) = (&s.created[0].0, &s.created[0].1);
+    assert_eq!(
+        title,
+        &format!(
+            "Waived review finding from job {}: The helper is wrong.",
+            fx.id
+        )
+    );
+    assert!(body.contains("It drops the last item."), "{body}");
+}
+
+#[test]
+fn a_long_title_is_cut_at_80_characters_on_a_char_boundary() {
+    let t = FakeTracker::new("o/r");
+    let long = "é".repeat(100);
+    let fx = merged(vec![waiver("review-code-r1.md", &[long.as_str()])], &t);
+    let s = t.state.lock().expect("lock");
+    let prefix = format!("Waived review finding from job {}: ", fx.id);
+    let head = s.created[0].0.strip_prefix(&prefix).expect("prefix");
+    assert_eq!(head.chars().count(), 80);
+}
+
+#[test]
+fn a_blank_blocker_gets_a_placeholder_title() {
+    let t = FakeTracker::new("o/r");
+    let fx = merged(vec![waiver("review-code-r1.md", &["  \n\n "])], &t);
+    let s = t.state.lock().expect("lock");
+    assert_eq!(
+        s.created[0].0,
+        format!(
+            "Waived review finding from job {}: untagged review reply",
+            fx.id
+        )
     );
 }

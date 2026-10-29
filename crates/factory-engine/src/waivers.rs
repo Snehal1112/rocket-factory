@@ -25,6 +25,21 @@ pub struct Waiver {
     pub blockers: Vec<String>,
     /// One slot per blocker. `None` until its ticket is filed.
     pub tickets: Vec<Option<u32>>,
+    /// True once a rework replaced the waived approve before it merged. No ticket is filed for it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub superseded: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+impl Waiver {
+    /// True while a blocker still waits for its ticket.
+    fn pending(&self) -> bool {
+        !self.superseded
+            && (0..self.blockers.len()).any(|b| self.tickets.get(b).copied().flatten().is_none())
+    }
 }
 
 /// The open blockers of a review reply, or the whole trimmed reply as one entry when none is tagged.
@@ -54,14 +69,42 @@ fn write_waivers(job_dir: &Path, list: &[Waiver]) -> Result<(), EngineError> {
 /// Appends a waiver. The same head and review file as the last entry is a retry and adds nothing.
 pub fn record_waiver(job_dir: &Path, waiver: Waiver) -> Result<(), EngineError> {
     let mut list = read_waivers(job_dir);
-    if list
-        .last()
-        .is_some_and(|last| last.head == waiver.head && last.file == waiver.file)
-    {
+    if list.last().is_some_and(|last| {
+        !last.superseded && last.head == waiver.head && last.file == waiver.file
+    }) {
         return Ok(());
     }
     list.push(waiver);
     write_waivers(job_dir, &list)
+}
+
+/// The ticket title part of a blocker: its first non-empty line with the whitespace folded, at
+/// most 80 characters. A blank blocker reads `untagged review reply`.
+fn title_head(blocker: &str) -> String {
+    let line = blocker
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .find(|l| !l.is_empty())
+        .unwrap_or_default();
+    if line.is_empty() {
+        return "untagged review reply".to_string();
+    }
+    line.chars().take(80).collect()
+}
+
+/// Marks every pending waiver superseded, because a rework replaced the waived approve before it
+/// merged. Returns how many entries it marked.
+pub fn supersede_waivers(job_dir: &Path) -> Result<usize, EngineError> {
+    let mut list = read_waivers(job_dir);
+    let mut marked = 0;
+    for w in list.iter_mut().filter(|w| w.pending()) {
+        w.superseded = true;
+        marked += 1;
+    }
+    if marked > 0 {
+        write_waivers(job_dir, &list)?;
+    }
+    Ok(marked)
 }
 
 /// Files one ticket for every waived blocker that has none yet. With `dry_run` it only lists them.
@@ -82,7 +125,7 @@ pub fn waiver_tickets_step(
     }
     let dir = driver.job_dir(&job);
     let mut list = read_waivers(&dir);
-    if list.is_empty() {
+    if list.iter().all(|w| w.superseded) {
         report.skipped = true;
         report
             .lines
@@ -94,12 +137,16 @@ pub fn waiver_tickets_step(
     let sha = short_sha(&tip).to_string();
     let tracker = driver.tracker();
     'all: for w in 0..list.len() {
+        // A rework replaced this approve before it merged, so its blockers were not waived in the end.
+        if list[w].superseded {
+            continue;
+        }
         for b in 0..list[w].blockers.len() {
             if list[w].tickets.get(b).copied().flatten().is_some() {
                 continue;
             }
             let blocker = list[w].blockers[b].clone();
-            let head: String = blocker.chars().take(80).collect();
+            let head = title_head(&blocker);
             let title = format!("Waived review finding from job {id}: {head}");
             if dry_run {
                 report.lines.push(format!("would create: {title}"));
