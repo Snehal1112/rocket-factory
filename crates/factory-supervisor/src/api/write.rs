@@ -248,6 +248,9 @@ fn created_id(stdout: &str) -> Option<String> {
     Some(id.to_string())
 }
 
+/// The text that every `factory new` spec refusal carries.
+const SPEC_REFUSAL_HINT: &str = "--accept-spec";
+
 /// `POST /projects/{p}/jobs`.
 pub fn create(home: &Home, deps: &ApiDeps, name: &str, body: &[u8]) -> ApiResponse {
     match create_inner(home, deps, name, body) {
@@ -290,7 +293,11 @@ fn create_inner(
         args.push(format!("--model={m}"));
     }
     args.extend(["--".to_string(), slug, feature]);
-    let out = finished(deps.cli.run(name, &args), false)?;
+    let run = deps.cli.run(name, &args);
+    // A spec refusal names `--accept-spec`, so it is a conflict the caller can resolve.
+    let refused = matches!(&run, Ok(o) if o.code == 1
+        && (o.stderr.contains(SPEC_REFUSAL_HINT) || o.stdout.contains(SPEC_REFUSAL_HINT)));
+    let out = finished(run, refused)?;
     let job = created_id(&out.stdout).ok_or_else(|| {
         error_response(
             500,
@@ -915,6 +922,35 @@ mod tests {
             "not_found"
         );
         assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn create_refusal_is_a_conflict() {
+        let f = fx();
+        let text = "factory: the spec has no user decision. Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
+        f.cli.reply(1, "", text);
+        let r = post(
+            &f,
+            "/projects/good/jobs",
+            create_body(&f).to_string().as_bytes(),
+        );
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
+        let msg = r.body["error"]["message"].as_str().unwrap_or("");
+        assert!(msg.contains("--accept-spec"), "{msg}");
+        assert_eq!(f.cli.calls().len(), 1);
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn create_other_failures_stay_failures() {
+        let f = fx();
+        f.cli.reply(1, "", "factory: plan file not found");
+        let r = post(
+            &f,
+            "/projects/good/jobs",
+            create_body(&f).to_string().as_bytes(),
+        );
+        assert_eq!(code(&r), (500, "failed".to_string()), "{}", r.body);
     }
 
     #[test]

@@ -461,6 +461,8 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "When the `file` line says `exists`, read the file and continue from it, never overwrite it.",
             "Only the last series carries `#N` or the issue URL in its feature text",
             "Report every `warning:` line",
+            "--accept-spec",
+            "Decided by: user",
             "refuses a plan with `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences",
         ],
     )?;
