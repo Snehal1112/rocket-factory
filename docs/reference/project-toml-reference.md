@@ -170,6 +170,19 @@ These only group jobs in `factory costs` and in the estimate that `factory new` 
 
 A 1 hour write costs twice a plain input token and a 5 minute write costs 1.25 times, so `"5m"` suits runs that rarely resume. `"1h"` does not beat a `FORCE_PROMPT_CACHING_5M` exported in the driver's own environment. Each `usage.jsonl` line has `cache_creation_1h` to check the effect.
 
+### Plugins and MCP
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `builder_plugins` | string list | `["superpowers"]` | Claude Code plugins every builder run loads. |
+| `reviewer_plugins` | string list | `[]` | Plugins every reviewer run loads. |
+| `commit_plugins` | string list | `["dev-workflow-skills"]` | Plugins the committer and the merge and sync message agents load. |
+| `kb_plugins` | string list | `[]` | Plugins the KB refresher loads. Its `kb-refresh` skill is a user skill, not a plugin, so it needs none. |
+
+A name is a plugin name such as `superpowers` or a full id such as `superpowers@claude-plugins-official`. Each entry is one non-empty word. Before the first Claude run, the driver reads the installed plugins once with `claude plugin list --json`. Each run then gets `--settings` with `enabledPlugins`, which turns on the role's plugins and turns off every other installed plugin, together with its skills. A plugin that is not installed is skipped, unless it is given as a full id. The defaults keep about 2.5k tokens of unused skill descriptions out of every session.
+
+No agent ever loads an MCP server. Every Claude run gets `--strict-mcp-config` with no `--mcp-config`, so servers from your user config, the project's `.mcp.json`, plugins and claude.ai connectors all stay off. There is no setting to turn this off. Codex runs get `--ignore-user-config` and `features.apps=false` and `features.plugins=false`.
+
 ## Checks
 
 `checks` is an array of tables. Write it as `[[settings.checks]]` in `project.toml`.

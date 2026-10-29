@@ -290,6 +290,7 @@ Limits:
 - There is no cold-start data, so the COLD STARTS tables show `n/a` for Codex.
 - The agent file text and a short preface go into the prompt. No skill is loaded.
 - Runs pass `--ignore-user-config`, so your own `~/.codex/config.toml` is not read. The login still works. `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from the child unless `FACTORY_ALLOW_API_KEY=1`.
+- Runs set `features.apps=false` and `features.plugins=false`, so ChatGPT apps and Codex plugins add no tools. Codex has no switch that drops every MCP server, and `-c mcp_servers={}` merges instead of replacing.
 - Runs set `approval_policy="on-request"` and `approvals_reviewer="auto_review"` explicitly, which enables automatic review for fresh and resumed sessions while keeping the configured role sandbox boundary.
 - Switching a project from one CLI to the other clears the saved session ids of a running job once. One fresh builder runs next.
 

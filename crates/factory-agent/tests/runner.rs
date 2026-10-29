@@ -178,6 +178,32 @@ fn args_reach_the_child_and_prompt_goes_to_stdin() {
 }
 
 #[test]
+fn a_plugin_list_reaches_the_child_as_settings() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let mut s = spec("args", tmp.path());
+    s.plugins = Some(vec!["superpowers".into()]);
+    let run = runner(EventSink::null("001")).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Done);
+    let settings = r#"--settings {"enabledPlugins":{"frontend-design@official":false,"superpowers@official":true}}"#;
+    assert!(
+        run.result_text.contains(settings),
+        "args: {}",
+        run.result_text
+    );
+}
+
+#[test]
+fn no_plugin_list_sends_no_settings() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let run = runner(EventSink::null("001")).run(&spec("args", tmp.path()));
+    assert!(
+        !run.result_text.contains("--settings"),
+        "args: {}",
+        run.result_text
+    );
+}
+
+#[test]
 fn builder_run_receives_permission_mode_allow_and_deny_flags() {
     let tmp = tempfile::tempdir().expect("tmp");
     let mut s = spec("args", tmp.path());

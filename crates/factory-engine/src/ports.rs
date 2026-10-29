@@ -173,8 +173,12 @@ impl Engine<'_> {
             if let Err(e) = self.prepare_for_codex(&mut spec) {
                 return Ok(AgentRun::failed(&e.to_string()));
             }
-        } else if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
-            spec.env.push((var.0.to_string(), var.1.to_string()));
+        } else {
+            if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
+                spec.env.push((var.0.to_string(), var.1.to_string()));
+            }
+            // Each role loads only its own plugins, so other skills stay out of the prompt.
+            spec.plugins = Some(self.config.plugins_for(&spec.role).to_vec());
         }
         // Every agent that runs in a job worktree finds the resolved agent files as resolved.
         if !self.agent_files.is_empty() {

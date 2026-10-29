@@ -2075,6 +2075,30 @@ fn no_cache_ttl_leaves_the_claude_environment_alone() {
     );
 }
 
+#[test]
+fn every_agent_run_loads_only_its_roles_plugins() {
+    let mut fx = committing_fixture();
+    fx.config.builder_plugins = vec!["superpowers".to_string(), "rust-analyzer-lsp".to_string()];
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let builders = runner.specs_for("builder");
+    assert!(!builders.is_empty(), "no builder run");
+    for spec in builders {
+        assert_eq!(
+            spec.plugins,
+            Some(vec![
+                "superpowers".to_string(),
+                "rust-analyzer-lsp".to_string()
+            ])
+        );
+    }
+    let committers = runner.specs_for("committer");
+    assert!(!committers.is_empty(), "no committer run");
+    for spec in committers {
+        assert_eq!(spec.plugins, Some(vec!["dev-workflow-skills".to_string()]));
+    }
+}
+
 use factory_core::board::TaskSession;
 
 /// Leaves job 001 as a driver crash in task 1 does: a worktree, stage Build, task index 0 and a saved

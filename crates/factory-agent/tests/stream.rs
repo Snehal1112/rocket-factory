@@ -116,10 +116,15 @@ fn args_of_a_default_spec_are_unchanged() {
     let spec = AgentSpec::new("001", "reviewer", "/w", "p");
     assert_eq!(
         spec.args(&caps(true, true, true)),
-        vec!["-p", "--output-format", "stream-json", "--verbose"]
+        vec![
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--strict-mcp-config"
+        ]
     );
     let mut full = AgentSpec::new("001", "builder", "/w", "p");
-    full.strict_mcp = true;
     full.model = Some("sonnet".into());
     full.resume = Some("s1".into());
     full.permission_mode = Some("dontAsk".into());
@@ -254,10 +259,41 @@ fn args_carry_strict_mcp_and_tools_as_single_arguments() {
 }
 
 #[test]
-fn args_omit_strict_mcp_and_tools_by_default() {
+fn plugin_settings_turn_on_only_the_chosen_plugins() {
+    let installed: Vec<String> = ["superpowers@a", "frontend-design@a", "gopls-lsp@b"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let mut spec = AgentSpec::new("001", "builder", "/w", "p");
+    assert_eq!(spec.plugin_settings(&installed), None);
+    spec.plugins = Some(vec![
+        "superpowers".into(),
+        "extra@m".into(),
+        "absent".into(),
+    ]);
+    let json: serde_json::Value =
+        serde_json::from_str(&spec.plugin_settings(&installed).expect("settings")).expect("json");
+    assert_eq!(
+        json,
+        serde_json::json!({"enabledPlugins": {
+            "superpowers@a": true,
+            "frontend-design@a": false,
+            "gopls-lsp@b": false,
+            "extra@m": true
+        }})
+    );
+    spec.plugins = Some(Vec::new());
+    let json: serde_json::Value =
+        serde_json::from_str(&spec.plugin_settings(&installed).expect("settings")).expect("json");
+    assert_eq!(json["enabledPlugins"]["superpowers@a"], false);
+    assert_eq!(spec.plugin_settings(&[]), None);
+}
+
+#[test]
+fn args_use_strict_mcp_and_omit_tools_by_default() {
     let spec = AgentSpec::new("001", "builder", "/w", "build");
     let joined = spec.args(&caps(true, true, true)).join(" ");
-    assert!(!joined.contains("--strict-mcp-config"));
+    assert!(joined.contains("--strict-mcp-config"));
     assert!(!joined.contains("--tools"));
     assert!(spec.env.is_empty());
 }

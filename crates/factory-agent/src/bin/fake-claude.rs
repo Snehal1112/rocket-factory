@@ -30,10 +30,17 @@ fn result(text: &str, is_error: bool, subtype: &str) {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `claude plugin list --json` answers with two installed plugins, one listed twice.
+    if args.first().map(String::as_str) == Some("plugin") {
+        emit(
+            r#"[{"id":"superpowers@official","enabled":true},{"id":"frontend-design@official","enabled":true},{"id":"frontend-design@official","enabled":true}]"#,
+        );
+        return;
+    }
     let mut prompt = String::new();
     let _ = std::io::stdin().read_to_string(&mut prompt);
     let mode = prompt.lines().next().map_or("", str::trim).to_string();
-    let args: Vec<String> = std::env::args().skip(1).collect();
     match mode.as_str() {
         "ok" => {
             init("fake-1");

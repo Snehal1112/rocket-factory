@@ -75,11 +75,15 @@ pub struct AgentSpec {
     /// except the committer, which sets `HARNESS_GATE=0`.
     pub env: Vec<(String, String)>,
     /// Adds `--strict-mcp-config`, so the run loads no MCP servers from settings.
+    /// On by default, so no factory agent ever loads an MCP server.
     pub strict_mcp: bool,
     /// Adds `--disable-slash-commands`, so the run loads no skill list. Only for roles without the Skill tool.
     pub disable_slash_commands: bool,
     /// Value for `--tools`, a comma separated tool list such as `Bash,Read,Skill`.
     pub tools: Option<String>,
+    /// The only Claude Code plugins the run loads, by name or `name@marketplace`. `None` leaves
+    /// the plugins to the user's settings. Codex ignores it.
+    pub plugins: Option<Vec<String>>,
     /// Extra directories the agent may read, one `--add-dir` flag each.
     pub add_dirs: Vec<PathBuf>,
     /// Called once with the session id when the stream reports it, while the run still goes on. Only task builders set it.
@@ -111,9 +115,10 @@ impl AgentSpec {
             used_before: 0,
             stall_after: None,
             env: Vec::new(),
-            strict_mcp: false,
+            strict_mcp: true,
             disable_slash_commands: false,
             tools: None,
+            plugins: None,
             add_dirs: Vec::new(),
             on_session: None,
             sandbox: None,
@@ -173,6 +178,27 @@ impl AgentSpec {
             push("--max-turns", &n.to_string());
         }
         a
+    }
+
+    /// The `--settings` JSON that turns on the chosen plugins and turns off every other installed
+    /// one. A bare name matches an installed `name@marketplace` id. `None` when there is nothing to set.
+    pub fn plugin_settings(&self, installed: &[String]) -> Option<String> {
+        let wanted = self.plugins.as_ref()?;
+        let chosen = |id: &str| {
+            let name = id.split('@').next().unwrap_or(id);
+            wanted.iter().any(|w| w == id || w == name)
+        };
+        let mut enabled = serde_json::Map::new();
+        for id in installed {
+            enabled.insert(id.clone(), serde_json::Value::Bool(chosen(id)));
+        }
+        for w in wanted.iter().filter(|w| w.contains('@')) {
+            enabled.insert(w.clone(), serde_json::Value::Bool(true));
+        }
+        if enabled.is_empty() {
+            return None;
+        }
+        Some(serde_json::json!({ "enabledPlugins": enabled }).to_string())
     }
 
     /// The text written to stdin. The agent text is prepended when neither `--agent` nor

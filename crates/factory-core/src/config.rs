@@ -116,6 +116,14 @@ pub struct Config {
     pub builder_carry_session: bool,
     /// The largest end-of-task context, in tokens, that may be carried to the next task.
     pub builder_carry_max_ctx: u64,
+    /// Claude Code plugins builder runs load, by name or `name@marketplace`. Every other plugin is off.
+    pub builder_plugins: Vec<String>,
+    /// Claude Code plugins reviewer runs load. Every other plugin is off.
+    pub reviewer_plugins: Vec<String>,
+    /// Claude Code plugins committer and message runs load. Every other plugin is off.
+    pub commit_plugins: Vec<String>,
+    /// Claude Code plugins KB refresh runs load. Every other plugin is off.
+    pub kb_plugins: Vec<String>,
     /// True only for a fail-closed config. Never read from the file.
     #[serde(skip)]
     pub degraded: bool,
@@ -165,6 +173,10 @@ impl Default for Config {
             builder_allow: Vec::new(),
             builder_carry_session: false,
             builder_carry_max_ctx: 100_000,
+            builder_plugins: vec!["superpowers".to_string()],
+            reviewer_plugins: Vec::new(),
+            commit_plugins: vec!["dev-workflow-skills".to_string()],
+            kb_plugins: Vec::new(),
             degraded: false,
         }
     }
@@ -179,6 +191,17 @@ impl Config {
     /// The file log level, `info` when unset.
     pub fn log_level_or_default(&self) -> &str {
         self.log_level.as_deref().unwrap_or("info")
+    }
+
+    /// The plugins a run of `role` loads. A role without its own list loads none.
+    pub fn plugins_for(&self, role: &str) -> &[String] {
+        match role {
+            "builder" => &self.builder_plugins,
+            "reviewer" => &self.reviewer_plugins,
+            "committer" | "message" => &self.commit_plugins,
+            "kb" => &self.kb_plugins,
+            _ => &[],
+        }
     }
 
     /// Every path matches `**`, so every diff is risky and nothing auto-merges.
@@ -308,6 +331,21 @@ impl Config {
             {
                 return Err(CoreError::Config(format!(
                     "{key}: every line must be one non-empty line"
+                )));
+            }
+        }
+        for (key, names) in [
+            ("builder_plugins", &cfg.builder_plugins),
+            ("reviewer_plugins", &cfg.reviewer_plugins),
+            ("commit_plugins", &cfg.commit_plugins),
+            ("kb_plugins", &cfg.kb_plugins),
+        ] {
+            if names
+                .iter()
+                .any(|n| n.is_empty() || n.contains(char::is_whitespace))
+            {
+                return Err(CoreError::Config(format!(
+                    "{key}: every plugin name must be one non-empty word"
                 )));
             }
         }
@@ -829,6 +867,39 @@ mod tests {
                 .tickets_on_merge
         );
         assert!(Config::parse("tickets_on_merge = \"yes\"").is_err());
+    }
+
+    #[test]
+    fn each_role_loads_only_the_plugins_it_uses_by_default() {
+        let cfg = Config::default();
+        assert_eq!(cfg.plugins_for("builder"), ["superpowers"]);
+        assert_eq!(cfg.plugins_for("committer"), ["dev-workflow-skills"]);
+        assert_eq!(cfg.plugins_for("message"), ["dev-workflow-skills"]);
+        assert!(cfg.plugins_for("reviewer").is_empty());
+        assert!(cfg.plugins_for("kb").is_empty());
+        assert!(cfg.plugins_for("someone-else").is_empty());
+    }
+
+    #[test]
+    fn plugin_lists_can_be_set_per_role() {
+        let cfg = Config::parse(
+            "builder_plugins = [\"superpowers\", \"rust-analyzer-lsp\"]\nreviewer_plugins = [\"x@market\"]\ncommit_plugins = []\nkb_plugins = [\"y\"]",
+        )
+        .expect("parse");
+        assert_eq!(
+            cfg.plugins_for("builder"),
+            ["superpowers", "rust-analyzer-lsp"]
+        );
+        assert_eq!(cfg.plugins_for("reviewer"), ["x@market"]);
+        assert!(cfg.plugins_for("committer").is_empty());
+        assert_eq!(cfg.plugins_for("kb"), ["y"]);
+    }
+
+    #[test]
+    fn a_plugin_name_must_be_one_word() {
+        for bad in ["builder_plugins = [\"\"]", "kb_plugins = [\"a b\"]"] {
+            assert!(Config::parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use crate::child::{drive, ChildConfig, Secret};
 use crate::events::EventSink;
@@ -84,6 +86,30 @@ pub struct ClaudeRunner {
     sink: EventSink,
     allow_api_key: bool,
     key_source: ApiKeySource,
+    /// Installed plugin ids, read once from `claude plugin list --json`.
+    installed: OnceLock<Vec<String>>,
+}
+
+/// The installed plugin ids, each once. An empty list when the command fails.
+fn list_plugins(program: &OsString) -> Vec<String> {
+    let out = Command::new(program)
+        .args(["plugin", "list", "--json"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let Ok(out) = out else {
+        return Vec::new();
+    };
+    let Ok(list) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = list
+        .iter()
+        .filter_map(|p| p["id"].as_str().map(str::to_string))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 impl ClaudeRunner {
@@ -94,6 +120,7 @@ impl ClaudeRunner {
             sink,
             allow_api_key: api_key_allowed_by_env(),
             key_source: ApiKeySource::Default,
+            installed: OnceLock::new(),
         }
     }
 
@@ -143,9 +170,17 @@ impl ClaudeRunner {
 
     fn run_inner(&self, spec: &AgentSpec) -> Result<AgentRun, AgentError> {
         let (remove_env, set_env) = self.key_env(spec)?;
+        let mut args = spec.args(&self.caps);
+        if spec.plugins.is_some() {
+            let installed = self.installed.get_or_init(|| list_plugins(&self.program));
+            if let Some(settings) = spec.plugin_settings(installed) {
+                args.push("--settings".to_string());
+                args.push(settings);
+            }
+        }
         let cfg = ChildConfig {
             program: self.program.clone(),
-            args: spec.args(&self.caps),
+            args,
             stdin: spec.stdin_prompt(&self.caps),
             label: "claude".to_string(),
             remove_env,

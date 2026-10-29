@@ -141,6 +141,8 @@ after the spec's own warning, and the job still runs.
 
 ## Using Codex
 
+Factory agents load no MCP server and only their own role's Claude Code plugins. `builder_plugins` (default `["superpowers"]`), `reviewer_plugins` (default empty), `commit_plugins` (default `["dev-workflow-skills"]`) and `kb_plugins` (default empty) name them; every other installed plugin is turned off for the run with `--settings`. See `docs/reference/project-toml-reference.md` ("Plugins and MCP").
+
 `agent_cli = "codex"` in `project.toml` (or `factory project add <path> --agent-cli codex`) runs every agent through `codex exec --json`. Unset or `"claude"` changes nothing. The limits: no `max_turns`; no mid-run budget stop (the run total is added after the run); no `cache_ttl`; no cold-start data; `builder_permissions` and `builder_allow` are ignored in favour of a per-role sandbox (builders `workspace-write` with network, reviewers `read-only`); `builder_carry_session` is off; runs use `--ignore-user-config`. The provider shows in `factory tokens`, `tokens --cache`, `costs` and on the dashboard card. The real smoke test is `#[ignore]`. See `docs/reference/software-factory.md` ("Using Codex") and `docs/reference/project-toml-reference.md`.
 
 ## API key per project

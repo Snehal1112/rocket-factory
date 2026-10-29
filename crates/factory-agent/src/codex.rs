@@ -23,6 +23,9 @@ const CODEX_API_VARS: [&str; 2] = ["OPENAI_API_KEY", "CODEX_API_KEY"];
 /// routes approval requests to automatic review, so a headless run never waits on a person.
 /// Probed with codex-cli 0.163.0 (read-only sandbox, `curl -sI https://example.com`): exit 0
 /// in 12s, no hang, the command was declined with a message the model saw.
+///
+/// Codex has no switch that drops every MCP server, and `-c mcp_servers={}` merges instead of
+/// replacing. With `--ignore-user-config` and apps and plugins off, no user MCP source is left.
 pub fn codex_args(spec: &AgentSpec) -> Vec<String> {
     let mut a: Vec<String> = vec!["exec".to_string()];
     if spec.resume.is_some() {
@@ -41,6 +44,9 @@ pub fn codex_args(spec: &AgentSpec) -> Vec<String> {
     };
     config("approval_policy=\"on-request\"".to_string());
     config("approvals_reviewer=\"auto_review\"".to_string());
+    // Apps and plugins can add MCP tools, and `--ignore-user-config` does not turn them off.
+    config("features.apps=false".to_string());
+    config("features.plugins=false".to_string());
     let mode = spec.sandbox.as_deref().unwrap_or("read-only");
     config(format!("sandbox_mode=\"{mode}\""));
     if !spec.writable_roots.is_empty() {
@@ -327,10 +333,27 @@ mod tests {
                 "-c",
                 "approvals_reviewer=\"auto_review\"",
                 "-c",
+                "features.apps=false",
+                "-c",
+                "features.plugins=false",
+                "-c",
                 "sandbox_mode=\"workspace-write\"",
                 "-"
             ])
         );
+    }
+
+    #[test]
+    fn codex_args_turn_off_apps_and_plugins_on_fresh_and_resumed_runs() {
+        for resume in [None, Some("abc".to_string())] {
+            let mut s = args_spec("read-only");
+            s.resume = resume;
+            let a = codex_args(&s);
+            for pair in ["features.apps=false", "features.plugins=false"] {
+                let i = a.iter().position(|x| x == pair).expect(pair);
+                assert_eq!(a[i - 1], "-c");
+            }
+        }
     }
 
     #[test]
