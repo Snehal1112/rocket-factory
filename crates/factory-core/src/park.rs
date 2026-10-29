@@ -54,24 +54,31 @@ impl ParkKind {
     }
 
     /// Like `next`, but a park that offers approve says what a plain approve would hit: while the
-    /// review has not run it offers `approve --without-review`, while changes are open `approve --waive`.
-    pub fn next_for(self, id: &str, review_missing: bool, changes_open: bool) -> Vec<String> {
+    /// review has not run or did not finish it offers `approve --without-review`, while changes are open
+    /// `approve --waive`. `verdict` is the word of the last review, if any.
+    pub fn next_for(self, id: &str, review_missing: bool, verdict: Option<&str>) -> Vec<String> {
         let mut next = self.next(id);
         let approve = format!("factory approve {id}");
         let Some(at) = next.iter().position(|n| *n == approve) else {
             return next;
         };
-        if changes_open {
+        if verdict == Some("changes") {
             next[at] = format!("factory approve {id} --waive \"<reason>\"");
             return next;
         }
-        if !review_missing {
+        let unfinished = verdict == Some("missing");
+        if !review_missing && !unfinished {
             return next;
         }
+        let why = if unfinished {
+            "the review did not finish"
+        } else {
+            "the review has not run"
+        };
         vec![
             format!("factory rework {id} <note>"),
             format!("factory cancel {id}"),
-            format!("factory approve {id} --without-review (the review has not run)"),
+            format!("factory approve {id} --without-review ({why})"),
         ]
     }
 
@@ -247,7 +254,7 @@ mod tests {
             wr.to_string(),
         ];
         for kind in [ParkKind::Other, ParkKind::BudgetStopped] {
-            assert_eq!(kind.next_for("012", true, false), want, "{kind:?}");
+            assert_eq!(kind.next_for("012", true, None), want, "{kind:?}");
         }
         // Parks without an approve option, and parks with a review, stay as they were.
         for kind in [
@@ -257,7 +264,7 @@ mod tests {
             ParkKind::BuilderBlocked,
         ] {
             assert_eq!(
-                kind.next_for("012", true, false),
+                kind.next_for("012", true, None),
                 kind.next("012"),
                 "{kind:?}"
             );
@@ -268,7 +275,7 @@ mod tests {
             ParkKind::BudgetStopped,
         ] {
             assert_eq!(
-                kind.next_for("012", false, false),
+                kind.next_for("012", false, None),
                 kind.next("012"),
                 "{kind:?}"
             );
@@ -277,9 +284,24 @@ mod tests {
 
     #[test]
     fn next_offers_waive_while_changes_are_open() {
-        let next = ParkKind::ChangesRemain.next_for("012", false, true);
+        let next = ParkKind::ChangesRemain.next_for("012", false, Some("changes"));
         assert!(
             next.contains(&"factory approve 012 --waive \"<reason>\"".to_string()),
+            "{next:?}"
+        );
+        assert!(
+            !next.contains(&"factory approve 012".to_string()),
+            "{next:?}"
+        );
+    }
+
+    #[test]
+    fn next_offers_without_review_after_a_missing_review() {
+        let next = ParkKind::ChangesRemain.next_for("012", false, Some("missing"));
+        assert!(
+            next.contains(
+                &"factory approve 012 --without-review (the review did not finish)".to_string()
+            ),
             "{next:?}"
         );
         assert!(
@@ -310,7 +332,7 @@ mod tests {
 
     #[test]
     fn a_park_before_the_review_offers_approve_without_review() {
-        let next = ParkKind::NoChecks.next_for("012", true, false);
+        let next = ParkKind::NoChecks.next_for("012", true, None);
         assert!(
             next.iter()
                 .any(|n| n.contains("factory approve 012 --without-review")),

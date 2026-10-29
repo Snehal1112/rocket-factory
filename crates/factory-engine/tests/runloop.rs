@@ -129,7 +129,7 @@ fn a_parked_job_gets_a_park_record_with_evidence() {
     assert_eq!(
         rec.next,
         vec![
-            format!("factory approve {}", job.id),
+            format!("factory approve {} --waive \"<reason>\"", job.id),
             format!("factory rework {} <note>", job.id)
         ]
     );

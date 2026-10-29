@@ -657,17 +657,45 @@ fn approve(
     d.store().update_job(id, |j| {
         factory_engine::set_stage_logged(j, Stage::Approve, None, false, now)
     })?;
-    tracing::info!(
-        event = "operator.approve",
-        without_review,
-        msg = "approved by the user"
-    );
-    let ruling = if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
-        "approved by the user without a review"
+    let ruling = if let Some(reason) = waive {
+        let review = job.last_review.as_ref();
+        let file = review.map_or("", |r| r.file.as_str());
+        let text = std::fs::read_to_string(d.job_dir(&job).join(file)).unwrap_or_default();
+        let blockers = factory_engine::waived_blockers(&text);
+        let count = blockers.len();
+        factory_engine::record_waiver(
+            &d.job_dir(&job),
+            factory_engine::Waiver {
+                head: job.head.clone().unwrap_or_default(),
+                round: review.map_or(0, |r| r.round),
+                file: file.to_string(),
+                reason: reason.to_string(),
+                at: now.max(0.0) as u64,
+                tickets: vec![None; count],
+                blockers,
+            },
+        )?;
+        tracing::info!(
+            event = "operator.approve",
+            without_review,
+            waived = true,
+            waive_reason = %factory_telemetry::cap_message(reason),
+            msg = "approved by the user"
+        );
+        format!("approved by the user, waived {count} blockers: {reason}")
     } else {
-        "approved by the user"
+        tracing::info!(
+            event = "operator.approve",
+            without_review,
+            msg = "approved by the user"
+        );
+        if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
+            "approved by the user without a review".to_string()
+        } else {
+            "approved by the user".to_string()
+        }
     };
-    d.ledger(&job).ruling(ruling)?;
+    d.ledger(&job).ruling(&ruling)?;
     Ok(match merge_stage(&d, id)? {
         MergeResult::Merged(sha) => outcome_lines::merged_line(Some(&sha)),
         MergeResult::Parked(reason) => outcome_lines::parked_line(&reason),
@@ -968,7 +996,20 @@ fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
             )));
         }
     }
-    render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run)
+    let tickets = render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run);
+    let waivers = render_tickets(
+        factory_engine::waiver_tickets_step(&d, id, dry_run)?,
+        dry_run,
+    );
+    match (tickets, waivers) {
+        (Ok(a), Ok(b)) => Ok(format!("{a}\n{b}")),
+        (Err(CliError::Refused(a)), Ok(b)) => Err(CliError::Refused(format!("{a}\n{b}"))),
+        (Ok(a), Err(CliError::Refused(b))) => Err(CliError::Refused(format!("{a}\n{b}"))),
+        (Err(CliError::Refused(a)), Err(CliError::Refused(b))) => {
+            Err(CliError::Refused(format!("{a}\n{b}")))
+        }
+        (Err(e), _) | (_, Err(e)) => Err(e),
+    }
 }
 
 /// The text of a tickets report. A failed report is an error, so the exit code is non-zero.

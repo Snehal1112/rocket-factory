@@ -876,3 +876,27 @@ fn waive_reason_must_be_one_short_line() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn approve_with_waive_merges_and_records_the_waiver() -> TestResult {
+    let sc = parked_with_changes()?;
+    let out = sc.run(&["approve", "1", "--waive", "accepted for now"])?;
+    assert!(out.starts_with("merged"), "{out}");
+    assert_eq!(sc.stage("001")?, "merged");
+    let sdd = sc.root.join(".superpowers/sdd");
+    let mut ledgers = String::new();
+    let mut waivers = String::new();
+    for entry in std::fs::read_dir(&sdd)?.flatten() {
+        ledgers.push_str(
+            &std::fs::read_to_string(entry.path().join("progress.md")).unwrap_or_default(),
+        );
+        waivers.push_str(
+            &std::fs::read_to_string(entry.path().join("waivers.json")).unwrap_or_default(),
+        );
+    }
+    assert!(ledgers.contains("waived 1 blockers"), "{ledgers}");
+    let list: serde_json::Value = serde_json::from_str(&waivers)?;
+    assert_eq!(list.as_array().map(Vec::len), Some(1), "{waivers}");
+    assert_eq!(list[0]["reason"], "accepted for now");
+    Ok(())
+}

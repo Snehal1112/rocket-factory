@@ -38,7 +38,11 @@ pub fn park(driver: &Driver, id: &str, reason: &str) -> Result<(), EngineError> 
     if !already {
         // Writing the record is best effort, the park already happened.
         let mut record = ParkRecord::new(ParkKind::Other, reason, id, job.round, at, Vec::new());
-        record.next = ParkKind::Other.next_for(id, job.review_missing(), job.changes_open());
+        record.next = ParkKind::Other.next_for(
+            id,
+            job.review_missing(),
+            job.last_review.as_ref().map(|r| r.verdict.as_str()),
+        );
         write_record(&driver.job_dir(&job), &record);
     }
     // The ledger takes one line, so the reason is folded into a single line.
@@ -78,6 +82,19 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
                         tracing::error!(event = "step.error", step = "tickets", msg = %format!("tickets error for job {id}: {err}"));
                         crate::tickets::notify_failure(driver, id, &err.to_string());
                     }
+                }
+            }
+            // Waiver tickets are filed whether or not tickets_on_merge is set, and fail the same soft way.
+            match crate::waivers::waiver_tickets_step(driver, id, false) {
+                Ok(report) if report.failed => {
+                    let text = report.lines.join("; ");
+                    tracing::error!(event = "step.error", step = "waivers", msg = %format!("waivers error for job {id}: {text}"));
+                    crate::tickets::notify_failure(driver, id, &text);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::error!(event = "step.error", step = "waivers", msg = %format!("waivers error for job {id}: {err}"));
+                    crate::tickets::notify_failure(driver, id, &err.to_string());
                 }
             }
             // The costs refresh runs last so that it counts the kb run of this job.

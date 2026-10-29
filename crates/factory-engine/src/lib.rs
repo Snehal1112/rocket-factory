@@ -38,6 +38,7 @@ mod tick;
 mod tickets;
 mod tipfiles;
 mod tracker;
+mod waivers;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -96,6 +97,9 @@ pub use tick::tick_plan;
 pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
 pub use tipfiles::RepoTip;
 pub use tracker::{GhTracker, Tracker};
+pub use waivers::{
+    read_waivers, record_waiver, waived_blockers, waiver_tickets_step, Waiver, WAIVERS_FILE,
+};
 
 #[derive(Debug, Error)]
 pub enum EngineError {

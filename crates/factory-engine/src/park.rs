@@ -71,18 +71,20 @@ impl Engine<'_> {
         let job = self.job().ok();
         let round = job.as_ref().map_or(1, |j| j.round);
         let review_missing = job.as_ref().is_some_and(|j| j.review_missing);
-        let changes_open = job
-            .as_ref()
-            .and_then(|j| j.last_review.as_ref())
-            .is_some_and(|r| r.verdict == "changes");
         let at = now().max(0.0) as u64;
         let mut record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
         // A park that offers approve says so when the review has not run, because a plain approve is refused.
-        record.next = kind.next_for(&self.job_id, review_missing, changes_open);
         record.verdict = job
             .as_ref()
             .and_then(|j| j.last_review.as_ref())
             .map(|r| r.verdict.clone());
+        let changes_open = job.as_ref().is_some_and(|j| j.changes_open);
+        let hint = if changes_open {
+            Some("changes")
+        } else {
+            record.verdict.as_deref()
+        };
+        record.next = kind.next_for(&self.job_id, review_missing, hint);
         if self.is_risky() {
             record.risky = Some(true);
         }

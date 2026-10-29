@@ -77,3 +77,23 @@ fn refused_approve_logs_nothing() -> TestResult {
     assert!(events(&lines, "operator.approve").is_empty(), "{lines:?}");
     Ok(())
 }
+
+#[test]
+fn approve_with_waive_logs_the_reason() -> TestResult {
+    let mut steps = vec![build(vec![("secrets/token.txt", "x\n")], 1_000)];
+    for _ in 0..6 {
+        steps.push(review(support::CHANGES));
+        steps.push(build(vec![("secrets/token.txt", "y\n")], 400));
+    }
+    let sc = Scenario::new("", steps)?;
+    sc.start(&sc.plan_b, false)?;
+    let (out, lines) = factory_telemetry::capture("info", || {
+        sc.run(&["approve", "1", "--waive", "accepted for now"])
+    });
+    out?;
+    let found = events(&lines, "operator.approve");
+    assert_eq!(found.len(), 1, "{lines:?}");
+    assert_eq!(found[0]["waived"], true);
+    assert_eq!(found[0]["waive_reason"], "accepted for now");
+    Ok(())
+}
