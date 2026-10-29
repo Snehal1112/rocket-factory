@@ -2713,3 +2713,17 @@ fn a_fix_round_prompt_has_no_simplify_line() {
     assert!(spec.resume.is_some());
     assert!(!spec.prompt.contains("simplify"), "{}", spec.prompt);
 }
+
+#[test]
+fn the_simplify_line_says_not_to_skip_it() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let spec = runner.last_spec_for("builder").expect("spec");
+    assert!(
+        spec.prompt
+            .contains("invoke the `simplify` skill on your uncommitted changes, even when the change is small; do not skip it."),
+        "{}",
+        spec.prompt
+    );
+}

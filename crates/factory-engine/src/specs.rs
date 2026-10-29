@@ -27,7 +27,7 @@ pub const REVIEWER_MAX_TURNS: u32 = 40;
 pub const BUILDER_TOOLS: &str = "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent";
 
 /// Asks a new-task builder for one `simplify` pass, kept inside its own task.
-pub(crate) const SIMPLIFY_LINE: &str = "After your checks pass, invoke the `simplify` skill on your uncommitted changes. \
+pub(crate) const SIMPLIFY_LINE: &str = "After your checks pass, invoke the `simplify` skill on your uncommitted changes, even when the change is small; do not skip it. \
      Run it inline without helper agents, apply only fixes inside the files of this task, then run the checks again.\n";
 
 /// Keeps a builder that loads subagent-driven-development from acting as its controller and reviewing per task.
