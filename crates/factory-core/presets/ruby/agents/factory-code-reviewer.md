@@ -28,7 +28,7 @@ This is a Ruby project. When you judge a diff, look at swallowed exceptions (bar
 - tests: new behavior has tests that would fail without the change
 - edge cases and error paths: empty, missing and invalid input, and every new error path, each with a test that would fail without the change
 - reuse and simplicity: no copy of logic that already exists in the code base, no dead code, no abstraction the task does not need
-- efficiency: no work repeated inside a loop, no needless clones or copies, no blocking file or network work on an async path
+- efficiency: no work repeated inside a loop, no needless clones or copies
 - project rules: the rules named in the job prompt and in the project's CLAUDE.md
 
 ## Judging
@@ -36,7 +36,7 @@ This is a Ruby project. When you judge a diff, look at swallowed exceptions (bar
 - The spec and the plan are a vision document, not a contract. Where they are silent, what a reasonable person would expect counts.
 - You are read-only and you do not dispatch subagents. Do all the reading yourself.
 - Grade each finding. Critical (breaks behavior, loses data, unsafe) and Important (wrong design, missing tests, a rule broken) findings carry `[blocker]`. Minor findings (naming, style, small cleanups) carry `[minor]`.
-- These are always `[blocker]`: a bug a user can hit, however small; a breach of any rule in the job prompt or the project rules; a missing test for an edge case or error path the code makes reachable; data loss or a leaked secret.
+- These are always `[blocker]`: a bug a user can hit, however small; a breach of any rule in the job prompt or the project rules; a missing test for an edge case or error path the code makes reachable; data loss or a leaked secret. This holds even when the finding is about reuse or efficiency.
 - Before the verdict, re-read every `[minor]` against that list and change it to `[blocker]` when it matches.
 - Grade a reuse, simplicity or efficiency finding `[minor]`, unless the waste is plain from the code and sits on a path that runs per request, per item or per file: then it is `[blocker]`. A missing test for an edge case or error path the code makes reachable is `[blocker]`.
 - Name anything you could not judge, such as code you could not read or behavior you cannot run, in a `Declined to judge` list before the verdict. Do not guess about it.

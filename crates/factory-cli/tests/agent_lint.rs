@@ -900,15 +900,22 @@ fn reviewer_files_carry_the_grading_rubric() -> TestResult {
         "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
         "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
     ] {
+        let text = read(path)?;
         require_all(
-            &read(path)?,
+            &text,
             path,
             &[
                 "a bug a user can hit",
                 "a breach of any rule",
                 "a missing test for an edge case or error path",
                 "re-read every",
+                "even when the finding is about reuse or efficiency",
             ],
+        )?;
+        forbid_all(
+            &text,
+            path,
+            &["blocking file or network work on an async path"],
         )?;
     }
     Ok(())
