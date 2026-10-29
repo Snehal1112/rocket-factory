@@ -413,7 +413,7 @@ impl Driver {
     }
 
     /// Builds the runner and event sink for this job and runs `f` on a per-job engine.
-    fn with_engine<R>(
+    pub(crate) fn with_engine<R>(
         &self,
         id: &str,
         f: impl FnOnce(&Engine) -> Result<R, EngineError>,

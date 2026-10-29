@@ -57,7 +57,7 @@ pub enum Command {
         #[arg(long, conflicts_with = "without_review")]
         waive: Option<String>,
     },
-    /// Send a one-line note to the builder and reset the round counter.
+    /// Send a one-line note to the builder as the next round, or to the running task.
     Rework {
         id: String,
         note: String,

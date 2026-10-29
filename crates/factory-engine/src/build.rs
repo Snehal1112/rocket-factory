@@ -55,6 +55,13 @@ fn cold_session(
     })
 }
 
+/// True when the next build call runs a task agent. A job with a builder session but no task count is a
+/// legacy whole-plan job and never does.
+pub(crate) fn is_mid_task(job: &JobView, tasks: &[PlanTask]) -> bool {
+    let legacy = job.session_id.is_some() && job.task_index == 0;
+    !legacy && (job.task_index as usize) < tasks.len()
+}
+
 impl Engine<'_> {
     /// Runs the builder, then records the new head. With a task list in `plan.md` it runs one task agent per
     /// call and stays in Build until the last task has a commit. Fix rounds resume the last session unless it is
@@ -68,13 +75,11 @@ impl Engine<'_> {
         if job.batch_snapshot.is_some() {
             return self.resume_batch(&job, &tasks);
         }
-        // A job that already has a builder session but no task count is a legacy whole-plan job.
-        let legacy = job.session_id.is_some() && job.task_index == 0;
-        if !legacy && (job.task_index as usize) < tasks.len() {
+        if is_mid_task(&job, &tasks) {
             return self.build_task(&job, &tasks);
         }
         let fresh = job.worktree.is_none();
-        // `factory rework` resets the round to 0, so a rework note marks a fix round too.
+        // A rework of a job parked mid-task leaves a note and keeps the round, so a note marks a fix round too.
         let fixing = job.round > 1 || self.job_dir.join("rework-note.md").exists();
         // A fix round or rework on a model other than the stored session's starts a fresh session.
         let escalated = !fresh && fixing && needs_fresh_session(&job);

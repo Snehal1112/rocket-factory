@@ -713,26 +713,49 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
             job.stage
         )));
     }
-    // The note is stored verbatim. The builder gets exactly this text.
-    std::fs::write(d.job_dir(&job).join("rework-note.md"), note)?;
-    d.ledger(&job).ruling(&format!("rework note: {note}"))?;
+    let kind = d.rework_kind(id)?;
     let now = now_secs();
-    d.store().update_job(id, |j| {
-        // Needs-human back to build is allowed by the stage guard, so no force.
-        factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
-        j.round = 0;
-        // The note is the findings now, so a no-change round is not a checks case.
-        j.fix_source = None;
-        // A rework revives a cancelled job, so approve does not refuse it later.
-        j.cancelled = false;
-        Ok(())
-    })?;
+    let line = match kind {
+        factory_engine::ReworkKind::MidTask => {
+            // The note is stored verbatim. The builder gets exactly this text.
+            std::fs::write(d.job_dir(&job).join("rework-note.md"), note)?;
+            d.ledger(&job).ruling(&format!("rework note: {note}"))?;
+            d.store().update_job(id, |j| {
+                // Needs-human back to build is allowed by the stage guard, so no force.
+                factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
+                // The note is the findings now, so a no-change round is not a checks case.
+                j.fix_source = None;
+                // A rework revives a cancelled job, so approve does not refuse it later.
+                j.cancelled = false;
+                Ok(())
+            })?;
+            format!("job {id} back to build, same task")
+        }
+        factory_engine::ReworkKind::NextRound => {
+            let new_round = job.round.max(1) + 1;
+            let text = d.rework_findings(id, note)?;
+            let file = format!("changes-r{new_round}.md");
+            std::fs::write(d.job_dir(&job).join(file), text)?;
+            d.ledger(&job).ruling(&format!("rework note: {note}"))?;
+            d.store().update_job(id, |j| {
+                factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
+                j.round = new_round;
+                // A rework grants a full new set of fix rounds.
+                j.rework_base = new_round - 1;
+                j.fix_source = Some("rework".to_string());
+                j.reset_reviews();
+                j.cancelled = false;
+                Ok(())
+            })?;
+            format!("job {id} back to build, round {new_round}")
+        }
+    };
     tracing::info!(
         event = "operator.rework",
         note = %factory_telemetry::cap_message(note),
         msg = "rework requested"
     );
-    Ok(format!("job {id} back to build, round reset to 0"))
+    Ok(line)
 }
 
 fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, CliError> {
