@@ -179,6 +179,11 @@ impl Engine<'_> {
             }
             // Each role loads only its own plugins, so other skills stay out of the prompt.
             spec.plugins = Some(self.config.plugins_for(&spec.role).to_vec());
+            // Helper agents run on the run's own model, so a skill cannot pick another one.
+            if let Some(model) = spec.model.clone() {
+                spec.env
+                    .push(("CLAUDE_CODE_SUBAGENT_MODEL".to_string(), model));
+            }
         }
         // Every agent that runs in a job worktree finds the resolved agent files as resolved.
         if !self.agent_files.is_empty() {

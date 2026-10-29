@@ -344,8 +344,8 @@ preset = "rust"
 base_branch = "main"
 budget_weighted = 1500000
 fix_rounds = 2
-builder_model = "sonnet"
-reviewer_model = "sonnet"
+builder_model = "claude-sonnet-5-5"
+reviewer_model = "claude-sonnet-5-5"
 tickets_on_merge = false
 ```
 
@@ -358,8 +358,8 @@ Keys you may want, with defaults:
 | `fix_rounds` | 2 | Fix rounds after a failed check or review. |
 | `diff_cap_lines` | 4000 | Bigger diffs park for you. |
 | `stall_minutes` | 10 | A silent agent counts as stalled after this long. |
-| `builder_model`, `reviewer_model`, `commit_model` | `sonnet` | Models for each role. |
-| `reviewer_model_large` | `opus` | A stronger reviewer for risky or big diffs. Set it to the same name as `reviewer_model` to turn it off. |
+| `builder_model`, `reviewer_model`, `commit_model` | `claude-sonnet-5-5` | Models for each role. A Fable model is refused. |
+| `reviewer_model_large` | `claude-opus-5-5` | A stronger reviewer for risky or big diffs. Set it to the same name as `reviewer_model` to turn it off. |
 | `risk_paths` | from the preset | Globs that make a diff risky and force your review. |
 | `read_first` | `CLAUDE.md` | Files the builder reads first. |
 | `tickets_on_merge` | false | File follow-up GitHub issues and close the parent issue after a merge (needs `gh`). |

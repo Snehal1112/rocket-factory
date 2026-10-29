@@ -1842,7 +1842,7 @@ fn builder_permissions_false_restores_the_old_argument_list() {
         "--verbose",
         "--strict-mcp-config",
         "--model",
-        "sonnet",
+        "claude-sonnet-5-5",
         "--tools",
         "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent",
         "--agent",
@@ -2197,9 +2197,9 @@ fn the_ledger_says_resumed_or_fresh() {
     assert_eq!(
         dispatched_lines(&fx),
         vec![
-            format!("Task 1: dispatched (BASE {base}, sonnet, fresh)"),
-            format!("Task 1: dispatched (BASE {base}, sonnet, resumed)"),
-            format!("Task 2: dispatched (BASE {base}, sonnet, fresh)"),
+            format!("Task 1: dispatched (BASE {base}, claude-sonnet-5-5, fresh)"),
+            format!("Task 1: dispatched (BASE {base}, claude-sonnet-5-5, resumed)"),
+            format!("Task 2: dispatched (BASE {base}, claude-sonnet-5-5, fresh)"),
         ]
     );
     let tasks = factory_core::Ledger::new(fx.job_dir.join("progress.md"))
@@ -2235,7 +2235,9 @@ fn the_whole_plan_dispatched_line_is_unchanged() {
     let base = fx.job().base.expect("base");
     assert_eq!(
         dispatched_lines(&fx),
-        vec![format!("Task 1: dispatched (BASE {base}, sonnet)")]
+        vec![format!(
+            "Task 1: dispatched (BASE {base}, claude-sonnet-5-5)"
+        )]
     );
 }
 
@@ -2295,8 +2297,14 @@ fn a_failed_resume_falls_back_to_a_fresh_builder() {
     assert!(job.task_session.is_none());
     let lines = dispatched_lines(&fx);
     assert_eq!(lines.len(), 3, "{lines:?}");
-    assert!(lines[1].ends_with(", sonnet, resumed)"), "{lines:?}");
-    assert!(lines[2].ends_with(", sonnet, fresh)"), "{lines:?}");
+    assert!(
+        lines[1].ends_with(", claude-sonnet-5-5, resumed)"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[2].ends_with(", claude-sonnet-5-5, fresh)"),
+        "{lines:?}"
+    );
 }
 
 /// Runs a resume that stops with `stop` and checks it parks without a fresh builder.

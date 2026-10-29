@@ -150,7 +150,13 @@ fn one_valid_commit_is_accepted_and_the_run_is_trimmed_and_capped() {
     assert_eq!(spec.used_before, 0);
     assert_eq!(
         spec.env,
-        vec![("HARNESS_GATE".to_string(), "0".to_string())]
+        vec![
+            ("HARNESS_GATE".to_string(), "0".to_string()),
+            (
+                "CLAUDE_CODE_SUBAGENT_MODEL".to_string(),
+                "claude-sonnet-5-5".to_string()
+            ),
+        ]
     );
     assert!(spec.strict_mcp);
     assert_eq!(spec.tools.as_deref(), Some("Bash,Read,Skill"));

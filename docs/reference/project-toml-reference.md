@@ -65,12 +65,14 @@ Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factor
 | `agent_cli` | `"claude"` or `"codex"` | unset, which means `"claude"` | The CLI that runs every agent of the project. `"codex"` runs them through `codex exec --json`, with the limits in "Using Codex" in `docs/reference/software-factory.md`. Any other value makes the config invalid. `factory project add <path> --agent-cli codex` writes it with `gpt-5.6-luna` for the five model keys (`builder_model`, `reviewer_model`, `reviewer_model_large`, `commit_model`, `kb_model`) and no `cache_ttl`. |
 | `allow_api_key` | bool | unset, which follows `FACTORY_ALLOW_API_KEY` | Whether this project's Claude agents may bill the API key in the environment. `true` passes `ANTHROPIC_API_KEY` through and fails the run when none is set. `false` always removes the key, even when `FACTORY_ALLOW_API_KEY=1`. Needs `agent_cli = "claude"`. |
 | `api_key_file` | path | unset | A file that holds the Anthropic API key for this project only, so projects can use different keys. Absolute or starting with `~/`. The driver reads it at the start of every agent run and sets `ANTHROPIC_API_KEY` for that run. It implies `allow_api_key = true` and conflicts with `allow_api_key = false` and with `agent_cli = "codex"`. The file holds one line, and group and others must not be able to read it (`chmod 600`). A missing, empty, multi-line or readable-by-others file fails the run; it never falls back to the login. The key is never stored in `project.toml`, the log, the events or the ledger. |
-| `builder_model` | string | `"sonnet"` | `--model` for every builder run. Not blank. |
-| `reviewer_model` | string | `"sonnet"` | Reviewer model. Not blank. |
-| `reviewer_model_large` | string | `"opus"` | A stronger reviewer. Used when the diff is risky, or the round's changed lines are strictly above `reviewer_large_over_lines`. To turn the switch off, set it to the same name as `reviewer_model`. Not blank. `factory project add --agent-cli codex` seeds it with the Codex model. A Codex project whose files do not set it gets no large reviewer, since `"opus"` is a Claude model. |
+| `builder_model` | string | `"claude-sonnet-5-5"` | `--model` for every builder run. Not blank. |
+| `reviewer_model` | string | `"claude-sonnet-5-5"` | Reviewer model. Not blank. |
+| `reviewer_model_large` | string | `"claude-opus-5-5"` | A stronger reviewer. Used when the diff is risky, or the round's changed lines are strictly above `reviewer_large_over_lines`. To turn the switch off, set it to the same name as `reviewer_model`. Not blank. `factory project add --agent-cli codex` seeds it with the Codex model. A Codex project whose files do not set it gets no large reviewer, since `"opus"` is a Claude model. |
 | `reviewer_large_over_lines` | integer | 800 | The threshold above. It counts the round diff, not the whole job diff. Above 0. |
-| `commit_model` | string | `"sonnet"` | Committer and the merge and sync message agents. Not blank. |
-| `kb_model` | string | `"sonnet"` | KB refresher. Not blank. |
+| `commit_model` | string | `"claude-sonnet-5-5"` | Committer and the merge and sync message agents. Not blank. |
+| `kb_model` | string | `"claude-sonnet-5-5"` | KB refresher. Not blank. |
+
+The defaults are full model IDs, not the `sonnet` and `opus` aliases, so a new model release does not change what the factory runs. A model name that contains `fable` (any case) in any of the five model keys makes the config invalid, so the project fails closed. Every Claude run also sets `CLAUDE_CODE_SUBAGENT_MODEL` to its own model, so the helper agents a builder or a skill starts run on the same model.
 
 The choice of reviewer model is written to the ledger as `review model: ...`. Weighted tokens ignore the model, so a stronger model's extra cost does not show in `factory tokens`.
 
@@ -287,7 +289,7 @@ commit_model = "haiku"
 
 ### Stronger review for big or risky diffs
 
-`reviewer_model_large` is `"opus"` by default. This lowers the threshold so more diffs get it:
+`reviewer_model_large` is `"claude-opus-5-5"` by default. This lowers the threshold so more diffs get it:
 
 ```toml
 [settings]
@@ -298,7 +300,7 @@ To turn the stronger reviewer off, give it the same model as `reviewer_model`:
 
 ```toml
 [settings]
-reviewer_model_large = "sonnet"
+reviewer_model_large = "claude-sonnet-5-5"
 ```
 
 ### Replace a list and keep the preset entries

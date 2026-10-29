@@ -139,11 +139,11 @@ impl Default for Config {
             budget_weighted: DEFAULT_JOB_BUDGET_WEIGHTED,
             fix_rounds: 2,
             stall_minutes: 10,
-            builder_model: "sonnet".to_string(),
-            reviewer_model: "sonnet".to_string(),
-            reviewer_model_large: Some("opus".to_string()),
+            builder_model: "claude-sonnet-5-5".to_string(),
+            reviewer_model: "claude-sonnet-5-5".to_string(),
+            reviewer_model_large: Some("claude-opus-5-5".to_string()),
             reviewer_large_over_lines: 800,
-            commit_model: "sonnet".to_string(),
+            commit_model: "claude-sonnet-5-5".to_string(),
             commit_subagents: false,
             commit_budget_weighted: 60_000,
             commit_batch: true,
@@ -151,7 +151,7 @@ impl Default for Config {
             builder_simplify: true,
             tickets_on_merge: false,
             kb_path: None,
-            kb_model: "sonnet".to_string(),
+            kb_model: "claude-sonnet-5-5".to_string(),
             kb_budget_weighted: 150_000,
             kb_auto_commit: false,
             size_small_max_bytes: 12_288,
@@ -218,9 +218,8 @@ impl Config {
     }
 
     pub fn parse(text: &str) -> Result<Config, CoreError> {
-        let mut cfg: Config =
-            toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
-        // The "opus" default is a Claude model, so a Codex config without the key gets no large reviewer.
+        let mut cfg: Config = toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
+        // The default large reviewer is a Claude model, so a Codex config without the key gets none.
         if cfg.agent_cli() == "codex" {
             let table: toml::Table =
                 toml::from_str(text).map_err(|e| CoreError::Config(e.to_string()))?;
@@ -246,6 +245,22 @@ impl Config {
         ];
         if models.iter().any(|m| m.trim().is_empty()) {
             return Err(CoreError::Config("model names must not be empty".into()));
+        }
+        // The factory runs Sonnet and Opus only, so a Fable model makes the config invalid.
+        let named = [
+            ("builder_model", Some(cfg.builder_model.as_str())),
+            ("reviewer_model", Some(cfg.reviewer_model.as_str())),
+            ("reviewer_model_large", cfg.reviewer_model_large.as_deref()),
+            ("commit_model", Some(cfg.commit_model.as_str())),
+            ("kb_model", Some(cfg.kb_model.as_str())),
+        ];
+        if let Some((key, _)) = named
+            .iter()
+            .find(|(_, m)| m.is_some_and(|m| m.to_lowercase().contains("fable")))
+        {
+            return Err(CoreError::Config(format!(
+                "{key} must not be a Fable model"
+            )));
         }
         if cfg.reviewer_large_over_lines == 0 {
             return Err(CoreError::Config(
@@ -924,14 +939,14 @@ mod tests {
     #[test]
     fn the_large_reviewer_model_defaults_to_opus() {
         let cfg = Config::default();
-        assert_eq!(cfg.reviewer_model_large.as_deref(), Some("opus"));
+        assert_eq!(cfg.reviewer_model_large.as_deref(), Some("claude-opus-5-5"));
         assert_eq!(cfg.reviewer_large_over_lines, 800);
         assert_eq!(
             Config::parse("")
                 .expect("parse")
                 .reviewer_model_large
                 .as_deref(),
-            Some("opus")
+            Some("claude-opus-5-5")
         );
         assert_eq!(
             Config::parse("reviewer_model_large = \"sonnet\"")
@@ -943,6 +958,42 @@ mod tests {
     }
 
     #[test]
+    fn default_models_are_sonnet_and_opus_5_5() {
+        let cfg = Config::default();
+        for m in [
+            &cfg.builder_model,
+            &cfg.reviewer_model,
+            &cfg.commit_model,
+            &cfg.kb_model,
+        ] {
+            assert_eq!(m, "claude-sonnet-5-5");
+        }
+        assert_eq!(cfg.reviewer_model_large.as_deref(), Some("claude-opus-5-5"));
+    }
+
+    #[test]
+    fn a_fable_model_is_refused_for_every_role() {
+        for key in [
+            "builder_model",
+            "reviewer_model",
+            "reviewer_model_large",
+            "commit_model",
+            "kb_model",
+        ] {
+            for name in ["fable", "claude-fable-5-1", "Claude-Fable-5-1"] {
+                let err =
+                    Config::parse(&format!("{key} = \"{name}\"")).expect_err("fable is refused");
+                assert!(
+                    err.to_string()
+                        .contains(&format!("{key} must not be a Fable model")),
+                    "{err}"
+                );
+            }
+        }
+        assert!(Config::parse("builder_model = \"claude-opus-5-5\"").is_ok());
+    }
+
+    #[test]
     fn a_codex_config_without_the_key_has_no_large_reviewer() {
         let codex = Config::parse("agent_cli = \"codex\"").expect("parse");
         assert_eq!(codex.reviewer_model_large, None);
@@ -950,7 +1001,10 @@ mod tests {
             .expect("parse");
         assert_eq!(set.reviewer_model_large.as_deref(), Some("gpt-big"));
         let claude = Config::parse("agent_cli = \"claude\"").expect("parse");
-        assert_eq!(claude.reviewer_model_large.as_deref(), Some("opus"));
+        assert_eq!(
+            claude.reviewer_model_large.as_deref(),
+            Some("claude-opus-5-5")
+        );
     }
 
     #[test]
@@ -1123,13 +1177,13 @@ mod tests {
         assert_eq!(cfg.budget_weighted, 1_000_000);
         assert_eq!(cfg.fix_rounds, 2);
         assert_eq!(cfg.stall_minutes, 10);
-        assert_eq!(cfg.builder_model, "sonnet");
+        assert_eq!(cfg.builder_model, "claude-sonnet-5-5");
         assert!(cfg.risk_paths.iter().any(|p| p == "src-tauri/**"));
-        assert_eq!(cfg.commit_model, "sonnet");
+        assert_eq!(cfg.commit_model, "claude-sonnet-5-5");
         assert!(!cfg.commit_subagents);
         assert_eq!(cfg.commit_budget_weighted, 60_000);
         assert_eq!(cfg.kb_path, None);
-        assert_eq!(cfg.kb_model, "sonnet");
+        assert_eq!(cfg.kb_model, "claude-sonnet-5-5");
         assert_eq!(cfg.kb_budget_weighted, 150_000);
         assert!(!cfg.kb_auto_commit);
     }

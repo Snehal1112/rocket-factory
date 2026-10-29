@@ -128,7 +128,7 @@ after the spec's own warning, and the job still runs.
 
 ## Stronger reviewer model
 
-- `reviewer_model_large` (default `"opus"`) names a stronger model for the reviewer. To turn the switch off, set it to the same name as `reviewer_model`.
+- `reviewer_model_large` (default `"claude-opus-5-5"`) names a stronger model for the reviewer. To turn the switch off, set it to the same name as `reviewer_model`.
 - `reviewer_large_over_lines` (default `800`, must be above zero) is the size threshold.
 - The review uses the large model when the whole job diff is risky, or when this round's diff has more changed
   lines than the threshold. A diff exactly at the threshold uses `reviewer_model`. The choice is written to the

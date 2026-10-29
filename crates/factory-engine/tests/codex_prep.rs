@@ -395,3 +395,37 @@ fn codex_builders_get_no_simplify_line() {
     let spec = runner.last_spec_for("builder").expect("builder spec");
     assert!(!spec.prompt.contains("simplify"), "{}", spec.prompt);
 }
+
+#[test]
+fn a_claude_run_pins_helper_agents_to_its_own_model() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder spec");
+    let model = spec.model.clone().expect("model");
+    assert!(
+        spec.env
+            .iter()
+            .any(|(k, v)| k == "CLAUDE_CODE_SUBAGENT_MODEL" && *v == model),
+        "{:?}",
+        spec.env
+    );
+}
+
+#[test]
+fn a_codex_run_sets_no_subagent_model() {
+    let fx = codex(committing_fixture());
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder spec");
+    assert!(
+        spec.env
+            .iter()
+            .all(|(k, _)| k != "CLAUDE_CODE_SUBAGENT_MODEL"),
+        "{:?}",
+        spec.env
+    );
+}
