@@ -442,6 +442,12 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
         accept_over_budget,
     } = args;
     let d = ctx.driver()?;
+    if let Some(problem) = model
+        .as_deref()
+        .and_then(|m| crate::project::job_model_problem(m, d.config().agent_cli()))
+    {
+        return Err(CliError::Refused(problem));
+    }
     let (job, notes) = match (one_job, plans.as_deref()) {
         (true, Some(plan)) => {
             let made = create_one_job(

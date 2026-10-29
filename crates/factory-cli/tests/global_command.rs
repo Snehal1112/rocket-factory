@@ -323,7 +323,7 @@ fn codex_skill_does_not_select_a_claude_model() {
         .join("factory")
         .join("SKILL.md");
     let text = std::fs::read_to_string(skill).expect("Codex skill");
-    assert!(!text.contains("--model opus"), "{text}");
+    assert!(!text.contains("--model claude-opus-5-5"), "{text}");
     assert!(text.contains("`--opus` is a Claude-only option"), "{text}");
 }
 

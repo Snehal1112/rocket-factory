@@ -54,7 +54,7 @@ impl Engine<'_> {
             self.ledger_task(
                 1,
                 TaskState::Dispatched,
-                &format!("BASE {base}, {}", self.config.builder_model),
+                &format!("BASE {base}, {}", self.builder_model()),
             )?;
             (cwd, base, None, branch)
         } else {
@@ -547,14 +547,14 @@ impl Engine<'_> {
         self.ledger_task(
             task.n,
             TaskState::Dispatched,
-            &format!("BASE {base}, {}, {how}", self.config.builder_model),
+            &format!("BASE {base}, {}, {how}", self.builder_model()),
         )?;
         tracing::info!(
             event = "task.start",
             task = task.n,
             title = %factory_telemetry::cap_message(&one_line(&task.title)),
             how = %how,
-            model = %self.config.builder_model,
+            model = %self.builder_model(),
             of = tasks.len() as u32,
             msg = %format!("task {} started", task.n)
         );
@@ -604,7 +604,7 @@ impl Engine<'_> {
             self.ledger_task(
                 task.n,
                 TaskState::Dispatched,
-                &format!("BASE {base}, {}, {again}", self.config.builder_model),
+                &format!("BASE {base}, {}, {again}", self.builder_model()),
             )?;
             let mut spec = self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier);
             if let Some(text) = &note {

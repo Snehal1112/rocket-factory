@@ -166,9 +166,25 @@ impl Engine<'_> {
         Ok(crate::StageOutcome::NeedsHuman(reason))
     }
 
+    /// The job's own model from `factory new --model`, when set and not blank. It replaces every role's model.
+    pub(crate) fn job_model(&self) -> Option<String> {
+        let board = Board::load(&self.board_path).ok()?;
+        let model = board.find(&self.job_id).ok()?.model.as_deref()?.trim();
+        (!model.is_empty()).then(|| model.to_string())
+    }
+
+    /// The builder model this job runs on: the job's own model, else the configured one.
+    pub(crate) fn builder_model(&self) -> String {
+        self.job_model()
+            .unwrap_or_else(|| self.config.builder_model.clone())
+    }
+
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
     pub(crate) fn run_agent(&self, mut spec: AgentSpec) -> Result<AgentRun, EngineError> {
         self.sync_provider()?;
+        if let Some(model) = self.job_model() {
+            spec.model = Some(model);
+        }
         if self.config.agent_cli() == "codex" {
             if let Err(e) = self.prepare_for_codex(&mut spec) {
                 return Ok(AgentRun::failed(&e.to_string()));

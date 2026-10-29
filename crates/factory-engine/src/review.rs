@@ -67,8 +67,13 @@ impl Engine<'_> {
         let class = classify_paths(&paths, &self.config);
         let risky = class == DiffClass::Risky;
         let round_lines = round_diff.changed_lines();
-        let model = self.reviewer_model_for(round_lines, risky);
-        if model != self.config.reviewer_model {
+        let job_model = self.job_model();
+        let model = job_model
+            .clone()
+            .unwrap_or_else(|| self.reviewer_model_for(round_lines, risky).to_string());
+        if job_model.is_some() {
+            self.ruling(&format!("review model: {model} (job model)"))?;
+        } else if model != self.config.reviewer_model {
             let reason = if risky {
                 "risky diff".to_string()
             } else {
@@ -86,7 +91,7 @@ impl Engine<'_> {
             job.round,
             &self.config.reviewer_rules,
             &extra,
-            model,
+            &model,
         );
         self.update(|j| {
             j.set_review("code", ReviewState::Running);

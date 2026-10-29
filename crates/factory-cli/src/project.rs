@@ -325,6 +325,23 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
 /// Model names that belong to Claude, not Codex.
 const CLAUDE_ALIASES: [&str; 3] = ["sonnet", "opus", "haiku"];
 
+/// Why `factory new --model <model>` must be refused for this project, or `None` when the model is fine.
+/// It follows the config rules: not blank, no Fable model, and no Claude model on a Codex project.
+pub fn job_model_problem(model: &str, agent_cli: &str) -> Option<String> {
+    if model.trim().is_empty() {
+        return Some("--model must not be blank".to_string());
+    }
+    if model.to_lowercase().contains("fable") {
+        return Some("--model must not be a Fable model".to_string());
+    }
+    if agent_cli == "codex" && is_claude_model(model) {
+        return Some(format!(
+            "--model {model} is a Claude model, but this project runs Codex"
+        ));
+    }
+    None
+}
+
 fn is_claude_model(model: &str) -> bool {
     let m = model.trim().to_lowercase();
     CLAUDE_ALIASES.contains(&m.as_str()) || m.starts_with("claude")
@@ -474,6 +491,25 @@ fn remove(home: &Home, name: &str, force: bool) -> Result<String, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_job_model_follows_the_config_model_rules() {
+        assert_eq!(job_model_problem("claude-opus-5-5", "claude"), None);
+        assert_eq!(job_model_problem("gpt-5.6-luna", "codex"), None);
+        assert!(job_model_problem("  ", "claude")
+            .expect("blank")
+            .contains("must not be blank"));
+        for name in ["fable", "claude-fable-5-1", "Claude-Fable-5-1"] {
+            assert!(job_model_problem(name, "claude")
+                .expect("fable")
+                .contains("must not be a Fable model"));
+        }
+        for name in ["opus", "claude-opus-5-5"] {
+            assert!(job_model_problem(name, "codex")
+                .expect("claude on codex")
+                .contains("is a Claude model, but this project runs Codex"));
+        }
+    }
 
     #[test]
     fn project_show_reports_a_missing_codex_and_a_claude_alias() {

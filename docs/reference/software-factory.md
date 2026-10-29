@@ -38,7 +38,7 @@ factory run (no LLM tokens):
 ## Modes
 
 - Default: builder and reviewer run on Sonnet.
-- `/factory <feature> --opus`: this job uses Opus (`factory new --model opus`). The model is never in the agent files, the driver passes it.
+- `/factory <feature> --opus`: this job uses Opus (`factory new --model claude-opus-5-5`). Every agent of the job runs on it: builders, fix rounds, the reviewer, the committer, the merge message and the KB refresher, and their helper agents. `factory new` refuses a blank or Fable model, and a Claude model on a Codex project. The model is never in the agent files, the driver passes it.
 
 ## Agents (`.claude/agents/`)
 
