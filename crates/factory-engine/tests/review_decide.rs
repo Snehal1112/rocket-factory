@@ -15,7 +15,15 @@ fn input(verdict: &Verdict) -> DecideInput<'_> {
         budget: BudgetState::Ok,
         round: 1,
         fix_rounds: 2,
+        rework_base: 0,
     }
+}
+
+fn risky_input(v: &Verdict) -> DecideInput<'_> {
+    let mut i = input(v);
+    i.class = DiffClass::Risky;
+    i.risky_summary = "risky paths (1): src-tauri/src/lib.rs".into();
+    i
 }
 
 #[test]
@@ -32,18 +40,103 @@ fn doc_only_diff_auto_merges() {
 }
 
 #[test]
-fn risky_diff_is_always_needs_human_even_when_approved() {
+fn risky_approve_needs_a_human() {
     let v = Verdict::Approve;
-    let mut i = input(&v);
-    i.class = DiffClass::Risky;
-    i.risky_summary = "risky paths (1): src-tauri/src/lib.rs".into();
-    match decide(&i) {
+    match decide(&risky_input(&v)) {
         Decision::NeedsHuman { reason: r, kind } => {
+            assert!(r.starts_with("risky diff: "), "{r}");
             assert!(r.contains("src-tauri/src/lib.rs"), "{r}");
             assert_eq!(kind, factory_core::ParkKind::RiskyDiff);
         }
         other => panic!("unexpected {other:?}"),
     }
+}
+
+#[test]
+fn risky_changes_gets_a_fix_round_then_changes_remain() {
+    let v = Verdict::Changes;
+    let mut i = risky_input(&v);
+    assert_eq!(decide(&i), Decision::FixRound);
+    i.round = 3;
+    assert!(matches!(
+        decide(&i),
+        Decision::NeedsHuman {
+            kind: factory_core::ParkKind::ChangesRemain,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn risky_failing_checks_get_a_fix_round() {
+    let v = Verdict::Approve;
+    let mut i = risky_input(&v);
+    i.checks_ok = false;
+    assert_eq!(decide(&i), Decision::FixRound);
+}
+
+#[test]
+fn risky_budget_stop_and_cap_come_first() {
+    let v = Verdict::Changes;
+    let mut i = risky_input(&v);
+    i.budget = BudgetState::Stop;
+    assert!(matches!(
+        decide(&i),
+        Decision::NeedsHuman {
+            kind: factory_core::ParkKind::BudgetStopped,
+            ..
+        }
+    ));
+    let mut i = risky_input(&v);
+    i.diff_lines = 5000;
+    assert!(matches!(
+        decide(&i),
+        Decision::NeedsHuman {
+            kind: factory_core::ParkKind::DiffTooLarge,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn zero_rounds_for_risky_parks_at_once() {
+    let changes = Verdict::Changes;
+    let mut i = risky_input(&changes);
+    i.fix_rounds = 0;
+    assert!(matches!(
+        decide(&i),
+        Decision::NeedsHuman {
+            kind: factory_core::ParkKind::ChangesRemain,
+            ..
+        }
+    ));
+    let approve = Verdict::Approve;
+    let mut i = risky_input(&approve);
+    i.fix_rounds = 0;
+    assert!(matches!(
+        decide(&i),
+        Decision::NeedsHuman {
+            kind: factory_core::ParkKind::RiskyDiff,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn rework_base_resets_the_count() {
+    let v = Verdict::Changes;
+    let mut i = input(&v);
+    i.round = 4;
+    i.rework_base = 3;
+    assert_eq!(decide(&i), Decision::FixRound);
+    i.rework_base = 0;
+    assert!(matches!(
+        decide(&i),
+        Decision::NeedsHuman {
+            kind: factory_core::ParkKind::ChangesRemain,
+            ..
+        }
+    ));
 }
 
 #[test]

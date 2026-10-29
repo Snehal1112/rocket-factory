@@ -22,7 +22,10 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("budget_weighted", None),
             ("diff_cap_lines", None),
             ("fix_rounds", None),
-            ("risky_fix_rounds", Some("2")),
+            (
+                "risky_fix_rounds",
+                Some("2  # Unset means the same as fix_rounds."),
+            ),
             ("stall_minutes", None),
         ],
     ),

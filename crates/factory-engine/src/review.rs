@@ -127,7 +127,8 @@ impl Engine<'_> {
             diff_cap: self.config.diff_cap_lines as usize,
             budget: budget_state(self.job_weighted_tokens(), self.config.budget_weighted),
             round: job.round,
-            fix_rounds: self.config.fix_rounds,
+            fix_rounds: self.config.fix_rounds_for(class == DiffClass::Risky),
+            rework_base: job.rework_base,
         };
         let decision = decide(&input);
         let choice = match &decision {

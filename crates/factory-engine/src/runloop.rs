@@ -502,7 +502,11 @@ fn run_job_inner(
             std::fs::read_to_string(driver.job_dir(&job).join("plan.md")).unwrap_or_default();
         crate::tasks::parse_tasks(&plan).len()
     };
-    let limit = driver.config().fix_rounds as usize * 4 + 12 + task_calls;
+    let rounds = driver
+        .config()
+        .fix_rounds
+        .max(driver.config().fix_rounds_for(true));
+    let limit = rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
         if guard.lost() {
             return Err(EngineError::Msg("project is busy: another owner holds the project lease (the lease was taken over), this run stops".into()));

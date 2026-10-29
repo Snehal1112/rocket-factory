@@ -17,18 +17,15 @@ pub struct DecideInput<'a> {
     pub diff_cap: usize,
     pub budget: BudgetState,
     pub round: u32,
+    /// The fix-round limit for this diff's class.
     pub fix_rounds: u32,
+    /// The round count at the last rework, so a rework gets fresh fix rounds.
+    pub rework_base: u32,
 }
 
-/// Implements spec decisions 6 and 7. The order of the checks matters.
+/// Implements the decision order of the review-findings spec. The order of the checks matters.
+/// The risk gate comes last, so a risky diff gets its fix rounds before it parks for a human.
 pub fn decide(i: &DecideInput) -> Decision {
-    // Decision 6: a risky diff always stops for the human.
-    if i.class == DiffClass::Risky {
-        return Decision::NeedsHuman {
-            kind: ParkKind::RiskyDiff,
-            reason: format!("risky diff: {}", i.risky_summary),
-        };
-    }
     if i.budget == BudgetState::Stop {
         return Decision::NeedsHuman {
             kind: ParkKind::BudgetStopped,
@@ -44,7 +41,7 @@ pub fn decide(i: &DecideInput) -> Decision {
             ),
         };
     }
-    let used = fix_rounds_used(i.round);
+    let used = fix_rounds_used(i.round, i.rework_base);
     let rounds_left = used < i.fix_rounds;
     if !i.checks_ok {
         return if rounds_left {
@@ -57,6 +54,11 @@ pub fn decide(i: &DecideInput) -> Decision {
         };
     }
     match i.verdict {
+        // A risky diff never merges without a human, even when approved.
+        Verdict::Approve if i.class == DiffClass::Risky => Decision::NeedsHuman {
+            kind: ParkKind::RiskyDiff,
+            reason: format!("risky diff: {}", i.risky_summary),
+        },
         Verdict::Approve => Decision::AutoMerge,
         // A missing verdict is never a pass.
         Verdict::Changes | Verdict::Missing => {
@@ -72,9 +74,9 @@ pub fn decide(i: &DecideInput) -> Decision {
     }
 }
 
-/// The fix rounds already spent when the job is in `round`. Round 1 is the first build.
-pub(crate) fn fix_rounds_used(round: u32) -> u32 {
-    round.saturating_sub(1)
+/// The fix rounds spent since the last rework, when the job is in `round`. Round 1 is the first build.
+pub(crate) fn fix_rounds_used(round: u32, rework_base: u32) -> u32 {
+    round.saturating_sub(1).saturating_sub(rework_base)
 }
 
 /// Names the risky paths for the human, at most five, with the count of the rest.

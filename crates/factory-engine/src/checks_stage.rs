@@ -169,8 +169,9 @@ impl Engine<'_> {
         source: &str,
     ) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;
-        let used = fix_rounds_used(job.round);
-        if used >= self.config.fix_rounds {
+        let used = fix_rounds_used(job.round, job.rework_base);
+        let risky = classify_paths(&self.job_changed_paths()?, &self.config) == DiffClass::Risky;
+        if used >= self.config.fix_rounds_for(risky) {
             let title = if kind == ParkKind::ChecksFailed {
                 "Failing checks"
             } else {
