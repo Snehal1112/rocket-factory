@@ -1037,7 +1037,7 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 | `builder made no changes` or `task N changed nothing` | Nothing was produced. | `rework`, or `cancel`. |
 | `builder committed on its own ...` | The builder broke the "no commits" rule. | `rework`. |
 | `builder changed <file>` | The builder touched a protected file. | `rework`, or `cancel`. |
-| `no check ran for N changed code path(s)` | No check covers the files that changed. | `approve` if you accept that, or `rework`. |
+| `no check covers N changed code path(s)` | A changed code path matches no check rule. | `approve` if you accept that, or `rework`. |
 | `no test was added in ...` | `require_tests` is on and the change has no test. | `approve` or `rework`. |
 | `main busy: the main checkout has tracked changes` | Your own checkout has uncommitted edits to tracked files, so the merge cannot happen. | Commit or stash those changes, then `approve` again. Untracked files are fine. |
 | `main busy: the main checkout is not on <base>` | Your checkout is on another branch. | Switch to the base branch, then `approve`. |

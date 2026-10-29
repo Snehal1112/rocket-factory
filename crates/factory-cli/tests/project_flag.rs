@@ -274,7 +274,14 @@ fn a_repo_override_adds_risk_paths() {
 
 #[test]
 fn a_job_touching_the_factory_folder_parks_for_a_human() {
-    let e = setup(&[(".gitignore", ".claude/\n")]);
+    // A rule covers the touched path, so the risk check is what stops the job.
+    let e = setup(&[
+        (".gitignore", ".claude/\n"),
+        (
+            ".factory/override.toml",
+            "[[checks]]\npaths = [\".factory/**\"]\ncommands = [\"true\"]\n",
+        ),
+    ]);
     *e.runner.also.lock().expect("lock") = Some(".factory/note.txt");
     let ctx = e.ctx().expect("ctx");
     e.new_job(&ctx);

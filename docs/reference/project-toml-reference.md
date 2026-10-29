@@ -208,7 +208,9 @@ commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
 How it works (`factory-checks/src/plan.rs`):
 
 - Every rule whose `paths` match a changed file applies. It is not first-match.
-- `{crate}` is the folder after the first `crates` segment of a matching path. With several crates the command runs once per crate, in alphabetical order. A command that uses `{crate}` but has no matching crate runs nothing.
+- `{crate}` is the cargo package that owns a matching path, read from `cargo metadata`, so `src-tauri` expands to its package name. If `cargo metadata` fails, it falls back to the folder after the first `crates` segment and `checks.md` says so. With several crates the command runs once per crate, in alphabetical order. A command that uses `{crate}` but has no matching crate runs nothing.
+- `{dependents}` expands to the direct dependents of the changed packages, alphabetically, at most `dependents_cap` of them. The rest are skipped and `checks.md` names them.
+- A changed code path that no rule matches and `unchecked_paths` does not exempt parks the job as `no-checks`, see the gates in `software-factory.md`.
 - Duplicate commands run once.
 - Every command runs, even after a failure. The default timeout is 900 seconds.
 - A failure sends the job back to the builder for a fix round, or parks it when `fix_rounds` is used up.

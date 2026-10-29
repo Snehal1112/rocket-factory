@@ -4,8 +4,8 @@ use factory_checks::{
     append_notes, plan_checks_in, run_checks, write_checks_md, CheckPlan, ChecksReport, Workspace,
 };
 use factory_core::{
-    classify_paths, code_paths_of, has_test_marker, has_test_path, Config, DiffClass, ParkKind,
-    ParkPart, Stage,
+    classify_paths, code_paths_of, has_test_marker, has_test_path, uncovered_code_paths, Config,
+    DiffClass, ParkKind, ParkPart, Stage,
 };
 
 use crate::decide::fix_rounds_used;
@@ -13,21 +13,13 @@ use crate::park::part_from_file;
 
 const NO_TESTS_NOTE: &str = "no test file or test marker in a code diff";
 
-/// None unless a code diff ran no check. A risky diff is left to `decide()`.
-pub(crate) fn no_checks_reason(
-    paths: &[String],
-    report_is_empty: bool,
-    config: &Config,
-) -> Option<String> {
-    if !report_is_empty || classify_paths(paths, config) == DiffClass::Risky {
+/// None unless a changed code path has no check rule and is not exempt. A risky diff is gated too.
+pub(crate) fn no_checks_reason(paths: &[String], config: &Config) -> Option<String> {
+    let uncovered = uncovered_code_paths(paths, config);
+    if uncovered.is_empty() {
         return None;
     }
-    let code = code_paths_of(paths, config);
-    let n = code.len();
-    if n == 0 {
-        return None;
-    }
-    Some(format!("no check ran for {}", code_path_list(&code)))
+    Some(format!("no check covers {}", code_path_list(&uncovered)))
 }
 
 /// `N changed code path(s): a, b, ...` with at most five names and a count of the rest.
@@ -122,14 +114,13 @@ impl Engine<'_> {
             .map_err(git_err)
     }
 
-    /// The no-checks gate: a park kind and reason when a code diff ran no check.
+    /// The no-checks gate: a park kind and reason when a changed code path has no check rule.
     pub(crate) fn gate_checks(
         &self,
         paths: &[String],
-        report: &ChecksReport,
+        _report: &ChecksReport,
     ) -> Option<(ParkKind, String)> {
-        no_checks_reason(paths, report.results.is_empty(), &self.config)
-            .map(|r| (ParkKind::NoChecks, r))
+        no_checks_reason(paths, &self.config).map(|r| (ParkKind::NoChecks, r))
     }
 
     /// Parks a job that a gate stopped, with the checks and the reason as evidence.
@@ -317,37 +308,63 @@ mod gate_tests {
         p.iter().map(|s| s.to_string()).collect()
     }
 
+    fn rule(glob: &str) -> factory_core::CheckRule {
+        factory_core::CheckRule {
+            paths: vec![glob.into()],
+            commands: vec!["true".into()],
+        }
+    }
+
     #[test]
     fn no_checks_reason_names_five_paths_and_a_count() {
         let all = paths(&["a.rs", "b.rs", "c.rs", "d.rs", "e.rs", "f.rs", "g.rs"]);
-        let reason = no_checks_reason(&all, true, &Config::default()).expect("a reason");
+        let reason = no_checks_reason(&all, &Config::default()).expect("a reason");
         assert_eq!(
             reason,
-            "no check ran for 7 changed code paths: a.rs, b.rs, c.rs, d.rs, e.rs (+2 more)"
+            "no check covers 7 changed code paths: a.rs, b.rs, c.rs, d.rs, e.rs (+2 more)"
         );
     }
 
     #[test]
     fn one_path_reads_singular() {
-        let reason =
-            no_checks_reason(&paths(&["a.rs"]), true, &Config::default()).expect("a reason");
-        assert_eq!(reason, "no check ran for 1 changed code path: a.rs");
+        let reason = no_checks_reason(&paths(&["a.rs"]), &Config::default()).expect("a reason");
+        assert_eq!(reason, "no check covers 1 changed code path: a.rs");
     }
 
     #[test]
-    fn a_report_with_results_is_never_gated() {
-        assert!(no_checks_reason(&paths(&["a.rs"]), false, &Config::default()).is_none());
+    fn partial_coverage_names_the_gap() {
+        let c = Config {
+            checks: vec![rule("src/**")],
+            ..Config::default()
+        };
+        let reason = no_checks_reason(&paths(&["src/a.rs", "Cargo.lock"]), &c).expect("a reason");
+        assert_eq!(reason, "no check covers 1 changed code path: Cargo.lock");
     }
 
     #[test]
-    fn docs_only_and_empty_path_lists_are_not_gated() {
-        assert!(no_checks_reason(
-            &paths(&["README.md", "docs/a.md"]),
-            true,
-            &Config::default()
-        )
-        .is_none());
-        assert!(no_checks_reason(&[], true, &Config::default()).is_none());
+    fn a_fully_covered_diff_is_not_gated() {
+        let c = Config {
+            checks: vec![rule("**")],
+            ..Config::default()
+        };
+        assert!(no_checks_reason(&paths(&["a.rs"]), &c).is_none());
+    }
+
+    #[test]
+    fn unchecked_paths_are_exempt() {
+        let c = Config {
+            unchecked_paths: vec!["LICENSE".into()],
+            ..Config::default()
+        };
+        assert!(no_checks_reason(&paths(&["LICENSE"]), &c).is_none());
+    }
+
+    #[test]
+    fn doc_paths_are_never_uncovered() {
+        assert!(
+            no_checks_reason(&paths(&["README.md", "docs/a.md"]), &Config::default()).is_none()
+        );
+        assert!(no_checks_reason(&[], &Config::default()).is_none());
     }
 
     #[test]
@@ -391,8 +408,8 @@ mod gate_tests {
     }
 
     #[test]
-    fn a_risky_diff_is_left_to_decide() {
+    fn a_risky_diff_is_gated_too() {
         let all = paths(&["src-tauri/src/lib.rs"]);
-        assert!(no_checks_reason(&all, true, &Config::default()).is_none());
+        assert!(no_checks_reason(&all, &Config::default()).is_some());
     }
 }
