@@ -464,7 +464,7 @@ What it prints: `merged <sha>`, or `parked: <reason>`. A `parked:` result leaves
 factory rework <ID> <NOTE>
 ```
 
-Sends one line to the builder, resets the round counter to 0 and sends the job back to the build stage.
+Sends one line to the builder and sends the job back to the build stage. A job parked at a task boundary starts the next round: the round number goes up, the builder gets a fresh set of fix rounds, and it reads `changes-r<N>.md` with your note first and then the open review findings. Earlier review and builder files are kept. A job parked in the middle of a task keeps its round and reads your note from `rework-note.md`.
 
 ```bash
 factory rework 028 "Handle the empty list case and add a test for it"
@@ -473,7 +473,7 @@ factory rework 028 "Handle the empty list case and add a test for it"
 - The note must not be empty, must be one line, and must be at most 200 characters.
 - The job must be in `needs-human`.
 - It also revives a cancelled job.
-- It does not run the job. It prints `job N back to build, round reset to 0`. You must run `factory run 028` afterwards.
+- It does not run the job. It prints `job N back to build, round <N>` for the next round, or `job N back to build, same task` for a job parked mid-task. You must run `factory run 028` afterwards.
 
 ### 6.7 `factory cancel`: give up on a job
 
