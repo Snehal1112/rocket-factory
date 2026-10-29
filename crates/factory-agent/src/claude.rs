@@ -50,6 +50,11 @@ pub enum ApiKeySource {
 /// The variables to remove from the child and the ones to set.
 type KeyEnv = (Vec<&'static str>, Vec<(&'static str, Secret)>);
 
+/// Checks that `path` holds a key the agents can use, as a job start would. The error names the file, never the key.
+pub fn check_key_file(path: &Path) -> Result<(), AgentError> {
+    read_key_file(path).map(|_| ())
+}
+
 /// Reads one key from `path`. The errors name the file, never the key.
 fn read_key_file(path: &Path) -> Result<Secret, AgentError> {
     let shown = path.display();

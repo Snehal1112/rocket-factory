@@ -11,7 +11,7 @@ pub mod stream;
 pub mod usage;
 
 pub use child::AgentStream;
-pub use claude::{AgentError, ApiKeySource, ClaudeRunner, ALLOW_API_KEY_VAR};
+pub use claude::{check_key_file, AgentError, ApiKeySource, ClaudeRunner, ALLOW_API_KEY_VAR};
 pub use codex::{codex_args, CodexRunner, CodexStream};
 pub use events::{AgentEvent, EventKind, EventSink};
 pub use run::{AgentRun, StopReason};

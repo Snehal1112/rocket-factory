@@ -822,3 +822,59 @@ fn which_resolves_the_deepest_project() {
     let out = run(&e, &["which", s(&repo.join("apps/web/src"))]).expect("which");
     assert_eq!(out, "web");
 }
+
+/// Points the demo project at `key` with the API key allowed.
+fn use_key_file(e: &Env, key: &Path) {
+    let file = e.home.project_dir("demo").join("project.toml");
+    let text = std::fs::read_to_string(&file).expect("read").replacen(
+        "[settings]\n",
+        &format!(
+            "[settings]\nallow_api_key = true\napi_key_file = \"{}\"\n",
+            key.display()
+        ),
+        1,
+    );
+    std::fs::write(&file, text).expect("write");
+}
+
+fn write_key(path: &Path, text: &str, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, text).expect("write key");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+}
+
+#[test]
+fn show_reports_a_key_file_the_agents_could_not_read() {
+    let e = env();
+    add_demo(&e);
+    let key = e.tmp.path().join("anthropic.env");
+    use_key_file(&e, &key);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("cannot read api_key_file"), "{out}");
+    write_key(
+        &key,
+        "# comment\nexport ANTHROPIC_API_KEY=sk-ant-secret\n",
+        0o600,
+    );
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("must hold a single line"), "{out}");
+    assert!(
+        !out.contains("sk-ant-secret"),
+        "the key must never be shown: {out}"
+    );
+    write_key(&key, "sk-ant-secret\n", 0o644);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("run chmod 600"), "{out}");
+}
+
+#[test]
+fn show_accepts_a_good_key_file() {
+    let e = env();
+    add_demo(&e);
+    let key = e.tmp.path().join("anthropic.key");
+    write_key(&key, "sk-ant-secret\n", 0o600);
+    use_key_file(&e, &key);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    assert!(out.contains("problems: none"), "{out}");
+    assert!(!out.contains("sk-ant-secret"), "{out}");
+}

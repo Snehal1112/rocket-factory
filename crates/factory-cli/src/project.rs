@@ -262,6 +262,11 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     if resolved.config.agent_cli() == "codex" {
         let path_env = std::env::var("PATH").unwrap_or_default();
         problems.extend(codex_problems(&resolved.config, &path_env));
+    } else if let Some(key) = resolved.config.api_key_path() {
+        // A key file the agents cannot read would stop every job at its first agent.
+        if let Err(e) = factory_agent::check_key_file(&key) {
+            problems.push(e.to_string());
+        }
     }
     let l = &resolved.layout;
     let mut out = vec![
