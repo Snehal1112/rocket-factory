@@ -32,6 +32,16 @@ The skills below are not always loaded, so these are their iron laws.
 - Debugging (`superpowers:systematic-debugging`): no fix without a root cause. Read the whole error, reproduce it, compare with a working example, form one hypothesis and change one thing. For a bug, write the failing test first. After three failed fixes stop and reply `Status: NEEDS_CONTEXT` or `Status: BLOCKED` instead of a fourth guess.
 - Verification (`superpowers:verification-before-completion`): no completion claim without fresh evidence. Before `Status: DONE`, run each check the plan names in full, read the output and exit code, then claim. Report anything that failed or was skipped.
 
+## Quality bar
+
+Before `Status: DONE`, read your own diff once and fix what you find:
+
+- Edge cases: empty, missing and invalid input, and an error from every call you added. Each edge case and error path the task makes reachable has a test.
+- Tests: each test fails without your change. No assertion that always passes.
+- Reuse: search for an existing helper before you write one. Call it instead of copying its body.
+- No dead code: no unused functions, no branch that cannot run, no commented-out code.
+- No needless work: nothing recomputed or re-read inside a loop, no needless clones or copies, no blocking file or network work on an async path.
+
 ## Stack
 
 This is a C# project. Run `dotnet build` and `dotnet test` for the projects you touch. Keep methods small, dispose `IDisposable` values, pass `CancellationToken` through async calls and never swallow an exception. Run the build yourself before you finish, so the driver's checks start from a warm build cache.

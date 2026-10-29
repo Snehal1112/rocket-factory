@@ -907,6 +907,29 @@ fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> Test
     Ok(())
 }
 
+#[test]
+fn builder_files_carry_the_quality_bar() -> TestResult {
+    for path in [".claude/agents/factory-builder.md"]
+        .into_iter()
+        .chain(PRESET_BUILDERS)
+    {
+        require_all(
+            &read(path)?,
+            path,
+            &[
+                "## Quality bar",
+                "Before `Status: DONE`, read your own diff once",
+                "Edge cases:",
+                "Tests:",
+                "Reuse:",
+                "No dead code:",
+                "No needless work:",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 // The `.claude/agents` copies are marked by the maintainer, so they are not listed here.
 const MARKED: [&str; 10] = [
     "crates/factory-core/presets/rust/agents/factory-builder.md",
