@@ -29,8 +29,8 @@ pub mod version;
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
 
 pub use board::{
-    Board, BuilderLast, Draft, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry,
-    TaskSession, DRAFT_STAGES,
+    Board, BuilderLast, Draft, Job, JobTokens, LastReview, Lease, ReviewState, SeriesPos,
+    StageEntry, TaskSession, DRAFT_STAGES,
 };
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{
@@ -61,4 +61,4 @@ pub use park::{ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
 pub use risk::{classify_paths, glob_match, DiffClass};
 pub use stage::Stage;
-pub use verdict::{parse_verdict, Verdict};
+pub use verdict::{open_blockers, parse_verdict, Verdict};

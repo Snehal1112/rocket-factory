@@ -140,6 +140,12 @@ pub struct Job {
     /// The agent provider of the latest run, `claude` or `codex`. Absent means `claude`. New in the Codex series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// The latest code review of the job. New in the act-on-review-findings series, absent in older boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_review: Option<LastReview>,
+    /// The `round` value when the latest rework started, so fix rounds count from there. New in the act-on-review-findings series, absent in older boards.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rework_base: u32,
 }
 
 /// The last finished builder of the job, a task or fix builder, used to decide a carry or a fresh fix builder.
@@ -196,6 +202,19 @@ pub struct SeriesPos {
     pub id: Option<String>,
 }
 
+/// The latest code review of a job. New in the act-on-review-findings series, absent in older boards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastReview {
+    pub round: u32,
+    /// `approve`, `changes` or `missing`.
+    pub verdict: String,
+    /// Open `[blocker]` lines in the review file.
+    pub blockers: u32,
+    pub file: String,
+    /// What started the review: `build`, `checks`, `review`, `rework` or `sync`.
+    pub source: String,
+}
+
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
@@ -247,7 +266,16 @@ impl Job {
             task_session: None,
             builder_last: None,
             provider: None,
+            last_review: None,
+            rework_base: 0,
         }
+    }
+
+    /// True when the latest code review asked for changes.
+    pub fn changes_open(&self) -> bool {
+        self.last_review
+            .as_ref()
+            .is_some_and(|r| r.verdict == "changes")
     }
 
     /// The refusal that approve gives for a needs-human job without a code review. CLI and API share it.
@@ -659,6 +687,37 @@ mod tests {
         let text = serde_json::to_string(&j).expect("json");
         let back: Job = serde_json::from_str(&text).expect("parse");
         assert_eq!(back.provider.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn last_review_and_rework_base_are_optional_and_round_trip() {
+        let mut j = job();
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(!text.contains("last_review"), "{text}");
+        assert!(!text.contains("rework_base"), "{text}");
+        j.last_review = Some(LastReview {
+            round: 2,
+            verdict: "changes".into(),
+            blockers: 1,
+            file: "review-code-r2.md".into(),
+            source: "review".into(),
+        });
+        j.rework_base = 1;
+        let text = serde_json::to_string(&j).expect("json");
+        let back: Job = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back, j);
+        assert!(back.changes_open());
+        j.last_review.as_mut().expect("set").verdict = "approve".into();
+        assert!(!j.changes_open());
+    }
+
+    #[test]
+    fn old_board_without_new_fields_loads() {
+        let text = serde_json::to_string(&job()).expect("json");
+        let back: Job = serde_json::from_str(&text).expect("old job loads");
+        assert_eq!(back.last_review, None);
+        assert_eq!(back.rework_base, 0);
+        assert!(!back.changes_open());
     }
 
     fn job() -> Job {

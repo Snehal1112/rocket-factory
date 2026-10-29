@@ -133,6 +133,12 @@ pub struct ParkRecord {
     pub round: u32,
     pub next: Vec<String>,
     pub parts: Vec<ParkPart>,
+    /// The review verdict word at the park. New in the act-on-review-findings series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    /// Whether the diff was risky at the park. New in the act-on-review-findings series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risky: Option<bool>,
 }
 
 impl ParkRecord {
@@ -151,6 +157,8 @@ impl ParkRecord {
             round,
             next: kind.next(id),
             parts,
+            verdict: None,
+            risky: None,
         }
     }
 
@@ -291,6 +299,19 @@ mod tests {
         let json = r#"{"kind":"checks-failed","reason":"r","at":1,"round":1,"next":[],"parts":[]}"#;
         let rec: ParkRecord = serde_json::from_str(json).expect("old record parses");
         assert_eq!(rec.kind, ParkKind::ChecksFailed);
+    }
+
+    #[test]
+    fn verdict_and_risky_are_omitted_when_unset_and_round_trip() {
+        let mut rec = ParkRecord::new(ParkKind::RiskyDiff, "why", "012", 1, 1, Vec::new());
+        let text = serde_json::to_string(&rec).expect("serialize");
+        assert!(!text.contains("verdict"), "{text}");
+        assert!(!text.contains("risky\""), "{text}");
+        rec.verdict = Some("changes".into());
+        rec.risky = Some(true);
+        let text = serde_json::to_string(&rec).expect("serialize");
+        let back: ParkRecord = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back, rec);
     }
 
     #[test]

@@ -47,6 +47,8 @@ pub struct Config {
     pub diff_cap_lines: u32,
     pub budget_weighted: u64,
     pub fix_rounds: u32,
+    /// Fix rounds a risky diff may use. `None` means the same as `fix_rounds`.
+    pub risky_fix_rounds: Option<u32>,
     pub stall_minutes: u32,
     pub builder_model: String,
     pub reviewer_model: String,
@@ -145,6 +147,7 @@ impl Default for Config {
             diff_cap_lines: 4000,
             budget_weighted: DEFAULT_JOB_BUDGET_WEIGHTED,
             fix_rounds: 2,
+            risky_fix_rounds: None,
             stall_minutes: 10,
             builder_model: "claude-sonnet-5-5".to_string(),
             reviewer_model: "claude-sonnet-5-5".to_string(),
@@ -224,6 +227,15 @@ impl Config {
             code_paths: vec!["**".to_string()],
             degraded: true,
             ..Config::default()
+        }
+    }
+
+    /// The fix rounds a diff may use, with the risky limit when the diff is risky.
+    pub fn fix_rounds_for(&self, risky: bool) -> u32 {
+        if risky {
+            self.risky_fix_rounds.unwrap_or(self.fix_rounds)
+        } else {
+            self.fix_rounds
         }
     }
 
@@ -568,6 +580,22 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn risky_fix_rounds_defaults_to_fix_rounds() {
+        let d = Config::default();
+        assert_eq!(d.fix_rounds_for(true), 2);
+        assert_eq!(d.fix_rounds_for(false), 2);
+        assert_eq!(
+            Config::parse("fix_rounds = 3")
+                .expect("ok")
+                .fix_rounds_for(true),
+            3
+        );
+        let z = Config::parse("risky_fix_rounds = 0").expect("ok");
+        assert_eq!(z.fix_rounds_for(true), 0);
+        assert_eq!(z.fix_rounds_for(false), 2);
+    }
+
     #[test]
     fn builder_allow_rejects_forbidden_and_malformed_entries() {
         for entry in [
