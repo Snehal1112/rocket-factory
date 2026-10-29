@@ -277,6 +277,7 @@ Creates a job on the board. Nothing is built yet.
 | `--spec <file>` | The spec file. Needs `--plans`. |
 | `--model <name>` | Recorded on the job card. See the note below. |
 | `--one-job` | Combine the whole plan chain into one job. Needs `--plans`. |
+| `--accept-spec "<reason>"` | Create the job although the spec check refused it. One line, at most 200 characters. |
 | `--accept-over-budget` | Allow a `--one-job` job whose estimate is over the budget. Needs `--one-job`. |
 
 **What each form does:**
@@ -325,6 +326,8 @@ factory new login-fix "Fix login redirect" \
 - A single plan file given without `--spec` gets no spec check.
 - A copy of the spec is stored in each job folder as `spec.md`. A copy of each plan is stored too. Edit the copy, not the committed file.
 - If no item under `## Decisions` says `Decided by: user`, the job gets a warning. It is not an error.
+
+**When `factory new` refuses the spec.** Before it creates a job, `factory new` checks the spec. It refuses when the plans touch risky paths and no `## Decisions` item says `Decided by: user`, or when the spec reviewer (setting `spec_review`, on by default) answers `CHANGES` or gives no verdict. A refusal creates nothing. The message names the review file under the state folder `spec-reviews/`. Fix the spec, record your answers as `Decided by: user` decisions, commit, and run the same command again. Pass `--accept-spec "<reason>"` only when you decide to go ahead anyway.
 
 **The `--one-job` estimate.** The estimate is 110,000 plus 100,000 per task, in weighted tokens. If it is over `budget_weighted` the command stops with:
 

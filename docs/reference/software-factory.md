@@ -22,6 +22,15 @@ factory run (no LLM tokens):
   otherwise                                      -> needs-human (factory approve | factory rework | factory cancel)
 ```
 
+## Spec check
+
+`factory new` checks the spec and its plans before it creates anything. Two checks run, and a refusal creates no job, board entry or worktree.
+
+- The decisions check always runs. When the plans touch risky paths and no `## Decisions` item says `Decided by: user`, the call is refused.
+- The spec review runs when `spec_review` is true (the default). A read-only reviewer (tools `Read, Grep, Glob`) reads the spec and the plans and answers APPROVE or CHANGES. A CHANGES verdict, or a missing verdict, refuses the call. The review is saved under `<state>/spec-reviews/` and the refusal names the file.
+
+A refusal ends with the hint to record the user's answer as a `Decided by: user` decision, or to pass `--accept-spec "<reason>"` (one line, not empty, at most 200 characters). The `/factory` command shows the findings to the user, fixes the spec with them and runs `factory new` again. The supervisor create endpoint answers a refusal with 409 `conflict` and the same text.
+
 ## Job model
 
 - One job is one feature. It holds a series of plans, each of at most 3 tasks, run one after another, never in parallel.
