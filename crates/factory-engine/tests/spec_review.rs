@@ -110,6 +110,27 @@ fn a_missing_verdict_refuses() {
 }
 
 #[test]
+fn a_preset_without_the_spec_reviewer_refuses_without_a_run() {
+    let fx = fixture(vec![reviewer(APPROVE)], Config::default());
+    // A preset from before this release resolves agent files, but none for the spec reviewer.
+    let builder = factory_core::AgentFile {
+        name: "factory-builder.md".to_string(),
+        content: "---\nname: factory-builder\n---\nbody\n".to_string(),
+    };
+    let fx = Fx {
+        driver: fx.driver.with_agent_files(vec![builder]),
+        ..fx
+    };
+    let err = new(&fx, None).expect_err("refused");
+    assert_eq!(
+        err.to_string(),
+        "the spec reviewer agent is missing; run factory upgrade or factory presets refresh, or set spec_review = false"
+    );
+    assert!(fx.runner.last_spec_for("spec-reviewer").is_none());
+    assert_eq!(jobs(&fx), 0);
+}
+
+#[test]
 fn an_approved_spec_is_not_reviewed_twice() {
     let fx = fixture(vec![reviewer(APPROVE)], Config::default());
     new(&fx, None).expect("first");

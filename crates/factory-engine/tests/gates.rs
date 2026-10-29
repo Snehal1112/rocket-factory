@@ -294,6 +294,26 @@ fn risk_paths_are_project_relative() {
 }
 
 #[test]
+fn a_failed_risky_paths_write_does_not_stop_the_review() {
+    let mut fx = scoped_fixture();
+    fx.config.risk_paths = vec!["migrations/**".into()];
+    let runner = built(&fx, vec![("migrations/1.sql", "x\n")]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    // A dangling link reads as absent, and writing through it fails.
+    std::os::unix::fs::symlink(
+        fx.job_dir.join("no-such-dir/file"),
+        fx.job_dir.join("risky-paths.txt"),
+    )
+    .expect("link");
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let review = fx.engine(&rr).review_stage().expect("review");
+    match review.decision {
+        Decision::NeedsHuman { kind, .. } => assert_eq!(kind, ParkKind::RiskyDiff),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
 fn a_non_risk_path_in_the_project_is_not_risky() {
     let mut fx = scoped_fixture();
     fx.config.risk_paths = vec!["migrations/**".into()];

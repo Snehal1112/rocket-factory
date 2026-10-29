@@ -89,7 +89,8 @@ impl Engine<'_> {
                 })
                 .cloned()
                 .collect();
-            std::fs::write(&first_risky, list.join("\n") + "\n").map_err(io_err)?;
+            // Like the other evidence files, this one is best effort and never stops the review.
+            let _ = std::fs::write(&first_risky, list.join("\n") + "\n");
         }
         let round_lines = round_diff.changed_lines();
         let job_model = self.job_model();

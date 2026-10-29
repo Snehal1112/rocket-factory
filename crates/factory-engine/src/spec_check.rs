@@ -23,6 +23,8 @@ pub enum SpecRefusal {
     ReviewChanges { file: PathBuf, findings: String },
     /// The spec reviewer gave no verdict, which is never a pass.
     ReviewMissing { file: PathBuf },
+    /// The resolved preset has no spec reviewer agent file, so the run would have no rules.
+    ReviewerMissing,
 }
 
 /// How the user gets past a refusal.
@@ -42,6 +44,10 @@ impl fmt::Display for SpecRefusal {
                 f,
                 "the spec review gave no verdict; a missing verdict is not a pass. The review is in {}. {OVERRIDE_HINT}",
                 file.display()
+            ),
+            SpecRefusal::ReviewerMissing => write!(
+                f,
+                "the spec reviewer agent is missing; run factory upgrade or factory presets refresh, or set spec_review = false"
             ),
         }
     }
@@ -201,6 +207,11 @@ pub(crate) fn review_spec_with(
 ) -> Result<(), SpecRefusal> {
     if !driver.config().spec_review {
         return Ok(());
+    }
+    // A preset from before the spec reviewer resolves agent files without it. Without any resolved
+    // files the checkout's own agent folder is used, so that case is not judged here.
+    if !driver.agent_files().is_empty() && reviewer_file_text(driver).trim().is_empty() {
+        return Err(SpecRefusal::ReviewerMissing);
     }
     let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
     let plan_texts: Vec<String> = plans.iter().map(|p| read(p)).collect();
