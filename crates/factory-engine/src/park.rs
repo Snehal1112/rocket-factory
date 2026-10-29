@@ -2,22 +2,49 @@
 
 use std::path::Path;
 
-use factory_core::{ParkKind, ParkPart, ParkRecord};
+use factory_core::{classify_paths, open_blockers, DiffClass, ParkKind, ParkPart, ParkRecord};
 
+use crate::decide::risk_summary;
 use crate::ports::now;
 use crate::{Engine, EngineError, StageOutcome};
 
-/// The reviewer's `[blocker]` lines, or the whole reply when it has none.
+/// The reviewer's open `[blocker]` lines, or the whole reply when it has none.
 pub(crate) fn blocker_lines(review_text: &str) -> String {
-    let blockers: Vec<&str> = review_text
-        .lines()
-        .filter(|l| l.contains("[blocker]"))
-        .collect();
+    let blockers = open_blockers(review_text);
     if blockers.is_empty() {
         review_text.to_string()
     } else {
         blockers.join("\n")
     }
+}
+
+/// The file that holds the risky paths of the first review of a job.
+pub(crate) const RISKY_PATHS_FILE: &str = "risky-paths.txt";
+
+/// Rewrites a ledger line `Ruling: review round N (source) verdict V, B blockers` as `round N (source): v, B blockers`.
+/// Lines from older drivers have no source or count, and show `?` for them.
+fn round_line(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("Ruling: ")?;
+    let rest = rest
+        .strip_prefix("sync review round ")
+        .or_else(|| rest.strip_prefix("review round "))?;
+    let (round, rest) = rest.split_once(' ')?;
+    let (source, rest) = match rest.strip_prefix('(') {
+        Some(r) => {
+            let (src, after) = r.split_once(')')?;
+            (src, after.trim_start())
+        }
+        None => ("?", rest),
+    };
+    let rest = rest.strip_prefix("verdict ")?;
+    let (verdict, count) = match rest.split_once(", ") {
+        Some((v, c)) => (v, c.strip_suffix(" blockers").unwrap_or("?")),
+        None => (rest, "?"),
+    };
+    Some(format!(
+        "round {round} ({source}): {}, {count} blockers",
+        verdict.to_lowercase()
+    ))
 }
 
 /// An evidence part read from a file in the job folder. A missing file gives no part.
@@ -48,6 +75,13 @@ impl Engine<'_> {
         let mut record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
         // A park that offers approve says so when the review has not run, because a plain approve is refused.
         record.next = kind.next_for(&self.job_id, review_missing);
+        record.verdict = job
+            .as_ref()
+            .and_then(|j| j.last_review.as_ref())
+            .map(|r| r.verdict.clone());
+        if self.is_risky() {
+            record.risky = Some(true);
+        }
         write_record(&self.job_dir, &record);
         self.update(|j| {
             j.park_kind = Some(kind.as_str().to_string());
@@ -58,33 +92,34 @@ impl Engine<'_> {
     }
 
     /// Evidence for a park the decision step chose. Anything that cannot be read is left out.
-    pub(crate) fn decision_parts(&self, kind: ParkKind, reason: &str, round: u32) -> Vec<ParkPart> {
+    pub(crate) fn decision_parts(&self, kind: ParkKind, reason: &str) -> Vec<ParkPart> {
         match kind {
             ParkKind::ChecksFailed => part_from_file(&self.job_dir, "checks.md", "Checks")
                 .into_iter()
                 .collect(),
             ParkKind::ChangesRemain => {
-                let file = format!("review-code-r{round}.md");
-                match std::fs::read_to_string(self.job_dir.join(&file)) {
-                    Ok(text) => vec![ParkPart::new(
-                        "Reviewer findings",
-                        &file,
-                        &blocker_lines(&text),
-                    )],
-                    Err(_) => Vec::new(),
-                }
+                let mut parts = self.lead_parts();
+                parts.extend(self.rounds_part());
+                parts.extend(self.stat_part());
+                parts
             }
-            ParkKind::RiskyDiff | ParkKind::DiffTooLarge => {
-                let mut parts = vec![ParkPart::new("Why it stopped", "driver", reason)];
-                if let Some(stat) = self.diff_stat_text() {
-                    parts.push(ParkPart::new("Changed files", "diff stat", &stat));
+            ParkKind::RiskyDiff => {
+                let mut parts = self.lead_parts();
+                if parts.is_empty() {
+                    parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 }
+                parts.extend(self.rounds_part());
+                parts.extend(self.stat_part());
+                parts
+            }
+            ParkKind::DiffTooLarge => {
+                let mut parts = vec![ParkPart::new("Why it stopped", "driver", reason)];
+                parts.extend(self.stat_part());
                 parts
             }
             ParkKind::NoChecks | ParkKind::NoTests => {
-                let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks")
-                    .into_iter()
-                    .collect();
+                let mut parts = self.lead_parts();
+                parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks"));
                 parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 parts
             }
@@ -98,6 +133,77 @@ impl Engine<'_> {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// True when the whole job diff touches a risky path. A diff that cannot be read counts as not risky.
+    pub(crate) fn is_risky(&self) -> bool {
+        self.job_changed_paths()
+            .is_ok_and(|p| classify_paths(&p, &self.config) == DiffClass::Risky)
+    }
+
+    /// The Review part, then the Risk part when the diff is risky.
+    pub(crate) fn lead_parts(&self) -> Vec<ParkPart> {
+        let mut parts: Vec<ParkPart> = self.review_part().into_iter().collect();
+        parts.extend(self.risk_part());
+        parts
+    }
+
+    /// The last review: its verdict line first, then the open blockers.
+    pub(crate) fn review_part(&self) -> Option<ParkPart> {
+        let last = self.job().ok()?.last_review?;
+        let head = format!("verdict {}, round {}", last.verdict, last.round);
+        let text = match std::fs::read_to_string(self.job_dir.join(&last.file)) {
+            Ok(reply) if last.verdict == "approve" => {
+                let open = open_blockers(&reply);
+                if open.is_empty() {
+                    head
+                } else {
+                    format!("{head}\n{}", open.join("\n"))
+                }
+            }
+            Ok(reply) => format!("{head}\n{}", blocker_lines(&reply)),
+            Err(_) => format!("verdict {}, findings file missing", last.verdict),
+        };
+        Some(ParkPart::new("Review", &last.file, &text))
+    }
+
+    /// The risky paths, and the ones fix rounds added after the first review. `None` when the diff is not risky.
+    pub(crate) fn risk_part(&self) -> Option<ParkPart> {
+        let paths = self.job_changed_paths().ok()?;
+        if classify_paths(&paths, &self.config) != DiffClass::Risky {
+            return None;
+        }
+        let mut text = risk_summary(&paths, &self.config);
+        if let Ok(first) = std::fs::read_to_string(self.job_dir.join(RISKY_PATHS_FILE)) {
+            let added: Vec<&str> = paths
+                .iter()
+                .filter(|p| {
+                    classify_paths(std::slice::from_ref(*p), &self.config) == DiffClass::Risky
+                })
+                .map(String::as_str)
+                .filter(|p| !first.lines().any(|l| l == *p))
+                .collect();
+            if !added.is_empty() {
+                text.push_str(&format!("\nadded by fix rounds: {}", added.join(", ")));
+            }
+        }
+        Some(ParkPart::new("Risk", "driver", &text))
+    }
+
+    /// One line per review round in the ledger.
+    pub(crate) fn rounds_part(&self) -> Option<ParkPart> {
+        let ledger = std::fs::read_to_string(self.job_dir.join("progress.md")).ok()?;
+        let lines: Vec<String> = ledger.lines().filter_map(round_line).collect();
+        if lines.is_empty() {
+            return None;
+        }
+        Some(ParkPart::new("Rounds", "progress.md", &lines.join("\n")))
+    }
+
+    /// The `Changed files` part, when the diff stat can be made.
+    fn stat_part(&self) -> Option<ParkPart> {
+        let stat = self.diff_stat_text()?;
+        Some(ParkPart::new("Changed files", "diff stat", &stat))
     }
 
     /// The `--stat` text of the whole job diff, or `None` when the diff cannot be made.

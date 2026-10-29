@@ -67,6 +67,18 @@ impl Engine<'_> {
         };
         let class = classify_paths(&paths, &self.config);
         let risky = class == DiffClass::Risky;
+        // The first review of a risky job records its risky paths, so a park can name those that fix rounds added.
+        let first_risky = self.job_dir.join(crate::park::RISKY_PATHS_FILE);
+        if risky && !first_risky.exists() {
+            let list: Vec<String> = paths
+                .iter()
+                .filter(|p| {
+                    classify_paths(std::slice::from_ref(*p), &self.config) == DiffClass::Risky
+                })
+                .cloned()
+                .collect();
+            std::fs::write(&first_risky, list.join("\n") + "\n").map_err(io_err)?;
+        }
         let round_lines = round_diff.changed_lines();
         let job_model = self.job_model();
         let model = job_model
@@ -100,6 +112,10 @@ impl Engine<'_> {
         })?;
         let run = self.run_agent(spec)?;
         let review_path = self.job_dir.join(format!("review-code-r{}.md", job.round));
+        let file = review_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         std::fs::write(&review_path, &run.result_text).map_err(io_err)?;
 
         let verdict = if run.stop_reason == factory_agent::StopReason::Done {
@@ -114,7 +130,6 @@ impl Engine<'_> {
         };
         let blockers = open_blockers(&run.result_text).len() as u32;
         let source = job.fix_source.clone().unwrap_or_else(|| "build".into());
-        let file = format!("review-code-r{}.md", job.round);
         let last = LastReview {
             round: job.round,
             verdict: verdict.as_word().into(),
@@ -187,8 +202,7 @@ impl Engine<'_> {
                         return Ok(outcome);
                     }
                 }
-                let round = self.job()?.round;
-                let parts = self.decision_parts(*kind, reason, round);
+                let parts = self.decision_parts(*kind, reason);
                 self.park_with(*kind, reason.clone(), parts)
             }
             Decision::FixRound => {

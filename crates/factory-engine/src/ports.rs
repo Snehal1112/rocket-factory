@@ -95,8 +95,7 @@ pub(crate) struct JobView {
     pub builder_last: Option<factory_core::board::BuilderLast>,
     /// The round count at the last rework.
     pub rework_base: u32,
-    /// The last review summary, if any. Later tasks of this plan read it.
-    #[allow(dead_code)]
+    /// The last review summary, if any.
     pub last_review: Option<factory_core::LastReview>,
 }
 

@@ -133,9 +133,13 @@ impl Engine<'_> {
         reason: String,
     ) -> Result<StageOutcome, EngineError> {
         self.ruling(&format!("parked, {reason}"))?;
-        let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks")
-            .into_iter()
-            .collect();
+        // A scope violation parks before any review, so only the other gates lead with the review.
+        let mut parts = if kind == ParkKind::Other {
+            Vec::new()
+        } else {
+            self.lead_parts()
+        };
+        parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks"));
         parts.push(ParkPart::new("Why it stopped", "driver", &reason));
         self.park_with(kind, reason, parts)
     }
@@ -177,12 +181,10 @@ impl Engine<'_> {
             } else {
                 "Reviewer findings"
             };
-            let part = ParkPart::new(title, source, findings);
-            return self.park_with(
-                kind,
-                format!("{reason} after {used} fix rounds"),
-                vec![part],
-            );
+            // A risky diff leads with the review and the risk, like every other risky park.
+            let mut parts = if risky { self.lead_parts() } else { Vec::new() };
+            parts.push(ParkPart::new(title, source, findings));
+            return self.park_with(kind, format!("{reason} after {used} fix rounds"), parts);
         }
         let next = job.round + 1;
         std::fs::write(self.job_dir.join(format!("changes-r{next}.md")), findings)

@@ -199,10 +199,12 @@ impl Engine<'_> {
                 } else {
                     "builder made no changes on resume"
                 };
-                let parts = reply
-                    .map(|text| ParkPart::new("Builder reply", "builder", &text))
-                    .into_iter()
-                    .collect();
+                let mut parts = if matches!(job.fix_source.as_deref(), Some("review" | "rework")) {
+                    self.lead_parts()
+                } else {
+                    Vec::new()
+                };
+                parts.extend(reply.map(|text| ParkPart::new("Builder reply", "builder", &text)));
                 return self.park_with(ParkKind::NothingChanged, why.to_string(), parts);
             }
             CommitOutcome::Park(reason) => {
