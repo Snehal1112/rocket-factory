@@ -198,6 +198,7 @@ The `project` commands work on the home only, so they run outside a git reposito
 factory project add /path/to/repo --preset rust [--base main] [--name demo]
 factory project list
 factory project show demo
+factory project defaults demo   # or --all: add every missing setting as a commented line
 factory project remove demo [--force]
 factory project which [<path>]
 ```

@@ -18,6 +18,7 @@ pub mod preset;
 pub mod project;
 pub mod resolve;
 pub mod risk;
+pub mod settings_block;
 pub mod stage;
 #[cfg(test)]
 mod test_support;

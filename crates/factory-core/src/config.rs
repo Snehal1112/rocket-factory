@@ -1,6 +1,6 @@
 use crate::error::CoreError;
 use crate::risk::glob_match;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Default per-job budget in weighted tokens. A config file can set its own.
@@ -27,7 +27,7 @@ const DEFAULT_RISK: &[&str] = &[
     ".claude/factory/config.toml",
 ];
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckRule {
     pub paths: Vec<String>,
@@ -40,7 +40,7 @@ impl CheckRule {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub risk_paths: Vec<String>,

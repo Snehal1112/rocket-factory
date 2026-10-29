@@ -192,6 +192,14 @@ pub enum ProjectCmd {
     },
     /// Show the resolved settings of a project.
     Show { name: String },
+    /// Add every setting the project file does not list yet, as a comment with its default.
+    Defaults {
+        /// The project. Leave it out with --all.
+        name: Option<String>,
+        /// Every project.
+        #[arg(long, conflicts_with = "name")]
+        all: bool,
+    },
     /// Delete a project folder. The repository and the presets stay.
     Remove {
         name: String,

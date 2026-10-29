@@ -195,6 +195,54 @@ fn show_prints_the_resolved_project() {
     assert!(!out.contains("degraded"), "{out}");
 }
 
+#[test]
+fn show_prints_every_setting_with_its_value_and_source() {
+    let e = env();
+    add_demo(&e);
+    let out = run(&e, &["show", "demo"]).expect("show");
+    for want in [
+        "settings:",
+        "  builder_carry_max_ctx = 45000 (default)",
+        "  read_first = [\"CLAUDE.md\"] (preset)",
+        "  base_branch = \"main\" (project)",
+        "  reviewer_model_large = unset (default)",
+        "  checks = 2 rules (preset)",
+        "  builder_rules = 3 entries (preset)",
+    ] {
+        assert!(out.contains(want), "missing {want:?} in\n{out}");
+    }
+}
+
+#[test]
+fn defaults_adds_the_settings_block_to_an_older_file_once() {
+    let e = env();
+    let repo = add_demo(&e);
+    let path = e.home.project_dir("demo").join("project.toml");
+    let bare = format!(
+        "repo = \"{}\"\npreset = \"rust\"\n\n[settings]\nbase_branch = \"main\"\n",
+        s(&std::fs::canonicalize(&repo).expect("canon"))
+    );
+    std::fs::write(&path, &bare).expect("write");
+    let out = run(&e, &["defaults", "demo"]).expect("defaults");
+    assert!(out.contains("demo: added the settings block"), "{out}");
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(text.starts_with(&bare), "{text}");
+    assert!(text.contains("# builder_carry_max_ctx = 45000"), "{text}");
+    let out = run(&e, &["defaults", "--all"]).expect("defaults --all");
+    assert!(out.contains("demo: already lists every setting"), "{out}");
+}
+
+#[test]
+fn defaults_needs_a_name_or_all() {
+    let e = env();
+    assert!(run(&e, &["defaults"]).is_err());
+    let both = Cli::try_parse_from(["factory", "project", "defaults", "demo", "--all"]);
+    assert_eq!(
+        both.err().map(|e| e.kind()),
+        Some(ErrorKind::ArgumentConflict)
+    );
+}
+
 fn set_plan_rules(e: &Env, line: &str) {
     // The `[settings]` table is the last table of the file, so a line appended here is a setting.
     let path = e.home.project_dir("demo").join("project.toml");

@@ -31,8 +31,34 @@ pub fn run(home: &Home, cmd: ProjectCmd) -> Result<String, CliError> {
         ProjectCmd::List => list(home),
         ProjectCmd::Which { path } => which(home, path.as_deref()),
         ProjectCmd::Show { name } => show(home, &name),
+        ProjectCmd::Defaults { name, all } => defaults(home, name.as_deref(), all),
         ProjectCmd::Remove { name, force } => remove(home, &name, force),
     }
+}
+
+/// Adds the commented settings block to one project file, or to every project file with `all`.
+fn defaults(home: &Home, name: Option<&str>, all: bool) -> Result<String, CliError> {
+    let names: Vec<String> = match (name, all) {
+        (Some(n), false) => vec![n.to_string()],
+        (None, true) => project::list(home)?.into_iter().map(|p| p.name).collect(),
+        _ => {
+            return Err(CliError::Refused(
+                "name a project or pass --all".to_string(),
+            ))
+        }
+    };
+    let mut out = String::new();
+    for n in names {
+        let line = match project::add_settings_block(home, &n) {
+            Ok(true) => format!("{n}: added the settings block"),
+            Ok(false) => format!("{n}: already lists every setting"),
+            Err(e) if all => format!("{n}: skipped, {e}"),
+            Err(e) => return Err(e.into()),
+        };
+        out.push_str(&line);
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// The central base branch of a project. A missing or invalid value gives the default, like `resolve` does.
@@ -268,6 +294,16 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     }
     if resolved.config.degraded {
         out.push("status: degraded (the settings failed closed)".to_string());
+    } else {
+        // A failed-closed config would show safe values that no layer set, so only a good one is listed.
+        let preset = project::preset_config(home, &file)?;
+        out.push("settings:".to_string());
+        let lines = factory_core::settings_block::effective_lines(
+            &resolved.config,
+            &file.settings,
+            &preset,
+        )?;
+        out.extend(lines.into_iter().map(|l| format!("  {l}")));
     }
     for n in &resolved.notes {
         out.push(format!("note: {n}"));

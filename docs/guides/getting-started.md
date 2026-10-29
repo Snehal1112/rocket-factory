@@ -170,7 +170,7 @@ Now check the registration. This is the most useful command when something looks
 factory project show myrepo
 ```
 
-The output must end with `problems: none`, and must not say `status: degraded`. A degraded project fails closed: every change counts as risky and nothing merges on its own.
+The output lists every setting under `settings:` with its value and source, and must end with `problems: none`. It must not say `status: degraded`. A degraded project fails closed: every change counts as risky and nothing merges on its own.
 
 Other project commands:
 
@@ -178,6 +178,7 @@ Other project commands:
 |---|---|
 | `factory project list` | All projects, and any that are disabled and why. |
 | `factory project which` | The project that owns the current folder. |
+| `factory project defaults <name>` | Add every setting the file does not list yet, as a commented line with its default. `--all` does every project. |
 | `factory project remove <name>` | Unregister a project. It never deletes your repo or your `factory/*` branches. |
 
 There is no command to edit a project. To change a setting, edit `~/.factory/projects/<name>/project.toml` by hand (section 12).

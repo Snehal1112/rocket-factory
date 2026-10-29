@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{preset, Config, CoreError, Home, Layout, Scope};
+use crate::{preset, settings_block, Config, CoreError, Home, Layout, Scope};
 
 const MAX_NAME: usize = 40;
 const PROJECT_FILE: &str = "project.toml";
@@ -200,6 +200,9 @@ pub fn add(
         settings,
     };
     let text = toml::to_string(&file).map_err(|e| CoreError::Config(e.to_string()))?;
+    // Every other setting follows as a comment, so the user sees what can be set.
+    let preset_config = preset::embedded(preset_name).map_or("", |p| p.config);
+    let text = settings_block::with_block(&text, preset_name, preset_config)?.unwrap_or(text);
     let dir = home.project_dir(name);
     let projects = home.projects_dir();
     std::fs::create_dir_all(&projects).map_err(|e| CoreError::io(&projects, e))?;
@@ -268,6 +271,35 @@ pub fn get(home: &Home, name: &str) -> Result<ProjectFile, CoreError> {
         return Err(CoreError::Config(format!("no project named {name}")));
     }
     read_file(&dir.join(PROJECT_FILE)).map_err(CoreError::Config)
+}
+
+/// The text of the project's preset `config.toml`. The installed file is what the driver reads, and
+/// the embedded one covers a missing file.
+pub fn preset_config(home: &Home, file: &ProjectFile) -> Result<String, CoreError> {
+    validate_name(&file.preset)?;
+    let path = home.presets_dir().join(&file.preset).join("config.toml");
+    match std::fs::read_to_string(&path) {
+        Ok(t) => Ok(t),
+        Err(_) => preset::embedded(&file.preset)
+            .map(|p| p.config.to_string())
+            .ok_or_else(|| CoreError::Config(format!("unknown preset {:?}", file.preset))),
+    }
+}
+
+/// Adds the commented settings block to an existing `project.toml` and keeps the rest of its text.
+/// Returns false when the file already lists every setting.
+pub fn add_settings_block(home: &Home, name: &str) -> Result<bool, CoreError> {
+    let file = get(home, name)?;
+    let path = home.project_dir(name).join(PROJECT_FILE);
+    let text = std::fs::read_to_string(&path).map_err(|e| CoreError::io(&path, e))?;
+    let preset_config = preset_config(home, &file)?;
+    match settings_block::with_block(&text, &file.preset, &preset_config)? {
+        Some(new) => {
+            crate::fsutil::write_atomic(&path, new.as_bytes())?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 /// The top of the git checkout that holds `path`: the nearest ancestor with a `.git` folder or file.
@@ -486,6 +518,35 @@ mod tests {
             f.settings.get("cache_ttl").and_then(|v| v.as_str()),
             Some("5m")
         );
+    }
+
+    #[test]
+    fn add_writes_every_setting_as_a_comment() {
+        let e = env();
+        add(&e.home, "rocket", &e.repo, "go", None, &ok).expect("add");
+        let text =
+            std::fs::read_to_string(e.home.project_dir("rocket").join(PROJECT_FILE)).expect("read");
+        assert!(text.contains(crate::settings_block::BLOCK_HEADER), "{text}");
+        assert!(text.contains("# builder_carry_session = true"), "{text}");
+        assert!(text.contains("the go preset"), "{text}");
+        assert!(!text.contains("# cache_ttl"), "{text}");
+    }
+
+    #[test]
+    fn the_settings_block_fills_an_existing_file_once() {
+        let e = env();
+        add(&e.home, "rocket", &e.repo, "go", None, &ok).expect("add");
+        let path = e.home.project_dir("rocket").join(PROJECT_FILE);
+        let bare = "repo = \"/r\"\npreset = \"go\"\n\n[settings]\nfix_rounds = 3\n";
+        let bare = bare.replace("/r", &e.repo.to_string_lossy());
+        std::fs::write(&path, &bare).expect("write");
+        assert!(add_settings_block(&e.home, "rocket").expect("first"));
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.starts_with(&bare), "{text}");
+        assert!(text.contains("# budget_weighted = 1000000"), "{text}");
+        assert!(!text.contains("# fix_rounds"), "{text}");
+        assert!(!add_settings_block(&e.home, "rocket").expect("second"));
+        assert_eq!(get(&e.home, "rocket").expect("get").settings.len(), 1);
     }
 
     #[test]
