@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use factory_core::{classify_paths, open_blockers, DiffClass, ParkKind, ParkPart, ParkRecord};
+use factory_core::{
+    classify_paths, open_blockers, park_summary, DiffClass, ParkKind, ParkPart, ParkRecord,
+};
 
 use crate::decide::risk_summary;
 use crate::ports::now;
@@ -94,10 +96,12 @@ impl Engine<'_> {
         if self.is_risky() {
             record.risky = Some(true);
         }
+        let summary = park_summary(&reason, &record.parts);
         write_record(&self.job_dir, &record);
         self.update(|j| {
             j.park_kind = Some(kind.as_str().to_string());
             j.park_at = Some(at);
+            j.park_summary = Some(summary);
             Ok(())
         })?;
         self.park(reason)

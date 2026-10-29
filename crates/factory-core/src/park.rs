@@ -189,9 +189,69 @@ impl ParkRecord {
     }
 }
 
+/// Longest board summary, in characters.
+const SUMMARY_CAP: usize = 160;
+
+/// The one line the board and the card show for a park: the first two non-empty lines of the
+/// first part, or the reason when there is none. Whitespace is folded and the line is capped.
+pub fn park_summary(reason: &str, parts: &[ParkPart]) -> String {
+    let lines: Vec<&str> = parts
+        .first()
+        .map(|p| {
+            p.text
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .take(2)
+                .collect()
+        })
+        .unwrap_or_default();
+    let joined = if lines.is_empty() {
+        reason.to_string()
+    } else {
+        lines.join(" · ")
+    };
+    let folded = joined.split_whitespace().collect::<Vec<_>>().join(" ");
+    if folded.chars().count() <= SUMMARY_CAP {
+        return folded;
+    }
+    let mut cut: String = folded.chars().take(SUMMARY_CAP - 1).collect();
+    cut.push('…');
+    cut
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summary_joins_the_first_two_lines() {
+        let part = ParkPart::new(
+            "Review",
+            "review.md",
+            "verdict changes, round 2\n\n- [blocker] no test\n- [blocker] two",
+        );
+        assert_eq!(
+            park_summary("why", &[part]),
+            "verdict changes, round 2 · - [blocker] no test"
+        );
+    }
+
+    #[test]
+    fn summary_falls_back_to_the_reason() {
+        assert_eq!(park_summary("the  reason", &[]), "the reason");
+        let blank = ParkPart::new("Why", "driver", " \n\n");
+        assert_eq!(park_summary("the reason", &[blank]), "the reason");
+    }
+
+    #[test]
+    fn summary_is_one_capped_line() {
+        let text = format!("{}\t\n{}", "é".repeat(500), "tail");
+        let part = ParkPart::new("Why", "driver", &text);
+        let got = park_summary("why", &[part]);
+        assert!(got.chars().count() <= 160, "{}", got.chars().count());
+        assert!(!got.contains('\n') && !got.contains('\t'));
+        assert!(got.ends_with('…'));
+    }
 
     #[test]
     fn kind_names_are_stable_kebab_case() {

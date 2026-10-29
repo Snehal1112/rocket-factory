@@ -1,4 +1,4 @@
-use factory_core::{ParkKind, ParkPart, ParkRecord, Stage};
+use factory_core::{park_summary, ParkKind, ParkPart, ParkRecord, Stage};
 use factory_git::{BaseState, MergeOutcome, Preflight};
 
 use crate::park::write_record;
@@ -41,12 +41,20 @@ pub fn park_with_parts(
 ) -> Result<(), EngineError> {
     let now = now_secs();
     let at = now.max(0.0) as u64;
+    // No park keeps an empty evidence list.
+    let parts = if parts.is_empty() {
+        vec![ParkPart::new("Why it stopped", "driver", reason)]
+    } else {
+        parts
+    };
+    let summary = park_summary(reason, &parts);
     let job = driver.store().update_job(id, |job| {
         // A park written earlier, such as a failed check in the sync, keeps its kind and evidence.
         let already = job.stage == Stage::NeedsHuman && job.park_kind.is_some();
         if !already {
             job.park_kind = Some(kind.as_str().to_string());
             job.park_at = Some(at);
+            job.park_summary = Some(summary.clone());
         }
         crate::ports::set_stage_logged(job, Stage::NeedsHuman, Some(reason), false, now)?;
         Ok((job.clone(), already))
@@ -55,12 +63,6 @@ pub fn park_with_parts(
     let (job, already) = job;
     if !already {
         // Writing the record is best effort, the park already happened.
-        // No park keeps an empty evidence list.
-        let parts = if parts.is_empty() {
-            vec![ParkPart::new("Why it stopped", "driver", reason)]
-        } else {
-            parts
-        };
         let mut record = ParkRecord::new(kind, reason, id, job.round, at, parts);
         record.next = kind.next_for(
             id,

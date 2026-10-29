@@ -113,6 +113,9 @@ pub struct Job {
     /// Unix seconds the job parked. New in the failure details series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub park_at: Option<u64>,
+    /// One line that says why the job parked, at most 160 characters. New in the park reasons series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park_summary: Option<String>,
     /// The tip of the snapshot commits while the batch commit of the job is pending. New in the cost reduction series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_snapshot: Option<String>,
@@ -257,6 +260,7 @@ impl Job {
             task_index: 0,
             park_kind: None,
             park_at: None,
+            park_summary: None,
             batch_snapshot: None,
             estimate: None,
             fix_source: None,
@@ -371,6 +375,7 @@ impl Job {
         if to != Stage::NeedsHuman {
             self.park_kind = None;
             self.park_at = None;
+            self.park_summary = None;
         }
         Ok(())
     }
@@ -569,6 +574,34 @@ mod tests {
         assert!(text.contains(r#""issues":[20,21]"#), "{text}");
         let back: Job = serde_json::from_str(&text).expect("round trip");
         assert_eq!(back.issues, vec![20, 21]);
+    }
+
+    #[test]
+    fn park_summary_is_optional_and_round_trips() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        let json = serde_json::to_string(&job).expect("json");
+        assert!(!json.contains("park_summary"), "{json}");
+        job.park_summary = Some("verdict changes, round 2".to_string());
+        let back: Job =
+            serde_json::from_str(&serde_json::to_string(&job).expect("json")).expect("parse");
+        assert_eq!(
+            back.park_summary.as_deref(),
+            Some("verdict changes, round 2")
+        );
+    }
+
+    #[test]
+    fn leaving_needs_human_clears_the_summary() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        job.set_stage(Stage::Build, None, false, 2.0)
+            .expect("build");
+        job.park_summary = Some("why".to_string());
+        job.set_stage(Stage::NeedsHuman, Some("why"), false, 3.0)
+            .expect("park");
+        assert_eq!(job.park_summary.as_deref(), Some("why"));
+        job.set_stage(Stage::Build, None, true, 4.0).expect("back");
+        assert_eq!(job.reason, None);
+        assert_eq!(job.park_summary, None);
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub use layout::{
     AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE,
 };
 pub use ledger::{Ledger, TaskState};
-pub use park::{ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
+pub use park::{park_summary, ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
 pub use risk::{classify_paths, glob_match, DiffClass};
 pub use stage::Stage;

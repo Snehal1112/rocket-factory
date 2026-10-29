@@ -137,3 +137,22 @@ fn an_earlier_park_keeps_its_evidence() {
     assert_eq!(rec.kind, ParkKind::ChecksFailed);
     assert_eq!(only_part(&rec).title, "Checks");
 }
+
+#[test]
+fn a_park_writes_the_summary_on_the_board() {
+    // No fix rounds, so the first changes verdict parks the job.
+    let fx = common::SeriesFixture::with_config(
+        "[blocker] src/a.rs wrong\nVERDICT: CHANGES",
+        factory_core::Config {
+            fix_rounds: 0,
+            ..Default::default()
+        },
+    );
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = factory_engine::create_job(&fx.driver, "stuck", "x", Some(&a), None).expect("create");
+    factory_engine::run_job(&fx.driver, &job.id).expect("run");
+    let parked = fx.driver.job(&job.id).expect("job");
+    let summary = parked.park_summary.as_deref().expect("summary");
+    assert!(summary.starts_with("verdict changes"), "{summary}");
+    assert!(!summary.contains('\n') && summary.chars().count() <= 160);
+}
