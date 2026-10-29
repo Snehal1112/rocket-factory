@@ -79,6 +79,8 @@ pub struct Config {
     pub tickets_on_merge: bool,
     /// After a merge, file one ticket for the open `[minor]` review findings. On by default.
     pub minor_tickets: bool,
+    /// Run the spec reviewer agent in `factory new`. The risky-decision check runs whatever this is.
+    pub spec_review: bool,
     /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
     pub kb_path: Option<String>,
     pub kb_model: String,
@@ -171,6 +173,7 @@ impl Default for Config {
             builder_simplify: true,
             tickets_on_merge: false,
             minor_tickets: true,
+            spec_review: true,
             kb_path: None,
             kb_model: "claude-sonnet-5-5".to_string(),
             kb_budget_weighted: 150_000,
@@ -968,6 +971,17 @@ mod tests {
                 .minor_tickets
         );
         assert!(Config::parse("minor_tickets = \"no\"").is_err());
+    }
+
+    #[test]
+    fn spec_review_is_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().spec_review);
+        assert!(
+            !Config::parse("spec_review = false")
+                .expect("parse")
+                .spec_review
+        );
+        assert!(Config::parse("spec_review = \"no\"").is_err());
     }
 
     #[test]

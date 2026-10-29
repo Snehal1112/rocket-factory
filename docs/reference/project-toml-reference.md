@@ -135,6 +135,7 @@ The builder also gets deny rules for `Edit` and `Write` on the job folder, so it
 | `base_branch` | string | `"main"` | Jobs branch from it and merge into it. Must be a valid git branch name and must not start with `factory/`. |
 | `tickets_on_merge` | bool | false | After a merge, file follow-up tickets and close the parent tickets with `gh`. A failure never changes the merge. |
 | `minor_tickets` | bool | true | After a merge, file one ticket with a checklist of the open `[minor]` findings of the last review. It needs no `tickets_on_merge`, applies to every plan of a series and never changes the merge. |
+| `spec_review` | bool | true | `factory new` runs the read-only spec reviewer on the spec and its plans before any job exists. A `CHANGES` or missing verdict refuses the call, and `--accept-spec "<reason>"` overrides it. The reviews are saved under `<state>/spec-reviews/`. The check for risky paths without a user decision runs whatever this is. |
 | `log_level` | string | `"info"` | Level of the JSON log file `log.jsonl`: `error`, `warn`, `info`, `debug` or `trace`. Any other value is a config error. The environment variable `FACTORY_LOG` (for example `debug` or `factory_engine=debug,info`) overrides it; an invalid value is ignored with a note. |
 | `risk_paths` | string list | 17 built-in globs | Diffs touching these paths stop for a human after review. Replaces the preset list. See "Globs". |
 

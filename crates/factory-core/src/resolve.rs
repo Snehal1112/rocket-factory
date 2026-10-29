@@ -401,7 +401,8 @@ mod tests {
                 "factory-builder.md",
                 "factory-code-reviewer.md",
                 "factory-committer.md",
-                "factory-kb-refresher.md"
+                "factory-kb-refresher.md",
+                "factory-spec-reviewer.md"
             ]
         );
     }
@@ -695,6 +696,7 @@ mod tests {
                 "factory-code-reviewer.md",
                 "factory-committer.md",
                 "factory-kb-refresher.md",
+                "factory-spec-reviewer.md",
                 "factory-zzz-new.md"
             ]
         );
@@ -702,7 +704,7 @@ mod tests {
         assert_eq!(got[1].1, "project builder");
         assert_eq!(got[2].1, preset_reviewer);
         assert_eq!(got[3].1, "repo committer");
-        assert_eq!(got[5].1, "project new");
+        assert_eq!(got[6].1, "project new");
     }
 
     #[test]

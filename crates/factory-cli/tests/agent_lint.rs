@@ -111,6 +111,7 @@ fn only_the_known_factory_agents_remain() -> TestResult {
         "factory-code-reviewer.md".to_string(),
         "factory-committer.md".to_string(),
         "factory-kb-refresher.md".to_string(),
+        "factory-spec-reviewer.md".to_string(),
     ];
     if names == want {
         Ok(())
@@ -216,6 +217,44 @@ fn reviewer_frontmatter_is_read_only() -> TestResult {
     }
     check_description(&fm, "reviewer")?;
     check_max_turns(&fm, "reviewer")
+}
+
+#[test]
+fn spec_reviewer_is_read_only_and_pins_its_rules() -> TestResult {
+    let mut paths = vec![".claude/agents/factory-spec-reviewer.md".to_string()];
+    for preset in ["rust", "ruby", "node", "csharp", "go"] {
+        paths.push(format!(
+            "crates/factory-core/presets/{preset}/agents/factory-spec-reviewer.md"
+        ));
+    }
+    for path in &paths {
+        let text = read(path)?;
+        let fm = frontmatter(&text)?;
+        if fm_get(&fm, "name") != Some("factory-spec-reviewer") {
+            return Err(format!("{path}: name is wrong"));
+        }
+        if fm_get(&fm, "tools") != Some("Read, Grep, Glob") {
+            return Err(format!("{path}: tools must be exactly Read, Grep, Glob"));
+        }
+        check_description(&fm, path)?;
+        check_max_turns(&fm, path)?;
+        require_all(
+            &text,
+            path,
+            &[
+                "<!-- factory-rules: 1 -->",
+                "path:line",
+                "default-deny",
+                "Decided by: call",
+            ],
+        )?;
+        if !has_line(&text, "VERDICT: APPROVE") || !has_line(&text, "VERDICT: CHANGES") {
+            return Err(format!(
+                "{path}: both VERDICT lines must be on their own line"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[test]
