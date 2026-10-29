@@ -119,6 +119,26 @@ test("renderCard for needs-human shows the reason and the commands for that job"
   assert.match(html, /factory rework 003 &lt;note&gt;/);
 });
 
+test("a parked card shows the kind chip and the summary", () => {
+  const html = board.renderCard(
+    makeJob({
+      stage: "needs-human",
+      park_kind: "changes-remain",
+      park_summary: "verdict changes, round 2 · [blocker] no <test>",
+      reason: "changes remain after 2 fix rounds",
+    }),
+  );
+  assert.match(html, new RegExp(board.parkKindLabel("changes-remain")));
+  assert.match(html, /<p class="reason park-summary">verdict changes, round 2 · \[blocker\] no &lt;test&gt;<\/p>/);
+  assert.match(html, /<p class="reason-detail">changes remain after 2 fix rounds<\/p>/);
+});
+
+test("card_without_a_summary_shows_the_reason", () => {
+  const html = board.renderCard(makeJob({ stage: "needs-human", reason: "checks failed" }));
+  assert.match(html, /<p class="reason">checks failed<\/p>/);
+  assert.doesNotMatch(html, /park-summary|reason-detail/);
+});
+
 test("renderCard copes with missing optional fields", () => {
   const html = board.renderCard({ id: "009", stage: "spec" });
   assert.match(html, /009/);

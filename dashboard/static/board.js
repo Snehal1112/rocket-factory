@@ -582,6 +582,17 @@
     return `<div class="job-actions">${buttons}</div>`;
   }
 
+  // The summary leads when the driver wrote one, the reason follows as detail when it differs.
+  function parkLines(job) {
+    const reason = job.reason || "needs a human";
+    const summary = typeof job.park_summary === "string" ? job.park_summary.trim() : "";
+    if (summary === "") return `<p class="reason">${escapeHtml(reason)}</p>`;
+    return (
+      `<p class="reason park-summary">${escapeHtml(summary)}</p>` +
+      (summary !== reason ? `<p class="reason-detail">${escapeHtml(reason)}</p>` : "")
+    );
+  }
+
   function renderCard(job, now, specs) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
@@ -591,7 +602,8 @@
       : "";
     const reason =
       job.stage === "needs-human"
-        ? `<p class="reason">${escapeHtml(job.reason || "needs a human")}</p>` +
+        ? (job.park_kind ? `<span class="chip ${parkKindClass(job.park_kind)}">${escapeHtml(parkKindLabel(job.park_kind))}</span>` : "") +
+          parkLines(job) +
           parkButton(job) +
           (openChanges(job)
             ? `<p class="review-missing">${escapeHtml(changesNotice(job))}</p>`

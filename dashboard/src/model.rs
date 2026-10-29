@@ -176,6 +176,13 @@ pub struct Job {
         skip_serializing_if = "Option::is_none"
     )]
     pub park_at: Option<u64>,
+    /// One line that says why the job parked. A bad value is dropped.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub park_summary: Option<String>,
     /// The cost estimate made when the job was created. A bad value is dropped.
     #[serde(
         default,
@@ -300,6 +307,20 @@ mod tests {
         assert_eq!(with.provider.as_deref(), Some("codex"));
         let without = job_with(serde_json::json!({}));
         assert_eq!(without.provider, None);
+    }
+
+    #[test]
+    fn park_summary_is_read_lenient_and_optional() {
+        let with = job_with(serde_json::json!({ "park_summary": "verdict changes, round 2" }));
+        assert_eq!(
+            with.park_summary.as_deref(),
+            Some("verdict changes, round 2")
+        );
+        assert_eq!(job_with(serde_json::json!({})).park_summary, None);
+        assert_eq!(
+            job_with(serde_json::json!({ "park_summary": 5 })).park_summary,
+            None
+        );
     }
 
     #[test]
