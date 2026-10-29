@@ -179,6 +179,23 @@ fn take_merge_lock(driver: &Driver) -> Result<crate::BoardLock, String> {
     }
 }
 
+/// The approve command the park's `next` hint offers, without its note in brackets.
+fn approve_form(job: &factory_core::Job, id: &str) -> String {
+    ParkKind::Other
+        .next_for(
+            id,
+            job.review_missing(),
+            job.last_review.as_ref().map(|r| r.verdict.as_str()),
+        )
+        .into_iter()
+        .find(|n| n.starts_with("factory approve "))
+        .map(|n| match n.split_once(" (") {
+            Some((cmd, _)) => cmd.to_string(),
+            None => n,
+        })
+        .unwrap_or_else(|| format!("factory approve {id}"))
+}
+
 fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
     let repo = driver.repo();
     let main = repo.base_branch().to_string();
@@ -233,8 +250,9 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
                 if !text.is_empty() {
                     text.push_str("\n\n");
                 }
+                let approve = approve_form(&job, id);
                 text.push_str(&format!(
-                    "Commit or stash these in the main checkout, then run factory approve {id} again."
+                    "Commit or stash these in the main checkout, then run {approve} again."
                 ));
                 return Ok(Step::Park(
                     format!("{main} busy: {reason}"),

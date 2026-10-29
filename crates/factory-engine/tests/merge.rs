@@ -525,3 +525,76 @@ fn two_projects_merge_into_one_repo() {
         );
     }
 }
+
+/// Records a last review with the given verdict, before the merge.
+fn set_verdict(fx: &common::MergeFixture, verdict: &str, blockers: u32) {
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.last_review = Some(factory_core::LastReview {
+                round: 1,
+                verdict: verdict.into(),
+                blockers,
+                file: "review-code-r1.md".into(),
+                source: "build".into(),
+            });
+            let state = if verdict == "approve" {
+                factory_core::ReviewState::Pass
+            } else {
+                factory_core::ReviewState::Changes
+            };
+            j.set_review("code", state);
+            Ok(())
+        })
+        .expect("last review");
+}
+
+#[test]
+fn a_main_busy_hint_names_waive_while_changes_are_open() {
+    let fx = common::approved_job();
+    set_verdict(&fx, "changes", 1);
+    std::fs::write(fx.main.join("README.md"), "dirty").expect("write");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.starts_with("main busy")),
+        "{r:?}"
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    let part = rec
+        .parts
+        .iter()
+        .find(|p| p.title == "Main checkout")
+        .expect("main checkout part");
+    assert!(
+        part.text
+            .contains("then run factory approve 001 --waive \"<reason>\" again."),
+        "{}",
+        part.text
+    );
+}
+
+#[test]
+fn a_main_busy_hint_is_plain_approve_after_an_approving_review() {
+    let fx = common::approved_job();
+    set_verdict(&fx, "approve", 0);
+    std::fs::write(fx.main.join("README.md"), "dirty").expect("write");
+    merge_stage(&fx.driver, &fx.id).expect("stage");
+    let job = fx.driver.job(&fx.id).expect("job");
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    let text = &rec.parts.last().expect("part").text;
+    assert!(
+        text.contains("then run factory approve 001 again."),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_root_job_does_not_park_no_checks_for_files_main_changed_after_a_sync() {
+    let fx = common::approved_job();
+    // Main gains a code file that no check covers after the job forked.
+    common::commit_file(&fx.main, "scripts/x.sh", "echo x\n");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
+    assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
+}

@@ -87,9 +87,9 @@ impl Engine<'_> {
         self.repo.changed_paths(&base, &head).map_err(git_err)
     }
 
-    /// The commits that hold the whole job diff. A subfolder project starts at the merge base with
-    /// the base branch, because a sync moves the head onto main and leaves the recorded base behind.
-    /// Other projects keep the recorded base.
+    /// The commits that hold the whole job diff. It starts at the merge base with the base branch,
+    /// because a sync moves the head onto main and leaves the recorded base behind. This holds for
+    /// root and subfolder projects alike.
     pub(crate) fn job_range(&self) -> Result<(String, String), EngineError> {
         let job = self.job()?;
         let base = job
@@ -104,11 +104,9 @@ impl Engine<'_> {
         Ok((from, head))
     }
 
-    /// The start of the whole job diff for the given base and head, see `job_range`.
-    pub(crate) fn range_start(&self, base: &str, head: &str) -> Result<String, EngineError> {
-        if self.repo.subpath().is_none() {
-            return Ok(base.to_string());
-        }
+    /// The start of the whole job diff for the given head, see `job_range`. The recorded base is
+    /// not used, because after a sync it would pull in every path main changed since the fork.
+    pub(crate) fn range_start(&self, _base: &str, head: &str) -> Result<String, EngineError> {
         self.repo
             .merge_base(self.repo.base_branch(), head)
             .map_err(git_err)
