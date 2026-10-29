@@ -53,6 +53,9 @@ pub enum Command {
         /// Merge a needs-human job even though its code review has not run.
         #[arg(long)]
         without_review: bool,
+        /// Merge a job whose review left open blockers, with a one-line reason.
+        #[arg(long, conflicts_with = "without_review")]
+        waive: Option<String>,
     },
     /// Send a one-line note to the builder and reset the round counter.
     Rework {

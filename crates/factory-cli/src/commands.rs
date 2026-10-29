@@ -313,16 +313,21 @@ pub fn env_lock_wait() -> Duration {
 }
 
 pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
-    if note.trim().is_empty() {
-        return Err(CliError::Refused("the rework note is empty".into()));
+    validate_one_line(note, "rework note")
+}
+
+/// Checks a free-text reason: not empty, one line, at most 200 characters.
+pub fn validate_one_line(text: &str, what: &str) -> Result<(), CliError> {
+    if text.trim().is_empty() {
+        return Err(CliError::Refused(format!("the {what} is empty")));
     }
-    if note.contains('\n') || note.contains('\r') {
-        return Err(CliError::Refused("the rework note must be one line".into()));
+    if text.contains('\n') || text.contains('\r') {
+        return Err(CliError::Refused(format!("the {what} must be one line")));
     }
-    if note.chars().count() > 200 {
-        return Err(CliError::Refused(
-            "the rework note is longer than 200 characters".into(),
-        ));
+    if text.chars().count() > 200 {
+        return Err(CliError::Refused(format!(
+            "the {what} is longer than 200 characters"
+        )));
     }
     Ok(())
 }
@@ -377,7 +382,11 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             let d = ctx.driver()?;
             Ok(serde_json::to_string_pretty(&d.job(&norm(&id)?)?)?)
         }
-        Command::Approve { id, without_review } => approve(ctx, &norm(&id)?, without_review),
+        Command::Approve {
+            id,
+            without_review,
+            waive,
+        } => approve(ctx, &norm(&id)?, without_review, waive.as_deref()),
         Command::Rework { id, note } => rework(ctx, &norm(&id)?, &note),
         Command::Cancel { id, reason, force } => match factory_core::normalize_id(&id) {
             Ok(id) => cancel(ctx, &id, &reason, force),
@@ -596,7 +605,15 @@ impl Drop for LeaseGuard<'_> {
     }
 }
 
-fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliError> {
+fn approve(
+    ctx: &CliCtx,
+    id: &str,
+    without_review: bool,
+    waive: Option<&str>,
+) -> Result<String, CliError> {
+    if let Some(reason) = waive {
+        validate_one_line(reason, "waive reason")?;
+    }
     ctx.runnable()?;
     let _span = factory_engine::job_span(id).entered();
     let d = ctx.driver()?;
@@ -625,8 +642,8 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
         }
     }
     // A parked job whose review never ran must not merge unseen, unless the user says so.
-    if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
-        return Err(CliError::Refused(job.review_missing_message()));
+    if let Some(refusal) = job.approve_refusal(without_review, waive.is_some()) {
+        return Err(CliError::Refused(refusal));
     }
     // The project lease is held through the merge and released on every exit path.
     let _project = d.hold_project(id)?;

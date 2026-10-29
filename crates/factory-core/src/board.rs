@@ -278,6 +278,51 @@ impl Job {
             .is_some_and(|r| r.verdict == "changes")
     }
 
+    /// The refusal that approve gives while the latest code review has open blockers.
+    pub fn changes_open_message(&self) -> String {
+        let (blockers, round, file) = self
+            .last_review
+            .as_ref()
+            .map_or((0, 0, ""), |r| (r.blockers, r.round, r.file.as_str()));
+        format!(
+            "job {} has {blockers} open review blockers from round {round} ({file}): use rework, cancel, or approve --waive \"<reason>\" to merge anyway",
+            self.id
+        )
+    }
+
+    /// True when the latest review ended without a usable verdict.
+    fn last_review_missing(&self) -> bool {
+        self.last_review
+            .as_ref()
+            .is_some_and(|r| r.verdict == "missing")
+    }
+
+    /// The reason approve is refused for this job, or `None` when it is allowed. CLI and API share it.
+    pub fn approve_refusal(&self, without_review: bool, waive: bool) -> Option<String> {
+        if waive && !self.changes_open() {
+            return Some(format!(
+                "job {} has no open review findings to waive",
+                self.id
+            ));
+        }
+        if self.changes_open() && !waive {
+            return Some(self.changes_open_message());
+        }
+        if self.stage == Stage::NeedsHuman && !without_review {
+            if self.last_review_missing() {
+                let round = self.last_review.as_ref().map_or(0, |r| r.round);
+                return Some(format!(
+                    "job {} review did not finish in round {round}: use rework, cancel, or approve --without-review to merge anyway",
+                    self.id
+                ));
+            }
+            if self.review_missing() && !self.changes_open() {
+                return Some(self.review_missing_message());
+            }
+        }
+        None
+    }
+
     /// The refusal that approve gives for a needs-human job without a code review. CLI and API share it.
     pub fn review_missing_message(&self) -> String {
         format!(
@@ -709,6 +754,76 @@ mod tests {
         assert!(back.changes_open());
         j.last_review.as_mut().expect("set").verdict = "approve".into();
         assert!(!j.changes_open());
+    }
+
+    fn with_last_review(verdict: &str) -> Job {
+        let mut j = job();
+        j.stage = Stage::NeedsHuman;
+        j.last_review = Some(LastReview {
+            round: 2,
+            verdict: verdict.into(),
+            blockers: 3,
+            file: "review-code-r2.md".into(),
+            source: "review".into(),
+        });
+        j
+    }
+
+    #[test]
+    fn approve_refusal_follows_the_last_review() {
+        // No last review: as today, the review-missing rule decides.
+        let mut j = job();
+        j.stage = Stage::NeedsHuman;
+        j.set_review("code", ReviewState::Pending);
+        assert!(j.approve_refusal(false, false).is_some());
+        assert!(j.approve_refusal(true, false).is_none());
+        assert!(j
+            .approve_refusal(false, true)
+            .expect("refused")
+            .contains("no open review findings to waive"));
+        j.set_review("code", ReviewState::Pass);
+        assert!(j.approve_refusal(false, false).is_none());
+
+        // Approve verdict: plain is allowed, waive is refused.
+        let mut j = with_last_review("approve");
+        j.set_review("code", ReviewState::Pass);
+        assert!(j.approve_refusal(false, false).is_none());
+        assert!(j.approve_refusal(true, false).is_none());
+        assert!(j.approve_refusal(false, true).is_some());
+
+        // Changes verdict: only waive is allowed.
+        let mut j = with_last_review("changes");
+        j.set_review("code", ReviewState::Changes);
+        let m = j.approve_refusal(false, false).expect("refused");
+        assert!(
+            m.contains("3 open review blockers from round 2 (review-code-r2.md)")
+                && m.contains("approve --waive"),
+            "{m}"
+        );
+        assert!(j.approve_refusal(true, false).is_some());
+        assert!(j.approve_refusal(false, true).is_none());
+
+        // Missing verdict: stored as changes on the board, so the review is not pending.
+        let mut j = with_last_review("missing");
+        j.set_review("code", ReviewState::Changes);
+        let m = j.approve_refusal(false, false).expect("refused");
+        assert!(
+            m.contains("did not finish")
+                && m.contains("rework")
+                && m.contains("cancel")
+                && m.contains("--without-review"),
+            "{m}"
+        );
+        assert!(j.approve_refusal(true, false).is_none());
+        assert!(j.approve_refusal(false, true).is_some());
+    }
+
+    #[test]
+    fn without_review_is_refused_while_changes_are_open() {
+        let mut j = with_last_review("changes");
+        j.set_review("code", ReviewState::Pending);
+        let m = j.approve_refusal(true, false).expect("refused");
+        assert!(m.contains("--waive"), "{m}");
     }
 
     #[test]

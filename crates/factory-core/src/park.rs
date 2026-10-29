@@ -53,12 +53,19 @@ impl ParkKind {
         }
     }
 
-    /// Like `next`, but a park that offers approve while the code review has not run offers
-    /// `approve --without-review` instead, since a plain approve would be refused.
-    pub fn next_for(self, id: &str, review_missing: bool) -> Vec<String> {
-        let next = self.next(id);
+    /// Like `next`, but a park that offers approve says what a plain approve would hit: while the
+    /// review has not run it offers `approve --without-review`, while changes are open `approve --waive`.
+    pub fn next_for(self, id: &str, review_missing: bool, changes_open: bool) -> Vec<String> {
+        let mut next = self.next(id);
         let approve = format!("factory approve {id}");
-        if !review_missing || !next.contains(&approve) {
+        let Some(at) = next.iter().position(|n| *n == approve) else {
+            return next;
+        };
+        if changes_open {
+            next[at] = format!("factory approve {id} --waive \"<reason>\"");
+            return next;
+        }
+        if !review_missing {
             return next;
         }
         vec![
@@ -240,7 +247,7 @@ mod tests {
             wr.to_string(),
         ];
         for kind in [ParkKind::Other, ParkKind::BudgetStopped] {
-            assert_eq!(kind.next_for("012", true), want, "{kind:?}");
+            assert_eq!(kind.next_for("012", true, false), want, "{kind:?}");
         }
         // Parks without an approve option, and parks with a review, stay as they were.
         for kind in [
@@ -249,15 +256,36 @@ mod tests {
             ParkKind::BuilderStopped,
             ParkKind::BuilderBlocked,
         ] {
-            assert_eq!(kind.next_for("012", true), kind.next("012"), "{kind:?}");
+            assert_eq!(
+                kind.next_for("012", true, false),
+                kind.next("012"),
+                "{kind:?}"
+            );
         }
         for kind in [
             ParkKind::Other,
             ParkKind::RiskyDiff,
             ParkKind::BudgetStopped,
         ] {
-            assert_eq!(kind.next_for("012", false), kind.next("012"), "{kind:?}");
+            assert_eq!(
+                kind.next_for("012", false, false),
+                kind.next("012"),
+                "{kind:?}"
+            );
         }
+    }
+
+    #[test]
+    fn next_offers_waive_while_changes_are_open() {
+        let next = ParkKind::ChangesRemain.next_for("012", false, true);
+        assert!(
+            next.contains(&"factory approve 012 --waive \"<reason>\"".to_string()),
+            "{next:?}"
+        );
+        assert!(
+            !next.contains(&"factory approve 012".to_string()),
+            "{next:?}"
+        );
     }
 
     #[test]
@@ -282,7 +310,7 @@ mod tests {
 
     #[test]
     fn a_park_before_the_review_offers_approve_without_review() {
-        let next = ParkKind::NoChecks.next_for("012", true);
+        let next = ParkKind::NoChecks.next_for("012", true, false);
         assert!(
             next.iter()
                 .any(|n| n.contains("factory approve 012 --without-review")),

@@ -1,5 +1,7 @@
 mod common;
+mod support;
 use common::Fixture;
+use support::{build, review, Scenario, TestResult, APPROVE, CHANGES};
 
 #[test]
 fn a_job_goes_from_new_to_merged_through_the_cli() {
@@ -813,4 +815,64 @@ fn new_without_plans_says_a_plan_is_needed_and_new_with_plans_does_not() {
         .run(&["new", "two", "x", "--plans", plans.to_str().expect("utf8")])
         .expect("new");
     assert!(!out.contains("no plan yet"), "{out}");
+}
+
+/// A risky job parked with open review blockers.
+fn parked_with_changes() -> Result<Scenario, Box<dyn std::error::Error>> {
+    let mut steps = vec![build(vec![("secrets/token.txt", "x\n")], 1_000)];
+    for _ in 0..6 {
+        steps.push(review(CHANGES));
+        steps.push(build(vec![("secrets/token.txt", "y\n")], 400));
+    }
+    let sc = Scenario::new("", steps)?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    Ok(sc)
+}
+
+#[test]
+fn approve_refuses_open_changes_and_names_waive() -> TestResult {
+    let sc = parked_with_changes()?;
+    let before = sc.main_tip()?;
+    let e = sc.run(&["approve", "1"]).expect_err("open changes");
+    let text = e.to_string();
+    assert!(text.contains("open review blockers"), "{text}");
+    assert!(text.contains("--waive"), "{text}");
+    assert_eq!(sc.stage("001")?, "needs-human");
+    assert_eq!(sc.main_tip()?, before);
+    Ok(())
+}
+
+#[test]
+fn approve_with_waive_on_a_clean_job_is_refused() -> TestResult {
+    let sc = Scenario::new(
+        "",
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(APPROVE),
+        ],
+    )?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    let e = sc
+        .run(&["approve", "1", "--waive", "x"])
+        .expect_err("nothing to waive");
+    let text = e.to_string();
+    assert!(text.contains("no open review findings to waive"), "{text}");
+    assert_eq!(sc.stage("001")?, "needs-human");
+    Ok(())
+}
+
+#[test]
+fn waive_reason_must_be_one_short_line() -> TestResult {
+    let sc = parked_with_changes()?;
+    for reason in ["".to_string(), "x".repeat(201)] {
+        let e = sc
+            .run(&["approve", "1", "--waive", &reason])
+            .expect_err("bad reason");
+        let text = e.to_string();
+        assert!(text.contains("waive reason"), "{text}");
+        assert_eq!(sc.stage("001")?, "needs-human");
+    }
+    Ok(())
 }
