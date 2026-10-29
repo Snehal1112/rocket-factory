@@ -327,3 +327,22 @@ fn the_slim_reviewer_prompt_is_shorter_than_the_full_one() {
     let (_b, full) = review_prompt(Vec::new());
     assert!(slim.len() < full.len(), "{} vs {}", slim.len(), full.len());
 }
+
+const GOLDEN_FIX_FRESH: &str = "You are the builder in a software factory, picking up a fix round in a fresh session. You are on branch `factory/001-demo`; the job's work so far is the diff from <SHA> to <SHA> (run `git diff <SHA>..<SHA>` to see it). The plan is at <TMP>/job/plan.md. Fix only the problems listed in <TMP>/job/changes-r3.md. Follow `superpowers:receiving-code-review` for the findings. Run the relevant checks. Do not run `git add` or `git commit`; the driver commits for you. Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line.";
+
+#[test]
+fn the_fresh_fix_prompt_matches_golden_text() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change("a.txt"), change("b.txt")]);
+    fx.engine(&runner).build_stage().expect("first");
+    std::fs::write(fx.job_dir.join("changes-r3.md"), "fix it").expect("findings");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 3;
+    job.escalated_model = Some("claude-opus-5-5".to_string());
+    job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
+    board.save(&fx.board_path).expect("save");
+    fx.engine(&runner).build_stage().expect("fresh fix");
+    let prompt = runner.last_spec_for("builder").expect("spec").prompt;
+    assert_eq!(norm(&fx, &prompt), GOLDEN_FIX_FRESH);
+}

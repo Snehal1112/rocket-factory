@@ -86,6 +86,8 @@ pub(crate) struct JobView {
     pub fix_source: Option<String>,
     /// The stronger builder model the job escalated to, if any.
     pub escalated_model: Option<String>,
+    /// The model the stored builder session ran on, if known.
+    pub builder_session_model: Option<String>,
     pub review_missing: bool,
     /// The saved builder session of the task that was running, if any.
     pub task_session: Option<factory_core::board::TaskSession>,
@@ -112,6 +114,7 @@ impl Engine<'_> {
             batch_snapshot: job.batch_snapshot.clone(),
             fix_source: job.fix_source.clone(),
             escalated_model: job.escalated_model.clone(),
+            builder_session_model: job.builder_session_model.clone(),
             review_missing: job.review_missing(),
             task_session: job.task_session.clone(),
             builder_last: job.builder_last.clone(),
@@ -176,10 +179,23 @@ impl Engine<'_> {
         (!model.is_empty()).then(|| model.to_string())
     }
 
-    /// The builder model this job runs on: the job's own model, else the configured one.
+    /// The builder model this job runs on: the job's own model, else the escalated one, else the configured one.
     pub(crate) fn builder_model(&self) -> String {
         self.job_model()
+            .or_else(|| self.escalated_model())
             .unwrap_or_else(|| self.config.builder_model.clone())
+    }
+
+    /// The stronger builder model the job escalated to, when set and not blank.
+    fn escalated_model(&self) -> Option<String> {
+        let board = Board::load(&self.board_path).ok()?;
+        let model = board
+            .find(&self.job_id)
+            .ok()?
+            .escalated_model
+            .as_deref()?
+            .trim();
+        (!model.is_empty()).then(|| model.to_string())
     }
 
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
@@ -187,6 +203,11 @@ impl Engine<'_> {
         self.sync_provider()?;
         if let Some(model) = self.job_model() {
             spec.model = Some(model);
+        } else if spec.role == "builder" {
+            // Only the builder escalates. The job's own model wins over it.
+            if let Some(model) = self.escalated_model() {
+                spec.model = Some(model);
+            }
         }
         if self.config.agent_cli() == "codex" {
             if let Err(e) = self.prepare_for_codex(&mut spec) {
@@ -265,6 +286,7 @@ impl Engine<'_> {
             if switched {
                 j.task_session = None;
                 j.builder_id = None;
+                j.builder_session_model = None;
                 j.builder_last = None;
             }
             j.provider = Some(want.clone());

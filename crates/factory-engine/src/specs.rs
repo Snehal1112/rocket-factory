@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use factory_agent::AgentSpec;
 
-use crate::ports::JobView;
+use crate::ports::{short_sha, JobView};
 use crate::tasks::{plan_header, spec_excerpt, task_section, PlanTask};
 use crate::Engine;
 
@@ -430,17 +430,7 @@ impl Engine<'_> {
         findings: &Path,
         session: &str,
     ) -> AgentSpec {
-        let hints = if self.config.check_hints.is_empty() {
-            String::new()
-        } else {
-            let list: Vec<String> = self
-                .config
-                .check_hints
-                .iter()
-                .map(|h| format!("`{h}`"))
-                .collect();
-            format!(" (for example {})", list.join(", "))
-        };
+        let hints = self.check_hints_text();
         let prompt = if self.slim_prompt(cwd, BUILDER_AGENT) {
             format!(
                 "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
@@ -471,8 +461,41 @@ impl Engine<'_> {
             kb = self.kb_line(),
             )
         };
-        let mut spec = AgentSpec::new(&self.job_id, "builder", self.repo.workdir_in(cwd), &prompt);
+        let mut spec = self.fix_builder_spec(cwd, &prompt);
         spec.resume = Some(session.to_string());
+        spec
+    }
+
+    /// The spec of a fix round builder in a fresh session, used when the round runs on a stronger model.
+    /// A resumed session could not reuse the cheaper model's prompt cache, so the builder starts anew.
+    pub(crate) fn builder_fix_fresh_spec(
+        &self,
+        job: &JobView,
+        cwd: &Path,
+        findings: &Path,
+    ) -> AgentSpec {
+        let base = short_sha(job.base.as_deref().unwrap_or_default());
+        let head = short_sha(job.head.as_deref().unwrap_or_default());
+        let prompt = format!(
+            "You are the builder in a software factory, picking up a fix round in a fresh session. \
+             You are on branch `{branch}`; the job's work so far is the diff from {base} to {head} \
+             (run `git diff {base}..{head}` to see it). The plan is at {plan}. \
+             Fix only the problems listed in {findings}. \
+             Follow `superpowers:receiving-code-review` for the findings. \
+             Run the relevant checks{hints}. \
+             Do not run `git add` or `git commit`; the driver commits for you. \
+             Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line.",
+            branch = job.branch,
+            plan = self.plan_file.display(),
+            findings = findings.display(),
+            hints = self.check_hints_text(),
+        );
+        self.fix_builder_spec(cwd, &prompt)
+    }
+
+    /// The fix round builder spec shared by the resumed and the fresh round, without a session.
+    fn fix_builder_spec(&self, cwd: &Path, prompt: &str) -> AgentSpec {
+        let mut spec = AgentSpec::new(&self.job_id, "builder", self.repo.workdir_in(cwd), prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
         spec.strict_mcp = true;
@@ -480,6 +503,20 @@ impl Engine<'_> {
         spec.add_dirs = self.kb_dirs();
         let spec = self.with_builder_permissions(spec);
         self.with_limits(spec, &self.config.builder_model)
+    }
+
+    /// The check hints for a fix round prompt, such as ` (for example `cargo test`)`, or an empty string.
+    fn check_hints_text(&self) -> String {
+        if self.config.check_hints.is_empty() {
+            return String::new();
+        }
+        let list: Vec<String> = self
+            .config
+            .check_hints
+            .iter()
+            .map(|h| format!("`{h}`"))
+            .collect();
+        format!(" (for example {})", list.join(", "))
     }
 }
 

@@ -44,7 +44,9 @@ impl Engine<'_> {
             .iter()
             .map(|name| std::fs::read(self.job_dir.join(name)).ok())
             .collect();
-        let earlier_session = self.job().ok().and_then(|j| j.session_id.clone());
+        let earlier = self.job().ok();
+        let earlier_session = earlier.as_ref().and_then(|j| j.session_id.clone());
+        let earlier_model = earlier.and_then(|j| j.builder_session_model);
         let run = self.run_agent(spec);
         let mut first_changed: Option<&str> = None;
         let mut failed: Vec<String> = Vec::new();
@@ -65,8 +67,10 @@ impl Engine<'_> {
             None => Ok(Ok(run)),
             Some(name) => {
                 let session = run.session_id.clone().or(earlier_session);
+                let session_model = self.session_model(&run, earlier_model);
                 self.update(|j| {
                     j.builder_id = session;
+                    j.builder_session_model = session_model;
                     Ok(())
                 })?;
                 let reason = match failed.first() {

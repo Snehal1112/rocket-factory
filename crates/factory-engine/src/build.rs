@@ -30,6 +30,14 @@ fn saved_session(job: &JobView, n: u32, tip: &str) -> Option<String> {
         .map(|s| s.id.clone())
 }
 
+/// True when the job escalated to a model the stored builder session did not run on.
+fn needs_fresh_session(job: &JobView) -> bool {
+    match &job.escalated_model {
+        Some(model) => job.builder_session_model.as_ref() != Some(model),
+        None => false,
+    }
+}
+
 impl Engine<'_> {
     /// Runs the builder, then records the new head. With a task list in `plan.md` it runs one task agent per
     /// call and stays in Build until the last task has a commit. Fix rounds resume the last session.
@@ -48,7 +56,9 @@ impl Engine<'_> {
             return self.build_task(&job, &tasks);
         }
         let fresh = job.worktree.is_none();
-        let new_work = fresh || job.session_id.is_none();
+        // A fix round on a model other than the stored session's starts a fresh session.
+        let fresh_fix = !fresh && job.round > 1 && needs_fresh_session(&job);
+        let new_work = !fresh_fix && (fresh || job.session_id.is_none());
         let (cwd, base, previous_head, branch) = if fresh {
             let (cwd, base, branch) = self.start_worktree(&job)?;
             self.ledger_task(
@@ -63,20 +73,12 @@ impl Engine<'_> {
         };
         self.write_agent_files(&cwd)?;
         let spec = match &job.session_id {
+            _ if fresh_fix => {
+                let findings = self.fix_findings(&job)?;
+                self.builder_fix_fresh_spec(&job, &cwd, &findings)
+            }
             Some(session) if !fresh => {
-                // A rework note from the user wins over a round findings file.
-                let note = self.job_dir.join("rework-note.md");
-                let findings = if note.exists() {
-                    note
-                } else {
-                    self.job_dir.join(format!("changes-r{}.md", job.round))
-                };
-                if !findings.exists() {
-                    return Err(EngineError::Msg(format!(
-                        "missing findings file {}",
-                        findings.display()
-                    )));
-                }
+                let findings = self.fix_findings(&job)?;
                 self.builder_resume_spec(&job, &cwd, &findings, session)
             }
             _ => self.builder_first_spec(&job, &cwd),
@@ -91,8 +93,10 @@ impl Engine<'_> {
             let _ = std::fs::remove_file(self.job_dir.join("rework-note.md"));
         }
         let session = run.session_id.clone().or(job.session_id.clone());
+        let session_model = self.session_model(&run, job.builder_session_model.clone());
         self.update(|j| {
             j.builder_id = session;
+            j.builder_session_model = session_model;
             Ok(())
         })?;
         // The reply to the findings may hold push-back reasons, so keep it for the reviewer and the human.
@@ -161,6 +165,37 @@ impl Engine<'_> {
         };
         self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
+    }
+
+    /// The findings file of a fix round. A rework note from the user wins over the round findings file.
+    fn fix_findings(&self, job: &JobView) -> Result<PathBuf, EngineError> {
+        let note = self.job_dir.join("rework-note.md");
+        let findings = if note.exists() {
+            note
+        } else {
+            self.job_dir.join(format!("changes-r{}.md", job.round))
+        };
+        if !findings.exists() {
+            return Err(EngineError::Msg(format!(
+                "missing findings file {}",
+                findings.display()
+            )));
+        }
+        Ok(findings)
+    }
+
+    /// The model of the builder session stored after a run: this run's model when it reported a session,
+    /// else the model of the earlier session it keeps.
+    pub(crate) fn session_model(
+        &self,
+        run: &factory_agent::AgentRun,
+        earlier: Option<String>,
+    ) -> Option<String> {
+        if run.session_id.is_some() {
+            Some(self.builder_model())
+        } else {
+            earlier
+        }
     }
 
     /// Writes the builder's reply to a fix round as `builder-r{round}.md` in the job folder.
@@ -725,9 +760,11 @@ impl Engine<'_> {
         let next = job.task_index + 1;
         let last = next as usize >= tasks.len();
         let snapshot = (self.config.commit_batch && last).then(|| new_tip.clone());
+        let session_model = self.session_model(&run, job.builder_session_model.clone());
         self.update(|j| {
             j.builder_last = builder_last;
             j.builder_id = session;
+            j.builder_session_model = session_model;
             j.task_index = next;
             j.batch_snapshot = snapshot;
             j.task_session = None;
