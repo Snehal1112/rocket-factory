@@ -372,6 +372,7 @@ pub fn codex_problems(cfg: &Config, path_env: &str) -> Vec<String> {
         ("reviewer_model_large", cfg.reviewer_model_large.as_deref()),
         ("commit_model", Some(cfg.commit_model.as_str())),
         ("kb_model", Some(cfg.kb_model.as_str())),
+        ("escalation_model", cfg.escalation_model.as_deref()),
     ];
     for (key, value) in models {
         if let Some(v) = value.filter(|v| is_claude_model(v)) {
@@ -530,6 +531,22 @@ mod tests {
             .iter()
             .any(|p| p.contains("builder_model") && p.contains("sonnet")));
         assert!(problems.iter().any(|p| p.contains("reviewer_model_large")));
+    }
+
+    #[test]
+    fn project_show_reports_a_claude_escalation_model_on_codex() {
+        let cfg = Config {
+            agent_cli: Some("codex".into()),
+            escalation_model: Some("claude-opus-5-5".into()),
+            ..Config::default()
+        };
+        let problems = codex_problems(&cfg, "/nonexistent-dir");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("escalation_model") && p.contains("claude-opus-5-5")),
+            "{problems:?}"
+        );
     }
 
     #[test]
