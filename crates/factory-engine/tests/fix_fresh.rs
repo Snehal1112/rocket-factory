@@ -103,3 +103,50 @@ fn a_small_idle_session_still_resumes() {
         fx.ledger()
     );
 }
+
+/// Sets the round and makes the last builder idle for `idle_secs`.
+fn set_round_and_idle(fx: &Fixture, round: u32, idle_secs: u64) {
+    let mut board = Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = round;
+    job.builder_last.as_mut().expect("recorded").ended_at = now() - idle_secs;
+    board.save(&fx.board_path).expect("save");
+}
+
+#[test]
+fn a_cold_round_one_resume_without_findings_still_resumes() {
+    let fx = committing_fixture();
+    let first = Tagged::new(scripted_auto(vec![append_effect()]), 150_000);
+    fx.engine(&first).build_stage().expect("build");
+    assert!(fx.job().round <= 1);
+    set_round_and_idle(&fx, 1, 1_000);
+    let session = fx.job().builder_id.expect("session");
+    // The resume prompt needs a findings file, so the round-1 resume gets one.
+    std::fs::write(fx.job_dir.join("changes-r1.md"), "carry on").expect("findings");
+    let runner = Tagged::new(scripted_auto(vec![append_effect()]), 20_000);
+    fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.inner.last_spec_for("builder").expect("builder spec");
+    assert_eq!(spec.resume, Some(session));
+    assert!(
+        !fx.ledger().contains("fresh fix builder"),
+        "{}",
+        fx.ledger()
+    );
+}
+
+#[test]
+fn a_cold_rework_gets_a_fresh_fix_builder() {
+    let fx = reach_fix_round(150_000, 1_000);
+    // `factory rework` resets the round to 0 and writes the note.
+    set_round_and_idle(&fx, 0, 1_000);
+    std::fs::write(fx.job_dir.join("rework-note.md"), "do it differently").expect("note");
+    let runner = build_round(&fx, 20_000);
+    let spec = runner.inner.last_spec_for("builder").expect("builder spec");
+    assert_eq!(spec.resume, None);
+    assert!(spec.prompt.contains("rework-note.md"), "{}", spec.prompt);
+    assert!(
+        fx.ledger().contains("fresh fix builder (idle "),
+        "{}",
+        fx.ledger()
+    );
+}

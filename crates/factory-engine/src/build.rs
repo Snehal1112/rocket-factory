@@ -76,8 +76,9 @@ impl Engine<'_> {
         let fresh = job.worktree.is_none();
         // A fix round on a model other than the stored session's starts a fresh session.
         let escalated = !fresh && job.round > 1 && needs_fresh_session(&job);
-        // A resume of a session whose cache expired and whose context is large starts a fresh session too.
-        let cold = if !fresh && !escalated && job.session_id.is_some() {
+        // A fix round or rework that would resume a cold, large session starts a fresh session too.
+        let fixing = job.round > 1 || self.job_dir.join("rework-note.md").exists();
+        let cold = if !fresh && !escalated && fixing && job.session_id.is_some() {
             cold_session(
                 job.builder_last.as_ref(),
                 carry_idle_limit(self.config.cache_ttl.as_deref()),
