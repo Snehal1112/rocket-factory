@@ -90,7 +90,11 @@ pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Worksp
                 .collect(),
             None => matched.iter().filter_map(|p| crate_of(p)).collect(),
         };
-        let mut dependents = ws.map(|ws| ws.dependents(&crates)).unwrap_or_default();
+        let uses_dependents = rule.commands.iter().any(|c| c.contains("{dependents}"));
+        let mut dependents = match ws {
+            Some(ws) if uses_dependents => ws.dependents(&crates),
+            _ => Vec::new(),
+        };
         let cap = cfg.dependents_cap as usize;
         if dependents.len() > cap {
             let skipped = dependents.split_off(cap);
@@ -262,6 +266,15 @@ mod tests {
         let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, Some(&ws()));
         assert_eq!(plan.commands, ["cargo test -j4 -p app"]);
         assert_eq!(plan.notes, ["SKIP dependents over the cap: rocket"]);
+    }
+
+    #[test]
+    fn a_crate_only_rule_never_notes_the_dependents_cap() {
+        let mut c = cfg(vec![(&["crates/**"], &["cargo test -j4 -p {crate}"])]);
+        c.dependents_cap = 0;
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, Some(&ws()));
+        assert_eq!(plan.commands, ["cargo test -j4 -p core"]);
+        assert!(plan.notes.is_empty(), "{:?}", plan.notes);
     }
 
     #[test]

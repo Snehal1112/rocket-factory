@@ -1734,6 +1734,41 @@ fn a_failing_check_after_task_two_is_reported_against_task_two() {
 }
 
 #[test]
+fn a_capped_away_dependents_check_still_leaves_its_note() {
+    let mut fx = two_task_fixture();
+    fx.config.checks = vec![rule("crates/core/**", "cargo test -j4 -p {dependents}")];
+    fx.config.dependents_cap = 0;
+    let write_workspace: Effect = Box::new(|spec| {
+        let files = [
+            ("Cargo.toml", "[workspace]\nmembers = [\"crates/core\", \"crates/app\"]\n"),
+            (
+                "crates/core/Cargo.toml",
+                "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("crates/core/src/lib.rs", "pub fn f() {}\n"),
+            (
+                "crates/app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ncore = { path = \"../core\" }\n",
+            ),
+            ("crates/app/src/lib.rs", "pub fn g() {}\n"),
+        ];
+        for (name, body) in files {
+            let path = spec.cwd.join(name);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            std::fs::write(path, body).expect("write");
+        }
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![write_workspace]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
+    assert!(
+        md.contains("SKIP dependents over the cap: app") && !md.contains("FAIL"),
+        "{md}"
+    );
+}
+
+#[test]
 fn a_task_with_no_mapped_checks_writes_nothing() {
     let mut fx = two_task_fixture();
     fx.config.checks = vec![rule("src/**", "false")];
