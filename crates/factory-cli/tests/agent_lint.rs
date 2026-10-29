@@ -910,12 +910,8 @@ fn reviewer_files_carry_the_grading_rubric() -> TestResult {
                 "a missing test for an edge case or error path",
                 "re-read every",
                 "even when the finding is about reuse or efficiency",
+                "no blocking file or network work on an async path (always",
             ],
-        )?;
-        forbid_all(
-            &text,
-            path,
-            &["blocking file or network work on an async path"],
         )?;
     }
     Ok(())

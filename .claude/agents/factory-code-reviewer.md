@@ -24,7 +24,7 @@ Input: your prompt names a diff file, the plan, the plan's Review Focus, the bui
 - tests: new behavior has tests that would fail without the change
 - edge cases and error paths: empty, missing and invalid input, and every new error path, each with a test that would fail without the change
 - reuse and simplicity: no copy of logic that already exists in the code base, no dead code, no abstraction the task does not need
-- efficiency: no work repeated inside a loop, no needless clones or copies
+- efficiency: no work repeated inside a loop, no needless clones or copies, no blocking file or network work on an async path (always `[blocker]`)
 - hard rules: shadcn/ui primitives only (no raw `button`, `input`, `dialog`, `select`, `form`), lucide-react icons only, `SingleLineEditor` for single-line variable-aware fields and Monaco for multi-line editors, narrow Zustand selectors (no full destructuring of store state), no git CLI shell-outs
 
 ## Judging

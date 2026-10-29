@@ -28,7 +28,7 @@ This is a Go project. When you judge a diff, look at ignored errors, goroutine a
 - tests: new behavior has tests that would fail without the change
 - edge cases and error paths: empty, missing and invalid input, and every new error path, each with a test that would fail without the change
 - reuse and simplicity: no copy of logic that already exists in the code base, no dead code, no abstraction the task does not need
-- efficiency: no work repeated inside a loop, no needless clones or copies
+- efficiency: no work repeated inside a loop, no needless clones or copies, no blocking file or network work on an async path (always `[blocker]`)
 - project rules: the rules named in the job prompt and in the project's CLAUDE.md
 
 ## Judging
