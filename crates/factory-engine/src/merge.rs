@@ -123,6 +123,19 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
                     crate::tickets::notify_failure(driver, id, &err.to_string());
                 }
             }
+            // The minor ticket follows the same soft rule and has no series gate.
+            match crate::minors::minor_tickets_step(driver, id, false) {
+                Ok(report) if report.failed => {
+                    let text = report.lines.join("; ");
+                    tracing::error!(event = "step.error", step = "minors", msg = %format!("minors error for job {id}: {text}"));
+                    crate::tickets::notify_failure(driver, id, &text);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::error!(event = "step.error", step = "minors", msg = %format!("minors error for job {id}: {err}"));
+                    crate::tickets::notify_failure(driver, id, &err.to_string());
+                }
+            }
             // The costs refresh runs last so that it counts the kb run of this job.
             if let Err(err) = crate::costs::refresh_costs(driver) {
                 tracing::error!(event = "step.error", step = "costs_refresh", msg = %format!("costs refresh error for job {id}: {err}"));

@@ -18,6 +18,7 @@ mod lease;
 mod lock;
 mod merge;
 mod message;
+mod minors;
 mod one_job;
 mod park;
 mod permissions;
@@ -70,6 +71,7 @@ pub use merge::{merge_stage, park, park_with_parts, MergeResult, MAX_SYNCS};
 pub use message::{
     fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS,
 };
+pub use minors::{minor_tickets_step, MINORS_FILE};
 pub use one_job::{
     create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED,
 };

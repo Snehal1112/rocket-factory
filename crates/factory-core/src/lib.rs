@@ -63,4 +63,4 @@ pub use park::{park_summary, ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
 pub use risk::{classify_paths, glob_match, DiffClass};
 pub use stage::Stage;
-pub use verdict::{open_blockers, parse_verdict, Verdict};
+pub use verdict::{open_blockers, open_minors, parse_verdict, Verdict};

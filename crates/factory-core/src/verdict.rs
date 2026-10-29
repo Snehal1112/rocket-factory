@@ -26,6 +26,16 @@ pub fn open_blockers(review_text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The trimmed lines of a review that carry `[minor]` and not `[fixed]`, in order.
+pub fn open_minors(review_text: &str) -> Vec<String> {
+    review_text
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains("[minor]") && !l.contains("[fixed]"))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Only an exact last non-empty line counts. Trailing whitespace and CRLF are tolerated, nothing else.
 pub fn parse_verdict(text: &str) -> Verdict {
     let last = text
@@ -51,6 +61,12 @@ mod tests {
             open_blockers(text),
             vec!["- [blocker] one", "- [blocker] three"]
         );
+    }
+
+    #[test]
+    fn open_minors_skips_fixed_and_blockers() {
+        let text = "- [minor] one\n- [blocker] two\n  - [minor] [fixed] three\n- [minor] four";
+        assert_eq!(open_minors(text), vec!["- [minor] one", "- [minor] four"]);
     }
 
     #[test]

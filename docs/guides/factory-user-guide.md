@@ -652,6 +652,8 @@ factory tickets 028
 - It never changes the merge result.
 - Set `tickets_on_merge = true` in the project settings to run it automatically after every merge. The default is off.
 
+Open `[minor]` findings of the last review become one ticket after the merge, a `- [ ]` checklist titled `Minor review findings from job <id>: <slug>`. `minors.json` in the job folder records the number, so a re-run files nothing twice, and `factory tickets <id>` retries a failed one. This runs whether or not `tickets_on_merge` is set, for every plan of a series. Set `minor_tickets = false` to turn it off.
+
 ### 6.14 `factory kb-refresh`: refresh the knowledge base
 
 ```
@@ -1146,6 +1148,7 @@ Project settings live in `~/.factory/projects/<name>/project.toml` under `[setti
 | `checks` | Which commands run for which changed files. | from the preset |
 | `require_tests` | Park a change that adds no test. | false |
 | `tickets_on_merge` | File follow-up tickets after each merge. | false |
+| `minor_tickets` | File one ticket for the open minor review findings after each merge. | true |
 | `kb_path` | A knowledge base folder. Unset turns the knowledge base off. | unset |
 | `log_level` | How much the log records. | `info` |
 

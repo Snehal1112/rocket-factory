@@ -1024,14 +1024,28 @@ fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
         factory_engine::waiver_tickets_step(&d, id, dry_run)?,
         dry_run,
     );
-    match (tickets, waivers) {
-        (Ok(a), Ok(b)) => Ok(format!("{a}\n{b}")),
-        (Err(CliError::Refused(a)), Ok(b)) => Err(CliError::Refused(format!("{a}\n{b}"))),
-        (Ok(a), Err(CliError::Refused(b))) => Err(CliError::Refused(format!("{a}\n{b}"))),
-        (Err(CliError::Refused(a)), Err(CliError::Refused(b))) => {
-            Err(CliError::Refused(format!("{a}\n{b}")))
+    let minors = render_tickets(
+        factory_engine::minor_tickets_step(&d, id, dry_run)?,
+        dry_run,
+    );
+    let mut text = String::new();
+    let mut refused = false;
+    for part in [tickets, waivers, minors] {
+        match part {
+            Ok(a) => text.push_str(&a),
+            Err(CliError::Refused(a)) => {
+                refused = true;
+                text.push_str(&a);
+            }
+            Err(e) => return Err(e),
         }
-        (Err(e), _) | (_, Err(e)) => Err(e),
+        text.push('\n');
+    }
+    let text = text.trim_end().to_string();
+    if refused {
+        Err(CliError::Refused(text))
+    } else {
+        Ok(text)
     }
 }
 

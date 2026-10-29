@@ -115,6 +115,8 @@ The driver can file the leftover work of a ticket and close the ticket after the
 - The step needs a merged job that is the last plan of its series. It files the tickets, comments once on each parent (job id, `main` sha, "not yet pushed" when `origin/main` lacks it, links to the new tickets) and closes each parent that is still open.
 - `tickets.json` in the job folder records every created ticket, comment and close, saved after each `gh` call. A re-run, also after a failure, never repeats a call. `--dry-run` makes only read calls and prints each action.
 - A `gh` failure is written to the ledger and printed. It never changes the merge result, and `factory tickets` exits non-zero.
+
+Minor tickets: after a merge, `merge_stage` runs `minor_tickets_step` once the waiver step is done. It files one ticket titled `Minor review findings from job <id>: <slug>` whose body is a `- [ ]` checklist of the open `[minor]` lines (not `[fixed]`) of the last review file, with no labels. It does not apply the series gate, runs whether or not `tickets_on_merge` is set, and is switched off with `minor_tickets = false` (default true). `minors.json` in the job folder holds `{"issue": <number>}` once filed; a failure is soft and `factory tickets <id>` retries it.
 - Merge footer: `Relates to: #N` when the spec has follow-ups (the ticket is not finished), `Fixes: #N` otherwise. Commit and sync footers stay `Relates to`.
 
 ## Logging

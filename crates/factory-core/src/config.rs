@@ -73,6 +73,8 @@ pub struct Config {
     pub builder_simplify: bool,
     /// After a merge, file the follow-up tickets and close the parent tickets. Off by default.
     pub tickets_on_merge: bool,
+    /// After a merge, file one ticket for the open `[minor]` review findings. On by default.
+    pub minor_tickets: bool,
     /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
     pub kb_path: Option<String>,
     pub kb_model: String,
@@ -162,6 +164,7 @@ impl Default for Config {
             builder_excerpt: true,
             builder_simplify: true,
             tickets_on_merge: false,
+            minor_tickets: true,
             kb_path: None,
             kb_model: "claude-sonnet-5-5".to_string(),
             kb_budget_weighted: 150_000,
@@ -948,6 +951,17 @@ mod tests {
         assert!(err
             .to_string()
             .contains("log_level must be one of error, warn, info, debug, trace"));
+    }
+
+    #[test]
+    fn minor_tickets_is_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().minor_tickets);
+        assert!(
+            !Config::parse("minor_tickets = false")
+                .expect("parse")
+                .minor_tickets
+        );
+        assert!(Config::parse("minor_tickets = \"no\"").is_err());
     }
 
     #[test]
