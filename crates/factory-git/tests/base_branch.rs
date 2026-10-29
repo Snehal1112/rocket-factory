@@ -78,7 +78,9 @@ fn state_checks_use_the_base_branch() {
         other => panic!("expected Ready, got {other:?}"),
     }
     match fx.repo().preflight_main().expect("preflight") {
-        Preflight::Busy { reason } => assert!(reason.contains("not on main"), "reason: {reason}"),
+        Preflight::Busy { reason, .. } => {
+            assert!(reason.contains("not on main"), "reason: {reason}")
+        }
         other => panic!("expected Busy, got {other:?}"),
     }
 }

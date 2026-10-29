@@ -209,7 +209,12 @@ impl Engine<'_> {
                 } else {
                     Vec::new()
                 };
-                parts.extend(reply.map(|text| ParkPart::new("Builder reply", "builder", &text)));
+                parts.push(match reply {
+                    Some(text) => ParkPart::new("Builder reply", "builder", &text),
+                    None => {
+                        ParkPart::new("Builder reply", "builder", "The builder wrote no reply.")
+                    }
+                });
                 return self.park_with(ParkKind::NothingChanged, why.to_string(), parts);
             }
             CommitOutcome::Park(reason) => {

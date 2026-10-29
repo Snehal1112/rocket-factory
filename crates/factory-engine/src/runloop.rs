@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use factory_core::{Job, Ledger, SeriesPos, Stage};
+use factory_core::{Job, Ledger, ParkKind, ParkPart, SeriesPos, Stage};
 
 use crate::{
-    merge_stage, now_secs, park, parse_series, today, Driver, EngineError, MergeResult,
+    merge_stage, now_secs, park_with_parts, parse_series, today, Driver, EngineError, MergeResult,
     StageOutcome,
 };
 
@@ -480,6 +480,38 @@ pub fn create_job_with_spec(
     Ok(first)
 }
 
+/// Parks a job that has no plan, naming the file that was expected.
+fn park_missing_plan(driver: &Driver, job: &Job) -> Result<(), EngineError> {
+    let text = format!("expected {}", driver.job_dir(job).join("plan.md").display());
+    let parts = vec![ParkPart::new("Missing plan", "driver", &text)];
+    park_with_parts(
+        driver,
+        &job.id,
+        "no plan.md in the job folder",
+        ParkKind::Other,
+        parts,
+    )
+}
+
+/// Parks a job whose run loop used up its steps, with the end of the ledger as evidence.
+fn park_unsettled(driver: &Driver, id: &str) -> Result<(), EngineError> {
+    let ledger = driver
+        .job(id)
+        .ok()
+        .and_then(|job| std::fs::read_to_string(driver.job_dir(&job).join("progress.md")).ok())
+        .unwrap_or_default();
+    let lines: Vec<&str> = ledger.lines().collect();
+    let tail = lines[lines.len().saturating_sub(20)..].join("\n");
+    let parts = vec![ParkPart::new("Ledger", "progress.md", &tail)];
+    park_with_parts(
+        driver,
+        id,
+        "run loop did not settle, see the ledger",
+        ParkKind::Other,
+        parts,
+    )
+}
+
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
 pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
     // The guard keeps the project lease renewed for the whole run and is dropped after the job lease is released.
@@ -520,7 +552,7 @@ fn run_job_inner(
             Stage::NeedsHuman => return Ok(RunEnd::NeedsHuman(job.reason.unwrap_or_default())),
             Stage::Spec => {
                 if !driver.job_dir(&job).join("plan.md").exists() {
-                    park(driver, id, "no plan.md in the job folder")?;
+                    park_missing_plan(driver, &job)?;
                 } else {
                     let now = now_secs();
                     driver.store().update_job(id, |j| {
@@ -531,7 +563,7 @@ fn run_job_inner(
             Stage::Build => {
                 // A job made without plans has no plan.md until a human places it. Park before any agent call.
                 if !driver.job_dir(&job).join("plan.md").exists() {
-                    park(driver, id, "no plan.md in the job folder")?;
+                    park_missing_plan(driver, &job)?;
                     continue;
                 }
                 driver.build(id)?;
@@ -553,7 +585,7 @@ fn run_job_inner(
             }
         }
     }
-    park(driver, id, "run loop did not settle, see the ledger")?;
+    park_unsettled(driver, id)?;
     Ok(RunEnd::NeedsHuman("run loop did not settle".into()))
 }
 

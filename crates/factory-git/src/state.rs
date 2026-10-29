@@ -5,9 +5,18 @@ use git2::{RepositoryState, StatusOptions};
 /// Result of the pre-merge check on the main checkout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Preflight {
-    Ready { main_sha: String },
-    Busy { reason: String },
+    Ready {
+        main_sha: String,
+    },
+    /// `paths` is filled only for tracked changes: at most 50, then one `(+N more)` entry.
+    Busy {
+        reason: String,
+        paths: Vec<String>,
+    },
 }
+
+/// The most paths a busy report lists.
+const MAX_BUSY_PATHS: usize = 50;
 
 /// Where a job branch stands relative to main.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +58,7 @@ impl Repo {
         let busy = |reason: &str| {
             Ok(Preflight::Busy {
                 reason: reason.to_string(),
+                paths: Vec::new(),
             })
         };
         let head = self.inner.head()?;
@@ -63,8 +73,20 @@ impl Repo {
         }
         let mut opts = StatusOptions::new();
         opts.include_untracked(false).include_ignored(false);
-        if !self.inner.statuses(Some(&mut opts))?.is_empty() {
-            return busy("the main checkout has tracked changes");
+        let statuses = self.inner.statuses(Some(&mut opts))?;
+        if !statuses.is_empty() {
+            let mut paths: Vec<String> = statuses
+                .iter()
+                .take(MAX_BUSY_PATHS)
+                .map(|s| String::from_utf8_lossy(s.path_bytes()).into_owned())
+                .collect();
+            if statuses.len() > MAX_BUSY_PATHS {
+                paths.push(format!("(+{} more)", statuses.len() - MAX_BUSY_PATHS));
+            }
+            return Ok(Preflight::Busy {
+                reason: "the main checkout has tracked changes".to_string(),
+                paths,
+            });
         }
         Ok(Preflight::Ready { main_sha })
     }

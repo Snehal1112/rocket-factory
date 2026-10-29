@@ -119,7 +119,7 @@ impl Repo {
                 ),
             });
         }
-        if let Preflight::Busy { reason } = self.preflight_main()? {
+        if let Preflight::Busy { reason, .. } = self.preflight_main()? {
             return Ok(MergeOutcome::Refused { reason });
         }
         let main = self.branch_commit(&self.base)?;

@@ -72,6 +72,12 @@ impl Engine<'_> {
         let round = job.as_ref().map_or(1, |j| j.round);
         let review_missing = job.as_ref().is_some_and(|j| j.review_missing);
         let at = now().max(0.0) as u64;
+        // No park keeps an empty evidence list.
+        let parts = if parts.is_empty() {
+            vec![ParkPart::new("Why it stopped", "driver", &reason)]
+        } else {
+            parts
+        };
         let mut record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
         // A park that offers approve says so when the review has not run, because a plain approve is refused.
         record.verdict = job
