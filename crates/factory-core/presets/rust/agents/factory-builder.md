@@ -44,7 +44,7 @@ Before `Status: DONE`, read your own diff once and fix what you find:
 
 ## Stack
 
-This is a Rust project. Run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`. Never use `--workspace` or `--all`, and never set `CARGO_TARGET_DIR`. Run `cargo check -j4` yourself before you finish, so the driver's checks start from a warm target. No unwrap in production paths, and no git CLI shell-outs from Rust code.
+This is a Rust project. Run `cargo check -j4 -p <crate>` and `cargo test -j4 -p <crate> <test_name>` for each crate you touched. Never use `--workspace` or `--all`, and never set `CARGO_TARGET_DIR`. Run `cargo check -j4 -p <crate>` for each crate you touched before you finish, so the driver's checks start from a warm target. No unwrap in production paths, and no git CLI shell-outs from Rust code.
 
 ## Commits
 

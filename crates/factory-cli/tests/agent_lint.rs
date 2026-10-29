@@ -890,6 +890,44 @@ fn reviewer_files_tag_fixed_findings() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn reviewer_files_carry_the_grading_rubric() -> TestResult {
+    for path in [
+        ".claude/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
+    ] {
+        require_all(
+            &read(path)?,
+            path,
+            &[
+                "a bug a user can hit",
+                "a breach of any rule",
+                "a missing test for an edge case or error path",
+                "re-read every",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_reviewer_blocks_blocking_async_work() -> TestResult {
+    let path = "crates/factory-core/presets/rust/agents/factory-code-reviewer.md";
+    require_all(&read(path)?, path, &["async runtime path"])
+}
+
+#[test]
+fn rust_builder_runs_cargo_per_crate() -> TestResult {
+    let path = "crates/factory-core/presets/rust/agents/factory-builder.md";
+    let text = read(path)?;
+    require_all(&text, path, &["cargo check -j4 -p <crate>"])?;
+    forbid_all(&text, path, &["`cargo check -j4`"])
+}
+
 /// The builder follows the implementer rules of subagent-driven-development and never acts as its controller.
 const NOT_CONTROLLER: &str =
     "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";
