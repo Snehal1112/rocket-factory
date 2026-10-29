@@ -74,7 +74,8 @@ pub use message::{
 };
 pub use minors::{minor_tickets_step, MINORS_FILE};
 pub use one_job::{
-    create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED,
+    create_one_job, create_one_job_accepting, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED,
+    ONE_JOB_PER_TASK_WEIGHTED,
 };
 pub use permissions::{builder_allowed_tools, builder_denied_tools, restore_file};
 pub use planlint::{lint_plan, PlanLint};
@@ -87,10 +88,13 @@ pub use project_lease::{
 pub use repo_lock::{lock_repo_merge, MERGE_LOCK_FILE, MERGE_LOCK_WAIT};
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome, ReviewRun};
 pub use rework::ReworkKind;
-pub use runloop::{create_job, create_job_with_spec, job_span, run_job, run_series, RunEnd};
+pub use runloop::{
+    create_job, create_job_with_spec, create_job_with_spec_accepting, job_span, run_job,
+    run_series, RunEnd,
+};
 pub use scope::scope_violation;
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
-pub use spec_check::{plan_file_paths, risky_without_user_decision, SpecRefusal};
+pub use spec_check::{plan_file_paths, review_spec, risky_without_user_decision, SpecRefusal};
 pub use specs::{
     ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS, RULES_VERSION,
 };

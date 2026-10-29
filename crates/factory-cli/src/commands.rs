@@ -7,10 +7,10 @@ use factory_core::{
     outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage,
 };
 use factory_engine::{
-    costs_path, create_job_with_spec, create_one_job, find_draft, force_release_project_lease,
-    gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, remove_draft,
-    run_job, run_series, set_draft_stage, start_draft, today, Driver, MergeResult, RepoTip, RunEnd,
-    DEFAULT_LOCK_WAIT,
+    costs_path, create_job_with_spec_accepting, create_one_job_accepting, find_draft,
+    force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs,
+    project_lease_status, remove_draft, run_job, run_series, set_draft_stage, start_draft, today,
+    Driver, MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT,
 };
 
 use crate::cli::{Cli, Command, SpecCmd};
@@ -356,6 +356,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             model,
             one_job,
             accept_over_budget,
+            accept_spec,
         } => new_job(
             ctx,
             &slug,
@@ -366,6 +367,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
                 model,
                 one_job,
                 accept_over_budget,
+                accept_spec,
             },
         ),
         Command::Run { id, series } => run(ctx, &norm(&id)?, series),
@@ -440,6 +442,7 @@ struct NewArgs {
     model: Option<String>,
     one_job: bool,
     accept_over_budget: bool,
+    accept_spec: Option<String>,
 }
 
 fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<String, CliError> {
@@ -449,7 +452,11 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
         model,
         one_job,
         accept_over_budget,
+        accept_spec,
     } = args;
+    if let Some(reason) = &accept_spec {
+        validate_one_line(reason, "accept-spec reason")?;
+    }
     let d = ctx.driver()?;
     if let Some(problem) = model
         .as_deref()
@@ -459,7 +466,7 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
     }
     let (job, notes) = match (one_job, plans.as_deref()) {
         (true, Some(plan)) => {
-            let made = create_one_job(
+            let made = create_one_job_accepting(
                 &d,
                 slug,
                 feature,
@@ -467,17 +474,19 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
                 spec.as_deref(),
                 model.as_deref(),
                 accept_over_budget,
+                accept_spec.as_deref(),
             )?;
             (made.job, made.notes)
         }
         _ => (
-            create_job_with_spec(
+            create_job_with_spec_accepting(
                 &d,
                 slug,
                 feature,
                 plans.as_deref(),
                 spec.as_deref(),
                 model.as_deref(),
+                accept_spec.as_deref(),
             )?,
             Vec::new(),
         ),

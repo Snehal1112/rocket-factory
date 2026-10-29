@@ -35,6 +35,10 @@ pub enum Command {
         /// Create the one job even when its estimate is over the budget. It needs --one-job.
         #[arg(long, requires = "one_job")]
         accept_over_budget: bool,
+        /// Create the jobs even when the spec check refuses the spec. The reason is one line, at most
+        /// 200 characters, and goes to the first job's ledger and warning.
+        #[arg(long)]
+        accept_spec: Option<String>,
     },
     /// Drive a job to merged or needs-human.
     Run {
@@ -307,6 +311,16 @@ mod tests {
                 accept_over_budget: true,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn new_parses_accept_spec() {
+        let cli = Cli::try_parse_from(["factory", "new", "d", "f", "--accept-spec", "checked"])
+            .expect("parse");
+        assert!(matches!(
+            cli.command,
+            Command::New { accept_spec: Some(ref r), .. } if r == "checked"
         ));
     }
 

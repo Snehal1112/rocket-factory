@@ -274,6 +274,7 @@ dependencies = [
  "git2",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tempfile",
  "thiserror",

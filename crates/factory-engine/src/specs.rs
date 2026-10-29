@@ -6,12 +6,14 @@ use factory_core::rules_marker;
 
 use crate::ports::{short_sha, JobView};
 use crate::tasks::{plan_header, spec_excerpt, task_section, PlanTask};
-use crate::Engine;
+use crate::{Driver, Engine};
 
 /// The agent file the driver passes with `--agent`.
 const BUILDER_AGENT: &str = "factory-builder";
 /// The reviewer agent file the driver passes with `--agent`. It sets the read-only tools and the checks.
 const REVIEWER_AGENT: &str = "factory-code-reviewer";
+/// The agent file of the spec reviewer.
+pub(crate) const SPEC_REVIEWER_AGENT: &str = "factory-spec-reviewer";
 /// The turn cap of a builder run. The builder agent files carry the same number, and a test pins it.
 pub const BUILDER_MAX_TURNS: u32 = 120;
 
@@ -660,3 +662,50 @@ impl Engine<'_> {
         self.with_limits(spec, model)
     }
 }
+
+impl Driver {
+    /// The headless spec reviewer. It runs in `cwd`, the main checkout, before any job exists.
+    pub(crate) fn spec_reviewer_spec(
+        &self,
+        cwd: &Path,
+        spec: &Path,
+        plans: &[PathBuf],
+    ) -> AgentSpec {
+        let plan_lines: Vec<String> = plans.iter().map(|p| p.display().to_string()).collect();
+        let prompt = format!(
+            "Review this spec and its plans before the build.\n\
+             Spec: {spec}\nPlans: {plans}\nMain checkout: {cwd}\n\
+             Report only the three kinds of finding in your agent rules. \
+             Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
+            spec = spec.display(),
+            plans = plan_lines.join(", "),
+            cwd = cwd.display(),
+        );
+        let model = self
+            .config()
+            .reviewer_model_large
+            .as_deref()
+            .unwrap_or(&self.config().reviewer_model);
+        let mut agent = AgentSpec::new(
+            SPEC_REVIEW_JOB,
+            "spec-reviewer",
+            self.repo().workdir_in(cwd),
+            &prompt,
+        );
+        agent.agent = Some(SPEC_REVIEWER_AGENT.to_string());
+        agent.max_turns = Some(REVIEWER_MAX_TURNS);
+        agent.strict_mcp = true;
+        agent.disable_slash_commands = true;
+        agent.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
+        agent.tools = Some("Read,Grep,Glob".to_string());
+        agent.model = Some(model.to_string());
+        agent.budget_weighted = Some(self.config().budget_weighted);
+        agent.stall_after = Some(Duration::from_secs(
+            u64::from(self.config().stall_minutes) * 60,
+        ));
+        agent
+    }
+}
+
+/// The job id the spec reviewer runs under, since no job exists yet.
+pub(crate) const SPEC_REVIEW_JOB: &str = "spec-review";

@@ -5,8 +5,8 @@ use std::path::Path;
 use factory_core::{Job, Stage};
 
 use crate::runloop::{
-    add_job, add_warning, adopt_draft, create_job_with_spec, user_decisions, validate_series,
-    Validated, NO_USER_DECISION,
+    add_job, add_warning, adopt_draft, create_job_with_spec_accepting, record_accepted,
+    user_decisions, validate_series, Validated, NO_USER_DECISION,
 };
 use crate::tasks::parse_checkbox_tasks;
 use crate::{combine_plans, parse_series_with, Driver, EngineError, SeriesError};
@@ -38,12 +38,37 @@ pub fn create_one_job(
     model: Option<&str>,
     accept_over_budget: bool,
 ) -> Result<OneJob, EngineError> {
+    create_one_job_accepting(
+        driver,
+        slug,
+        feature,
+        plan,
+        spec_path,
+        model,
+        accept_over_budget,
+        None,
+    )
+}
+
+/// Like `create_one_job`. A reason in `accept_spec` turns a spec refusal into a pass and is recorded.
+#[allow(clippy::too_many_arguments)]
+pub fn create_one_job_accepting(
+    driver: &Driver,
+    slug: &str,
+    feature: &str,
+    plan: &Path,
+    spec_path: Option<&Path>,
+    model: Option<&str>,
+    accept_over_budget: bool,
+    accept_spec: Option<&str>,
+) -> Result<OneJob, EngineError> {
     // The task cap is lifted, so a plan with no task needs its own message.
     let Validated {
         series,
         plan_warnings,
         spec_text,
-    } = validate_series(driver, plan, spec_path, |root, start| {
+        accepted,
+    } = validate_series(driver, plan, spec_path, accept_spec, |root, start| {
         parse_series_with(root, start, None).map_err(|e| match e {
             SeriesError::TaskCount { path, found: 0 } => EngineError::Msg(format!(
                 "{}: a plan needs at least one task",
@@ -54,7 +79,15 @@ pub fn create_one_job(
     })?;
     // One plan has nothing to combine, so it takes the normal path and skips the guard.
     if series.plans.len() == 1 {
-        let job = create_job_with_spec(driver, slug, feature, Some(plan), spec_path, model)?;
+        let job = create_job_with_spec_accepting(
+            driver,
+            slug,
+            feature,
+            Some(plan),
+            spec_path,
+            model,
+            accept_spec,
+        )?;
         let notes = vec!["--one-job had no effect: the chain has one plan".to_string()];
         return Ok(OneJob { job, notes });
     }
@@ -114,6 +147,9 @@ pub fn create_one_job(
         .is_some_and(|text| user_decisions(text) == 0)
     {
         job = add_warning(driver, slug, job, NO_USER_DECISION);
+    }
+    if let Some(reason) = &accepted {
+        job = record_accepted(driver, slug, job, reason);
     }
     for warning in plan_warnings.iter().chain(&combined.warnings) {
         job = add_warning(driver, slug, job, warning);

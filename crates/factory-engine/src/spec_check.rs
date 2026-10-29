@@ -1,11 +1,14 @@
 //! Checks on a spec that run before `factory new` creates any job.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use factory_core::{classify_paths, Config, DiffClass};
+use factory_core::{classify_paths, Config, DiffClass, AGENT_EXCLUDE_PATTERN};
+use sha2::{Digest, Sha256};
 
 use crate::runloop::user_decisions;
+use crate::specs::{SPEC_REVIEWER_AGENT, SPEC_REVIEW_JOB};
+use crate::Driver;
 
 /// How many risky paths the refusal names.
 const MAX_NAMED: usize = 5;
@@ -21,21 +24,104 @@ pub enum SpecRefusal {
     ReviewMissing { file: PathBuf },
 }
 
+/// How the user gets past a refusal.
+const OVERRIDE_HINT: &str =
+    "Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
+
 impl fmt::Display for SpecRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SpecRefusal::NoUserDecision(reason) => write!(f, "{reason}"),
+            SpecRefusal::NoUserDecision(reason) => write!(f, "{reason}. {OVERRIDE_HINT}"),
             SpecRefusal::ReviewChanges { file, findings } => write!(
                 f,
-                "the spec review asked for changes in {}:\n{findings}",
+                "the spec review asked for changes:\n{findings}\nThe review is in {}. {OVERRIDE_HINT}",
                 file.display()
             ),
             SpecRefusal::ReviewMissing { file } => write!(
                 f,
-                "the spec review gave no verdict for {}; a missing verdict is not a pass",
+                "the spec review gave no verdict; a missing verdict is not a pass. The review is in {}. {OVERRIDE_HINT}",
                 file.display()
             ),
         }
+    }
+}
+
+/// The hex SHA-256 of the spec text followed by each plan text, in order.
+fn review_key(spec: &str, plans: &[String]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(spec.as_bytes());
+    for plan in plans {
+        hash.update(plan.as_bytes());
+    }
+    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The last non-empty line of a review.
+fn last_line(text: &str) -> &str {
+    text.lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+}
+
+/// Puts the spec reviewer's agent file in the main checkout when the repo does not track its own.
+/// A failure is ignored: the run then gives no verdict, and a missing verdict refuses.
+fn write_reviewer_file(driver: &Driver) {
+    let name = format!("{SPEC_REVIEWER_AGENT}.md");
+    let Some(file) = driver.agent_files().iter().find(|f| f.name == name) else {
+        return;
+    };
+    let rel = factory_core::agent_files_rel_dir().join(&name);
+    let tracked = driver
+        .repo()
+        .is_tracked_at_branch(driver.repo().base_branch(), &rel.to_string_lossy())
+        .unwrap_or(true);
+    if tracked
+        || driver
+            .repo()
+            .exclude_paths(&[AGENT_EXCLUDE_PATTERN])
+            .is_err()
+    {
+        return;
+    }
+    let path = driver.root().join(&rel);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, &file.content);
+}
+
+/// Runs the spec reviewer on the spec and the plans, unless an APPROVE review of the same text is on file.
+/// The review is saved under the spec reviews folder, and its path is in every refusal.
+pub fn review_spec(driver: &Driver, spec: &Path, plans: &[PathBuf]) -> Result<(), SpecRefusal> {
+    if !driver.config().spec_review {
+        return Ok(());
+    }
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+    let plan_texts: Vec<String> = plans.iter().map(|p| read(p)).collect();
+    let key = review_key(&read(spec), &plan_texts);
+    let file = driver.layout().spec_reviews_dir().join(format!("{key}.md"));
+    if last_line(&read(&file)) == "VERDICT: APPROVE" {
+        return Ok(());
+    }
+    write_reviewer_file(driver);
+    let agent = driver.spec_reviewer_spec(driver.root(), spec, plans);
+    let run = driver.run_agent_for(SPEC_REVIEW_JOB, &agent);
+    let mut text = run.result_text.trim_end().to_string();
+    text.push('\n');
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // An unsaved review still refuses with its path, so the write result is not checked.
+    let _ = std::fs::write(&file, &text);
+    match last_line(&text) {
+        "VERDICT: APPROVE" => Ok(()),
+        "VERDICT: CHANGES" => Err(SpecRefusal::ReviewChanges {
+            file,
+            findings: text.trim_end().to_string(),
+        }),
+        _ => Err(SpecRefusal::ReviewMissing { file }),
     }
 }
 
@@ -143,6 +229,30 @@ mod tests {
         let msg = got.expect("refused");
         assert!(msg.contains("src-tauri/src/lib.rs"));
         assert!(msg.contains("no decision in it was answered by the user"));
+    }
+
+    #[test]
+    fn refusals_end_with_the_override_hint() {
+        let hint = "Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
+        let file = PathBuf::from("/s/spec-reviews/k.md");
+        for refusal in [
+            SpecRefusal::NoUserDecision("the spec touches risky paths (a)".into()),
+            SpecRefusal::ReviewChanges {
+                file: file.clone(),
+                findings: "1. [blocker] x".into(),
+            },
+            SpecRefusal::ReviewMissing { file },
+        ] {
+            assert!(refusal.to_string().ends_with(hint), "{refusal}");
+        }
+    }
+
+    #[test]
+    fn the_review_key_changes_with_a_plan() {
+        let a = review_key("spec", &["p1".into()]);
+        assert_eq!(a.len(), 64);
+        assert_eq!(a, review_key("spec", &["p1".into()]));
+        assert_ne!(a, review_key("spec", &["p2".into()]));
     }
 
     #[test]

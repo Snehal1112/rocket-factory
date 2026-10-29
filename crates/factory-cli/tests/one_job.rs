@@ -40,6 +40,13 @@ fn set_budget(fx: &Fixture, budget: u64) {
     std::fs::write(path, text).expect("config");
 }
 
+fn set_spec_review_off(fx: &Fixture) {
+    let path = fx.root.join(".claude/factory/config.toml");
+    let mut text = std::fs::read_to_string(&path).expect("config");
+    text.push_str("spec_review = false\n");
+    std::fs::write(path, text).expect("config");
+}
+
 #[test]
 fn one_job_output_starts_with_the_created_line() {
     let fx = Fixture::new();
@@ -125,6 +132,8 @@ fn accept_over_budget_creates_the_job_and_prints_a_budget_warning() {
 #[test]
 fn binary_prints_the_consent_line_bare_and_exits_non_zero() {
     let fx = Fixture::new();
+    // The binary runs the real agent CLI, so the spec review stays off here.
+    set_spec_review_off(&fx);
     let plans = plans_folder(&fx, 4, 3);
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_factory"))
         .arg("--root")
@@ -163,6 +172,50 @@ fn new_refuses_a_risky_spec_without_a_user_decision() {
             .contains("no decision in it was answered by the user"),
         "{err}"
     );
+    assert!(err.to_string().contains("--accept-spec"), "{err}");
     let status = fx.run(&["status"]).expect("status");
     assert!(!status.contains("demo"), "{status}");
+}
+
+#[test]
+fn accept_spec_is_validated_before_anything_is_created() {
+    let fx = Fixture::new();
+    let plans = plans_folder(&fx, 1, 1);
+    let dir = plans.to_str().expect("utf8");
+    for reason in ["", "two\nlines", &"x".repeat(201)] {
+        let err = fx
+            .run(&["new", "demo", "f", "--plans", dir, "--accept-spec", reason])
+            .expect_err("refused");
+        assert!(err.to_string().contains("accept-spec reason"), "{err}");
+    }
+    let status = fx.run(&["status"]).expect("status");
+    assert!(!status.contains("demo"), "{status}");
+}
+
+#[test]
+fn accept_spec_on_a_refused_risky_spec_creates_the_job_and_prints_the_warning() {
+    let fx = Fixture::with_risk_path("src-tauri/**");
+    let plans = plans_folder(&fx, 1, 1);
+    let risky = std::fs::read_to_string(plans.join("plan-01-x.md"))
+        .expect("plan")
+        .replace("`a.rs`", "`src-tauri/src/lib.rs`");
+    std::fs::write(plans.join("plan-01-x.md"), risky).expect("plan");
+    let spec = SPEC.replace("Decided by: user", "Decided by: call");
+    std::fs::write(plans.join("spec.md"), spec).expect("spec");
+    let dir = plans.to_str().expect("utf8");
+    let out = fx
+        .run(&[
+            "new",
+            "demo",
+            "f",
+            "--plans",
+            dir,
+            "--accept-spec",
+            "checked by hand",
+        ])
+        .expect("created");
+    assert!(
+        out.contains("warning: spec accepted by the user: checked by hand"),
+        "{out}"
+    );
 }
