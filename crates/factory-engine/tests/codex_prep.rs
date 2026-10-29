@@ -383,3 +383,15 @@ fn provider_sync_runs_once_per_engine() {
     fresh.sync_provider().expect("fresh sync");
     assert_eq!(fx.job().task_session, None);
 }
+
+#[test]
+fn codex_builders_get_no_simplify_line() {
+    let fx = codex(committing_fixture());
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder spec");
+    assert!(!spec.prompt.contains("simplify"), "{}", spec.prompt);
+}

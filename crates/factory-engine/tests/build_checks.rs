@@ -2655,3 +2655,53 @@ fn only_task_builders_get_a_session_hook() {
         assert!(specs.iter().all(|s| s.on_session.is_none()), "{role}");
     }
 }
+
+const SIMPLIFY: &str = "invoke the `simplify` skill";
+
+#[test]
+fn the_simplify_line_reaches_new_task_builders() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let specs = runner.specs_for("builder");
+    assert_eq!(specs.len(), 2);
+    for spec in specs {
+        assert!(spec.prompt.contains(SIMPLIFY), "{}", spec.prompt);
+    }
+    // A plan without task headings gets one whole-plan builder, which gets the line too.
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.last_spec_for("builder").expect("spec");
+    assert!(spec.prompt.contains(SIMPLIFY), "{}", spec.prompt);
+}
+
+#[test]
+fn builder_simplify_off_drops_the_line() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_simplify = false;
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let specs = runner.specs_for("builder");
+    assert_eq!(specs.len(), 2);
+    for spec in specs {
+        assert!(!spec.prompt.contains("simplify"), "{}", spec.prompt);
+    }
+}
+
+#[test]
+fn a_fix_round_prompt_has_no_simplify_line() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    start_fix_round(&fx);
+    e.build_stage().expect("fix round");
+    let spec = runner.last_spec_for("builder").expect("spec");
+    assert!(spec.resume.is_some());
+    assert!(!spec.prompt.contains("simplify"), "{}", spec.prompt);
+}

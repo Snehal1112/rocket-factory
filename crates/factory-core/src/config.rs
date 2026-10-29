@@ -62,6 +62,8 @@ pub struct Config {
     pub commit_batch: bool,
     /// Give each task builder only its own task instead of the whole plan and spec.
     pub builder_excerpt: bool,
+    /// Ask each new-task builder to run the `simplify` skill on its changes. Claude runs only.
+    pub builder_simplify: bool,
     /// After a merge, file the follow-up tickets and close the parent tickets. Off by default.
     pub tickets_on_merge: bool,
     /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
@@ -146,6 +148,7 @@ impl Default for Config {
             commit_budget_weighted: 60_000,
             commit_batch: true,
             builder_excerpt: true,
+            builder_simplify: true,
             tickets_on_merge: false,
             kb_path: None,
             kb_model: "sonnet".to_string(),
@@ -734,6 +737,13 @@ mod tests {
             .expect("parse");
         assert!(!parsed.builder_carry_session);
         assert_eq!(parsed.builder_carry_max_ctx, 60_000);
+    }
+
+    #[test]
+    fn builder_simplify_is_on_by_default() {
+        assert!(Config::default().builder_simplify);
+        let off = Config::parse("builder_simplify = false").expect("parse");
+        assert!(!off.builder_simplify);
     }
 
     #[test]

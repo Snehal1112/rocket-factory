@@ -516,3 +516,20 @@ fn task_start_title_is_one_line_and_capped() {
     assert!(!title.contains('\n'));
     assert!(title.chars().count() <= 300, "{}", title.len());
 }
+
+#[test]
+fn a_carried_task_prompt_has_the_simplify_line() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_carry_session = true;
+    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let spec = runner.inner.specs_for("builder")[1].clone();
+    assert!(spec.resume.is_some());
+    assert!(
+        spec.prompt.contains("invoke the `simplify` skill"),
+        "{}",
+        spec.prompt
+    );
+}

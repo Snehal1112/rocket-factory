@@ -26,6 +26,10 @@ pub const REVIEWER_MAX_TURNS: u32 = 40;
 /// The tools a builder run may use. They are every tool the builder agent files tell it to use.
 pub const BUILDER_TOOLS: &str = "Bash,Read,Edit,Write,Grep,Glob,Skill,Agent";
 
+/// Asks a new-task builder for one `simplify` pass, kept inside its own task.
+pub(crate) const SIMPLIFY_LINE: &str = "After your checks pass, invoke the `simplify` skill on your uncommitted changes. \
+     Run it inline without helper agents, apply only fixes inside the files of this task, then run the checks again.\n";
+
 /// Keeps a builder that loads subagent-driven-development from acting as its controller and reviewing per task.
 const NOT_CONTROLLER: &str =
     "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";
@@ -133,6 +137,15 @@ impl Engine<'_> {
         }
     }
 
+    /// The simplify sentence of a new-task builder prompt. Empty when `builder_simplify` is off or the CLI is not Claude.
+    fn simplify_line(&self) -> &'static str {
+        if self.config.builder_simplify && self.config.agent_cli() == "claude" {
+            SIMPLIFY_LINE
+        } else {
+            ""
+        }
+    }
+
     /// The prompt line that names the job's spec, or nothing when the job has none.
     fn spec_line(&self) -> String {
         let spec_file = self.job_dir.join("spec.md");
@@ -190,10 +203,11 @@ impl Engine<'_> {
             format!(
                 "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
                  {read} Never edit the plan.\n{spec_line}\
-                 {rules}{kb}",
+                 {rules}{simplify}{kb}",
                 branch = job.branch,
                 read = self.read_line(false),
                 rules = self.rules_line(),
+                simplify = self.simplify_line(),
                 kb = self.kb_line(),
             )
         } else {
@@ -202,13 +216,14 @@ impl Engine<'_> {
              {read} Never edit the plan.\n{spec_line}\
              Follow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), task by task. {NOT_CONTROLLER} \
              Write the failing test first, then the code, then run the checks.\n\
-             {rules}\
+             {rules}{simplify}\
              Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              {kb}Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.",
             branch = job.branch,
             read = self.read_line(false),
             rules = self.rules_line(),
+            simplify = self.simplify_line(),
             kb = self.kb_line(),
             )
         };
@@ -294,12 +309,13 @@ impl Engine<'_> {
                  {read} Never edit the plan.\n{spec_line}{excerpt}\
                  Base commit: {base}. Current tip: {tip}.\n{done}\n\
                  Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
-                 {rules}\
+                 {rules}{simplify}\
                  Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
                  {kb}",
                 branch = job.branch,
                 read = self.read_line(!excerpt.is_empty()),
                 rules = self.rules_line(),
+                simplify = self.simplify_line(),
                 kb = self.kb_line(),
                 n = task.n,
                 title = task.title,
@@ -312,7 +328,7 @@ impl Engine<'_> {
              Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
              Follow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md) for this task. {NOT_CONTROLLER} \
              Write the failing test first, then the code, then run the checks the task names.\n\
-             {rules}\
+             {rules}{simplify}\
              Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
@@ -320,6 +336,7 @@ impl Engine<'_> {
             branch = job.branch,
             read = self.read_line(!excerpt.is_empty()),
             rules = self.rules_line(),
+            simplify = self.simplify_line(),
             kb = self.kb_line(),
             n = task.n,
             title = task.title,
@@ -375,7 +392,8 @@ impl Engine<'_> {
         let prompt = format!(
             "Task {prev} is done and committed as {sha}. Base {base7}, current tip {tip7}. \
              The driver now gives you Task {n} in this same session; this replaces the earlier line that later tasks belong to other agents. \
-             Do only Task {n}: {title}. Do not redo or rework earlier tasks.\n{your_task}\n",
+             Do only Task {n}: {title}. Do not redo or rework earlier tasks.\n{your_task}\n{simplify}",
+            simplify = self.simplify_line(),
             prev = task.n.saturating_sub(1),
             sha = crate::ports::short_sha(tip),
             base7 = crate::ports::short_sha(base),

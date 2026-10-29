@@ -60,6 +60,7 @@ const GROUPS: &[(&str, &[Key])] = &[
         "Builder and reviewer prompts.",
         &[
             ("builder_excerpt", None),
+            ("builder_simplify", None),
             ("builder_carry_session", None),
             ("builder_carry_max_ctx", None),
             ("read_first", None),
