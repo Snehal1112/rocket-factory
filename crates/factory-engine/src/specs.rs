@@ -146,6 +146,16 @@ impl Engine<'_> {
         }
     }
 
+    /// The simplify sentence of a carried task. It asks again, since the session already ran simplify for an earlier task.
+    fn carried_simplify_line(&self, n: u32) -> String {
+        match self.simplify_line() {
+            "" => String::new(),
+            line => format!(
+                "Run the `simplify` skill again for Task {n}, even if you ran it for an earlier task. {line}"
+            ),
+        }
+    }
+
     /// The prompt line that names the job's spec, or nothing when the job has none.
     fn spec_line(&self) -> String {
         let spec_file = self.job_dir.join("spec.md");
@@ -386,14 +396,14 @@ impl Engine<'_> {
     ) -> AgentSpec {
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
         let your_task = match task_section(&plan, task.n) {
-            Some(section) => format!("--- your task ---\n{section}"),
+            Some(section) => format!("--- your task ---\n{section}\n--- end of task ---"),
             None => format!("Your task is in the plan at {}.", self.plan_file.display()),
         };
         let prompt = format!(
             "Task {prev} is done and committed as {sha}. Base {base7}, current tip {tip7}. \
              The driver now gives you Task {n} in this same session; this replaces the earlier line that later tasks belong to other agents. \
              Do only Task {n}: {title}. Do not redo or rework earlier tasks.\n{your_task}\n{simplify}",
-            simplify = self.simplify_line(),
+            simplify = self.carried_simplify_line(task.n),
             prev = task.n.saturating_sub(1),
             sha = crate::ports::short_sha(tip),
             base7 = crate::ports::short_sha(base),

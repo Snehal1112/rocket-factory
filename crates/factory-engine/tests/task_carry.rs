@@ -533,3 +533,36 @@ fn a_carried_task_prompt_has_the_simplify_line() {
         spec.prompt
     );
 }
+
+#[test]
+fn the_carried_prompt_closes_the_task_before_asking_for_simplify_again() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_carry_session = true;
+    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let prompt = runner.inner.specs_for("builder")[1].prompt.clone();
+    let end = prompt.find("--- end of task ---\n").expect("end marker");
+    let again = prompt
+        .find("Run the `simplify` skill again for Task 2, even if you ran it for an earlier task.")
+        .expect("again line");
+    let simplify = prompt
+        .find("invoke the `simplify` skill")
+        .expect("simplify line");
+    assert!(end < again && again < simplify, "{prompt}");
+}
+
+#[test]
+fn the_carried_prompt_has_no_again_line_with_simplify_off() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_carry_session = true;
+    fx.config.builder_simplify = false;
+    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let prompt = runner.inner.specs_for("builder")[1].prompt.clone();
+    assert!(prompt.contains("--- end of task ---\n"), "{prompt}");
+    assert!(!prompt.contains("simplify"), "{prompt}");
+}
