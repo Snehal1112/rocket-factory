@@ -78,12 +78,14 @@ impl Engine<'_> {
         let fixing = job.round > 1 || self.job_dir.join("rework-note.md").exists();
         // A fix round or rework on a model other than the stored session's starts a fresh session.
         let escalated = !fresh && fixing && needs_fresh_session(&job);
-        // A fix round or rework that would resume a cold, large session starts a fresh session too.
-        let cold = if !fresh && !escalated && fixing && job.session_id.is_some() {
+        // A fix round or rework that would resume a cold, large session starts a fresh session too. The idle
+        // limit is the Anthropic cache TTL, so Codex sessions always resume.
+        let codex = self.config.agent_cli() == "codex";
+        let cold = if !fresh && !escalated && !codex && fixing && job.session_id.is_some() {
             cold_session(
                 job.builder_last.as_ref(),
                 carry_idle_limit(self.config.cache_ttl.as_deref()),
-                u64::from(self.config.fix_fresh_over_ctx),
+                self.config.fix_fresh_over_ctx,
                 now().max(0.0) as u64,
             )
         } else {

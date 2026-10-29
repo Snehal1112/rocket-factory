@@ -124,7 +124,7 @@ pub struct Config {
     /// The largest end-of-task context, in tokens, that may be carried to the next task.
     pub builder_carry_max_ctx: u64,
     /// A fix round starts a fresh builder when the last builder's cache expired and its end context was above this.
-    pub fix_fresh_over_ctx: u32,
+    pub fix_fresh_over_ctx: u64,
     /// Claude Code plugins builder runs load, by name or `name@marketplace`. Every other plugin is off.
     pub builder_plugins: Vec<String>,
     /// Claude Code plugins reviewer runs load. Every other plugin is off.

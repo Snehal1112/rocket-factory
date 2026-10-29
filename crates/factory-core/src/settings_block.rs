@@ -376,7 +376,12 @@ mod tests {
         assert!(!out.contains("# budget_weighted"), "{out}");
         let fix_rounds_lines = out
             .lines()
-            .filter(|l| l.trim_start_matches("# ").starts_with("fix_rounds"))
+            .filter(|l| {
+                l.trim_start()
+                    .trim_start_matches('#')
+                    .trim_start()
+                    .starts_with("fix_rounds")
+            })
             .count();
         assert_eq!(fix_rounds_lines, 1, "{out}");
         assert!(!out.contains("# checks"), "{out}");

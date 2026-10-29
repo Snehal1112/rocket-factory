@@ -1,7 +1,7 @@
 mod common;
 
 use common::{committing_fixture, scripted_auto, Effect, Fixture, Tagged};
-use factory_core::{Board, CheckRule};
+use factory_core::{AgentFile, Board, BuilderLast, CheckRule};
 
 fn append_effect() -> Effect {
     Box::new(|spec| {
@@ -66,7 +66,7 @@ fn an_idle_large_session_gets_a_fresh_fix_builder() {
     let ledger = fx.ledger();
     let ruling = ledger
         .lines()
-        .find(|l| l.contains("fresh fix builder (idle 10"))
+        .find(|l| l.contains("fresh fix builder (idle "))
         .unwrap_or_else(|| panic!("{ledger}"));
     assert!(
         ruling.ends_with("s over 240s, context 150000 over 60000)"),
@@ -146,6 +146,56 @@ fn a_cold_rework_gets_a_fresh_fix_builder() {
     assert!(spec.prompt.contains("rework-note.md"), "{}", spec.prompt);
     assert!(
         fx.ledger().contains("fresh fix builder (idle "),
+        "{}",
+        fx.ledger()
+    );
+}
+
+/// Codex runs need the agent files in the prompt.
+fn codex_files() -> Vec<AgentFile> {
+    ["builder", "committer"]
+        .iter()
+        .map(|n| AgentFile {
+            name: format!("factory-{n}.md"),
+            content: format!("---\nname: factory-{n}\n---\nBODY {n}\n"),
+        })
+        .collect()
+}
+
+#[test]
+fn a_cold_codex_fix_round_still_resumes() {
+    let mut fx = committing_fixture();
+    fx.config.agent_cli = Some("codex".to_string());
+    fx.config.escalation_model = None;
+    let first = Tagged::new(scripted_auto(vec![append_effect()]), 150_000);
+    fx.engine(&first)
+        .with_agent_files(codex_files())
+        .build_stage()
+        .expect("build");
+    // The fake Codex run reports no session, so the last builder is recorded by hand.
+    let session = "codex-thread".to_string();
+    let mut board = Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.round = 2;
+    job.builder_id = Some(session.clone());
+    job.builder_last = Some(BuilderLast {
+        task: 0,
+        id: session.clone(),
+        ended_at: now() - 1_000,
+        end_ctx: 150_000,
+    });
+    board.save(&fx.board_path).expect("save");
+    std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
+    let runner = Tagged::new(scripted_auto(vec![append_effect()]), 20_000);
+    fx.engine(&runner)
+        .with_agent_files(codex_files())
+        .build_stage()
+        .expect("build");
+    let spec = runner.inner.last_spec_for("builder").expect("builder spec");
+    // The idle limit is the Anthropic cache TTL, so it does not apply to Codex.
+    assert_eq!(spec.resume, Some(session));
+    assert!(
+        !fx.ledger().contains("fresh fix builder"),
         "{}",
         fx.ledger()
     );
