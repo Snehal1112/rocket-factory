@@ -32,6 +32,7 @@ mod rework;
 mod runloop;
 mod scope;
 mod series;
+mod spec_check;
 mod specs;
 mod store;
 mod sync;
@@ -89,6 +90,7 @@ pub use rework::ReworkKind;
 pub use runloop::{create_job, create_job_with_spec, job_span, run_job, run_series, RunEnd};
 pub use scope::scope_violation;
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
+pub use spec_check::{plan_file_paths, risky_without_user_decision, SpecRefusal};
 pub use specs::{
     ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS, RULES_VERSION,
 };
@@ -124,6 +126,9 @@ pub enum EngineError {
     ProjectBusy(String),
     #[error("needs consent: this job is estimated at {estimate} weighted tokens and the budget is {budget}; raise budget_weighted in project.toml or pass --accept-over-budget")]
     NeedsConsent { estimate: u64, budget: u64 },
+    /// `factory new` refused the spec, so no job exists.
+    #[error("{0}")]
+    SpecRefused(SpecRefusal),
 }
 
 /// What a stage did to the job. The caller chains stages by the new board stage.

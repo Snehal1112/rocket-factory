@@ -352,6 +352,20 @@ pub(crate) fn validate_series(
             }
         })?;
         check_spec(&text, &spec.display().to_string())?;
+        // A spec that touches risky paths needs a decision the user answered.
+        let mut plan_texts: Vec<String> = Vec::new();
+        for plan in &series.plans {
+            plan_texts.push(std::fs::read_to_string(&plan.path).map_err(|e| {
+                EngineError::Msg(format!("cannot read {}: {e}", plan.path.display()))
+            })?);
+        }
+        if let Some(reason) =
+            crate::spec_check::risky_without_user_decision(&text, &plan_texts, driver.config())
+        {
+            return Err(EngineError::SpecRefused(
+                crate::spec_check::SpecRefusal::NoUserDecision(reason),
+            ));
+        }
         spec_text = Some(text);
     }
     Ok(Validated {

@@ -144,3 +144,25 @@ fn binary_prints_the_consent_line_bare_and_exits_non_zero() {
     assert!(!output.status.success());
     assert!(output.status.code().is_some_and(|c| c != 0));
 }
+
+#[test]
+fn new_refuses_a_risky_spec_without_a_user_decision() {
+    let fx = Fixture::with_risk_path("src-tauri/**");
+    let plans = plans_folder(&fx, 1, 1);
+    let risky = std::fs::read_to_string(plans.join("plan-01-x.md"))
+        .expect("plan")
+        .replace("`a.rs`", "`src-tauri/src/lib.rs:12-40`");
+    std::fs::write(plans.join("plan-01-x.md"), risky).expect("plan");
+    let spec = SPEC.replace("Decided by: user", "Decided by: call");
+    std::fs::write(plans.join("spec.md"), spec).expect("spec");
+    let err = fx
+        .run(&["new", "demo", "f", "--plans", plans.to_str().expect("utf8")])
+        .expect_err("refused");
+    assert!(
+        err.to_string()
+            .contains("no decision in it was answered by the user"),
+        "{err}"
+    );
+    let status = fx.run(&["status"]).expect("status");
+    assert!(!status.contains("demo"), "{status}");
+}
