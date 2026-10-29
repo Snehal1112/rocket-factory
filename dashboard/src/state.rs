@@ -378,6 +378,7 @@ mod tests {
             estimate: None,
             spec_warning: None,
             provider: None,
+            last_review: None,
         }
     }
 

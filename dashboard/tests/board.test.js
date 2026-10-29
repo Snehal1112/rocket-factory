@@ -100,7 +100,7 @@ test("renderCard shows id, slug, date, branch, round and age", () => {
   assert.match(html, /fix-import/);
   assert.match(html, /2026-10-13/);
   assert.match(html, /factory\/001-fix-import/);
-  assert.match(html, /round 1\/2/);
+  assert.match(html, /round 1</);
   assert.match(html, /1m in stage/);
 });
 
@@ -485,11 +485,32 @@ test("a needs-human card without a review verdict says so and offers approve --w
 });
 
 test("a needs-human card with a review verdict keeps the plain approve and no warning", () => {
-  for (const code of ["pass", "changes"]) {
-    const card = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "r", reviews: { code } }));
-    assert.doesNotMatch(card, /The review has not run/);
-    assert.match(card, /data-copy="factory approve 003"/);
-  }
+  const card = board.renderCard(makeJob({ id: "003", stage: "needs-human", reason: "r", reviews: { code: "pass" } }));
+  assert.doesNotMatch(card, /The review has not run/);
+  assert.doesNotMatch(card, /asked for changes/);
+  assert.match(card, /data-copy="factory approve 003"/);
+});
+
+test("a needs-human card with open changes offers approve --waive", () => {
+  const last_review = { round: 2, verdict: "changes", blockers: 3, file: "review-2.md" };
+  const job = makeJob({ id: "003", stage: "needs-human", reason: "r", reviews: { code: "changes" }, last_review });
+  assert.equal(board.openChanges(job), true);
+  assert.equal(board.openChanges(makeJob({ last_review: { verdict: "approve" } })), false);
+  assert.equal(board.openChanges(makeJob({})), false);
+  const card = board.renderCard(job);
+  assert.match(card, /data-copy="factory approve 003 --waive &quot;&lt;reason&gt;&quot;"/);
+  assert.match(card, /The review asked for changes \(3 blockers\)\./);
+  assert.doesNotMatch(card, /--without-review/);
+});
+
+test("round pips follow the round", () => {
+  const card = board.renderCard(makeJob({ round: 3 }));
+  assert.equal((card.match(/class="pip[ "]/g) || []).length, 3);
+  assert.equal((card.match(/pip pip-on/g) || []).length, 3);
+  assert.match(card, /round 3</);
+  const none = board.renderCard(makeJob({ round: 0 }));
+  assert.equal((none.match(/class="pip[ "]/g) || []).length, 2);
+  assert.equal((board.renderCard(makeJob({ round: 9 })).match(/class="pip[ "]/g) || []).length, 6);
 });
 
 test("needs-human cards and the summary use copy chips for approve, rework and cancel", () => {

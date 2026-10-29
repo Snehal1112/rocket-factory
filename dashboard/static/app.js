@@ -449,16 +449,19 @@
     if (mode !== "home") return;
     const path = FactoryProjects.jobPathFor(project, id, kind);
     if (!path) return;
-    if (kind === "approve") {
+    const waive = kind === "approve" && button && button.getAttribute("data-act-waive") === "1";
+    if (kind === "approve" && !waive) {
       runWrite(button, () => postApi(path), () => `Approved job ${id}`);
       return;
     }
-    if (kind !== "rework" && kind !== "cancel") return;
-    actKind = kind;
+    if (kind !== "rework" && kind !== "cancel" && !waive) return;
+    actKind = waive ? "waive" : kind;
     actJob = id;
     actProject = project;
-    byId("act-title").textContent = kind === "rework" ? `Rework job ${id}` : `Cancel job ${id}`;
-    byId("act-note-label").firstChild.textContent = kind === "rework" ? "Note for the builder " : "Reason (optional) ";
+    const titles = { rework: `Rework job ${id}`, cancel: `Cancel job ${id}`, waive: `Approve job ${id} with open blockers` };
+    const labels = { rework: "Note for the builder ", cancel: "Reason (optional) ", waive: "Why merge with open blockers? " };
+    byId("act-title").textContent = titles[actKind];
+    byId("act-note-label").firstChild.textContent = labels[actKind];
     byId("act-force-label").hidden = kind !== "cancel";
     byId("act-note").value = "";
     byId("act-force").checked = false;
@@ -471,6 +474,7 @@
     const note = byId("act-note").value;
     let body;
     if (actKind === "rework") body = FactoryProjects.buildReworkBody(note);
+    else if (actKind === "waive") body = FactoryProjects.buildWaiveBody(note);
     else body = FactoryProjects.buildCancelBody(note, byId("act-force").checked);
     if (body.error) {
       showBanner(body.error);
@@ -478,9 +482,10 @@
     }
     const kind = actKind;
     const id = actJob;
-    const path = FactoryProjects.jobPathFor(actProject, id, kind);
+    const path = FactoryProjects.jobPathFor(actProject, id, kind === "waive" ? "approve" : kind);
     if (!path) return;
-    const ok = await runWrite(byId("act-submit"), () => postApi(path, body), () => (kind === "rework" ? `Sent job ${id} back` : `Cancelled job ${id}`));
+    const done = { rework: `Sent job ${id} back`, cancel: `Cancelled job ${id}`, waive: `Approved job ${id} with a waiver` };
+    const ok = await runWrite(byId("act-submit"), () => postApi(path, body), () => done[kind]);
     if (ok) actDialog.close();
   });
 
