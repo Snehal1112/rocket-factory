@@ -328,7 +328,7 @@ fn the_slim_reviewer_prompt_is_shorter_than_the_full_one() {
     assert!(slim.len() < full.len(), "{} vs {}", slim.len(), full.len());
 }
 
-const GOLDEN_FIX_FRESH: &str = "You are the builder in a software factory, picking up a fix round in a fresh session. You are on branch `factory/001-demo`; the job's work so far is the diff from <SHA> to <SHA> (run `git diff <SHA>..<SHA>` to see it). The plan is at <TMP>/job/plan.md. Fix only the problems listed in <TMP>/job/changes-r3.md. Follow `superpowers:receiving-code-review` for the findings. Run the relevant checks. Do not run `git add` or `git commit`; the driver commits for you. Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line.";
+const GOLDEN_FIX_FRESH: &str = "You are the builder in a software factory, picking up a fix round in a fresh session. You are on branch `factory/001-demo`; the job's work so far is the diff from <SHA> to <SHA> (run `git diff <SHA>..<SHA>` to see it). Read the plan at <TMP>/job/plan.md. Never edit the plan.\nFix only the problems listed in <TMP>/job/changes-r3.md. Follow `superpowers:receiving-code-review` for the findings. Run the relevant checks. Do not run `git add` or `git commit`; the driver commits for you. Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line.";
 
 #[test]
 fn the_fresh_fix_prompt_matches_golden_text() {

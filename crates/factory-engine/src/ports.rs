@@ -281,17 +281,26 @@ impl Engine<'_> {
             self.provider_synced.set(true);
             return Ok(());
         }
-        let switched = stored.as_deref().unwrap_or("claude") != want;
+        let from = stored.as_deref().unwrap_or("claude").to_string();
+        let switched = from != want;
+        let mut cleared = None;
         self.update(|j| {
             if switched {
                 j.task_session = None;
                 j.builder_id = None;
                 j.builder_session_model = None;
                 j.builder_last = None;
+                // The escalated model names the old provider's model, so it cannot run on the new one.
+                cleared = j.escalated_model.take();
             }
             j.provider = Some(want.clone());
             Ok(())
         })?;
+        if let Some(model) = cleared {
+            self.ruling(&format!(
+                "provider switched from {from} to {want}, cleared the escalated builder model {model}"
+            ))?;
+        }
         self.provider_synced.set(true);
         Ok(())
     }

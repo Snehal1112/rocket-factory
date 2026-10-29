@@ -15,7 +15,8 @@ pub(crate) fn escalation_for(
     if let Some(model) = already {
         return Some(model.to_string());
     }
-    let model = escalation_model?;
+    // The stored model is trimmed, so it matches the trimmed model the builder session records.
+    let model = escalation_model?.trim();
     (fix_rounds_spent >= after).then(|| model.to_string())
 }
 

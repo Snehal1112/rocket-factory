@@ -466,8 +466,8 @@ impl Engine<'_> {
         spec
     }
 
-    /// The spec of a fix round builder in a fresh session, used when the round runs on a stronger model.
-    /// A resumed session could not reuse the cheaper model's prompt cache, so the builder starts anew.
+    /// The spec of a fix round builder in a fresh session, used when the round is escalated or the session is cold.
+    /// A fresh session has none of the first prompt's context, so it gets the read, spec, rules and KB lines again.
     pub(crate) fn builder_fix_fresh_spec(
         &self,
         job: &JobView,
@@ -479,14 +479,17 @@ impl Engine<'_> {
         let prompt = format!(
             "You are the builder in a software factory, picking up a fix round in a fresh session. \
              You are on branch `{branch}`; the job's work so far is the diff from {base} to {head} \
-             (run `git diff {base}..{head}` to see it). The plan is at {plan}. \
-             Fix only the problems listed in {findings}. \
+             (run `git diff {base}..{head}` to see it). {read} Never edit the plan.\n{spec_line}\
+             {rules}{kb}Fix only the problems listed in {findings}. \
              Follow `superpowers:receiving-code-review` for the findings. \
              Run the relevant checks{hints}. \
              Do not run `git add` or `git commit`; the driver commits for you. \
              Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line.",
             branch = job.branch,
-            plan = self.plan_file.display(),
+            read = self.read_line(false),
+            spec_line = self.spec_line(),
+            rules = self.rules_line(),
+            kb = self.kb_line(),
             findings = findings.display(),
             hints = self.check_hints_text(),
         );

@@ -192,6 +192,9 @@ fn a_rework_note_wins_in_an_escalated_round() {
         .prompt;
     assert!(prompt.contains("rework-note.md"), "{prompt}");
     assert!(!prompt.contains("changes-r3.md"), "{prompt}");
+    let spec = runner.last_spec_for("builder").expect("builder spec");
+    assert_eq!(spec.model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(spec.resume, None);
 }
 
 #[test]
@@ -222,4 +225,91 @@ fn a_later_escalated_round_resumes_the_strong_session() {
     let spec = fourth.last_spec_for("builder").expect("builder spec");
     assert!(spec.resume.is_some(), "{spec:?}");
     assert_eq!(spec.model.as_deref(), Some("claude-opus-5-5"));
+}
+
+#[test]
+fn the_fresh_fix_prompt_carries_the_project_rules() {
+    let mut fx = committing_fixture();
+    fx.config.read_first = vec!["CLAUDE.md".into()];
+    fx.config.builder_rules = vec!["Run cargo check -j4.".into()];
+    let kb = fx.tmp.path().join("kb");
+    std::fs::create_dir_all(&kb).expect("mkdir kb");
+    fx.config.kb_path = Some(kb.to_string_lossy().into_owned());
+    std::fs::write(fx.job_dir.join("spec.md"), "# Spec\n").expect("spec");
+    reach_round_three(&mut fx);
+    let runner = build_round(&fx);
+    let spec = runner.last_spec_for("builder").expect("builder spec");
+    assert_eq!(spec.resume, None);
+    let prompt = spec.prompt;
+    assert!(prompt.contains("Rules: Run cargo check -j4."), "{prompt}");
+    assert!(prompt.contains("Read CLAUDE.md"), "{prompt}");
+    assert!(prompt.contains("Knowledge base: "), "{prompt}");
+    assert!(prompt.contains("spec.md"), "{prompt}");
+}
+
+#[test]
+fn a_provider_switch_clears_the_escalated_model() {
+    let mut fx = committing_fixture();
+    reach_round_three(&mut fx);
+    fx.config.agent_cli = Some("codex".to_string());
+    let runner = scripted_auto(vec![]);
+    fx.engine(&runner).sync_provider().expect("sync");
+    assert_eq!(fx.job().escalated_model, None);
+    assert!(
+        fx.ledger()
+            .contains("provider switched from claude to codex, cleared the escalated builder model claude-opus-5-5"),
+        "{}",
+        fx.ledger()
+    );
+}
+
+#[test]
+fn a_reworked_escalated_job_does_not_resume_the_old_model_session() {
+    let mut fx = committing_fixture();
+    reach_round_three(&mut fx);
+    // `factory rework` resets the round to 0 and writes the note.
+    let mut board = Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").round = 0;
+    board.save(&fx.board_path).expect("save");
+    std::fs::write(fx.job_dir.join("rework-note.md"), "do it differently").expect("note");
+    let runner = build_round(&fx);
+    let spec = runner.last_spec_for("builder").expect("builder spec");
+    assert_eq!(spec.model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(spec.resume, None);
+}
+
+#[test]
+fn a_padded_escalation_model_resumes_the_second_escalated_round() {
+    let mut fx = committing_fixture();
+    fx.config.fix_rounds = 3;
+    fx.config.escalation_model = Some("  claude-opus-5-5  ".to_string());
+    failing_checks(&mut fx);
+    build_round(&fx);
+    build_round(&fx);
+    assert_eq!(fx.job().round, 3);
+    let third = build_round(&fx);
+    assert_eq!(third.last_spec_for("builder").expect("spec").resume, None);
+    assert_eq!(fx.job().round, 4);
+    let fourth = build_round(&fx);
+    let spec = fourth.last_spec_for("builder").expect("builder spec");
+    assert!(spec.resume.is_some(), "{spec:?}");
+    assert_eq!(spec.model.as_deref(), Some("claude-opus-5-5"));
+}
+
+#[test]
+fn an_escalated_round_that_changes_nothing_after_checks_parks_like_a_resumed_one() {
+    let mut fx = committing_fixture();
+    reach_round_three(&mut fx);
+    assert_eq!(fx.job().fix_source.as_deref(), Some("checks"));
+    let runner = scripted_auto(vec![Box::new(|_| "nothing to do".to_string())]);
+    let out = fx.engine(&runner).build_stage().expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder spec");
+    assert_eq!(spec.resume, None);
+    match out {
+        StageOutcome::NeedsHuman(r) => assert!(
+            r.contains("fix round 3 changed nothing and the checks still fail"),
+            "{r}"
+        ),
+        other => panic!("expected needs-human, got {other:?}"),
+    }
 }
