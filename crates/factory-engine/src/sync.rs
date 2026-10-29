@@ -74,7 +74,7 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
             return Ok(SyncOutcome::Parked(format!("after sync: {why}")))
         }
     }
-    let outcome = driver.review(id)?;
+    let outcome = driver.review_sync(id)?;
     match &outcome.decision {
         Decision::AutoMerge => match driver.apply(id, &outcome)? {
             StageOutcome::Advanced(Stage::Approve) => Ok(SyncOutcome::Synced),

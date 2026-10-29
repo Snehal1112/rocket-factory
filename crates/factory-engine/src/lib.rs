@@ -82,7 +82,7 @@ pub use project_lease::{
     ProjectLeaseStatus,
 };
 pub use repo_lock::{lock_repo_merge, MERGE_LOCK_FILE, MERGE_LOCK_WAIT};
-pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
+pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome, ReviewRun};
 pub use rework::ReworkKind;
 pub use runloop::{create_job, create_job_with_spec, job_span, run_job, run_series, RunEnd};
 pub use scope::scope_violation;

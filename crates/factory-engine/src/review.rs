@@ -12,6 +12,13 @@ use crate::specs::ReviewerExtra;
 use crate::tasks::{plan_outline, review_focus};
 use crate::{Engine, EngineError, StageOutcome};
 
+/// Which run a review belongs to. A sync review keeps its own file next to the round review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewRun {
+    Round,
+    Sync,
+}
+
 pub struct ReviewOutcome {
     pub verdict: Verdict,
     pub review_path: PathBuf,
@@ -31,6 +38,11 @@ impl Engine<'_> {
 
     /// Writes the diff files, runs the reviewer once, saves its reply and decides.
     pub fn review_stage(&self) -> Result<ReviewOutcome, EngineError> {
+        self.review_stage_as(ReviewRun::Round)
+    }
+
+    /// Like `review_stage`, and a sync run saves `review-code-r{round}-sync{n}.md` instead.
+    pub fn review_stage_as(&self, run_kind: ReviewRun) -> Result<ReviewOutcome, EngineError> {
         let job = self.job()?;
         let base = job
             .base
@@ -111,7 +123,18 @@ impl Engine<'_> {
             Ok(())
         })?;
         let run = self.run_agent(spec)?;
-        let review_path = self.job_dir.join(format!("review-code-r{}.md", job.round));
+        let review_path = match run_kind {
+            ReviewRun::Round => self.job_dir.join(format!("review-code-r{}.md", job.round)),
+            ReviewRun::Sync => {
+                let prefix = format!("review-code-r{}-sync", job.round);
+                let taken = std::fs::read_dir(&self.job_dir)
+                    .map_err(io_err)?
+                    .filter_map(Result::ok)
+                    .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+                    .count();
+                self.job_dir.join(format!("{prefix}{}.md", taken + 1))
+            }
+        };
         let file = review_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -129,7 +152,14 @@ impl Engine<'_> {
             ReviewState::Changes
         };
         let blockers = open_blockers(&run.result_text).len() as u32;
-        let source = job.fix_source.clone().unwrap_or_else(|| "build".into());
+        let source = match run_kind {
+            ReviewRun::Round => job.fix_source.clone().unwrap_or_else(|| "build".into()),
+            ReviewRun::Sync => "sync".into(),
+        };
+        let label = match run_kind {
+            ReviewRun::Round => "review",
+            ReviewRun::Sync => "sync review",
+        };
         let last = LastReview {
             round: job.round,
             verdict: verdict.as_word().into(),
@@ -143,7 +173,7 @@ impl Engine<'_> {
             Ok(())
         })?;
         self.ruling(&format!(
-            "review round {} ({source}) verdict {verdict:?}, {blockers} blockers",
+            "{label} round {} ({source}) verdict {verdict:?}, {blockers} blockers",
             job.round
         ))?;
 

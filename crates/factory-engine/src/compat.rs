@@ -542,6 +542,9 @@ impl Driver {
     pub fn review(&self, id: &str) -> Result<ReviewOutcome, EngineError> {
         self.with_engine(id, |e| e.review_stage())
     }
+    pub fn review_sync(&self, id: &str) -> Result<ReviewOutcome, EngineError> {
+        self.with_engine(id, |e| e.review_stage_as(crate::ReviewRun::Sync))
+    }
     pub fn apply(&self, id: &str, outcome: &ReviewOutcome) -> Result<StageOutcome, EngineError> {
         self.with_engine(id, |e| e.apply_decision(outcome))
     }
