@@ -1787,6 +1787,8 @@ fn a_broken_workspace_map_still_runs_the_checks() {
     let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
     assert!(md.contains("NOTE workspace map unavailable"), "{md}");
     assert!(md.contains("PASS true"), "{md}");
+    // Without a map the dependents rule plans no command.
+    assert!(!md.contains("cargo test -j4 -p"), "{md}");
 }
 
 #[test]

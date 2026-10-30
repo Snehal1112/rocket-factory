@@ -287,7 +287,8 @@ The marker is `<home>/VERSION`. A binary older than the marker stops with a mess
 `--version` and `install` still work. `factory project show` prints `version: <version>`, and `factoryd status`
 ends with `factoryd <version>` and a `warning:` line when it differs from the `factory` binary.
 
-Boards written before this release have no `last_review`. A job parked there with a CHANGES review approves as before, with no `--waive`. The first review after the upgrade writes the field.
+Boards written before this release have no `last_review`. A job parked there with a CHANGES review approves
+as before, with no `--waive`. The first review after the upgrade writes the field.
 
 ### Refreshing seeded presets
 

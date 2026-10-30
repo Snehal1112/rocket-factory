@@ -1146,7 +1146,7 @@ fn a_round_two_gate_park_shows_the_round_one_review() {
     let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, factory_core::ParkKind::NoChecks);
     assert_eq!(fx.job().round, 2);
-    assert_eq!(rec.parts[0].title, "Review");
+    assert_eq!(titles(&rec), ["Review", "Checks", "Why it stopped"]);
     assert!(
         rec.parts[0].text.starts_with("verdict changes, round 1"),
         "{}",

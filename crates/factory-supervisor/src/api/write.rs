@@ -894,11 +894,7 @@ mod tests {
     #[test]
     fn approve_with_open_changes_needs_a_waive_reason() {
         let f = fx();
-        let job = job_json("001", "001-first").replace(
-            r#""stage":"build""#,
-            r#""stage":"needs-human","last_review":{"round":2,"verdict":"changes","blockers":2,"file":"review-2.md","source":"review"}"#,
-        );
-        write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
+        open_changes_board(&f);
         for body in [&b"{}"[..], br#"{"without_review":true}"#] {
             let r = post(&f, "/projects/good/jobs/1/approve", body);
             assert_eq!(code(&r), (409, "conflict".to_string()));

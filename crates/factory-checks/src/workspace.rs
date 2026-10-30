@@ -204,6 +204,10 @@ mod tests {
     fn load_fails_without_a_manifest() {
         let dir = tempfile::tempdir().expect("tempdir");
         let err = Workspace::load(dir.path()).expect_err("no manifest");
-        assert!(err.to_string().contains("cargo metadata failed"), "{err}");
+        assert!(
+            err.to_string()
+                .starts_with("workspace map: cargo metadata failed: "),
+            "{err}"
+        );
     }
 }

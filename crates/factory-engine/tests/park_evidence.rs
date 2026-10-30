@@ -183,6 +183,8 @@ fn a_job_without_a_plan_names_the_missing_file() {
     factory_engine::run_job(&fx.driver, &job.id).expect("run");
     let job = fx.driver.job(&job.id).expect("job");
     let rec = ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::Other);
+    assert_eq!(rec.parts.len(), 1, "{:?}", rec.parts);
     let part = &rec.parts[0];
     assert_eq!(part.title, "Missing plan");
     assert!(part.text.starts_with("expected "), "{}", part.text);
