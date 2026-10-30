@@ -12,6 +12,7 @@ Start here. Find the question you have, open that one doc. Paths are relative to
 | What can I set in `project.toml`, with defaults and validation? | `reference/project-toml-reference.md` |
 | Which flags does each `factory` and `factoryd` command take? | `reference/factory-admin-manual.md` |
 | How do I cut a release? | `operations/releasing.md` |
+| How do I check a real agent CLI before a release? | `operations/releasing.md` (live smoke run, `scripts/live-smoke.sh`) |
 | How do I register Rocket or RocketVault on another machine? | `operations/rocket-registration.md`, `operations/rocketvault-registration.md` |
 | What is planned next, and why? | `roadmap/roadmap-2026-10-18.md` |
 | Why does factory output need human follow-up fixes? | `roadmap/quality-investigation-2026-10-29.md` |
