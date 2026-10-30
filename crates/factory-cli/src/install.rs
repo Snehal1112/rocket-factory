@@ -1,31 +1,59 @@
 //! `factory install`: writes the global `/factory` slash command and Codex skill.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use factory_agent::installed_plugin_ids;
 pub use factory_core::GLOBAL_COMMAND;
 use factory_core::{
     claude_commands_dir, codex_skills_dir, write_atomic, TOOL_MAP_CLAUDE, TOOL_MAP_CODEX,
 };
 
-use crate::CliError;
+use crate::{plugin, CliError};
 
 const FILE_NAME: &str = "factory.md";
 const SKILL_DIR_NAME: &str = "factory";
 const SKILL_FILE_NAME: &str = "SKILL.md";
 const SKILL_DESCRIPTION: &str = "Run the software factory workflow for a project: brainstorm, plan, then build, check, review, and merge through the factory driver.";
 
+/// The text of the Claude `/factory` command, shared by `factory install` and the plugin.
+pub fn claude_command_text() -> String {
+    GLOBAL_COMMAND.to_string()
+}
+
 /// Installs into `dir` when given, else installs the Claude command and Codex skill under `$HOME`.
 pub fn run(dir: Option<&Path>, force: bool) -> Result<String, CliError> {
+    run_with_claude(dir, force, OsStr::new("claude"))
+}
+
+/// Like `run`, asking `claude_program` which plugins are installed.
+pub fn run_with_claude(
+    dir: Option<&Path>,
+    force: bool,
+    claude_program: &OsStr,
+) -> Result<String, CliError> {
+    let command = claude_command_text();
     if let Some(folder) = dir {
-        return install_file(folder, FILE_NAME, GLOBAL_COMMAND, force);
+        return install_file(folder, FILE_NAME, &command, force);
     }
     let home = user_home()?;
-    let claude = install_file(
-        &claude_commands_dir(&home),
-        FILE_NAME,
-        GLOBAL_COMMAND,
-        force,
-    )?;
+    let commands = claude_commands_dir(&home);
+    let old_command = commands.join(FILE_NAME);
+    let has_plugin = plugin::plugin_installed(&installed_plugin_ids(claude_program));
+    let claude = if has_plugin && !force {
+        let mut line = "skipped Claude command: the factory plugin is installed".to_string();
+        if old_command.exists() {
+            line = format!("{line}\n{}", plugin::duplicate_note(&old_command));
+        }
+        line
+    } else {
+        let line = install_file(&commands, FILE_NAME, &command, force)?;
+        if has_plugin {
+            line
+        } else {
+            format!("{line}\n{}", plugin::install_hint())
+        }
+    };
     let codex_folder = codex_skills_dir(&home).join(SKILL_DIR_NAME);
     let codex_target = codex_folder.join(SKILL_FILE_NAME);
     let skill = codex_skill().map_err(|error| {
@@ -63,14 +91,22 @@ pub fn commands_folder(dir: Option<&Path>) -> Result<PathBuf, CliError> {
     }
 }
 
+/// The home folder when `commands_dir` is the standard `<home>/.claude/commands` path.
+pub fn home_of_standard_commands_dir(commands_dir: &Path) -> Option<&Path> {
+    let home = commands_dir.parent().and_then(Path::parent)?;
+    (claude_commands_dir(home).as_path() == commands_dir).then_some(home)
+}
+
+/// The path of the Claude command file inside a commands folder.
+pub fn command_file(folder: &Path) -> PathBuf {
+    folder.join(FILE_NAME)
+}
+
 /// Updates the Codex skill when the command folder is the standard `~/.claude/commands` path.
 pub fn upgrade_codex_skill(commands_dir: &Path, dry_run: bool) -> Result<Option<String>, CliError> {
-    let Some(home) = commands_dir.parent().and_then(Path::parent) else {
+    let Some(home) = home_of_standard_commands_dir(commands_dir) else {
         return Ok(None);
     };
-    if claude_commands_dir(home).as_path() != commands_dir {
-        return Ok(None);
-    }
     let folder = codex_skills_dir(home).join(SKILL_DIR_NAME);
     match std::fs::metadata(folder.join(SKILL_FILE_NAME)) {
         Ok(_) => {}
@@ -92,7 +128,7 @@ pub fn upgrade_codex_skill(commands_dir: &Path, dry_run: bool) -> Result<Option<
 
 /// Updates one command file in an explicit folder. Kept for callers that manage one integration.
 pub fn upgrade_into(folder: &Path, dry_run: bool) -> Result<String, CliError> {
-    upgrade_file(folder, FILE_NAME, GLOBAL_COMMAND, dry_run)
+    upgrade_file(folder, FILE_NAME, &claude_command_text(), dry_run)
 }
 
 fn user_home() -> Result<PathBuf, CliError> {
@@ -104,7 +140,7 @@ fn user_home() -> Result<PathBuf, CliError> {
 }
 
 fn codex_skill() -> Result<String, CliError> {
-    build_codex_skill(GLOBAL_COMMAND)
+    build_codex_skill(&claude_command_text())
 }
 
 fn build_codex_skill(command: &str) -> Result<String, CliError> {

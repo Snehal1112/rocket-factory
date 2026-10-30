@@ -146,7 +146,7 @@ pub enum Command {
         #[command(subcommand)]
         cmd: PresetsCmd,
     },
-    /// Install the global /factory command for Claude and the factory skill for Codex.
+    /// Fallback install of the /factory command file for Claude and the factory skill for Codex. Prints the plugin commands.
     Install {
         /// The folder to write factory.md into. By default installs for Claude and Codex under $HOME.
         #[arg(long)]
@@ -154,6 +154,11 @@ pub enum Command {
         /// Replace an existing factory.md that differs.
         #[arg(long)]
         force: bool,
+    },
+    /// Maintain the Claude Code plugin files in this repository.
+    Plugin {
+        #[command(subcommand)]
+        cmd: PluginCmd,
     },
     /// Update the /factory command and the unedited presets, report overrides that shadow them, and write the version marker.
     Upgrade {
@@ -199,6 +204,19 @@ pub enum SpecCmd {
     Stage { slug: String, stage: String },
     /// Print the stage and spec file of a draft.
     Resume { slug: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PluginCmd {
+    /// Write the plugin files from the shipped command text, or only verify them with --check.
+    Sync {
+        /// The repository root. Defaults to the current directory.
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Fail when a plugin file differs from the generated text, and write nothing.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -512,6 +530,31 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Tickets { dry_run: false, .. }
+        ));
+    }
+
+    #[test]
+    fn plugin_sync_parses_check() {
+        let cli = Cli::try_parse_from(["factory", "plugin", "sync", "--check"]).expect("parse");
+        assert!(matches!(
+            cli.command,
+            Command::Plugin {
+                cmd: PluginCmd::Sync {
+                    repo: None,
+                    check: true
+                }
+            }
+        ));
+        let cli =
+            Cli::try_parse_from(["factory", "plugin", "sync", "--repo", "/r"]).expect("parse");
+        assert!(matches!(
+            cli.command,
+            Command::Plugin {
+                cmd: PluginCmd::Sync {
+                    repo: Some(_),
+                    check: false
+                }
+            }
         ));
     }
 
