@@ -2,6 +2,7 @@
 
 (function () {
   const POLL_MS = 1000;
+  const VERSION_POLL_MS = 60000;
   let lastState = null;
   let lastOk = null;
   let inFlight = false;
@@ -335,6 +336,26 @@
     showBudget(usage);
   }
 
+  // The versions change only when a binary restarts, so they are read at load, on entering home
+  // mode, and then once a minute. A failed read keeps the last label.
+  async function loadVersion() {
+    let reply;
+    try {
+      const response = await fetch("/api/version", { cache: "no-store" });
+      if (!response.ok) return;
+      reply = await response.json();
+    } catch (error) {
+      return;
+    }
+    const label = FactoryProjects.versionLabel(reply);
+    const el = byId("version");
+    el.hidden = label.text === "";
+    const className = label.warn ? "version version-warn" : "version";
+    if (el.className !== className) el.className = className;
+    setText(el, label.text);
+    if (el.title !== label.title) el.title = label.title;
+  }
+
   function enterHomeMode() {
     mode = "home";
     try {
@@ -342,9 +363,8 @@
     } catch (error) {
       selected = null;
     }
-    document.title = "Software factory";
-    byId("project-suffix").hidden = true;
     byId("newjob").hidden = false;
+    loadVersion();
   }
 
   function selectTab(name) {
@@ -531,4 +551,6 @@
 
   tick();
   setInterval(tick, POLL_MS);
+  loadVersion();
+  setInterval(loadVersion, VERSION_POLL_MS);
 })();

@@ -92,6 +92,7 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
         }
     };
     let spawner = ProcessSpawner::from_env().map_err(|e| e.to_string())?;
+    let spawner_bin = spawner.bin().to_path_buf();
     if let Some(text) = version_check::mismatch(spawner.bin(), FACTORY_VERSION) {
         report_mismatch(&text);
     }
@@ -119,9 +120,11 @@ fn run(home: Home, interval_ms: u64, once: bool) -> Result<(), String> {
         .map_err(|e| format!("listen {:?}: {e}", cfg.listen))?;
     token::ensure(&home).map_err(|e| e.to_string())?;
     let cli = ProcessFactoryCli::from_env().map_err(|e| e.to_string())?;
+    let bin = spawner_bin.clone();
     let deps = ApiDeps {
         now_ms: std::sync::Arc::new(now_ms),
         cli: std::sync::Arc::new(cli),
+        factory_version: std::sync::Arc::new(move || version_check::binary_version(&bin)),
     };
     let api = ApiServer::start(home.clone(), listen, deps).map_err(|e| e.to_string())?;
     println!("api listening on {}", api.addr);

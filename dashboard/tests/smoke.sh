@@ -131,7 +131,8 @@ await "a stopped agent is marked done" '.jobs[0].agents[0] | select(.status=="do
 write_board merged
 await "a merged job has no growing merged duration" '.jobs[0].stage_durations | all(.stage != "merged")'
 
-check "the page is served" bash -c "curl -fs $url/ | grep -q 'Software factory'"
+check "the page is served" bash -c "curl -fs $url/ | grep -q '<title>Rocket Factory</title>'"
+check "/api/version names only the dashboard version" bash -c "curl -fs $url/api/version | grep -Eq '^\{\"dashboard\":\"[0-9]+\.[0-9]+\.[0-9]+[^\"]*\"\}\$'"
 check "board.js and patch.js are served" bash -c "curl -fs $url/board.js | grep -q FactoryBoard && curl -fs $url/patch.js | grep -q FactoryPatch"
 check "the CSP forbids base and form targets" bash -c "curl -sI $url/ | grep -i content-security-policy | grep -q \"base-uri 'none'; form-action 'none'\""
 code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "$url/api/state")"

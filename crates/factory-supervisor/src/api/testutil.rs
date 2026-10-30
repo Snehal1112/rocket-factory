@@ -94,6 +94,7 @@ pub fn deps_with(cli: Arc<FakeCli>) -> ApiDeps {
     ApiDeps {
         now_ms: Arc::new(|| NOW_MS),
         cli,
+        factory_version: Arc::new(|| Ok("9.8.7".to_string())),
     }
 }
 

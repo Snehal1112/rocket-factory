@@ -21,6 +21,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 pub const MAX_BODY: usize = 64 * 1024;
 /// The factory API address used when `--api` is absent.
 pub const DEFAULT_API: &str = "127.0.0.1:8766";
+/// The version of this dashboard build.
+pub const DASHBOARD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Config {
     pub root: PathBuf,
@@ -316,6 +318,7 @@ pub fn route_request(app: &App, request: &Request, port: u16, now: f64) -> Reply
         "/projects.js" => asset("text/javascript; charset=utf-8", PROJECTS_JS),
         "/app.js" => asset("text/javascript; charset=utf-8", APP_JS),
         "/healthz" => text(200, "ok"),
+        "/api/version" => json_reply(200, &serde_json::json!({ "dashboard": DASHBOARD_VERSION })),
         "/api/state" => match &app.mode {
             Mode::Root(project) => state_reply(project, now, None),
             Mode::Home(_) => text(404, "not found"),
@@ -452,6 +455,24 @@ mod tests {
     use std::net::TcpStream;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn root_mode_reports_only_the_dashboard_version() -> TestResult {
+        let (_dir, app) = app_with_board(Some(JOB))?;
+        let request = Request {
+            method: "GET",
+            url: "/api/version",
+            host: Some("127.0.0.1:9"),
+            origin: None,
+            content_type: None,
+            body: &[],
+        };
+        let reply = route_request(&app, &request, 9, 5.0);
+        assert_eq!(reply.status, 200);
+        let json: serde_json::Value = serde_json::from_slice(&reply.body)?;
+        assert_eq!(json, serde_json::json!({ "dashboard": DASHBOARD_VERSION }));
+        Ok(())
+    }
 
     #[test]
     fn warns_only_when_the_factory_folder_is_missing() -> TestResult {
