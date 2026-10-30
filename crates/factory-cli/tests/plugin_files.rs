@@ -117,6 +117,7 @@ fn release_script_syncs_and_adds_plugin_files() {
     let add = line_index(&lines, |l| {
         l.contains("git add") && l.contains("plugins/factory")
     });
+    assert!(lines[sync].contains("--bin factory"), "{}", lines[sync]);
     assert!(sync > bump, "plugin sync must run after the version bump");
     assert!(add > sync, "git add must come after plugin sync");
 }
@@ -126,6 +127,7 @@ fn release_script_gate_checks_plugin_drift() {
     let text = release_script();
     let lines: Vec<&str> = text.lines().collect();
     let check = line_index(&lines, |l| l.contains("plugin sync --check"));
+    assert!(lines[check].contains("--bin factory"), "{}", lines[check]);
     let gate = line_index(&lines, |l| l.contains("CI gate passed"));
     assert!(check < gate);
 }

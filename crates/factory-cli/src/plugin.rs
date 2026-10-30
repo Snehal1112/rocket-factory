@@ -77,6 +77,9 @@ fn generated() -> [(&'static str, String); 2] {
     ]
 }
 
+/// The marketplace file that marks the repository root.
+const MARKETPLACE_REL: &str = ".claude-plugin/marketplace.json";
+
 /// Writes the generated plugin files under `repo` and reports `wrote` or `unchanged` per file.
 pub fn sync(repo: &Path) -> Result<Vec<String>, CliError> {
     let mut lines = Vec::new();
@@ -112,6 +115,12 @@ pub fn run(cmd: &PluginCmd) -> Result<String, CliError> {
                 Some(path) => path.clone(),
                 None => std::env::current_dir()?,
             };
+            if !repo.join(MARKETPLACE_REL).is_file() {
+                return Err(CliError::Refused(format!(
+                    "{} is not the repository root: {MARKETPLACE_REL} is missing; use --repo",
+                    repo.display()
+                )));
+            }
             if *only {
                 check(&repo)?;
                 Ok("plugin files are current".to_string())
@@ -144,6 +153,20 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&text).expect("json");
         assert_eq!(json["version"], "1.2.3");
         assert_eq!(json["author"]["name"], AUTHOR_NAME);
+    }
+
+    #[test]
+    fn run_refuses_a_folder_without_the_marketplace_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for only in [false, true] {
+            let cmd = PluginCmd::Sync {
+                repo: Some(dir.path().to_path_buf()),
+                check: only,
+            };
+            let error = run(&cmd).expect_err("wrong folder must fail");
+            assert!(error.to_string().contains("--repo"), "{error}");
+        }
+        assert!(!dir.path().join("plugins").exists());
     }
 
     #[test]

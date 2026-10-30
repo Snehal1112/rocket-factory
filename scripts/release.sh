@@ -116,7 +116,7 @@ if ! node --test dashboard/tests/*.test.js; then
     echo -e "${RED}Dashboard JS tests failed. Fix them before releasing.${NC}"
     exit 1
 fi
-if ! cargo run -j4 -q -p factory-cli -- plugin sync --check; then
+if ! cargo run -j4 -q -p factory-cli --bin factory -- plugin sync --check; then
     echo -e "${RED}The plugin files drifted. Run 'factory plugin sync' and commit.${NC}"
     exit 1
 fi
@@ -268,7 +268,7 @@ cargo check -j4 --quiet --manifest-path "$DASH_MANIFEST"
 
 # Regenerate the plugin files. This rebuilds with the new CARGO_PKG_VERSION,
 # so plugin.json gets the new version.
-cargo run -j4 -q -p factory-cli -- plugin sync
+cargo run -j4 -q -p factory-cli --bin factory -- plugin sync
 
 git add Cargo.toml Cargo.lock "$DASH_MANIFEST" dashboard/Cargo.lock plugins/factory
 git commit -m "chore: bump version to ${new_tag}"
