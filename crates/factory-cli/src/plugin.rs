@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use factory_core::version::FACTORY_VERSION;
-use factory_core::{plugin_rel_files, write_atomic};
+use factory_core::{plugin_rel_files, write_atomic, MARKETPLACE_REL_FILE};
 
 use crate::cli::PluginCmd;
 use crate::{install, CliError};
@@ -77,9 +77,6 @@ fn generated() -> [(&'static str, String); 2] {
     ]
 }
 
-/// The marketplace file that marks the repository root.
-const MARKETPLACE_REL: &str = ".claude-plugin/marketplace.json";
-
 /// Writes the generated plugin files under `repo` and reports `wrote` or `unchanged` per file.
 pub fn sync(repo: &Path) -> Result<Vec<String>, CliError> {
     let mut lines = Vec::new();
@@ -115,9 +112,9 @@ pub fn run(cmd: &PluginCmd) -> Result<String, CliError> {
                 Some(path) => path.clone(),
                 None => std::env::current_dir()?,
             };
-            if !repo.join(MARKETPLACE_REL).is_file() {
+            if !repo.join(MARKETPLACE_REL_FILE).is_file() {
                 return Err(CliError::Refused(format!(
-                    "{} is not the repository root: {MARKETPLACE_REL} is missing; use --repo",
+                    "{} is not the repository root: {MARKETPLACE_REL_FILE} is missing; use --repo",
                     repo.display()
                 )));
             }
