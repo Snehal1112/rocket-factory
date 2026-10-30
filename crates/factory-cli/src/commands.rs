@@ -669,7 +669,10 @@ fn approve(
     let ruling = if let Some(reason) = waive {
         let review = job.last_review.as_ref();
         let file = review.map_or("", |r| r.file.as_str());
-        let text = std::fs::read_to_string(d.job_dir(&job).join(file)).unwrap_or_default();
+        let text = review
+            .and_then(|r| r.path_in(&d.job_dir(&job)))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default();
         let blockers = factory_engine::waived_blockers(&text);
         let count = blockers.len();
         factory_engine::record_waiver(

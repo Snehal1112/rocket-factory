@@ -31,7 +31,8 @@ impl Engine<'_> {
         let job = self.job()?;
         if let Some(last) = &job.last_review {
             if matches!(last.verdict.as_str(), "changes" | "missing") {
-                if let Ok(text) = std::fs::read_to_string(self.job_dir.join(&last.file)) {
+                let path = last.path_in(&self.job_dir);
+                if let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) {
                     return Ok(text);
                 }
             }

@@ -168,8 +168,11 @@ impl Engine<'_> {
     pub(crate) fn review_part(&self) -> Option<ParkPart> {
         let last = self.job().ok()?.last_review?;
         let head = format!("verdict {}, round {}", last.verdict, last.round);
-        let text = match std::fs::read_to_string(self.job_dir.join(&last.file)) {
-            Ok(reply) if last.verdict == "approve" => {
+        let reply = last
+            .path_in(&self.job_dir)
+            .and_then(|path| std::fs::read_to_string(path).ok());
+        let text = match reply {
+            Some(reply) if last.verdict == "approve" => {
                 let open = open_blockers(&reply);
                 if open.is_empty() {
                     head
@@ -177,8 +180,8 @@ impl Engine<'_> {
                     format!("{head}\n{}", open.join("\n"))
                 }
             }
-            Ok(reply) => format!("{head}\n{}", blocker_lines(&reply)),
-            Err(_) => format!("verdict {}, findings file missing", last.verdict),
+            Some(reply) => format!("{head}\n{}", blocker_lines(&reply)),
+            None => format!("verdict {}, findings file missing", last.verdict),
         };
         Some(ParkPart::new("Review", &last.file, &text))
     }

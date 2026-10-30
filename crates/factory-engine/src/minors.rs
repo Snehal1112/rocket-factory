@@ -39,7 +39,10 @@ pub fn minor_tickets_step(
     let Some(last) = job.last_review.as_ref() else {
         return Ok(skipped("the job has no review".to_string()));
     };
-    let text = std::fs::read_to_string(dir.join(&last.file)).unwrap_or_default();
+    let text = last
+        .path_in(&dir)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default();
     let minors = open_minors(&text);
     if minors.is_empty() {
         return Ok(skipped("the review has no open minor findings".to_string()));
