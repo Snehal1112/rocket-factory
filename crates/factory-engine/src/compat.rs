@@ -72,6 +72,8 @@ pub struct Driver {
     /// How long a merge waits for the repository merge lock.
     merge_lock_wait: Duration,
     agent_files: Vec<factory_core::AgentFile>,
+    /// The user-wide folders Codex lists skills from.
+    codex_skill_roots: Vec<PathBuf>,
     /// How many `ProjectGuard`s are alive. While one is, `run_job` keeps the project lease.
     project_holds: AtomicU32,
     /// How long a lease lasts without a renewal.
@@ -229,6 +231,7 @@ impl Driver {
             lock_wait: DEFAULT_LOCK_WAIT,
             merge_lock_wait: crate::MERGE_LOCK_WAIT,
             agent_files: Vec::new(),
+            codex_skill_roots: Vec::new(),
             project_holds: AtomicU32::new(0),
             lease_ttl: LEASE_TTL_SECS,
             heartbeat: Duration::from_secs(HEARTBEAT_SECS),
@@ -272,6 +275,12 @@ impl Driver {
     /// Sets the agent files every engine of this driver writes into new job worktrees.
     pub fn with_agent_files(mut self, files: Vec<factory_core::AgentFile>) -> Driver {
         self.agent_files = files;
+        self
+    }
+
+    /// Sets the user-wide skill folders every engine of this driver passes to Codex runs.
+    pub fn with_codex_skill_roots(mut self, roots: Vec<PathBuf>) -> Driver {
+        self.codex_skill_roots = roots;
         self
     }
 
@@ -451,7 +460,8 @@ impl Driver {
             config,
             &events,
         )?
-        .with_agent_files(self.agent_files.clone());
+        .with_agent_files(self.agent_files.clone())
+        .with_codex_skill_roots(self.codex_skill_roots.clone());
         crate::run_probe(
             &engine,
             harness,
@@ -484,7 +494,8 @@ impl Driver {
             &events,
         )?
         .with_lock_wait(self.lock_wait)
-        .with_agent_files(self.agent_files.clone());
+        .with_agent_files(self.agent_files.clone())
+        .with_codex_skill_roots(self.codex_skill_roots.clone());
         let engine = if self.layout.commit_context_file.exists() {
             engine.with_commit_context(self.layout.commit_context_file.clone())
         } else {
