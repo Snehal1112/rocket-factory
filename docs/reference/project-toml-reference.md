@@ -54,6 +54,9 @@ Defaults come from `Config::default()` in `factory-core/src/config.rs`. A value 
 | `budget_weighted` | integer | 1000000 | Cap on weighted tokens for the whole job, summed over all runs. The runner kills the agent when the job reaches it and warns at 80%. Above 0. |
 | `diff_cap_lines` | integer | 4000 | Cap on changed lines of the whole job diff. A bigger diff parks as `diff-too-large`. Above 0. |
 | `fix_rounds` | integer | 2 | Fix rounds allowed after a failure. When used up, failing checks park as `checks-failed` and review changes park as `changes-remain`. `0` parks on the first failure. |
+| `risky_fix_rounds` | integer | same as `fix_rounds` | Fix rounds a risky diff may use, for failing checks and for review findings, before it parks. 0 parks a risky diff at its first failing check or CHANGES verdict. |
+| `dependents_cap` | integer | 6 | Most direct dependents a `{dependents}` check command expands to. The rest are skipped, and `checks.md` names them. |
+| `unchecked_paths` | list of globs | `[]` | Paths that no check covers on purpose. They are never reported as uncovered. Doc paths are never reported either. |
 | `stall_minutes` | integer | 10 | Minutes without any stream event before the driver kills the agent. Applies to builder, reviewer, committer, KB and message agents. The check is approximate. |
 
 Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factory-core/src/budget.rs`). When a builder is killed on budget it parks as `builder-stopped`. `budget-stopped` is only used when a reviewed round finds the budget gone.
@@ -131,6 +134,8 @@ The builder also gets deny rules for `Edit` and `Write` on the job folder, so it
 |---|---|---|---|
 | `base_branch` | string | `"main"` | Jobs branch from it and merge into it. Must be a valid git branch name and must not start with `factory/`. |
 | `tickets_on_merge` | bool | false | After a merge, file follow-up tickets and close the parent tickets with `gh`. A failure never changes the merge. |
+| `minor_tickets` | bool | true | After a merge, file one ticket with a checklist of the open `[minor]` findings of the last review. It needs no `tickets_on_merge`, applies to every plan of a series and never changes the merge. |
+| `spec_review` | bool | true | `factory new` runs the read-only spec reviewer on the spec and its plans before any job exists. A `CHANGES` or missing verdict refuses the call, and `--accept-spec "<reason>"` overrides it. The reviews are saved under `<state>/spec-reviews/`. The check for risky paths without a user decision runs whatever this is. |
 | `log_level` | string | `"info"` | Level of the JSON log file `log.jsonl`: `error`, `warn`, `info`, `debug` or `trace`. Any other value is a config error. The environment variable `FACTORY_LOG` (for example `debug` or `factory_engine=debug,info`) overrides it; an invalid value is ignored with a note. |
 | `risk_paths` | string list | 17 built-in globs | Diffs touching these paths stop for a human after review. Replaces the preset list. See "Globs". |
 
@@ -204,7 +209,9 @@ commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
 How it works (`factory-checks/src/plan.rs`):
 
 - Every rule whose `paths` match a changed file applies. It is not first-match.
-- `{crate}` is the folder after the first `crates` segment of a matching path. With several crates the command runs once per crate, in alphabetical order. A command that uses `{crate}` but has no matching crate runs nothing.
+- `{crate}` is the cargo package that owns a matching path, read from `cargo metadata`, so `src-tauri` expands to its package name. If `cargo metadata` fails, it falls back to the folder after the first `crates` segment and `checks.md` says so. With several crates the command runs once per crate, in alphabetical order. A command that uses `{crate}` but has no matching crate runs nothing.
+- `{dependents}` expands to the direct dependents of the changed packages, alphabetically, at most `dependents_cap` of them. The rest are skipped and `checks.md` names them.
+- A changed code path that no rule matches and `unchecked_paths` does not exempt parks the job as `no-checks`, see the gates in `software-factory.md`.
 - Duplicate commands run once.
 - Every command runs, even after a failure. The default timeout is 900 seconds.
 - A failure sends the job back to the builder for a fix round, or parks it when `fix_rounds` is used up.

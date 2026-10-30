@@ -35,8 +35,20 @@ pub enum CliSpawnError {
 }
 
 pub trait FactoryCli: Send + Sync {
-    /// Runs `factory --project <project> <args...>` and waits for it.
+    /// Runs `factory --project <project> <args...>` and waits for it, at most `TIMEOUT`.
     fn run(&self, project: &str, args: &[String]) -> Result<CliOutput, CliSpawnError>;
+
+    /// Like `run`, but waits at most `timeout`. A command that runs an agent, like `new` with its
+    /// spec review, needs longer than the default. Without its own version it is plain `run`.
+    fn run_with_timeout(
+        &self,
+        project: &str,
+        args: &[String],
+        timeout: Duration,
+    ) -> Result<CliOutput, CliSpawnError> {
+        let _ = timeout;
+        self.run(project, args)
+    }
 }
 
 /// Runs the real `factory` binary.
@@ -104,6 +116,15 @@ fn drain<R: Read + Send + 'static>(stream: Option<R>, name: &str) -> Drain<R> {
 
 impl FactoryCli for ProcessFactoryCli {
     fn run(&self, project: &str, args: &[String]) -> Result<CliOutput, CliSpawnError> {
+        self.run_with_timeout(project, args, TIMEOUT)
+    }
+
+    fn run_with_timeout(
+        &self,
+        project: &str,
+        args: &[String],
+        timeout: Duration,
+    ) -> Result<CliOutput, CliSpawnError> {
         let start = |reason: String| CliSpawnError::Start {
             path: self.bin.clone(),
             reason,
@@ -124,11 +145,11 @@ impl FactoryCli for ProcessFactoryCli {
         let status = loop {
             match child.try_wait() {
                 Ok(Some(s)) => break s,
-                Ok(None) if began.elapsed() >= TIMEOUT => {
+                Ok(None) if began.elapsed() >= timeout => {
                     // This child was started here, so stopping it is ours to do.
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(CliSpawnError::Timeout(TIMEOUT.as_secs()));
+                    return Err(CliSpawnError::Timeout(timeout.as_secs()));
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(20)),
                 Err(e) => {

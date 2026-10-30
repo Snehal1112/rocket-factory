@@ -142,6 +142,13 @@ test("buildNoteBody needs a note for rework and trims it", () => {
   assert.equal(typeof projects.buildReworkBody("x".repeat(201)).error, "string");
 });
 
+test("buildWaiveBody refuses empty and multi-line reasons", () => {
+  assert.deepEqual(projects.buildWaiveBody(" known flake "), { waive_reason: "known flake" });
+  assert.equal(typeof projects.buildWaiveBody("").error, "string");
+  assert.equal(typeof projects.buildWaiveBody("a\nb").error, "string");
+  assert.equal(typeof projects.buildWaiveBody("x".repeat(201)).error, "string");
+});
+
 test("buildCancelBody keeps reason and force only when set", () => {
   assert.deepEqual(projects.buildCancelBody("", false), {});
   assert.deepEqual(projects.buildCancelBody(" why ", true), { reason: "why", force: true });

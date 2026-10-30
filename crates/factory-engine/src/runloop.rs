@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use factory_core::{Job, Ledger, SeriesPos, Stage};
+use factory_core::{Job, Ledger, ParkKind, ParkPart, SeriesPos, Stage};
 
 use crate::{
-    merge_stage, now_secs, park, parse_series, today, Driver, EngineError, MergeResult,
+    merge_stage, now_secs, park_with_parts, parse_series, today, Driver, EngineError, MergeResult,
     StageOutcome,
 };
 
@@ -297,6 +297,17 @@ pub(crate) struct Validated {
     pub plan_warnings: Vec<String>,
     /// The checked spec text, when there is a spec.
     pub spec_text: Option<String>,
+    /// The user's reason, when `--accept-spec` overrode a refusal.
+    pub accepted: Option<String>,
+}
+
+/// Records that the user accepted a refused spec, in the job's ledger and its warning.
+pub(crate) fn record_accepted(driver: &Driver, slug: &str, job: Job, reason: &str) -> Job {
+    let text = format!("spec accepted by the user: {reason}");
+    if let Err(err) = driver.ledger(&job).ruling(&text) {
+        note_failure(driver, &job, "spec acceptance", slug, &err.into());
+    }
+    add_warning(driver, slug, job, &text)
 }
 
 /// Parses the chain, lints every plan and checks the spec, all before any job exists.
@@ -305,6 +316,7 @@ pub(crate) fn validate_series(
     driver: &Driver,
     start: &Path,
     spec_path: Option<&Path>,
+    accept_spec: Option<&str>,
     parse: impl Fn(&Path, &Path) -> Result<crate::Series, EngineError>,
 ) -> Result<Validated, EngineError> {
     // Absolute paths keep `Next plan:` lookups and the stored plan files right from any directory.
@@ -343,6 +355,7 @@ pub(crate) fn validate_series(
     let has_spec = spec_path.is_some() || start.is_dir();
     // The text that passes the check is the text every job gets, so the file is read once.
     let mut spec_text: Option<String> = None;
+    let mut accepted: Option<String> = None;
     if has_spec {
         let text = std::fs::read_to_string(&spec).map_err(|_| {
             if spec_path.is_some() {
@@ -352,12 +365,44 @@ pub(crate) fn validate_series(
             }
         })?;
         check_spec(&text, &spec.display().to_string())?;
+        // A spec that touches risky paths needs a decision the user answered.
+        let mut plan_texts: Vec<String> = Vec::new();
+        for plan in &series.plans {
+            plan_texts.push(std::fs::read_to_string(&plan.path).map_err(|e| {
+                EngineError::Msg(format!("cannot read {}: {e}", plan.path.display()))
+            })?);
+        }
+        // A refusal stops here, unless the user gave a reason to go on. A risky spec the user did not
+        // answer is refused before the agent runs, so an accepted one never pays for a review.
+        let plan_paths: Vec<std::path::PathBuf> =
+            series.plans.iter().map(|p| p.path.clone()).collect();
+        let refusal = match crate::spec_check::risky_without_user_decision(
+            &text,
+            &plan_texts,
+            driver.config(),
+        ) {
+            Some(reason) => Some(crate::spec_check::SpecRefusal::NoUserDecision(reason)),
+            None => crate::spec_check::review_spec_with(
+                driver,
+                &spec,
+                &plan_paths,
+                accept_spec.is_some(),
+            )
+            .err(),
+        };
+        if let Some(refusal) = refusal {
+            match accept_spec {
+                Some(reason) => accepted = Some(reason.to_string()),
+                None => return Err(EngineError::SpecRefused(refusal)),
+            }
+        }
         spec_text = Some(text);
     }
     Ok(Validated {
         series,
         plan_warnings,
         spec_text,
+        accepted,
     })
 }
 
@@ -383,6 +428,19 @@ pub fn create_job_with_spec(
     spec_path: Option<&Path>,
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
+    create_job_with_spec_accepting(driver, slug, feature, plan, spec_path, model, None)
+}
+
+/// Like `create_job_with_spec`. A reason in `accept_spec` turns a spec refusal into a pass and is recorded.
+pub fn create_job_with_spec_accepting(
+    driver: &Driver,
+    slug: &str,
+    feature: &str,
+    plan: Option<&Path>,
+    spec_path: Option<&Path>,
+    model: Option<&str>,
+    accept_spec: Option<&str>,
+) -> Result<Job, EngineError> {
     // A spec with no plans would be skipped without a word, so refuse it.
     if spec_path.is_some() && plan.is_none() {
         return Err(EngineError::Msg("--spec needs --plans".to_string()));
@@ -404,7 +462,8 @@ pub fn create_job_with_spec(
         series,
         plan_warnings,
         spec_text,
-    } = validate_series(driver, start, spec_path, |root, start| {
+        accepted,
+    } = validate_series(driver, start, spec_path, accept_spec, |root, start| {
         crate::parse_series_with(root, start, Some(crate::series::MAX_TASKS_PER_PLAN))
             .map_err(EngineError::from)
     })?;
@@ -474,10 +533,45 @@ pub fn create_job_with_spec(
     {
         first = add_warning(driver, slug, first, NO_USER_DECISION);
     }
+    if let Some(reason) = &accepted {
+        first = record_accepted(driver, slug, first, reason);
+    }
     for warning in &plan_warnings {
         first = add_warning(driver, slug, first, warning);
     }
     Ok(first)
+}
+
+/// Parks a job that has no plan, naming the file that was expected.
+fn park_missing_plan(driver: &Driver, job: &Job) -> Result<(), EngineError> {
+    let text = format!("expected {}", driver.job_dir(job).join("plan.md").display());
+    let parts = vec![ParkPart::new("Missing plan", "driver", &text)];
+    park_with_parts(
+        driver,
+        &job.id,
+        "no plan.md in the job folder",
+        ParkKind::Other,
+        parts,
+    )
+}
+
+/// Parks a job whose run loop used up its steps, with the end of the ledger as evidence.
+fn park_unsettled(driver: &Driver, id: &str) -> Result<(), EngineError> {
+    let ledger = driver
+        .job(id)
+        .ok()
+        .and_then(|job| std::fs::read_to_string(driver.job_dir(&job).join("progress.md")).ok())
+        .unwrap_or_default();
+    let lines: Vec<&str> = ledger.lines().collect();
+    let tail = lines[lines.len().saturating_sub(20)..].join("\n");
+    let parts = vec![ParkPart::new("Ledger", "progress.md", &tail)];
+    park_with_parts(
+        driver,
+        id,
+        "run loop did not settle, see the ledger",
+        ParkKind::Other,
+        parts,
+    )
 }
 
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
@@ -502,7 +596,11 @@ fn run_job_inner(
             std::fs::read_to_string(driver.job_dir(&job).join("plan.md")).unwrap_or_default();
         crate::tasks::parse_tasks(&plan).len()
     };
-    let limit = driver.config().fix_rounds as usize * 4 + 12 + task_calls;
+    let rounds = driver
+        .config()
+        .fix_rounds
+        .max(driver.config().fix_rounds_for(true));
+    let limit = rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
         if guard.lost() {
             return Err(EngineError::Msg("project is busy: another owner holds the project lease (the lease was taken over), this run stops".into()));
@@ -516,7 +614,7 @@ fn run_job_inner(
             Stage::NeedsHuman => return Ok(RunEnd::NeedsHuman(job.reason.unwrap_or_default())),
             Stage::Spec => {
                 if !driver.job_dir(&job).join("plan.md").exists() {
-                    park(driver, id, "no plan.md in the job folder")?;
+                    park_missing_plan(driver, &job)?;
                 } else {
                     let now = now_secs();
                     driver.store().update_job(id, |j| {
@@ -527,7 +625,7 @@ fn run_job_inner(
             Stage::Build => {
                 // A job made without plans has no plan.md until a human places it. Park before any agent call.
                 if !driver.job_dir(&job).join("plan.md").exists() {
-                    park(driver, id, "no plan.md in the job folder")?;
+                    park_missing_plan(driver, &job)?;
                     continue;
                 }
                 driver.build(id)?;
@@ -549,7 +647,7 @@ fn run_job_inner(
             }
         }
     }
-    park(driver, id, "run loop did not settle, see the ledger")?;
+    park_unsettled(driver, id)?;
     Ok(RunEnd::NeedsHuman("run loop did not settle".into()))
 }
 

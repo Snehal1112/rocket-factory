@@ -42,6 +42,12 @@ pub struct ParkView {
     pub round: u32,
     pub next: Vec<String>,
     pub parts: Vec<PartView>,
+    /// The review verdict at the time of the park. Absent in older records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    /// Whether the diff was risky. Absent in older records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risky: Option<bool>,
 }
 
 pub enum ParkReply {
@@ -172,6 +178,19 @@ mod tests {
             }
             _ => panic!("expected Found"),
         }
+    }
+
+    #[test]
+    fn park_view_reads_verdict_and_risky() {
+        let v: ParkView =
+            serde_json::from_str(r#"{"kind":"k","verdict":"changes","risky":true}"#).expect("new");
+        assert_eq!(v.verdict.as_deref(), Some("changes"));
+        assert_eq!(v.risky, Some(true));
+        let old: ParkView = serde_json::from_str(r#"{"kind":"k","reason":"r"}"#).expect("old");
+        assert!(!serde_json::to_string(&old)
+            .expect("json")
+            .contains("verdict"));
+        assert_eq!((old.verdict.as_deref(), old.risky), (None, None));
     }
 
     #[test]

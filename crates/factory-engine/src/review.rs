@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
 use factory_core::{
-    budget_state, classify_paths, parse_verdict, DiffClass, ParkKind, ReviewState, Stage, Verdict,
+    budget_state, classify_paths, open_blockers, parse_verdict, DiffClass, LastReview, ParkKind,
+    ReviewState, Stage, Verdict,
 };
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
@@ -10,6 +11,13 @@ use crate::ports::{git_err, io_err};
 use crate::specs::ReviewerExtra;
 use crate::tasks::{plan_outline, review_focus};
 use crate::{Engine, EngineError, StageOutcome};
+
+/// Which run a review belongs to. A sync review keeps its own file next to the round review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewRun {
+    Round,
+    Sync,
+}
 
 pub struct ReviewOutcome {
     pub verdict: Verdict,
@@ -30,6 +38,11 @@ impl Engine<'_> {
 
     /// Writes the diff files, runs the reviewer once, saves its reply and decides.
     pub fn review_stage(&self) -> Result<ReviewOutcome, EngineError> {
+        self.review_stage_as(ReviewRun::Round)
+    }
+
+    /// Like `review_stage`, and a sync run saves `review-code-r{round}-sync{n}.md` instead.
+    pub fn review_stage_as(&self, run_kind: ReviewRun) -> Result<ReviewOutcome, EngineError> {
         let job = self.job()?;
         let base = job
             .base
@@ -66,6 +79,19 @@ impl Engine<'_> {
         };
         let class = classify_paths(&paths, &self.config);
         let risky = class == DiffClass::Risky;
+        // The first review of a risky job records its risky paths, so a park can name those that fix rounds added.
+        let first_risky = self.job_dir.join(crate::park::RISKY_PATHS_FILE);
+        if risky && !first_risky.exists() {
+            let list: Vec<String> = paths
+                .iter()
+                .filter(|p| {
+                    classify_paths(std::slice::from_ref(*p), &self.config) == DiffClass::Risky
+                })
+                .cloned()
+                .collect();
+            // Like the other evidence files, this one is best effort and never stops the review.
+            let _ = std::fs::write(&first_risky, list.join("\n") + "\n");
+        }
         let round_lines = round_diff.changed_lines();
         let job_model = self.job_model();
         let model = job_model
@@ -98,7 +124,22 @@ impl Engine<'_> {
             Ok(())
         })?;
         let run = self.run_agent(spec)?;
-        let review_path = self.job_dir.join(format!("review-code-r{}.md", job.round));
+        let review_path = match run_kind {
+            ReviewRun::Round => self.job_dir.join(format!("review-code-r{}.md", job.round)),
+            ReviewRun::Sync => {
+                let prefix = format!("review-code-r{}-sync", job.round);
+                let taken = std::fs::read_dir(&self.job_dir)
+                    .map_err(io_err)?
+                    .filter_map(Result::ok)
+                    .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+                    .count();
+                self.job_dir.join(format!("{prefix}{}.md", taken + 1))
+            }
+        };
+        let file = review_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         std::fs::write(&review_path, &run.result_text).map_err(io_err)?;
 
         let verdict = if run.stop_reason == factory_agent::StopReason::Done {
@@ -111,11 +152,31 @@ impl Engine<'_> {
         } else {
             ReviewState::Changes
         };
+        let blockers = open_blockers(&run.result_text).len() as u32;
+        let source = match run_kind {
+            ReviewRun::Round => job.fix_source.clone().unwrap_or_else(|| "build".into()),
+            ReviewRun::Sync => "sync".into(),
+        };
+        let label = match run_kind {
+            ReviewRun::Round => "review",
+            ReviewRun::Sync => "sync review",
+        };
+        let last = LastReview {
+            round: job.round,
+            verdict: verdict.as_word().into(),
+            blockers,
+            file,
+            source: source.clone(),
+        };
         self.update(|j| {
             j.set_review("code", state);
+            j.last_review = Some(last.clone());
             Ok(())
         })?;
-        self.ruling(&format!("review round {} verdict {:?}", job.round, verdict))?;
+        self.ruling(&format!(
+            "{label} round {} ({source}) verdict {verdict:?}, {blockers} blockers",
+            job.round
+        ))?;
 
         let checks_ok = self.latest_checks_ok()?;
         let input = DecideInput {
@@ -127,7 +188,8 @@ impl Engine<'_> {
             diff_cap: self.config.diff_cap_lines as usize,
             budget: budget_state(self.job_weighted_tokens(), self.config.budget_weighted),
             round: job.round,
-            fix_rounds: self.config.fix_rounds,
+            fix_rounds: self.config.fix_rounds_for(class == DiffClass::Risky),
+            rework_base: job.rework_base,
         };
         let decision = decide(&input);
         let choice = match &decision {
@@ -135,7 +197,13 @@ impl Engine<'_> {
             Decision::FixRound => "fix",
             Decision::NeedsHuman { .. } => "needs-human",
         };
-        tracing::info!(event = "decide", choice = choice, round = job.round);
+        tracing::info!(
+            event = "decide",
+            choice = choice,
+            round = job.round,
+            verdict = verdict.as_word(),
+            risky = risky
+        );
         Ok(ReviewOutcome {
             verdict,
             review_path,
@@ -159,8 +227,13 @@ impl Engine<'_> {
     pub fn apply_decision(&self, outcome: &ReviewOutcome) -> Result<StageOutcome, EngineError> {
         match &outcome.decision {
             Decision::NeedsHuman { kind, reason } => {
-                let round = self.job()?.round;
-                let parts = self.decision_parts(*kind, reason, round);
+                // A risky approve still needs the final checks to pass on the exact head.
+                if *kind == ParkKind::RiskyDiff {
+                    if let Some(outcome) = self.final_gate()? {
+                        return Ok(outcome);
+                    }
+                }
+                let parts = self.decision_parts(*kind, reason);
                 self.park_with(*kind, reason.clone(), parts)
             }
             Decision::FixRound => {
@@ -175,36 +248,46 @@ impl Engine<'_> {
                 )
             }
             Decision::AutoMerge => {
-                let report = self.final_checks()?;
-                if !report.all_passed() {
-                    let findings = format!(
-                        "The final checks failed. Fix these failures only.\n\n{}",
-                        report.failure_text()
-                    );
-                    return self.fix_or_park(
-                        &findings,
-                        "final checks failed",
-                        ParkKind::ChecksFailed,
-                        "checks",
-                    );
+                if let Some(outcome) = self.final_gate()? {
+                    return Ok(outcome);
                 }
-                let paths = self.job_changed_paths()?;
-                if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
-                    return self.park_gate(kind, reason);
-                }
-                let commands: Vec<&str> =
-                    report.results.iter().map(|r| r.command.as_str()).collect();
-                let list = if commands.is_empty() {
-                    "none".to_string()
-                } else {
-                    commands.join(", ")
-                };
-                self.ruling(&format!("checks ran: {list}"))?;
                 self.set_stage(Stage::Approve, None, false)?;
                 self.ruling("auto-merge approved, checks green, reviewer approved")?;
                 Ok(StageOutcome::Advanced(Stage::Approve))
             }
         }
+    }
+
+    /// Re-runs the checks on the final head and applies the gates.
+    /// Returns `Some` when it started a fix round or parked, and `None` when everything passed.
+    fn final_gate(&self) -> Result<Option<StageOutcome>, EngineError> {
+        let report = self.final_checks()?;
+        if !report.all_passed() {
+            let findings = format!(
+                "The final checks failed. Fix these failures only.\n\n{}",
+                report.failure_text()
+            );
+            return self
+                .fix_or_park(
+                    &findings,
+                    "final checks failed",
+                    ParkKind::ChecksFailed,
+                    "checks",
+                )
+                .map(Some);
+        }
+        let paths = self.job_changed_paths()?;
+        if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
+            return self.park_gate(kind, reason).map(Some);
+        }
+        let commands: Vec<&str> = report.results.iter().map(|r| r.command.as_str()).collect();
+        let list = if commands.is_empty() {
+            "none".to_string()
+        } else {
+            commands.join(", ")
+        };
+        self.ruling(&format!("checks ran: {list}"))?;
+        Ok(None)
     }
 }
 

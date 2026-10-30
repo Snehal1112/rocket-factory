@@ -286,6 +286,15 @@ fn the_slim_reviewer_prompt_keeps_inputs_and_the_rereview_block() {
     let (fx, _first) = review_prompt(reviewer_files(Some("<!-- factory-rules: 1 -->")));
     let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
     std::fs::write(fx.job_dir.join("review-code-r1.md"), "1. [blocker] x\n").expect("earlier");
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").last_review = Some(factory_core::LastReview {
+        round: 1,
+        verdict: "changes".into(),
+        blockers: 1,
+        file: "review-code-r1.md".into(),
+        source: "build".into(),
+    });
+    board.save(&fx.board_path).expect("save");
     let rr = scripted(Vec::new());
     let spec = fx.engine(&rr).reviewer_spec(
         &wt,

@@ -7,6 +7,7 @@ use factory_core::{
 };
 
 use crate::clock::now_secs;
+use crate::specs::SPEC_REVIEW_JOB;
 use crate::{Driver, EngineError};
 
 /// One record per board job. A missing plan, usage file or commit gives an empty field, never an error.
@@ -44,6 +45,30 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
             providers: usage.providers,
             provider_roles: usage.provider_roles,
         });
+    }
+    // The spec reviews belong to no job, so their log gets a record of its own. It is not merged,
+    // so it never feeds the group figures.
+    if let Ok(text) = std::fs::read_to_string(driver.layout().spec_review_usage_file()) {
+        let usage = usage_summary(&text, SPEC_REVIEW_JOB);
+        if usage.runs > 0 {
+            out.push(JobCost {
+                id: SPEC_REVIEW_JOB.to_string(),
+                slug: SPEC_REVIEW_JOB.to_string(),
+                stage: SPEC_REVIEW_JOB.to_string(),
+                group: None,
+                plan_bytes: 0,
+                tasks: 0,
+                lines: None,
+                files: None,
+                weighted: usage.weighted,
+                raw: usage.raw,
+                runs: usage.runs,
+                approx: usage.approx,
+                roles: usage.roles,
+                providers: usage.providers,
+                provider_roles: usage.provider_roles,
+            });
+        }
     }
     Ok(out)
 }

@@ -224,6 +224,7 @@ name = "factory-checks"
 version = "0.1.6"
 dependencies = [
  "factory-core",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]
@@ -273,6 +274,7 @@ dependencies = [
  "git2",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tempfile",
  "thiserror",

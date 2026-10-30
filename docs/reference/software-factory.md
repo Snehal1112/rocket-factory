@@ -22,6 +22,15 @@ factory run (no LLM tokens):
   otherwise                                      -> needs-human (factory approve | factory rework | factory cancel)
 ```
 
+## Spec check
+
+`factory new` checks the spec and its plans before it creates anything. Two checks run, and a refusal creates no job, board entry or worktree.
+
+- The decisions check always runs. When the plans touch risky paths and no `## Decisions` item says `Decided by: user`, the call is refused.
+- The spec review runs when `spec_review` is true (the default). A read-only reviewer (tools `Read, Grep, Glob`) reads the spec and the plans and answers APPROVE or CHANGES. A CHANGES verdict, or a missing verdict, refuses the call. The review is saved under `<state>/spec-reviews/` and the refusal names the file. When a preset is in use but has no spec reviewer agent file (a preset from before this check), the call is refused with `the spec reviewer agent is missing; run factory upgrade or factory presets refresh, or set spec_review = false`, and no agent runs.
+
+A refusal ends with the hint to record the user's answer as a `Decided by: user` decision, or to pass `--accept-spec "<reason>"` (one line, not empty, at most 200 characters). The `/factory` command shows the findings to the user, fixes the spec with them and runs `factory new` again. The supervisor create endpoint answers a refusal with 409 `conflict` and the same text, takes `accept_spec` in its body, and waits up to the project's `stall_minutes` plus two minutes for the review.
+
 ## Job model
 
 - One job is one feature. It holds a series of plans, each of at most 3 tasks, run one after another, never in parallel.
@@ -115,6 +124,8 @@ The driver can file the leftover work of a ticket and close the ticket after the
 - The step needs a merged job that is the last plan of its series. It files the tickets, comments once on each parent (job id, `main` sha, "not yet pushed" when `origin/main` lacks it, links to the new tickets) and closes each parent that is still open.
 - `tickets.json` in the job folder records every created ticket, comment and close, saved after each `gh` call. A re-run, also after a failure, never repeats a call. `--dry-run` makes only read calls and prints each action.
 - A `gh` failure is written to the ledger and printed. It never changes the merge result, and `factory tickets` exits non-zero.
+
+Minor tickets: after a merge, `merge_stage` runs `minor_tickets_step` once the waiver step is done. It files one ticket titled `Minor review findings from job <id>: <slug>` whose body is a `- [ ]` checklist of the open `[minor]` lines (not `[fixed]`) of the last review file, with no labels. It does not apply the series gate, runs whether or not `tickets_on_merge` is set, and is switched off with `minor_tickets = false` (default true). `minors.json` in the job folder holds `{"issue": <number>}` once filed; a failure is soft and `factory tickets <id>` retries it.
 - Merge footer: `Relates to: #N` when the spec has follow-ups (the ticket is not finished), `Fixes: #N` otherwise. Commit and sync footers stay `Relates to`.
 
 ## Logging
@@ -180,9 +191,9 @@ The builder runs only per-crate cargo commands (`cargo check -j4 -p <crate>`), n
 
 ### No-check and no-test gates
 
-- `no-checks`: a diff with a code path and no check results parks the job before the reviewer runs. A diff of only `*.md`, `docs/**` or `.claude/**` paths is not code and is not parked. A risky diff skips this gate, so `decide()` still ends it as `risky-diff`. With no config, or a broken one, every path counts as code.
+- `no-checks`: a changed code path that no `[[checks]]` rule matches parks the job before the reviewer runs, even when other paths of the diff did run a check. The reason reads `no check covers N changed code paths: a, b (+k more)`. A path is exempt when it matches `unchecked_paths`. A diff of only `*.md`, `docs/**` or `.claude/**` paths is not code and is not parked. A risky diff is gated too: it parks as `no-checks` before `decide()` can end it as `risky-diff`, and the park carries the review and risk parts. With no config, or a broken one, every path counts as code.
 - `no-tests`: a code diff with no test path and no added test marker writes a ledger line and a note to the reviewer. With `require_tests = true` it parks as `no-tests` instead.
-- Where they run: in the checks stage, and again in the final re-run of the checks on the merge head (the `AutoMerge` arm), so a fix round that leaves no mapped check still parks `no-checks`. Both park through `park_with`. A parked job offers `approve` (as `approve --without-review` when the review has not run) and `rework`.
+- Where they run: in the checks stage, and again in the final re-run of the checks on the merge head (the `AutoMerge` arm), so a fix round that leaves a path with no mapped check still parks `no-checks`. Both park through `park_with`. A parked job offers `approve` (as `approve --without-review` when the review has not run) and `rework`.
 - The settings are `code_paths`, `test_paths`, `test_markers` and `require_tests`, see `README.md`.
 - The ledger has one line `checks ran: <commands>` or `checks ran: none` before the `auto-merge approved` line.
 
@@ -196,7 +207,22 @@ Auto-merge needs all of: no check failure, the latest reviewer verdict is exactl
 
 Risky means the diff touches any `risk_paths` entry: the collection trust gate, auth, secrets or `{{process.env}}`, persistence formats, `src-tauri/`, `DomainEvent`, `Cargo.toml`, `Cargo.lock`, `package.json`, `tauri.conf.json`, CSP or the harness hooks. A missing or broken config makes every diff risky.
 
-The driver merges the reviewed sha only: it checks the branch tip equals the recorded head, preflights main (on `main`, clean, not mid-merge), makes a no-ff merge commit (the committer's message, or the fixed `chore(factory): merge job NNN <slug>` fallback), and verifies the second parent. If main moved it merges main into the job branch inside the worktree, re-runs checks and the reviewer on the sync diff (at most 2 syncs). A conflict goes to `needs-human`. It never pushes and never rewrites history.
+A risky diff gets the same fix rounds as any other (`risky_fix_rounds`, default `fix_rounds`; 0 parks at once). It never auto-merges: after an approve the final checks run on the exact head, and then the job parks as `risky-diff` for a human approve. The park evidence leads with the review. For `risky-diff` and `changes-remain` the parts are, in order:
+
+- `Review`: `verdict <word>, round <N>`, then the open `[blocker]` lines (the whole reply when a CHANGES has none), or `findings file missing`.
+- `Risk`: the risky paths, and `added by fix rounds: <paths>` for risky paths that were not in the first review (`risky-paths.txt`). Only on a risky diff.
+- `Rounds`: one line per review round, `round N (<source>): <verdict>, <B> blockers`, read from the ledger.
+- `Changed files`: the diff stat.
+
+`nothing-changed` after a review fix round, and `no-checks` or `no-tests` parks, put `Review` (and `Risk` when risky) before their other parts. `park.json` also records `verdict` and `risky`.
+
+The driver merges the reviewed sha only: it checks the branch tip equals the recorded head, preflights main (on `main`, clean, not mid-merge), makes a no-ff merge commit (the committer's message, or the fixed `chore(factory): merge job NNN <slug>` fallback), and verifies the second parent. If main moved it merges main into the job branch inside the worktree, re-runs checks and the reviewer on the sync diff (at most 2 syncs). A sync review is saved as `review-code-r<round>-sync<n>.md`, so the round review `review-code-r<round>.md` is never overwritten. It sets `last_review` with source `sync`, and the ledger line starts `sync review round <round> (sync)`. A conflict goes to `needs-human`. It never pushes and never rewrites history.
+
+## Rework
+
+- A rework of a job that parked at a task boundary is the next round. It bumps `round`, sets `rework_base` to the new round minus one (a full new set of fix rounds) and writes `changes-r<N>.md` with the note first and then the open findings of the latest review. Earlier files (`review-code-r*.md`, `builder-r*.md`, `changes-r*.md`) are kept. It prints `job <id> back to build, round <N>`.
+- A job parked mid-task keeps the old path: `rework-note.md` is used, `round` and `rework_base` stay, and it prints `job <id> back to build, same task`.
+- The next review reads `last_review.file` as the previous findings, which can be a sync review file.
 
 ## Monorepos
 

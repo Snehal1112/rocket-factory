@@ -1,7 +1,11 @@
-use factory_checks::{plan_checks, run_checks, write_checks_md, ChecksReport};
+use std::path::Path;
+
+use factory_checks::{
+    append_notes, plan_checks_in, run_checks, write_checks_md, CheckPlan, ChecksReport, Workspace,
+};
 use factory_core::{
-    classify_paths, code_paths_of, has_test_marker, has_test_path, Config, DiffClass, ParkKind,
-    ParkPart, Stage,
+    classify_paths, code_paths_of, has_test_marker, has_test_path, uncovered_code_paths, Config,
+    DiffClass, ParkKind, ParkPart, Stage,
 };
 
 use crate::decide::fix_rounds_used;
@@ -9,21 +13,13 @@ use crate::park::part_from_file;
 
 const NO_TESTS_NOTE: &str = "no test file or test marker in a code diff";
 
-/// None unless a code diff ran no check. A risky diff is left to `decide()`.
-pub(crate) fn no_checks_reason(
-    paths: &[String],
-    report_is_empty: bool,
-    config: &Config,
-) -> Option<String> {
-    if !report_is_empty || classify_paths(paths, config) == DiffClass::Risky {
+/// None unless a changed code path has no check rule and is not exempt. A risky diff is gated too.
+pub(crate) fn no_checks_reason(paths: &[String], config: &Config) -> Option<String> {
+    let uncovered = uncovered_code_paths(paths, config);
+    if uncovered.is_empty() {
         return None;
     }
-    let code = code_paths_of(paths, config);
-    let n = code.len();
-    if n == 0 {
-        return None;
-    }
-    Some(format!("no check ran for {}", code_path_list(&code)))
+    Some(format!("no check covers {}", code_path_list(&uncovered)))
 }
 
 /// `N changed code path(s): a, b, ...` with at most five names and a count of the rest.
@@ -70,11 +66,13 @@ impl Engine<'_> {
     pub(crate) fn run_checks_now(&self) -> Result<ChecksReport, EngineError> {
         let (base, head) = self.job_range()?;
         let raw = self.repo.changed_paths(&base, &head).map_err(git_err)?;
-        let plan = plan_checks(&self.repo.scoped_paths(&raw), &self.config);
-        let report = run_checks(&self.repo.workdir_in(&self.worktree()?), &plan);
+        let workdir = self.repo.workdir_in(&self.worktree()?);
+        let plan = self.plan_for(&self.repo.scoped_paths(&raw), &workdir);
+        let report = run_checks(&workdir, &plan);
         log_check_results(&report);
-        write_checks_md(&self.job_dir.join("checks.md"), &report)
-            .map_err(|e| EngineError::Check(e.to_string()))?;
+        let md = self.job_dir.join("checks.md");
+        write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
+        append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(report)
     }
 
@@ -89,9 +87,9 @@ impl Engine<'_> {
         self.repo.changed_paths(&base, &head).map_err(git_err)
     }
 
-    /// The commits that hold the whole job diff. A subfolder project starts at the merge base with
-    /// the base branch, because a sync moves the head onto main and leaves the recorded base behind.
-    /// Other projects keep the recorded base.
+    /// The commits that hold the whole job diff. It starts at the merge base with the base branch,
+    /// because a sync moves the head onto main and leaves the recorded base behind. This holds for
+    /// root and subfolder projects alike.
     pub(crate) fn job_range(&self) -> Result<(String, String), EngineError> {
         let job = self.job()?;
         let base = job
@@ -106,24 +104,21 @@ impl Engine<'_> {
         Ok((from, head))
     }
 
-    /// The start of the whole job diff for the given base and head, see `job_range`.
-    pub(crate) fn range_start(&self, base: &str, head: &str) -> Result<String, EngineError> {
-        if self.repo.subpath().is_none() {
-            return Ok(base.to_string());
-        }
+    /// The start of the whole job diff for the given head, see `job_range`. The recorded base is
+    /// not used, because after a sync it would pull in every path main changed since the fork.
+    pub(crate) fn range_start(&self, _base: &str, head: &str) -> Result<String, EngineError> {
         self.repo
             .merge_base(self.repo.base_branch(), head)
             .map_err(git_err)
     }
 
-    /// The no-checks gate: a park kind and reason when a code diff ran no check.
+    /// The no-checks gate: a park kind and reason when a changed code path has no check rule.
     pub(crate) fn gate_checks(
         &self,
         paths: &[String],
-        report: &ChecksReport,
+        _report: &ChecksReport,
     ) -> Option<(ParkKind, String)> {
-        no_checks_reason(paths, report.results.is_empty(), &self.config)
-            .map(|r| (ParkKind::NoChecks, r))
+        no_checks_reason(paths, &self.config).map(|r| (ParkKind::NoChecks, r))
     }
 
     /// Parks a job that a gate stopped, with the checks and the reason as evidence.
@@ -133,15 +128,19 @@ impl Engine<'_> {
         reason: String,
     ) -> Result<StageOutcome, EngineError> {
         self.ruling(&format!("parked, {reason}"))?;
-        let mut parts: Vec<ParkPart> = part_from_file(&self.job_dir, "checks.md", "Checks")
-            .into_iter()
-            .collect();
+        // A scope violation parks before any review, so only the other gates lead with the review.
+        let mut parts = if kind == ParkKind::Other {
+            Vec::new()
+        } else {
+            self.lead_parts()
+        };
+        parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks"));
         parts.push(ParkPart::new("Why it stopped", "driver", &reason));
         self.park_with(kind, reason, parts)
     }
 
     /// Runs the mapped checks over the diff from `from` to `to` and writes `out` in the job dir. It returns
-    /// `None`, and writes nothing, when no check is mapped to the changed paths.
+    /// `None` when no check is mapped to the changed paths. It then writes only the plan notes, if there are any.
     pub(crate) fn run_checks_between(
         &self,
         from: &str,
@@ -149,15 +148,46 @@ impl Engine<'_> {
         out: &str,
     ) -> Result<Option<ChecksReport>, EngineError> {
         let raw = self.repo.changed_paths(from, to).map_err(git_err)?;
-        let plan = plan_checks(&self.repo.scoped_paths(&raw), &self.config);
+        let workdir = self.repo.workdir_in(&self.worktree()?);
+        let plan = self.plan_for(&self.repo.scoped_paths(&raw), &workdir);
         if plan.commands.is_empty() {
+            // A plan with notes but no command still leaves its notes, so a capped-away check is not silent.
+            if !plan.notes.is_empty() {
+                let md = self.job_dir.join(out);
+                write_checks_md(&md, &ChecksReport { results: vec![] })
+                    .map_err(|e| EngineError::Check(e.to_string()))?;
+                append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
+            }
             return Ok(None);
         }
-        let report = run_checks(&self.repo.workdir_in(&self.worktree()?), &plan);
+        let report = run_checks(&workdir, &plan);
         log_check_results(&report);
-        write_checks_md(&self.job_dir.join(out), &report)
-            .map_err(|e| EngineError::Check(e.to_string()))?;
+        let md = self.job_dir.join(out);
+        write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
+        append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
         Ok(Some(report))
+    }
+
+    /// Plans the checks. The cargo workspace map is loaded only when a command needs it, and a
+    /// failed load falls back to the folder rule with a note in `checks.md`.
+    fn plan_for(&self, scoped: &[String], workdir: &Path) -> CheckPlan {
+        let needs_map = self.config.checks.iter().any(|r| {
+            r.commands
+                .iter()
+                .any(|c| c.contains("{crate}") || c.contains("{dependents}"))
+        });
+        if !needs_map || !workdir.join("Cargo.toml").is_file() {
+            return plan_checks_in(scoped, &self.config, None);
+        }
+        match Workspace::load(workdir) {
+            Ok(ws) => plan_checks_in(scoped, &self.config, Some(&ws)),
+            Err(e) => {
+                let mut plan = plan_checks_in(scoped, &self.config, None);
+                plan.notes
+                    .push(format!("NOTE workspace map unavailable: {e}"));
+                plan
+            }
+        }
     }
 
     /// Starts a fix round with `findings`, or parks the job when the rounds are used up.
@@ -169,19 +199,18 @@ impl Engine<'_> {
         source: &str,
     ) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;
-        let used = fix_rounds_used(job.round);
-        if used >= self.config.fix_rounds {
+        let used = fix_rounds_used(job.round, job.rework_base);
+        let risky = classify_paths(&self.job_changed_paths()?, &self.config) == DiffClass::Risky;
+        if used >= self.config.fix_rounds_for(risky) {
             let title = if kind == ParkKind::ChecksFailed {
                 "Failing checks"
             } else {
                 "Reviewer findings"
             };
-            let part = ParkPart::new(title, source, findings);
-            return self.park_with(
-                kind,
-                format!("{reason} after {used} fix rounds"),
-                vec![part],
-            );
+            // A risky diff leads with the review and the risk, like every other risky park.
+            let mut parts = if risky { self.lead_parts() } else { Vec::new() };
+            parts.push(ParkPart::new(title, source, findings));
+            return self.park_with(kind, format!("{reason} after {used} fix rounds"), parts);
         }
         let next = job.round + 1;
         std::fs::write(self.job_dir.join(format!("changes-r{next}.md")), findings)
@@ -277,37 +306,63 @@ mod gate_tests {
         p.iter().map(|s| s.to_string()).collect()
     }
 
+    fn rule(glob: &str) -> factory_core::CheckRule {
+        factory_core::CheckRule {
+            paths: vec![glob.into()],
+            commands: vec!["true".into()],
+        }
+    }
+
     #[test]
     fn no_checks_reason_names_five_paths_and_a_count() {
         let all = paths(&["a.rs", "b.rs", "c.rs", "d.rs", "e.rs", "f.rs", "g.rs"]);
-        let reason = no_checks_reason(&all, true, &Config::default()).expect("a reason");
+        let reason = no_checks_reason(&all, &Config::default()).expect("a reason");
         assert_eq!(
             reason,
-            "no check ran for 7 changed code paths: a.rs, b.rs, c.rs, d.rs, e.rs (+2 more)"
+            "no check covers 7 changed code paths: a.rs, b.rs, c.rs, d.rs, e.rs (+2 more)"
         );
     }
 
     #[test]
     fn one_path_reads_singular() {
-        let reason =
-            no_checks_reason(&paths(&["a.rs"]), true, &Config::default()).expect("a reason");
-        assert_eq!(reason, "no check ran for 1 changed code path: a.rs");
+        let reason = no_checks_reason(&paths(&["a.rs"]), &Config::default()).expect("a reason");
+        assert_eq!(reason, "no check covers 1 changed code path: a.rs");
     }
 
     #[test]
-    fn a_report_with_results_is_never_gated() {
-        assert!(no_checks_reason(&paths(&["a.rs"]), false, &Config::default()).is_none());
+    fn partial_coverage_names_the_gap() {
+        let c = Config {
+            checks: vec![rule("src/**")],
+            ..Config::default()
+        };
+        let reason = no_checks_reason(&paths(&["src/a.rs", "Cargo.lock"]), &c).expect("a reason");
+        assert_eq!(reason, "no check covers 1 changed code path: Cargo.lock");
     }
 
     #[test]
-    fn docs_only_and_empty_path_lists_are_not_gated() {
-        assert!(no_checks_reason(
-            &paths(&["README.md", "docs/a.md"]),
-            true,
-            &Config::default()
-        )
-        .is_none());
-        assert!(no_checks_reason(&[], true, &Config::default()).is_none());
+    fn a_fully_covered_diff_is_not_gated() {
+        let c = Config {
+            checks: vec![rule("**")],
+            ..Config::default()
+        };
+        assert!(no_checks_reason(&paths(&["a.rs"]), &c).is_none());
+    }
+
+    #[test]
+    fn unchecked_paths_are_exempt() {
+        let c = Config {
+            unchecked_paths: vec!["LICENSE".into()],
+            ..Config::default()
+        };
+        assert!(no_checks_reason(&paths(&["LICENSE"]), &c).is_none());
+    }
+
+    #[test]
+    fn doc_paths_are_never_uncovered() {
+        assert!(
+            no_checks_reason(&paths(&["README.md", "docs/a.md"]), &Config::default()).is_none()
+        );
+        assert!(no_checks_reason(&[], &Config::default()).is_none());
     }
 
     #[test]
@@ -351,8 +406,8 @@ mod gate_tests {
     }
 
     #[test]
-    fn a_risky_diff_is_left_to_decide() {
+    fn a_risky_diff_is_gated_too() {
         let all = paths(&["src-tauri/src/lib.rs"]);
-        assert!(no_checks_reason(&all, true, &Config::default()).is_none());
+        assert!(no_checks_reason(&all, &Config::default()).is_some());
     }
 }

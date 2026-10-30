@@ -18,6 +18,7 @@ mod lease;
 mod lock;
 mod merge;
 mod message;
+mod minors;
 mod one_job;
 mod park;
 mod permissions;
@@ -27,9 +28,11 @@ pub mod procinfo;
 mod project_lease;
 mod repo_lock;
 mod review;
+mod rework;
 mod runloop;
 mod scope;
 mod series;
+mod spec_check;
 mod specs;
 mod store;
 mod sync;
@@ -38,6 +41,7 @@ mod tick;
 mod tickets;
 mod tipfiles;
 mod tracker;
+mod waivers;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -64,12 +68,14 @@ pub use followups::{follow_ups, FollowUp};
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
 pub use lock::{lock_board, BoardLock};
-pub use merge::{merge_stage, park, MergeResult, MAX_SYNCS};
+pub use merge::{merge_stage, park, park_with_parts, MergeResult, MAX_SYNCS};
 pub use message::{
     fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS,
 };
+pub use minors::{minor_tickets_step, MINORS_FILE};
 pub use one_job::{
-    create_one_job, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED, ONE_JOB_PER_TASK_WEIGHTED,
+    create_one_job, create_one_job_accepting, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED,
+    ONE_JOB_PER_TASK_WEIGHTED,
 };
 pub use permissions::{builder_allowed_tools, builder_denied_tools, restore_file};
 pub use planlint::{lint_plan, PlanLint};
@@ -80,10 +86,15 @@ pub use project_lease::{
     ProjectLeaseStatus,
 };
 pub use repo_lock::{lock_repo_merge, MERGE_LOCK_FILE, MERGE_LOCK_WAIT};
-pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome};
-pub use runloop::{create_job, create_job_with_spec, job_span, run_job, run_series, RunEnd};
+pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome, ReviewRun};
+pub use rework::ReworkKind;
+pub use runloop::{
+    create_job, create_job_with_spec, create_job_with_spec_accepting, job_span, run_job,
+    run_series, RunEnd,
+};
 pub use scope::scope_violation;
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
+pub use spec_check::{plan_file_paths, review_spec, risky_without_user_decision, SpecRefusal};
 pub use specs::{
     ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS, RULES_VERSION,
 };
@@ -96,6 +107,10 @@ pub use tick::tick_plan;
 pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
 pub use tipfiles::RepoTip;
 pub use tracker::{GhTracker, Tracker};
+pub use waivers::{
+    read_waivers, record_waiver, supersede_waivers, waived_blockers, waiver_tickets_step, Waiver,
+    WAIVERS_FILE,
+};
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -116,6 +131,9 @@ pub enum EngineError {
     ProjectBusy(String),
     #[error("needs consent: this job is estimated at {estimate} weighted tokens and the budget is {budget}; raise budget_weighted in project.toml or pass --accept-over-budget")]
     NeedsConsent { estimate: u64, budget: u64 },
+    /// `factory new` refused the spec, so no job exists.
+    #[error("{0}")]
+    SpecRefused(SpecRefusal),
 }
 
 /// What a stage did to the job. The caller chains stages by the new board stage.

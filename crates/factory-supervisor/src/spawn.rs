@@ -94,6 +94,10 @@ fn args_of(req: &Request) -> Vec<String> {
             if req.without_review {
                 args.push("--without-review".to_string());
             }
+            if let Some(reason) = &req.waive_reason {
+                // The `=` form keeps a reason that starts with a dash from reading as a flag.
+                args.push(format!("--waive={reason}"));
+            }
         }
     }
     args
@@ -296,6 +300,17 @@ pub(crate) mod tests {
         assert!(std::fs::read_to_string(&out3)
             .expect("out")
             .contains("--project p approve 7 --without-review\n"));
+    }
+
+    #[test]
+    fn approve_args_carry_the_waive_reason() {
+        let waive = req(Action::Approve, false)
+            .waive("known flake")
+            .expect("approve");
+        assert_eq!(
+            args_of(&waive),
+            ["--project", "p", "approve", "7", "--waive=known flake"]
+        );
     }
 
     #[test]

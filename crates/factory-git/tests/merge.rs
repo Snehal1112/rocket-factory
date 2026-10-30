@@ -17,9 +17,44 @@ fn preflight_is_ready_on_a_clean_main_and_ignores_untracked_files() {
 
 fn busy_reason(fx: &Fixture) -> String {
     match fx.repo().preflight_main().expect("preflight") {
-        Preflight::Busy { reason } => reason,
+        Preflight::Busy { reason, .. } => reason,
         other => panic!("expected Busy, got {other:?}"),
     }
+}
+
+fn busy_paths(fx: &Fixture) -> Vec<String> {
+    match fx.repo().preflight_main().expect("preflight") {
+        Preflight::Busy { paths, .. } => paths,
+        other => panic!("expected Busy, got {other:?}"),
+    }
+}
+
+#[test]
+fn busy_lists_the_tracked_changes() {
+    let fx = Fixture::new();
+    let git = fx.git();
+    commit_files(&git, &[("a.txt", "a\n"), ("b.txt", "b\n")], "more files");
+    std::fs::write(fx.path.join("a.txt"), "changed\n").expect("write");
+    std::fs::write(fx.path.join("b.txt"), "changed\n").expect("write");
+    std::fs::write(fx.path.join("scratch.txt"), "x").expect("write");
+    let mut paths = busy_paths(&fx);
+    paths.sort();
+    assert_eq!(paths, vec!["a.txt".to_string(), "b.txt".to_string()]);
+}
+
+#[test]
+fn busy_lists_at_most_fifty_paths() {
+    let fx = Fixture::new();
+    let git = fx.git();
+    let names: Vec<String> = (0..60).map(|n| format!("f{n:02}.txt")).collect();
+    let files: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "x\n")).collect();
+    commit_files(&git, &files, "many files");
+    for n in &names {
+        std::fs::write(fx.path.join(n), "changed\n").expect("write");
+    }
+    let paths = busy_paths(&fx);
+    assert_eq!(paths.len(), 51, "{paths:?}");
+    assert_eq!(paths[50], "(+10 more)");
 }
 
 #[test]

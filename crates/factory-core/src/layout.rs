@@ -83,6 +83,16 @@ impl Layout {
         self.state_dir.join("board.json")
     }
 
+    /// The folder of saved spec reviews, one file per hash of the spec and its plans.
+    pub fn spec_reviews_dir(&self) -> PathBuf {
+        self.state_dir.join("spec-reviews")
+    }
+
+    /// The usage log of the spec reviews. No job owns those runs, so their tokens are logged here.
+    pub fn spec_review_usage_file(&self) -> PathBuf {
+        self.spec_reviews_dir().join("usage.jsonl")
+    }
+
     pub fn events_file(&self) -> PathBuf {
         self.state_dir.join("events.jsonl")
     }
@@ -202,6 +212,15 @@ mod tests {
         ] {
             assert!(!is_agent_file_name(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn spec_reviews_live_in_the_state_dir() {
+        let l = Layout::in_repo(Path::new("/r"));
+        assert_eq!(
+            l.spec_reviews_dir(),
+            PathBuf::from("/r/.superpowers/factory/spec-reviews")
+        );
     }
 
     #[test]

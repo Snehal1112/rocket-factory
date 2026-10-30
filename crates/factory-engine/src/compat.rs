@@ -387,6 +387,18 @@ impl Driver {
     pub fn root(&self) -> &Path {
         &self.layout.repo
     }
+    /// The agent files the driver writes into checkouts.
+    pub(crate) fn agent_files(&self) -> &[factory_core::AgentFile] {
+        &self.agent_files
+    }
+    /// Runs one agent that belongs to no job yet, through the runner made for `id`.
+    pub(crate) fn run_agent_for(
+        &self,
+        id: &str,
+        spec: &factory_agent::AgentSpec,
+    ) -> factory_agent::AgentRun {
+        (self.runner_for)(id).run(spec)
+    }
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -413,7 +425,7 @@ impl Driver {
     }
 
     /// Builds the runner and event sink for this job and runs `f` on a per-job engine.
-    fn with_engine<R>(
+    pub(crate) fn with_engine<R>(
         &self,
         id: &str,
         f: impl FnOnce(&Engine) -> Result<R, EngineError>,
@@ -541,6 +553,9 @@ impl Driver {
     }
     pub fn review(&self, id: &str) -> Result<ReviewOutcome, EngineError> {
         self.with_engine(id, |e| e.review_stage())
+    }
+    pub fn review_sync(&self, id: &str) -> Result<ReviewOutcome, EngineError> {
+        self.with_engine(id, |e| e.review_stage_as(crate::ReviewRun::Sync))
     }
     pub fn apply(&self, id: &str, outcome: &ReviewOutcome) -> Result<StageOutcome, EngineError> {
         self.with_engine(id, |e| e.apply_decision(outcome))

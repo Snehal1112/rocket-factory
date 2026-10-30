@@ -2,9 +2,14 @@
 
 mod plan;
 mod run;
+mod workspace;
 
-pub use plan::{plan_checks, validate_command, validate_config, CheckPlan, DEFAULT_TIMEOUT};
-pub use run::{run_checks, trim_tail, write_checks_md, CheckResult, ChecksReport};
+pub use plan::{
+    plan_checks, plan_checks_in, validate_command, validate_config, CheckPlan, DEFAULT_TIMEOUT,
+};
+pub use run::{append_notes, run_checks, trim_tail, write_checks_md, CheckResult, ChecksReport};
+
+pub use workspace::{Package, Workspace};
 
 use thiserror::Error;
 
@@ -18,4 +23,6 @@ pub enum CheckError {
     Forbidden { flag: &'static str, cmd: String },
     #[error("could not write checks file: {0}")]
     Write(String),
+    #[error("workspace map: {0}")]
+    Workspace(String),
 }

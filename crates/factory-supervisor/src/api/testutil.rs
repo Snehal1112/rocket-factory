@@ -6,6 +6,7 @@ use factory_core::Home;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::api::ApiDeps;
 use crate::factory_cli::{CliOutput, CliSpawnError, FactoryCli};
@@ -16,6 +17,8 @@ pub const NOW_MS: u64 = 1_700_000_000_000;
 /// Records every call and answers with the queued replies, else with the last one set.
 pub struct FakeCli {
     calls: Mutex<Vec<(String, Vec<String>)>>,
+    /// The time limit of each call, `None` for a plain `run`.
+    timeouts: Mutex<Vec<Option<Duration>>>,
     replies: Mutex<VecDeque<CliOutput>>,
     last: Mutex<CliOutput>,
 }
@@ -24,6 +27,7 @@ impl Default for FakeCli {
     fn default() -> FakeCli {
         FakeCli {
             calls: Mutex::new(Vec::new()),
+            timeouts: Mutex::new(Vec::new()),
             replies: Mutex::new(VecDeque::new()),
             last: Mutex::new(CliOutput {
                 code: 0,
@@ -50,16 +54,39 @@ impl FakeCli {
     pub fn calls(&self) -> Vec<(String, Vec<String>)> {
         self.calls.lock().expect("lock").clone()
     }
-}
 
-impl FactoryCli for FakeCli {
-    fn run(&self, project: &str, args: &[String]) -> Result<CliOutput, CliSpawnError> {
+    pub fn timeouts(&self) -> Vec<Option<Duration>> {
+        self.timeouts.lock().expect("lock").clone()
+    }
+
+    fn answer(
+        &self,
+        project: &str,
+        args: &[String],
+        timeout: Option<Duration>,
+    ) -> Result<CliOutput, CliSpawnError> {
+        self.timeouts.lock().expect("lock").push(timeout);
         self.calls
             .lock()
             .expect("lock")
             .push((project.to_string(), args.to_vec()));
         let queued = self.replies.lock().expect("lock").pop_front();
         Ok(queued.unwrap_or_else(|| self.last.lock().expect("lock").clone()))
+    }
+}
+
+impl FactoryCli for FakeCli {
+    fn run(&self, project: &str, args: &[String]) -> Result<CliOutput, CliSpawnError> {
+        self.answer(project, args, None)
+    }
+
+    fn run_with_timeout(
+        &self,
+        project: &str,
+        args: &[String],
+        timeout: Duration,
+    ) -> Result<CliOutput, CliSpawnError> {
+        self.answer(project, args, Some(timeout))
     }
 }
 

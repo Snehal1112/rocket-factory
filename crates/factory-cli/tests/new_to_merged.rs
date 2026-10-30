@@ -1,5 +1,7 @@
 mod common;
+mod support;
 use common::Fixture;
+use support::{build, review, Scenario, TestResult, APPROVE, CHANGES};
 
 #[test]
 fn a_job_goes_from_new_to_merged_through_the_cli() {
@@ -813,4 +815,304 @@ fn new_without_plans_says_a_plan_is_needed_and_new_with_plans_does_not() {
         .run(&["new", "two", "x", "--plans", plans.to_str().expect("utf8")])
         .expect("new");
     assert!(!out.contains("no plan yet"), "{out}");
+}
+
+/// A risky job parked with open review blockers.
+fn parked_with_changes() -> Result<Scenario, Box<dyn std::error::Error>> {
+    let mut steps = vec![build(vec![("secrets/token.txt", "x\n")], 1_000)];
+    for _ in 0..6 {
+        steps.push(review(CHANGES));
+        steps.push(build(vec![("secrets/token.txt", "y\n")], 400));
+    }
+    let sc = Scenario::new("", steps)?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    Ok(sc)
+}
+
+#[test]
+fn approve_refuses_open_changes_and_names_waive() -> TestResult {
+    let sc = parked_with_changes()?;
+    let before = sc.main_tip()?;
+    let e = sc.run(&["approve", "1"]).expect_err("open changes");
+    let text = e.to_string();
+    assert!(text.contains("open review blockers"), "{text}");
+    assert!(text.contains("--waive"), "{text}");
+    assert_eq!(sc.stage("001")?, "needs-human");
+    assert_eq!(sc.main_tip()?, before);
+    Ok(())
+}
+
+#[test]
+fn approve_with_waive_on_a_clean_job_is_refused() -> TestResult {
+    let sc = Scenario::new(
+        "",
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(APPROVE),
+        ],
+    )?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    let e = sc
+        .run(&["approve", "1", "--waive", "x"])
+        .expect_err("nothing to waive");
+    let text = e.to_string();
+    assert!(text.contains("no open review findings to waive"), "{text}");
+    assert_eq!(sc.stage("001")?, "needs-human");
+    Ok(())
+}
+
+#[test]
+fn waive_reason_must_be_one_short_line() -> TestResult {
+    let sc = parked_with_changes()?;
+    for reason in ["".to_string(), "x".repeat(201)] {
+        let e = sc
+            .run(&["approve", "1", "--waive", &reason])
+            .expect_err("bad reason");
+        let text = e.to_string();
+        assert!(text.contains("waive reason"), "{text}");
+        assert_eq!(sc.stage("001")?, "needs-human");
+    }
+    Ok(())
+}
+
+#[test]
+fn approve_with_waive_merges_and_records_the_waiver() -> TestResult {
+    let sc = parked_with_changes()?;
+    let out = sc.run(&["approve", "1", "--waive", "accepted for now"])?;
+    assert!(out.starts_with("merged"), "{out}");
+    assert_eq!(sc.stage("001")?, "merged");
+    let sdd = sc.root.join(".superpowers/sdd");
+    let mut ledgers = String::new();
+    let mut waivers = String::new();
+    for entry in std::fs::read_dir(&sdd)?.flatten() {
+        ledgers.push_str(
+            &std::fs::read_to_string(entry.path().join("progress.md")).unwrap_or_default(),
+        );
+        waivers.push_str(
+            &std::fs::read_to_string(entry.path().join("waivers.json")).unwrap_or_default(),
+        );
+    }
+    assert!(ledgers.contains("waived 1 blockers"), "{ledgers}");
+    let list: serde_json::Value = serde_json::from_str(&waivers)?;
+    assert_eq!(list.as_array().map(Vec::len), Some(1), "{waivers}");
+    assert_eq!(list[0]["reason"], "accepted for now");
+    Ok(())
+}
+
+/// A tracker that counts created issues and answers every other call.
+#[derive(Default)]
+struct CountCreates(std::sync::atomic::AtomicU32);
+
+impl factory_engine::Tracker for CountCreates {
+    fn repo_name(&self) -> Result<String, String> {
+        Ok("o/r".into())
+    }
+    fn labels_of(&self, _: u32) -> Result<Vec<String>, String> {
+        Ok(vec![])
+    }
+    fn is_closed(&self, _: u32) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn create(&self, _: &str, _: &str, _: &[String]) -> Result<u32, String> {
+        Ok(300 + self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+    }
+    fn comment(&self, _: u32, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn close(&self, _: u32) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_rework_supersedes_a_waiver_that_never_merged() -> TestResult {
+    let tracker = std::sync::Arc::new(CountCreates::default());
+    let sc = reworkable(
+        0,
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+            build(vec![("secrets/token.txt", "y\n")], 400),
+            review(APPROVE),
+        ],
+    )?
+    .with_tracker(tracker.clone());
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    // A dirty main parks the waived approve as main busy.
+    std::fs::write(sc.root.join("README.md"), "dirty\n")?;
+    let out = sc.run(&["approve", "1", "--waive", "accepted for now"])?;
+    assert!(out.contains("main busy"), "{out}");
+    std::fs::write(sc.root.join("README.md"), "demo\n")?;
+    // A stale rework note must not shadow the round's findings.
+    std::fs::write(job_file(&sc, "rework-note.md"), "stale")?;
+    assert_eq!(
+        sc.run(&["rework", "1", "fix the helper"])?,
+        "job 001 back to build, round 2"
+    );
+    assert!(!job_file(&sc, "rework-note.md").exists());
+    let waivers: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(job_file(&sc, "waivers.json"))?)?;
+    assert_eq!(waivers[0]["superseded"], true, "{waivers}");
+    let ledger = std::fs::read_to_string(job_file(&sc, "progress.md"))?;
+    assert!(
+        ledger.contains("waiver superseded by rework round 2"),
+        "{ledger}"
+    );
+    let end = sc.run(&["run", "1"])?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    assert!(sc.run(&["approve", "1"])?.starts_with("merged"));
+    assert_eq!(tracker.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
+}
+
+/// A risky job with `fix_rounds` fix rounds, scripted by `steps`.
+fn reworkable(
+    fix_rounds: u32,
+    steps: Vec<support::Step>,
+) -> Result<Scenario, Box<dyn std::error::Error>> {
+    let cfg = format!("fix_rounds = {fix_rounds}\nrisky_fix_rounds = {fix_rounds}\n");
+    Scenario::new(&cfg, steps)
+}
+
+fn job_file(sc: &Scenario, name: &str) -> std::path::PathBuf {
+    let dir = sc.job("1").map(|j| j.dir).unwrap_or_default();
+    sc.root.join(".superpowers/sdd").join(dir).join(name)
+}
+
+const NOTE_WINS: &str =
+    "The note above is from the user and wins where it conflicts with the findings below.";
+
+#[test]
+fn rework_of_a_round_one_job_keeps_round_one_files() -> TestResult {
+    let sc = reworkable(
+        0,
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+            build(vec![("secrets/token.txt", "y\n")], 400),
+            review(CHANGES),
+        ],
+    )?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    let before = std::fs::read_to_string(job_file(&sc, "review-code-r1.md"))?;
+    let line = sc.run(&["rework", "1", "shorter"])?;
+    assert_eq!(line, "job 001 back to build, round 2");
+    let job = sc.job("1")?;
+    assert_eq!((job.round, job.rework_base), (2, 1));
+    sc.run(&["run", "1"])?;
+    for name in ["review-code-r1.md", "builder-r2.md", "review-code-r2.md"] {
+        assert!(job_file(&sc, name).exists(), "{name}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(job_file(&sc, "review-code-r1.md"))?,
+        before
+    );
+    Ok(())
+}
+
+#[test]
+fn rework_sends_the_note_and_the_open_findings() -> TestResult {
+    let sc = reworkable(
+        0,
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+        ],
+    )?;
+    sc.start(&sc.plan_b, false)?;
+    sc.run(&["rework", "1", "use a shorter name"])?;
+    let text = std::fs::read_to_string(job_file(&sc, "changes-r2.md"))?;
+    let want = format!("use a shorter name\n\n{NOTE_WINS}\n\n{CHANGES}");
+    assert_eq!(text, want);
+    Ok(())
+}
+
+#[test]
+fn rework_after_nothing_changed_carries_the_review() -> TestResult {
+    let sc = reworkable(
+        1,
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+            build(vec![], 400),
+        ],
+    )?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    assert_eq!(sc.job("1")?.park_kind.as_deref(), Some("nothing-changed"));
+    sc.run(&["rework", "1", "try again"])?;
+    let round = sc.job("1")?.round;
+    let text = std::fs::read_to_string(job_file(&sc, &format!("changes-r{round}.md")))?;
+    assert!(text.contains(CHANGES), "{text}");
+    Ok(())
+}
+
+#[test]
+fn rework_after_failing_checks_carries_the_checks() -> TestResult {
+    let sc = reworkable(
+        0,
+        vec![build(
+            vec![("secrets/token.txt", "x\n"), ("bad.flag", "x\n")],
+            1_000,
+        )],
+    )?;
+    let end = sc.start(&sc.plan_b, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    assert_eq!(sc.job("1")?.park_kind.as_deref(), Some("checks-failed"));
+    sc.run(&["rework", "1", "fix the flag"])?;
+    let text = std::fs::read_to_string(job_file(&sc, "changes-r2.md"))?;
+    assert!(text.starts_with("fix the flag\n\n"), "{text}");
+    assert!(text.contains("FAIL test ! -f bad.flag"), "{text}");
+    Ok(())
+}
+
+#[test]
+fn rework_grants_a_full_set_of_fix_rounds() -> TestResult {
+    let sc = reworkable(
+        1,
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+            build(vec![("secrets/token.txt", "y\n")], 400),
+            review(CHANGES),
+            build(vec![("secrets/token.txt", "z\n")], 400),
+            review(CHANGES),
+            build(vec![("secrets/token.txt", "w\n")], 400),
+            review(CHANGES),
+        ],
+    )?;
+    sc.start(&sc.plan_b, false)?;
+    assert_eq!(sc.job("1")?.round, 2);
+    sc.run(&["rework", "1", "again"])?;
+    assert_eq!(sc.job("1")?.round, 3);
+    sc.run(&["run", "1"])?;
+    // The CHANGES review of the rework round still started a fix round.
+    assert_eq!(sc.job("1")?.round, 4);
+    Ok(())
+}
+
+#[test]
+fn rework_mid_task_keeps_the_note_path() -> TestResult {
+    let sc = reworkable(1, vec![])?;
+    let plan = sc.tmp.path().join("plans/plan-03-two.md");
+    std::fs::write(
+        &plan,
+        "# Two\n\n### Task 1: a\n\n### Task 2: b\n\nNext plan: none\n",
+    )?;
+    let end = sc.start(&plan, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    let round = sc.job("1")?.round;
+    let line = sc.run(&["rework", "1", "use the small helper"])?;
+    assert_eq!(line, "job 001 back to build, same task");
+    assert_eq!(
+        std::fs::read_to_string(job_file(&sc, "rework-note.md"))?,
+        "use the small helper"
+    );
+    let job = sc.job("1")?;
+    assert_eq!((job.round, job.rework_base), (round, 0));
+    Ok(())
 }

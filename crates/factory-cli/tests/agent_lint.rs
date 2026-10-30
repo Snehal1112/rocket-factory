@@ -111,6 +111,7 @@ fn only_the_known_factory_agents_remain() -> TestResult {
         "factory-code-reviewer.md".to_string(),
         "factory-committer.md".to_string(),
         "factory-kb-refresher.md".to_string(),
+        "factory-spec-reviewer.md".to_string(),
     ];
     if names == want {
         Ok(())
@@ -216,6 +217,44 @@ fn reviewer_frontmatter_is_read_only() -> TestResult {
     }
     check_description(&fm, "reviewer")?;
     check_max_turns(&fm, "reviewer")
+}
+
+#[test]
+fn spec_reviewer_is_read_only_and_pins_its_rules() -> TestResult {
+    let mut paths = vec![".claude/agents/factory-spec-reviewer.md".to_string()];
+    for preset in ["rust", "ruby", "node", "csharp", "go"] {
+        paths.push(format!(
+            "crates/factory-core/presets/{preset}/agents/factory-spec-reviewer.md"
+        ));
+    }
+    for path in &paths {
+        let text = read(path)?;
+        let fm = frontmatter(&text)?;
+        if fm_get(&fm, "name") != Some("factory-spec-reviewer") {
+            return Err(format!("{path}: name is wrong"));
+        }
+        if fm_get(&fm, "tools") != Some("Read, Grep, Glob") {
+            return Err(format!("{path}: tools must be exactly Read, Grep, Glob"));
+        }
+        check_description(&fm, path)?;
+        check_max_turns(&fm, path)?;
+        require_all(
+            &text,
+            path,
+            &[
+                "<!-- factory-rules: 1 -->",
+                "path:line",
+                "default-deny",
+                "Decided by: call",
+            ],
+        )?;
+        if !has_line(&text, "VERDICT: APPROVE") || !has_line(&text, "VERDICT: CHANGES") {
+            return Err(format!(
+                "{path}: both VERDICT lines must be on their own line"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -422,6 +461,8 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "When the `file` line says `exists`, read the file and continue from it, never overwrite it.",
             "Only the last series carries `#N` or the issue URL in its feature text",
             "Report every `warning:` line",
+            "--accept-spec",
+            "Decided by: user",
             "refuses a plan with `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences",
         ],
     )?;
@@ -873,6 +914,62 @@ fn reviewer_files_name_the_review_focus_and_the_builder_rulings() -> TestResult 
         require_all(&read(path)?, path, &["Review Focus", "rulings", "concerns"])?;
     }
     Ok(())
+}
+
+#[test]
+fn reviewer_files_tag_fixed_findings() -> TestResult {
+    for path in [
+        ".claude/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
+    ] {
+        require_all(&read(path)?, path, &["[fixed]", "keeps no other tag"])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn reviewer_files_carry_the_grading_rubric() -> TestResult {
+    for path in [
+        ".claude/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
+        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
+    ] {
+        let text = read(path)?;
+        require_all(
+            &text,
+            path,
+            &[
+                "a bug a user can hit",
+                "a breach of any rule",
+                "a missing test for an edge case or error path",
+                "re-read every",
+                "even when the finding is about reuse or efficiency",
+                "no blocking file or network work on an async path (always",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_reviewer_blocks_blocking_async_work() -> TestResult {
+    let path = "crates/factory-core/presets/rust/agents/factory-code-reviewer.md";
+    require_all(&read(path)?, path, &["async runtime path"])
+}
+
+#[test]
+fn rust_builder_runs_cargo_per_crate() -> TestResult {
+    let path = "crates/factory-core/presets/rust/agents/factory-builder.md";
+    let text = read(path)?;
+    require_all(&text, path, &["cargo check -j4 -p <crate>"])?;
+    forbid_all(&text, path, &["`cargo check -j4`"])
 }
 
 /// The builder follows the implementer rules of subagent-driven-development and never acts as its controller.

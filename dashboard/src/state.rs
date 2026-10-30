@@ -375,9 +375,11 @@ mod tests {
             cancelled: None,
             park_kind: None,
             park_at: None,
+            park_summary: None,
             estimate: None,
             spec_warning: None,
             provider: None,
+            last_review: None,
         }
     }
 

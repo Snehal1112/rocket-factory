@@ -243,6 +243,12 @@ impl Scenario {
         })
     }
 
+    /// The same scenario with an injected issue tracker instead of `gh`.
+    pub fn with_tracker(mut self, tracker: Arc<dyn factory_engine::Tracker>) -> Scenario {
+        self.ctx = self.ctx.clone().with_tracker(tracker);
+        self
+    }
+
     pub fn run(&self, args: &[&str]) -> Result<String, CliError> {
         let mut argv = vec!["factory"];
         argv.extend_from_slice(args);

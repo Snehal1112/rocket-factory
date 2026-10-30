@@ -2,15 +2,18 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use factory_agent::AgentSpec;
+use factory_core::rules_marker;
 
 use crate::ports::{short_sha, JobView};
 use crate::tasks::{plan_header, spec_excerpt, task_section, PlanTask};
-use crate::Engine;
+use crate::{Driver, Engine};
 
 /// The agent file the driver passes with `--agent`.
 const BUILDER_AGENT: &str = "factory-builder";
 /// The reviewer agent file the driver passes with `--agent`. It sets the read-only tools and the checks.
 const REVIEWER_AGENT: &str = "factory-code-reviewer";
+/// The agent file of the spec reviewer.
+pub(crate) const SPEC_REVIEWER_AGENT: &str = "factory-spec-reviewer";
 /// The turn cap of a builder run. The builder agent files carry the same number, and a test pins it.
 pub const BUILDER_MAX_TURNS: u32 = 120;
 
@@ -36,32 +39,6 @@ const NOT_CONTROLLER: &str =
 
 /// The rules version this engine knows. Agent files carry `<!-- factory-rules: N -->` with the same number.
 pub const RULES_VERSION: u32 = 1;
-
-#[cfg(test)]
-mod marker_tests {
-    use super::rules_marker;
-
-    #[test]
-    fn rules_marker_reads_only_exact_lines() {
-        assert_eq!(
-            rules_marker("---\n---\n<!-- factory-rules: 3 -->\n"),
-            Some(3)
-        );
-        assert_eq!(rules_marker("x <!-- factory-rules: 3 -->"), None);
-        assert_eq!(rules_marker("<!-- factory-rules: x -->"), None);
-        assert_eq!(rules_marker(""), None);
-    }
-}
-
-/// The number of the first line that is exactly `<!-- factory-rules: N -->`.
-pub(crate) fn rules_marker(text: &str) -> Option<u32> {
-    text.lines().find_map(|line| {
-        let n = line
-            .strip_prefix("<!-- factory-rules: ")?
-            .strip_suffix(" -->")?;
-        n.parse::<u32>().ok()
-    })
-}
 
 impl Engine<'_> {
     /// True when the worktree's agent file carries a rules marker at or above `RULES_VERSION`.
@@ -580,23 +557,26 @@ impl Engine<'_> {
         model: &str,
     ) -> AgentSpec {
         let spec_line = self.spec_line();
-        // A later round also gets the findings of the round before, so the reviewer can check they were fixed.
+        // A later round also gets the latest review's findings, so the reviewer can check they were fixed.
         let earlier = self
-            .job_dir
-            .join(format!("review-code-r{}.md", round.saturating_sub(1)));
-        let earlier_line = if round > 1 && earlier.exists() {
-            format!(
-                "The findings of round {} are at {}. Check that each was fixed.\n",
-                round - 1,
-                earlier.display()
-            )
-        } else {
-            String::new()
+            .job()
+            .ok()
+            .and_then(|j| j.last_review)
+            .filter(|last| round > 1 && last.round < round)
+            .map(|last| (last.round, self.job_dir.join(&last.file)))
+            .filter(|(_, path)| path.exists());
+        let earlier_line = match &earlier {
+            Some((r, path)) => format!(
+                "The findings of round {r} are at {}. Check that each was fixed.\n",
+                path.display()
+            ),
+            None => String::new(),
         };
         // Round 2 and later review only the fix, so the reviewer does not reopen settled ground.
-        // It needs earlier findings to judge, so a round after a checks-only fix is a normal review.
-        let rereview = if round > 1 && earlier.exists() {
+        // It needs earlier findings to judge, so a round without a review file is a normal review.
+        let rereview = if earlier.is_some() {
             "This is a scoped re-review. Give a verdict for each earlier finding: fixed, not fixed, or wrong. \
+             A finding that is fixed is tagged `[fixed]` and keeps no other tag. \
              A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. \
              Inspect the fix diff only. Report anything you notice outside it under `Out-of-scope observations`, without changing the verdict.\n"
         } else {
@@ -682,3 +662,50 @@ impl Engine<'_> {
         self.with_limits(spec, model)
     }
 }
+
+impl Driver {
+    /// The headless spec reviewer. It runs in `cwd`, the main checkout, before any job exists.
+    pub(crate) fn spec_reviewer_spec(
+        &self,
+        cwd: &Path,
+        spec: &Path,
+        plans: &[PathBuf],
+    ) -> AgentSpec {
+        let plan_lines: Vec<String> = plans.iter().map(|p| p.display().to_string()).collect();
+        let prompt = format!(
+            "Review this spec and its plans before the build.\n\
+             Spec: {spec}\nPlans: {plans}\nMain checkout: {cwd}\n\
+             Report only the three kinds of finding in your agent rules. \
+             Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
+            spec = spec.display(),
+            plans = plan_lines.join(", "),
+            cwd = cwd.display(),
+        );
+        let model = self
+            .config()
+            .reviewer_model_large
+            .as_deref()
+            .unwrap_or(&self.config().reviewer_model);
+        let mut agent = AgentSpec::new(
+            SPEC_REVIEW_JOB,
+            "spec-reviewer",
+            self.repo().workdir_in(cwd),
+            &prompt,
+        );
+        agent.agent = Some(SPEC_REVIEWER_AGENT.to_string());
+        agent.max_turns = Some(REVIEWER_MAX_TURNS);
+        agent.strict_mcp = true;
+        agent.disable_slash_commands = true;
+        agent.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
+        agent.tools = Some("Read,Grep,Glob".to_string());
+        agent.model = Some(model.to_string());
+        agent.budget_weighted = Some(self.config().budget_weighted);
+        agent.stall_after = Some(Duration::from_secs(
+            u64::from(self.config().stall_minutes) * 60,
+        ));
+        agent
+    }
+}
+
+/// The job id the spec reviewer runs under, since no job exists yet.
+pub(crate) const SPEC_REVIEW_JOB: &str = "spec-review";

@@ -519,6 +519,8 @@ impl AgentRunner for RoleRunner {
         } else if spec.role == "committer" {
             commit_index(&spec.cwd, AUTO_COMMIT_MESSAGE);
             "done".to_string()
+        } else if spec.role == "spec-reviewer" {
+            "VERDICT: APPROVE".to_string()
         } else {
             self.verdict.clone()
         };

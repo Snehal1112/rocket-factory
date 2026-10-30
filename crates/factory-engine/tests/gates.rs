@@ -43,7 +43,7 @@ fn a_code_diff_with_no_mapped_check_parks_as_no_checks_before_the_review() {
     let out = fx.engine(&runner).checks_stage().expect("checks");
     match out {
         StageOutcome::NeedsHuman(r) => {
-            assert!(r.contains("no check ran") && r.contains("a.txt"), "{r}")
+            assert!(r.contains("no check covers") && r.contains("a.txt"), "{r}")
         }
         other => panic!("unexpected {other:?}"),
     }
@@ -72,18 +72,29 @@ fn a_docs_only_diff_with_no_mapped_check_is_not_parked() {
 }
 
 #[test]
-fn a_risky_code_diff_with_no_mapped_check_is_left_to_decide() {
+fn risky_diff_with_an_unchecked_path_parks() {
     let mut fx = committing_fixture();
     only_src_checks(&mut fx);
     let runner = built(&fx, vec![("src-tauri/src/lib.rs", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
-    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
-    let rr = reviewer("fine\nVERDICT: APPROVE");
-    let review = fx.engine(&rr).review_stage().expect("review");
-    match review.decision {
-        Decision::NeedsHuman { kind, .. } => assert_eq!(kind, ParkKind::RiskyDiff),
+    match out {
+        StageOutcome::NeedsHuman(r) => {
+            assert!(r.contains("no check covers") && r.contains("lib.rs"), "{r}")
+        }
         other => panic!("unexpected {other:?}"),
     }
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::NoChecks);
+}
+
+#[test]
+fn an_exempt_path_does_not_park() {
+    let mut fx = committing_fixture();
+    only_src_checks(&mut fx);
+    fx.config.unchecked_paths = vec!["LICENSE".into()];
+    let runner = built(&fx, vec![("LICENSE", "x\n")]);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
 }
 
 #[test]
@@ -274,6 +285,26 @@ fn risk_paths_are_project_relative() {
     fx.config.risk_paths = vec!["migrations/**".into()];
     let runner = built(&fx, vec![("migrations/1.sql", "x\n")]);
     fx.engine(&runner).checks_stage().expect("checks");
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let review = fx.engine(&rr).review_stage().expect("review");
+    match review.decision {
+        Decision::NeedsHuman { kind, .. } => assert_eq!(kind, ParkKind::RiskyDiff),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn a_failed_risky_paths_write_does_not_stop_the_review() {
+    let mut fx = scoped_fixture();
+    fx.config.risk_paths = vec!["migrations/**".into()];
+    let runner = built(&fx, vec![("migrations/1.sql", "x\n")]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    // A dangling link reads as absent, and writing through it fails.
+    std::os::unix::fs::symlink(
+        fx.job_dir.join("no-such-dir/file"),
+        fx.job_dir.join("risky-paths.txt"),
+    )
+    .expect("link");
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let review = fx.engine(&rr).review_stage().expect("review");
     match review.decision {

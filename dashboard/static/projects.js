@@ -85,6 +85,14 @@
     return { note: text };
   }
 
+  function buildWaiveBody(reason) {
+    const text = String(reason || "").trim();
+    if (!text) return { error: "Write the reason for merging with open blockers." };
+    if (/[\r\n]/.test(text)) return { error: "The reason must be one line." };
+    if (text.length > NOTE_MAX) return { error: `The reason is ${text.length} characters, ${NOTE_MAX} at most.` };
+    return { waive_reason: text };
+  }
+
   function buildCancelBody(reason, force) {
     const body = {};
     const text = String(reason || "").trim();
@@ -163,6 +171,7 @@
     isSafeId,
     buildCreateBody,
     buildReworkBody,
+    buildWaiveBody,
     buildCancelBody,
     jobActions,
     errorText,

@@ -113,6 +113,9 @@ pub struct Job {
     /// Unix seconds the job parked. New in the failure details series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub park_at: Option<u64>,
+    /// One line that says why the job parked, at most 160 characters. New in the park reasons series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park_summary: Option<String>,
     /// The tip of the snapshot commits while the batch commit of the job is pending. New in the cost reduction series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_snapshot: Option<String>,
@@ -140,6 +143,12 @@ pub struct Job {
     /// The agent provider of the latest run, `claude` or `codex`. Absent means `claude`. New in the Codex series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// The latest code review of the job. New in the act-on-review-findings series, absent in older boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_review: Option<LastReview>,
+    /// The `round` value when the latest rework started, so fix rounds count from there. New in the act-on-review-findings series, absent in older boards.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rework_base: u32,
 }
 
 /// The last finished builder of the job, a task or fix builder, used to decide a carry or a fresh fix builder.
@@ -196,6 +205,19 @@ pub struct SeriesPos {
     pub id: Option<String>,
 }
 
+/// The latest code review of a job. New in the act-on-review-findings series, absent in older boards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastReview {
+    pub round: u32,
+    /// `approve`, `changes` or `missing`.
+    pub verdict: String,
+    /// Open `[blocker]` lines in the review file.
+    pub blockers: u32,
+    pub file: String,
+    /// What started the review: `build`, `checks`, `review`, `rework` or `sync`.
+    pub source: String,
+}
+
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
@@ -238,6 +260,7 @@ impl Job {
             task_index: 0,
             park_kind: None,
             park_at: None,
+            park_summary: None,
             batch_snapshot: None,
             estimate: None,
             fix_source: None,
@@ -247,7 +270,61 @@ impl Job {
             task_session: None,
             builder_last: None,
             provider: None,
+            last_review: None,
+            rework_base: 0,
         }
+    }
+
+    /// True when the latest code review asked for changes.
+    pub fn changes_open(&self) -> bool {
+        self.last_review
+            .as_ref()
+            .is_some_and(|r| r.verdict == "changes")
+    }
+
+    /// The refusal that approve gives while the latest code review has open blockers.
+    pub fn changes_open_message(&self) -> String {
+        let (blockers, round, file) = self
+            .last_review
+            .as_ref()
+            .map_or((0, 0, ""), |r| (r.blockers, r.round, r.file.as_str()));
+        format!(
+            "job {} has {blockers} open review blockers from round {round} ({file}): use rework, cancel, or approve --waive \"<reason>\" to merge anyway",
+            self.id
+        )
+    }
+
+    /// True when the latest review ended without a usable verdict.
+    fn last_review_missing(&self) -> bool {
+        self.last_review
+            .as_ref()
+            .is_some_and(|r| r.verdict == "missing")
+    }
+
+    /// The reason approve is refused for this job, or `None` when it is allowed. CLI and API share it.
+    pub fn approve_refusal(&self, without_review: bool, waive: bool) -> Option<String> {
+        if waive && !self.changes_open() {
+            return Some(format!(
+                "job {} has no open review findings to waive",
+                self.id
+            ));
+        }
+        if self.changes_open() && !waive {
+            return Some(self.changes_open_message());
+        }
+        if self.stage == Stage::NeedsHuman && !without_review {
+            if self.last_review_missing() {
+                let round = self.last_review.as_ref().map_or(0, |r| r.round);
+                return Some(format!(
+                    "job {} review did not finish in round {round}: use rework, cancel, or approve --without-review to merge anyway",
+                    self.id
+                ));
+            }
+            if self.review_missing() && !self.changes_open() {
+                return Some(self.review_missing_message());
+            }
+        }
+        None
     }
 
     /// The refusal that approve gives for a needs-human job without a code review. CLI and API share it.
@@ -298,6 +375,7 @@ impl Job {
         if to != Stage::NeedsHuman {
             self.park_kind = None;
             self.park_at = None;
+            self.park_summary = None;
         }
         Ok(())
     }
@@ -499,6 +577,34 @@ mod tests {
     }
 
     #[test]
+    fn park_summary_is_optional_and_round_trips() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        let json = serde_json::to_string(&job).expect("json");
+        assert!(!json.contains("park_summary"), "{json}");
+        job.park_summary = Some("verdict changes, round 2".to_string());
+        let back: Job =
+            serde_json::from_str(&serde_json::to_string(&job).expect("json")).expect("parse");
+        assert_eq!(
+            back.park_summary.as_deref(),
+            Some("verdict changes, round 2")
+        );
+    }
+
+    #[test]
+    fn leaving_needs_human_clears_the_summary() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        job.set_stage(Stage::Build, None, false, 2.0)
+            .expect("build");
+        job.park_summary = Some("why".to_string());
+        job.set_stage(Stage::NeedsHuman, Some("why"), false, 3.0)
+            .expect("park");
+        assert_eq!(job.park_summary.as_deref(), Some("why"));
+        job.set_stage(Stage::Build, None, true, 4.0).expect("back");
+        assert_eq!(job.reason, None);
+        assert_eq!(job.park_summary, None);
+    }
+
+    #[test]
     fn park_fields_are_set_kept_and_cleared_by_set_stage() {
         let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
         job.set_stage(Stage::Build, None, false, 2.0)
@@ -659,6 +765,107 @@ mod tests {
         let text = serde_json::to_string(&j).expect("json");
         let back: Job = serde_json::from_str(&text).expect("parse");
         assert_eq!(back.provider.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn last_review_and_rework_base_are_optional_and_round_trip() {
+        let mut j = job();
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(!text.contains("last_review"), "{text}");
+        assert!(!text.contains("rework_base"), "{text}");
+        j.last_review = Some(LastReview {
+            round: 2,
+            verdict: "changes".into(),
+            blockers: 1,
+            file: "review-code-r2.md".into(),
+            source: "review".into(),
+        });
+        j.rework_base = 1;
+        let text = serde_json::to_string(&j).expect("json");
+        let back: Job = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back, j);
+        assert!(back.changes_open());
+        j.last_review.as_mut().expect("set").verdict = "approve".into();
+        assert!(!j.changes_open());
+    }
+
+    fn with_last_review(verdict: &str) -> Job {
+        let mut j = job();
+        j.stage = Stage::NeedsHuman;
+        j.last_review = Some(LastReview {
+            round: 2,
+            verdict: verdict.into(),
+            blockers: 3,
+            file: "review-code-r2.md".into(),
+            source: "review".into(),
+        });
+        j
+    }
+
+    #[test]
+    fn approve_refusal_follows_the_last_review() {
+        // No last review: as today, the review-missing rule decides.
+        let mut j = job();
+        j.stage = Stage::NeedsHuman;
+        j.set_review("code", ReviewState::Pending);
+        assert!(j.approve_refusal(false, false).is_some());
+        assert!(j.approve_refusal(true, false).is_none());
+        assert!(j
+            .approve_refusal(false, true)
+            .expect("refused")
+            .contains("no open review findings to waive"));
+        j.set_review("code", ReviewState::Pass);
+        assert!(j.approve_refusal(false, false).is_none());
+
+        // Approve verdict: plain is allowed, waive is refused.
+        let mut j = with_last_review("approve");
+        j.set_review("code", ReviewState::Pass);
+        assert!(j.approve_refusal(false, false).is_none());
+        assert!(j.approve_refusal(true, false).is_none());
+        assert!(j.approve_refusal(false, true).is_some());
+
+        // Changes verdict: only waive is allowed.
+        let mut j = with_last_review("changes");
+        j.set_review("code", ReviewState::Changes);
+        let m = j.approve_refusal(false, false).expect("refused");
+        assert!(
+            m.contains("3 open review blockers from round 2 (review-code-r2.md)")
+                && m.contains("approve --waive"),
+            "{m}"
+        );
+        assert!(j.approve_refusal(true, false).is_some());
+        assert!(j.approve_refusal(false, true).is_none());
+
+        // Missing verdict: stored as changes on the board, so the review is not pending.
+        let mut j = with_last_review("missing");
+        j.set_review("code", ReviewState::Changes);
+        let m = j.approve_refusal(false, false).expect("refused");
+        assert!(
+            m.contains("did not finish")
+                && m.contains("rework")
+                && m.contains("cancel")
+                && m.contains("--without-review"),
+            "{m}"
+        );
+        assert!(j.approve_refusal(true, false).is_none());
+        assert!(j.approve_refusal(false, true).is_some());
+    }
+
+    #[test]
+    fn without_review_is_refused_while_changes_are_open() {
+        let mut j = with_last_review("changes");
+        j.set_review("code", ReviewState::Pending);
+        let m = j.approve_refusal(true, false).expect("refused");
+        assert!(m.contains("--waive"), "{m}");
+    }
+
+    #[test]
+    fn old_board_without_new_fields_loads() {
+        let text = serde_json::to_string(&job()).expect("json");
+        let back: Job = serde_json::from_str(&text).expect("old job loads");
+        assert_eq!(back.last_review, None);
+        assert_eq!(back.rework_base, 0);
+        assert!(!back.changes_open());
     }
 
     fn job() -> Job {

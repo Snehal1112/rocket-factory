@@ -47,6 +47,8 @@ pub struct Config {
     pub diff_cap_lines: u32,
     pub budget_weighted: u64,
     pub fix_rounds: u32,
+    /// Fix rounds a risky diff may use. `None` means the same as `fix_rounds`.
+    pub risky_fix_rounds: Option<u32>,
     pub stall_minutes: u32,
     pub builder_model: String,
     pub reviewer_model: String,
@@ -59,6 +61,10 @@ pub struct Config {
     pub escalation_model: Option<String>,
     /// Fix rounds spent before the next one escalates the builder. At or above `fix_rounds` it never escalates.
     pub escalate_after_fix_rounds: u32,
+    /// Most direct dependents a `{dependents}` check command expands to. The rest are skipped with a note.
+    pub dependents_cap: u32,
+    /// Path globs that no check covers on purpose. They are never reported as uncovered.
+    pub unchecked_paths: Vec<String>,
     pub commit_model: String,
     pub commit_subagents: bool,
     /// Per-run cap on weighted tokens for one committer run.
@@ -71,6 +77,10 @@ pub struct Config {
     pub builder_simplify: bool,
     /// After a merge, file the follow-up tickets and close the parent tickets. Off by default.
     pub tickets_on_merge: bool,
+    /// After a merge, file one ticket for the open `[minor]` review findings. On by default.
+    pub minor_tickets: bool,
+    /// Run the spec reviewer agent in `factory new`. The risky-decision check runs whatever this is.
+    pub spec_review: bool,
     /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
     pub kb_path: Option<String>,
     pub kb_model: String,
@@ -145,6 +155,7 @@ impl Default for Config {
             diff_cap_lines: 4000,
             budget_weighted: DEFAULT_JOB_BUDGET_WEIGHTED,
             fix_rounds: 2,
+            risky_fix_rounds: None,
             stall_minutes: 10,
             builder_model: "claude-sonnet-5-5".to_string(),
             reviewer_model: "claude-sonnet-5-5".to_string(),
@@ -152,6 +163,8 @@ impl Default for Config {
             reviewer_large_over_lines: 800,
             escalation_model: Some("claude-opus-5-5".to_string()),
             escalate_after_fix_rounds: 1,
+            dependents_cap: 6,
+            unchecked_paths: Vec::new(),
             commit_model: "claude-sonnet-5-5".to_string(),
             commit_subagents: false,
             commit_budget_weighted: 60_000,
@@ -159,6 +172,8 @@ impl Default for Config {
             builder_excerpt: true,
             builder_simplify: true,
             tickets_on_merge: false,
+            minor_tickets: true,
+            spec_review: true,
             kb_path: None,
             kb_model: "claude-sonnet-5-5".to_string(),
             kb_budget_weighted: 150_000,
@@ -224,6 +239,15 @@ impl Config {
             code_paths: vec!["**".to_string()],
             degraded: true,
             ..Config::default()
+        }
+    }
+
+    /// The fix rounds a diff may use, with the risky limit when the diff is risky.
+    pub fn fix_rounds_for(&self, risky: bool) -> u32 {
+        if risky {
+            self.risky_fix_rounds.unwrap_or(self.fix_rounds)
+        } else {
+            self.fix_rounds
         }
     }
 
@@ -568,6 +592,22 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn risky_fix_rounds_defaults_to_fix_rounds() {
+        let d = Config::default();
+        assert_eq!(d.fix_rounds_for(true), 2);
+        assert_eq!(d.fix_rounds_for(false), 2);
+        assert_eq!(
+            Config::parse("fix_rounds = 3")
+                .expect("ok")
+                .fix_rounds_for(true),
+            3
+        );
+        let z = Config::parse("risky_fix_rounds = 0").expect("ok");
+        assert_eq!(z.fix_rounds_for(true), 0);
+        assert_eq!(z.fix_rounds_for(false), 2);
+    }
+
     #[test]
     fn builder_allow_rejects_forbidden_and_malformed_entries() {
         for entry in [
@@ -920,6 +960,28 @@ mod tests {
         assert!(err
             .to_string()
             .contains("log_level must be one of error, warn, info, debug, trace"));
+    }
+
+    #[test]
+    fn minor_tickets_is_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().minor_tickets);
+        assert!(
+            !Config::parse("minor_tickets = false")
+                .expect("parse")
+                .minor_tickets
+        );
+        assert!(Config::parse("minor_tickets = \"no\"").is_err());
+    }
+
+    #[test]
+    fn spec_review_is_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().spec_review);
+        assert!(
+            !Config::parse("spec_review = false")
+                .expect("parse")
+                .spec_review
+        );
+        assert!(Config::parse("spec_review = \"no\"").is_err());
     }
 
     #[test]

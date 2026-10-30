@@ -233,6 +233,31 @@ fn read_agent_dir(dir: &Path, problems: &mut Vec<String>) -> Vec<(String, String
     out
 }
 
+/// Adds an agent drift note when an override lacks parts of the preset file it replaces.
+fn note_drift(
+    preset_files: &BTreeMap<String, String>,
+    name: &str,
+    own: &str,
+    preset: &str,
+    notes: &mut Vec<String>,
+) {
+    let Some(base) = preset_files.get(name) else {
+        return;
+    };
+    let mut items = crate::agent_drift::agent_drift(base, own);
+    let Some(last) = items.pop() else {
+        return;
+    };
+    let list = if items.is_empty() {
+        last
+    } else {
+        format!("{} and {last}", items.join(", "))
+    };
+    notes.push(format!(
+        "agent drift: {name} lacks {list}; compare it with the {preset} preset or remove the override"
+    ));
+}
+
 fn merged_agents(
     home: &Home,
     name: &str,
@@ -246,10 +271,12 @@ fn merged_agents(
         let preset_agents = home.presets_dir().join(&file.preset).join("agents");
         by_name.extend(read_agent_dir(&preset_agents, problems));
     }
-    by_name.extend(read_agent_dir(
-        &home.project_dir(name).join("agents"),
-        problems,
-    ));
+    let preset_files = by_name.clone();
+    let own_files = read_agent_dir(&home.project_dir(name).join("agents"), problems);
+    for (n, content) in &own_files {
+        note_drift(&preset_files, n, content, &file.preset, notes);
+    }
+    by_name.extend(own_files);
     match tip.list_dir(AGENTS_DIR) {
         Err(e) => problems.push(format!(
             "cannot read {AGENTS_DIR} from the base branch: {e}"
@@ -261,6 +288,7 @@ fn merged_agents(
                         "agent file name {n:?} in {AGENTS_DIR} is not valid"
                     ));
                 } else if n.ends_with(".md") {
+                    note_drift(&preset_files, &n, &content, &file.preset, notes);
                     by_name.insert(n, content);
                 }
             }
@@ -373,7 +401,8 @@ mod tests {
                 "factory-builder.md",
                 "factory-code-reviewer.md",
                 "factory-committer.md",
-                "factory-kb-refresher.md"
+                "factory-kb-refresher.md",
+                "factory-spec-reviewer.md"
             ]
         );
     }
@@ -599,6 +628,34 @@ mod tests {
     }
 
     #[test]
+    fn an_old_override_gives_a_drift_note() {
+        let e = env();
+        let own = e.home.project_dir("p").join("agents");
+        std::fs::write(own.join("factory-code-reviewer.md"), "old reviewer\n").expect("write");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n
+                    .starts_with("agent drift: factory-code-reviewer.md lacks the rules marker")),
+            "{:?}",
+            r.notes
+        );
+    }
+
+    #[test]
+    fn no_override_no_drift() {
+        let e = env();
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(
+            !r.notes.iter().any(|n| n.starts_with("agent drift")),
+            "{:?}",
+            r.notes
+        );
+    }
+
+    #[test]
     fn agent_layers_replace_by_name_and_the_result_is_sorted() {
         let e = env();
         let own = e.home.project_dir("p").join("agents");
@@ -639,6 +696,7 @@ mod tests {
                 "factory-code-reviewer.md",
                 "factory-committer.md",
                 "factory-kb-refresher.md",
+                "factory-spec-reviewer.md",
                 "factory-zzz-new.md"
             ]
         );
@@ -646,7 +704,7 @@ mod tests {
         assert_eq!(got[1].1, "project builder");
         assert_eq!(got[2].1, preset_reviewer);
         assert_eq!(got[3].1, "repo committer");
-        assert_eq!(got[5].1, "project new");
+        assert_eq!(got[6].1, "project new");
     }
 
     #[test]

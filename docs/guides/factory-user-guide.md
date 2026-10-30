@@ -277,6 +277,7 @@ Creates a job on the board. Nothing is built yet.
 | `--spec <file>` | The spec file. Needs `--plans`. |
 | `--model <name>` | Recorded on the job card. See the note below. |
 | `--one-job` | Combine the whole plan chain into one job. Needs `--plans`. |
+| `--accept-spec "<reason>"` | Create the job although the spec check refused it. One line, at most 200 characters. |
 | `--accept-over-budget` | Allow a `--one-job` job whose estimate is over the budget. Needs `--one-job`. |
 
 **What each form does:**
@@ -325,6 +326,8 @@ factory new login-fix "Fix login redirect" \
 - A single plan file given without `--spec` gets no spec check.
 - A copy of the spec is stored in each job folder as `spec.md`. A copy of each plan is stored too. Edit the copy, not the committed file.
 - If no item under `## Decisions` says `Decided by: user`, the job gets a warning. It is not an error.
+
+**When `factory new` refuses the spec.** Before it creates a job, `factory new` checks the spec. It refuses when the plans touch risky paths and no `## Decisions` item says `Decided by: user`, or when the spec reviewer (setting `spec_review`, on by default) answers `CHANGES` or gives no verdict. A refusal creates nothing. The message names the review file under the state folder `spec-reviews/`. Fix the spec, record your answers as `Decided by: user` decisions, commit, and run the same command again. Pass `--accept-spec "<reason>"` only when you decide to go ahead anyway.
 
 **The `--one-job` estimate.** The estimate is 110,000 plus 100,000 per task, in weighted tokens. If it is over `budget_weighted` the command stops with:
 
@@ -432,11 +435,15 @@ Use it after you looked at the change and accept it.
 | Option | Meaning |
 |---|---|
 | `--without-review` | Merge a `needs-human` job even though the code review never ran. |
+| `--waive "<reason>"` | Merge a `needs-human` job whose last review asked for changes. The reason is one line, not empty, at most 200 characters. It cannot be combined with `--without-review`. |
 
 ```bash
 factory approve 028
 factory approve 028 --without-review
+factory approve 028 --waive "known flake, fixing in a follow-up"
 ```
+
+A plain approve of a job whose last review asked for changes is refused. `--waive` is the way to merge it anyway. It writes a ledger line, an `operator.approve` event and an entry in `waivers.json` in the job folder, and after the merge it files one ticket for each waived blocker, whether or not `tickets_on_merge` is set. A ticket that cannot be filed never changes the merge result; `factory tickets <id>` retries it. The dashboard asks for the reason in a dialog when you press Approve on such a job.
 
 The job must be in `needs-human` or `approve`. The merge is the same as an automatic one: it merges the reviewed change with a merge commit into your base branch. It never pushes.
 
@@ -447,6 +454,7 @@ Refusals, each exiting with code 1:
 | `job N was cancelled` | Use `rework` to revive it. |
 | `job N is in stage X, approve needs needs-human or approve` | The job is not waiting for you. |
 | `job N has no code review yet ...` | Use `rework`, or `approve --without-review` to merge anyway. |
+| `the review asked for changes ...` | Use `rework`, `cancel`, or `approve --waive "<reason>"` to merge anyway. |
 | `job N cannot be approved, the job changed files outside <sub>` | Monorepo projects only. Use `rework` so the builder removes those changes. |
 | `job N has a pending batch commit, use rework to finish it` | Use `rework`. |
 | `project is blocked: <reason>` | Fix the project settings. |
@@ -459,7 +467,7 @@ What it prints: `merged <sha>`, or `parked: <reason>`. A `parked:` result leaves
 factory rework <ID> <NOTE>
 ```
 
-Sends one line to the builder, resets the round counter to 0 and sends the job back to the build stage.
+Sends one line to the builder and sends the job back to the build stage. A job parked at a task boundary starts the next round: the round number goes up, the builder gets a fresh set of fix rounds, and it reads `changes-r<N>.md` with your note first and then the open review findings. Earlier review and builder files are kept. A job parked in the middle of a task keeps its round and reads your note from `rework-note.md`.
 
 ```bash
 factory rework 028 "Handle the empty list case and add a test for it"
@@ -468,7 +476,7 @@ factory rework 028 "Handle the empty list case and add a test for it"
 - The note must not be empty, must be one line, and must be at most 200 characters.
 - The job must be in `needs-human`.
 - It also revives a cancelled job.
-- It does not run the job. It prints `job N back to build, round reset to 0`. You must run `factory run 028` afterwards.
+- It does not run the job. It prints `job N back to build, round <N>` for the next round, or `job N back to build, same task` for a job parked mid-task. You must run `factory run 028` afterwards.
 
 ### 6.7 `factory cancel`: give up on a job
 
@@ -646,6 +654,8 @@ factory tickets 028
 - It is safe to run twice. A marker file in the job folder stops any call from repeating.
 - It never changes the merge result.
 - Set `tickets_on_merge = true` in the project settings to run it automatically after every merge. The default is off.
+
+Open `[minor]` findings of the last review become one ticket after the merge, a `- [ ]` checklist titled `Minor review findings from job <id>: <slug>`. `minors.json` in the job folder records the number, so a re-run files nothing twice, and `factory tickets <id>` retries a failed one. This runs whether or not `tickets_on_merge` is set, for every plan of a series. Set `minor_tickets = false` to turn it off.
 
 ### 6.14 `factory kb-refresh`: refresh the knowledge base
 
@@ -1030,7 +1040,7 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 | `builder made no changes` or `task N changed nothing` | Nothing was produced. | `rework`, or `cancel`. |
 | `builder committed on its own ...` | The builder broke the "no commits" rule. | `rework`. |
 | `builder changed <file>` | The builder touched a protected file. | `rework`, or `cancel`. |
-| `no check ran for N changed code path(s)` | No check covers the files that changed. | `approve` if you accept that, or `rework`. |
+| `no check covers N changed code path(s)` | A changed code path matches no check rule. | `approve` if you accept that, or `rework`. |
 | `no test was added in ...` | `require_tests` is on and the change has no test. | `approve` or `rework`. |
 | `main busy: the main checkout has tracked changes` | Your own checkout has uncommitted edits to tracked files, so the merge cannot happen. | Commit or stash those changes, then `approve` again. Untracked files are fine. |
 | `main busy: the main checkout is not on <base>` | Your checkout is on another branch. | Switch to the base branch, then `approve`. |
@@ -1141,6 +1151,7 @@ Project settings live in `~/.factory/projects/<name>/project.toml` under `[setti
 | `checks` | Which commands run for which changed files. | from the preset |
 | `require_tests` | Park a change that adds no test. | false |
 | `tickets_on_merge` | File follow-up tickets after each merge. | false |
+| `minor_tickets` | File one ticket for the open minor review findings after each merge. | true |
 | `kb_path` | A knowledge base folder. Unset turns the knowledge base off. | unset |
 | `log_level` | How much the log records. | `info` |
 

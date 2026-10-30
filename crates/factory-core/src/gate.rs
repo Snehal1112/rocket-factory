@@ -49,6 +49,15 @@ pub fn code_paths_of<S: AsRef<str>>(paths: &[S], config: &Config) -> Vec<String>
         .collect()
 }
 
+/// The code paths that no `[[checks]]` rule maps and that `unchecked_paths` does not exempt.
+pub fn uncovered_code_paths(paths: &[String], config: &Config) -> Vec<String> {
+    code_paths_of(paths, config)
+        .into_iter()
+        .filter(|p| !config.checks.iter().any(|r| r.matches(p)))
+        .filter(|p| !matches_any(&config.unchecked_paths, &[], p))
+        .collect()
+}
+
 /// True when one path is a test path. An empty `test_paths` means the built-in list.
 pub fn has_test_path<S: AsRef<str>>(paths: &[S], config: &Config) -> bool {
     paths
@@ -73,6 +82,7 @@ pub fn has_test_marker(diff_text: &str, config: &Config) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::CheckRule;
 
     fn cfg() -> Config {
         Config::default()
@@ -184,5 +194,38 @@ mod tests {
         c.test_markers = vec!["@Test".into()];
         assert!(has_test_marker("+@Test\n", &c));
         assert!(!has_test_marker("+#[test]\n", &c));
+    }
+
+    fn rule(glob: &str) -> CheckRule {
+        CheckRule {
+            paths: vec![glob.into()],
+            commands: vec!["true".into()],
+        }
+    }
+
+    fn strings(p: &[&str]) -> Vec<String> {
+        p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn uncovered_paths_skip_rule_matches() {
+        let mut c = cfg();
+        c.checks = vec![rule("src/**")];
+        let got = uncovered_code_paths(&strings(&["src/a.rs", "Cargo.lock"]), &c);
+        assert_eq!(got, strings(&["Cargo.lock"]));
+    }
+
+    #[test]
+    fn unchecked_paths_are_exempt() {
+        let mut c = cfg();
+        c.unchecked_paths = vec!["LICENSE".into(), ".gitignore".into()];
+        let got = uncovered_code_paths(&strings(&["LICENSE", ".gitignore", "a.rs"]), &c);
+        assert_eq!(got, strings(&["a.rs"]));
+    }
+
+    #[test]
+    fn doc_paths_are_never_uncovered() {
+        let got = uncovered_code_paths(&strings(&["README.md", "docs/a.txt"]), &cfg());
+        assert!(got.is_empty(), "{got:?}");
     }
 }

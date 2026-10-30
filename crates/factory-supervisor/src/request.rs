@@ -16,6 +16,10 @@ pub enum RequestError {
     SeriesNotAllowed,
     #[error("without_review is only valid for an approve request")]
     WithoutReviewNotAllowed,
+    #[error("waive_reason is only valid for an approve request")]
+    WaiveNotAllowed,
+    #[error("waive_reason and without_review cannot be combined")]
+    WaiveWithoutReview,
     #[error("bad request id {0:?}")]
     Id(String),
 }
@@ -39,6 +43,9 @@ pub struct Request {
     /// For an approve: merge even though the code review has not run. Absent in older request files.
     #[serde(default, skip_serializing_if = "is_false")]
     pub without_review: bool,
+    /// For an approve: merge with open review blockers and record this reason. Absent in older request files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waive_reason: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -89,6 +96,7 @@ impl Request {
             series,
             ts_ms: now_ms,
             without_review: false,
+            waive_reason: None,
         };
         req.validate()?;
         Ok(req)
@@ -101,6 +109,13 @@ impl Request {
         Ok(self)
     }
 
+    /// The same request with a waiver reason. Only an approve may carry it, and not with the other flag.
+    pub fn waive(mut self, reason: &str) -> Result<Request, RequestError> {
+        self.waive_reason = Some(reason.to_string());
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), RequestError> {
         validate_name(&self.project).map_err(|e| RequestError::Project(e.to_string()))?;
         validate_job(&self.job)?;
@@ -109,6 +124,14 @@ impl Request {
         }
         if self.without_review && self.action != Action::Approve {
             return Err(RequestError::WithoutReviewNotAllowed);
+        }
+        if self.waive_reason.is_some() {
+            if self.action != Action::Approve {
+                return Err(RequestError::WaiveNotAllowed);
+            }
+            if self.without_review {
+                return Err(RequestError::WaiveWithoutReview);
+            }
         }
         validate_id_chars(&self.id)?;
         if self.id != make_id(self.ts_ms, &self.project, &self.job) {
@@ -196,6 +219,29 @@ mod tests {
             run.without_review(),
             Err(RequestError::WithoutReviewNotAllowed)
         );
+    }
+
+    #[test]
+    fn old_request_without_waive_reason_parses() {
+        let old: Request = serde_json::from_str(GOOD_JSON).expect("parse");
+        assert_eq!(old.waive_reason, None);
+        assert!(!serde_json::to_string(&old)
+            .expect("json")
+            .contains("waive_reason"));
+        let r = Request::new("p", Action::Approve, "1", false, 1)
+            .expect("ok")
+            .waive("known flake")
+            .expect("approve");
+        let back: Request =
+            serde_json::from_str(&serde_json::to_string(&r).expect("json")).expect("parse");
+        assert_eq!(back.waive_reason.as_deref(), Some("known flake"));
+        let run = Request::new("p", Action::Run, "1", false, 1).expect("ok");
+        assert_eq!(run.waive("x"), Err(RequestError::WaiveNotAllowed));
+        let both = Request::new("p", Action::Approve, "1", false, 1)
+            .expect("ok")
+            .without_review()
+            .expect("approve");
+        assert_eq!(both.waive("x"), Err(RequestError::WaiveWithoutReview));
     }
 
     #[test]

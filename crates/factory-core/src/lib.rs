@@ -1,4 +1,5 @@
 //! Board model, ledger, config, risk, verdict and budget rules for the factory driver.
+pub mod agent_drift;
 pub mod board;
 pub mod budget;
 pub mod commitmsg;
@@ -28,9 +29,10 @@ pub mod version;
 /// The global `/factory` slash command that `factory install` writes.
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
 
+pub use agent_drift::{agent_drift, rules_marker};
 pub use board::{
-    Board, BuilderLast, Draft, Job, JobTokens, Lease, ReviewState, SeriesPos, StageEntry,
-    TaskSession, DRAFT_STAGES,
+    Board, BuilderLast, Draft, Job, JobTokens, LastReview, Lease, ReviewState, SeriesPos,
+    StageEntry, TaskSession, DRAFT_STAGES,
 };
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{
@@ -48,7 +50,7 @@ pub use cost::{
 };
 pub use error::CoreError;
 pub use fsutil::write_atomic;
-pub use gate::{code_paths_of, has_test_marker, has_test_path};
+pub use gate::{code_paths_of, has_test_marker, has_test_path, uncovered_code_paths};
 pub use home::Home;
 pub use homeconfig::HomeConfig;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
@@ -57,8 +59,8 @@ pub use layout::{
     AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE,
 };
 pub use ledger::{Ledger, TaskState};
-pub use park::{ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
+pub use park::{park_summary, ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
 pub use risk::{classify_paths, glob_match, DiffClass};
 pub use stage::Stage;
-pub use verdict::{parse_verdict, Verdict};
+pub use verdict::{open_blockers, open_minors, parse_verdict, Verdict};

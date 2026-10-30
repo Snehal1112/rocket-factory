@@ -22,7 +22,13 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("budget_weighted", None),
             ("diff_cap_lines", None),
             ("fix_rounds", None),
+            (
+                "risky_fix_rounds",
+                Some("2  # Unset means the same as fix_rounds."),
+            ),
             ("stall_minutes", None),
+            ("dependents_cap", None),
+            ("unchecked_paths", None),
         ],
     ),
     (
@@ -77,6 +83,8 @@ const GROUPS: &[(&str, &[Key])] = &[
         &[
             ("base_branch", None),
             ("tickets_on_merge", None),
+            ("minor_tickets", None),
+            ("spec_review", None),
             ("log_level", Some("\"debug\"  # Unset means info.")),
             ("risk_paths", None),
         ],

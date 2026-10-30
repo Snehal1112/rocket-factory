@@ -132,6 +132,17 @@ mod tests {
     }
 
     #[test]
+    fn spec_review_usage_counts_toward_the_budget() {
+        let (_t, home) = home_with(&["a"]);
+        write_usage(&home, "a", "001", &line(10, 0, DAY));
+        let file = project::get(&home, "a").expect("project");
+        let layout = project::layout(&home, "a", &file).expect("layout");
+        std::fs::create_dir_all(layout.spec_reviews_dir()).expect("dir");
+        std::fs::write(layout.spec_review_usage_file(), line(7, 0, DAY)).expect("usage");
+        assert_eq!(status(&home, Some(100), NOW_MS).expect("some").used, 17);
+    }
+
+    #[test]
     fn cache_reads_weigh_one_tenth() {
         let (_t, home) = home_with(&["a"]);
         write_usage(&home, "a", "001", &line(1, 50, DAY));

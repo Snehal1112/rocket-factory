@@ -7,10 +7,10 @@ use factory_core::{
     outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage,
 };
 use factory_engine::{
-    costs_path, create_job_with_spec, create_one_job, find_draft, force_release_project_lease,
-    gather_costs, lease_is_live, merge_stage, now_secs, project_lease_status, remove_draft,
-    run_job, run_series, set_draft_stage, start_draft, today, Driver, MergeResult, RepoTip, RunEnd,
-    DEFAULT_LOCK_WAIT,
+    costs_path, create_job_with_spec_accepting, create_one_job_accepting, find_draft,
+    force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs,
+    project_lease_status, remove_draft, run_job, run_series, set_draft_stage, start_draft, today,
+    Driver, MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT,
 };
 
 use crate::cli::{Cli, Command, SpecCmd};
@@ -313,16 +313,21 @@ pub fn env_lock_wait() -> Duration {
 }
 
 pub fn validate_rework_note(note: &str) -> Result<(), CliError> {
-    if note.trim().is_empty() {
-        return Err(CliError::Refused("the rework note is empty".into()));
+    validate_one_line(note, "rework note")
+}
+
+/// Checks a free-text reason: not empty, one line, at most 200 characters.
+pub fn validate_one_line(text: &str, what: &str) -> Result<(), CliError> {
+    if text.trim().is_empty() {
+        return Err(CliError::Refused(format!("the {what} is empty")));
     }
-    if note.contains('\n') || note.contains('\r') {
-        return Err(CliError::Refused("the rework note must be one line".into()));
+    if text.contains('\n') || text.contains('\r') {
+        return Err(CliError::Refused(format!("the {what} must be one line")));
     }
-    if note.chars().count() > 200 {
-        return Err(CliError::Refused(
-            "the rework note is longer than 200 characters".into(),
-        ));
+    if text.chars().count() > 200 {
+        return Err(CliError::Refused(format!(
+            "the {what} is longer than 200 characters"
+        )));
     }
     Ok(())
 }
@@ -351,6 +356,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             model,
             one_job,
             accept_over_budget,
+            accept_spec,
         } => new_job(
             ctx,
             &slug,
@@ -361,6 +367,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
                 model,
                 one_job,
                 accept_over_budget,
+                accept_spec,
             },
         ),
         Command::Run { id, series } => run(ctx, &norm(&id)?, series),
@@ -377,7 +384,11 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             let d = ctx.driver()?;
             Ok(serde_json::to_string_pretty(&d.job(&norm(&id)?)?)?)
         }
-        Command::Approve { id, without_review } => approve(ctx, &norm(&id)?, without_review),
+        Command::Approve {
+            id,
+            without_review,
+            waive,
+        } => approve(ctx, &norm(&id)?, without_review, waive.as_deref()),
         Command::Rework { id, note } => rework(ctx, &norm(&id)?, &note),
         Command::Cancel { id, reason, force } => match factory_core::normalize_id(&id) {
             Ok(id) => cancel(ctx, &id, &reason, force),
@@ -431,6 +442,7 @@ struct NewArgs {
     model: Option<String>,
     one_job: bool,
     accept_over_budget: bool,
+    accept_spec: Option<String>,
 }
 
 fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<String, CliError> {
@@ -440,7 +452,11 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
         model,
         one_job,
         accept_over_budget,
+        accept_spec,
     } = args;
+    if let Some(reason) = &accept_spec {
+        validate_one_line(reason, "accept-spec reason")?;
+    }
     let d = ctx.driver()?;
     if let Some(problem) = model
         .as_deref()
@@ -450,7 +466,7 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
     }
     let (job, notes) = match (one_job, plans.as_deref()) {
         (true, Some(plan)) => {
-            let made = create_one_job(
+            let made = create_one_job_accepting(
                 &d,
                 slug,
                 feature,
@@ -458,17 +474,19 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
                 spec.as_deref(),
                 model.as_deref(),
                 accept_over_budget,
+                accept_spec.as_deref(),
             )?;
             (made.job, made.notes)
         }
         _ => (
-            create_job_with_spec(
+            create_job_with_spec_accepting(
                 &d,
                 slug,
                 feature,
                 plans.as_deref(),
                 spec.as_deref(),
                 model.as_deref(),
+                accept_spec.as_deref(),
             )?,
             Vec::new(),
         ),
@@ -596,7 +614,15 @@ impl Drop for LeaseGuard<'_> {
     }
 }
 
-fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliError> {
+fn approve(
+    ctx: &CliCtx,
+    id: &str,
+    without_review: bool,
+    waive: Option<&str>,
+) -> Result<String, CliError> {
+    if let Some(reason) = waive {
+        validate_one_line(reason, "waive reason")?;
+    }
     ctx.runnable()?;
     let _span = factory_engine::job_span(id).entered();
     let d = ctx.driver()?;
@@ -625,8 +651,8 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
         }
     }
     // A parked job whose review never ran must not merge unseen, unless the user says so.
-    if job.stage == Stage::NeedsHuman && job.review_missing() && !without_review {
-        return Err(CliError::Refused(job.review_missing_message()));
+    if let Some(refusal) = job.approve_refusal(without_review, waive.is_some()) {
+        return Err(CliError::Refused(refusal));
     }
     // The project lease is held through the merge and released on every exit path.
     let _project = d.hold_project(id)?;
@@ -640,17 +666,46 @@ fn approve(ctx: &CliCtx, id: &str, without_review: bool) -> Result<String, CliEr
     d.store().update_job(id, |j| {
         factory_engine::set_stage_logged(j, Stage::Approve, None, false, now)
     })?;
-    tracing::info!(
-        event = "operator.approve",
-        without_review,
-        msg = "approved by the user"
-    );
-    let ruling = if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
-        "approved by the user without a review"
+    let ruling = if let Some(reason) = waive {
+        let review = job.last_review.as_ref();
+        let file = review.map_or("", |r| r.file.as_str());
+        let text = std::fs::read_to_string(d.job_dir(&job).join(file)).unwrap_or_default();
+        let blockers = factory_engine::waived_blockers(&text);
+        let count = blockers.len();
+        factory_engine::record_waiver(
+            &d.job_dir(&job),
+            factory_engine::Waiver {
+                head: job.head.clone().unwrap_or_default(),
+                round: review.map_or(0, |r| r.round),
+                file: file.to_string(),
+                reason: reason.to_string(),
+                at: now.max(0.0) as u64,
+                tickets: vec![None; count],
+                blockers,
+                superseded: false,
+            },
+        )?;
+        tracing::info!(
+            event = "operator.approve",
+            without_review,
+            waived = true,
+            waive_reason = %factory_telemetry::cap_message(reason),
+            msg = "approved by the user"
+        );
+        format!("approved by the user, waived {count} blockers: {reason}")
     } else {
-        "approved by the user"
+        tracing::info!(
+            event = "operator.approve",
+            without_review,
+            msg = "approved by the user"
+        );
+        if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
+            "approved by the user without a review".to_string()
+        } else {
+            "approved by the user".to_string()
+        }
     };
-    d.ledger(&job).ruling(ruling)?;
+    d.ledger(&job).ruling(&ruling)?;
     Ok(match merge_stage(&d, id)? {
         MergeResult::Merged(sha) => outcome_lines::merged_line(Some(&sha)),
         MergeResult::Parked(reason) => outcome_lines::parked_line(&reason),
@@ -668,26 +723,56 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
             job.stage
         )));
     }
-    // The note is stored verbatim. The builder gets exactly this text.
-    std::fs::write(d.job_dir(&job).join("rework-note.md"), note)?;
-    d.ledger(&job).ruling(&format!("rework note: {note}"))?;
+    let kind = d.rework_kind(id)?;
     let now = now_secs();
-    d.store().update_job(id, |j| {
-        // Needs-human back to build is allowed by the stage guard, so no force.
-        factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
-        j.round = 0;
-        // The note is the findings now, so a no-change round is not a checks case.
-        j.fix_source = None;
-        // A rework revives a cancelled job, so approve does not refuse it later.
-        j.cancelled = false;
-        Ok(())
-    })?;
+    let line = match kind {
+        factory_engine::ReworkKind::MidTask => {
+            // The note is stored verbatim. The builder gets exactly this text.
+            std::fs::write(d.job_dir(&job).join("rework-note.md"), note)?;
+            d.ledger(&job).ruling(&format!("rework note: {note}"))?;
+            d.store().update_job(id, |j| {
+                // Needs-human back to build is allowed by the stage guard, so no force.
+                factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
+                // The note is the findings now, so a no-change round is not a checks case.
+                j.fix_source = None;
+                // A rework revives a cancelled job, so approve does not refuse it later.
+                j.cancelled = false;
+                Ok(())
+            })?;
+            format!("job {id} back to build, same task")
+        }
+        factory_engine::ReworkKind::NextRound => {
+            let new_round = job.round.max(1) + 1;
+            let text = d.rework_findings(id, note)?;
+            let file = format!("changes-r{new_round}.md");
+            std::fs::write(d.job_dir(&job).join(file), text)?;
+            // A stale mid-task note must never shadow the findings of the new round.
+            let _ = std::fs::remove_file(d.job_dir(&job).join("rework-note.md"));
+            d.ledger(&job).ruling(&format!("rework note: {note}"))?;
+            // A waived approve that never merged is replaced by this round, so its blockers get no tickets.
+            if factory_engine::supersede_waivers(&d.job_dir(&job))? > 0 {
+                d.ledger(&job)
+                    .ruling(&format!("waiver superseded by rework round {new_round}"))?;
+            }
+            d.store().update_job(id, |j| {
+                factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
+                j.round = new_round;
+                // A rework grants a full new set of fix rounds.
+                j.rework_base = new_round - 1;
+                j.fix_source = Some("rework".to_string());
+                j.reset_reviews();
+                j.cancelled = false;
+                Ok(())
+            })?;
+            format!("job {id} back to build, round {new_round}")
+        }
+    };
     tracing::info!(
         event = "operator.rework",
         note = %factory_telemetry::cap_message(note),
         msg = "rework requested"
     );
-    Ok(format!("job {id} back to build, round reset to 0"))
+    Ok(line)
 }
 
 fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, CliError> {
@@ -951,7 +1036,34 @@ fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
             )));
         }
     }
-    render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run)
+    let tickets = render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run);
+    let waivers = render_tickets(
+        factory_engine::waiver_tickets_step(&d, id, dry_run)?,
+        dry_run,
+    );
+    let minors = render_tickets(
+        factory_engine::minor_tickets_step(&d, id, dry_run)?,
+        dry_run,
+    );
+    let mut text = String::new();
+    let mut refused = false;
+    for part in [tickets, waivers, minors] {
+        match part {
+            Ok(a) => text.push_str(&a),
+            Err(CliError::Refused(a)) => {
+                refused = true;
+                text.push_str(&a);
+            }
+            Err(e) => return Err(e),
+        }
+        text.push('\n');
+    }
+    let text = text.trim_end().to_string();
+    if refused {
+        Err(CliError::Refused(text))
+    } else {
+        Ok(text)
+    }
 }
 
 /// The text of a tickets report. A failed report is an error, so the exit code is non-zero.
@@ -1006,6 +1118,10 @@ fn cache_tokens(ctx: &CliCtx, days: Option<u32>) -> Result<String, CliError> {
             &job.id,
         )?);
     }
+    jobs.push(crate::tokens::load_usage(
+        &d.layout().spec_review_usage_file(),
+        "spec-review",
+    )?);
     let report = crate::tokens::cache_report(&jobs, days, now_secs() as u64);
     Ok(crate::tokens::render_cache(&report))
 }

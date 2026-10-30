@@ -72,11 +72,13 @@ pub(crate) fn project_usage(
     let Ok(layout) = project::layout(home, name, file) else {
         return total;
     };
-    let Ok(dir) = std::fs::read_dir(&layout.jobs_dir) else {
-        return total;
-    };
-    for entry in dir.flatten() {
-        let Ok(text) = std::fs::read_to_string(entry.path().join("usage.jsonl")) else {
+    // The spec reviews belong to no job, so their log sits beside the job folders.
+    let mut logs = vec![layout.spec_review_usage_file()];
+    if let Ok(dir) = std::fs::read_dir(&layout.jobs_dir) {
+        logs.extend(dir.flatten().map(|e| e.path().join("usage.jsonl")));
+    }
+    for log in logs {
+        let Ok(text) = std::fs::read_to_string(log) else {
             continue;
         };
         for (day, tokens) in per_day(&text) {

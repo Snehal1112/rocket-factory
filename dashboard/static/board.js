@@ -25,12 +25,25 @@
     return !["pass", "changes", "skipped"].includes(state);
   }
 
-  // The approve command to show: a job whose review has not run needs the flag.
+  // True when the latest review asked for changes. Approve then needs a waiver reason.
+  function openChanges(job) {
+    return Boolean(job && job.last_review && job.last_review.verdict === "changes");
+  }
+
+  // The approve command to show: open changes need a waiver, a review that has not run needs the flag.
   function approveCommand(job) {
+    if (openChanges(job)) return `factory approve ${job.id} --waive "<reason>"`;
     return reviewMissing(job) ? `factory approve ${job.id} --without-review` : `factory approve ${job.id}`;
   }
 
-  const MAX_ROUNDS = 2;
+  // The sentence under a needs-human card with open changes.
+  function changesNotice(job) {
+    const count = Number(job.last_review.blockers) || 0;
+    return `The review asked for changes (${count} ${count === 1 ? "blocker" : "blockers"}).`;
+  }
+
+  const MIN_PIPS = 2;
+  const MAX_PIPS = 6;
   const REVIEW_STATES = ["pending", "running", "pass", "changes", "skipped"];
   const AGENT_STATUSES = ["running", "stale", "done"];
   const CHIP_STAGES = ["review", "approve", "needs-human", "merged"];
@@ -129,9 +142,10 @@
   }
 
   function roundPips(round) {
-    const done = Math.min(Math.max(Number(round) || 0, 0), MAX_ROUNDS);
+    const done = Math.min(Math.max(Number(round) || 0, 0), MAX_PIPS);
+    const drawn = Math.max(done, MIN_PIPS);
     let pips = "";
-    for (let i = 0; i < MAX_ROUNDS; i++) {
+    for (let i = 0; i < drawn; i++) {
       pips += `<span class="pip${i < done ? " pip-on" : ""}"></span>`;
     }
     return pips;
@@ -563,9 +577,20 @@
     const id = escapeHtml(job.id);
     const project = escapeHtml(job.project);
     const buttons = list
-      .map((name) => `<button type="button" class="act act-${name}" data-act="${name}" data-act-job="${id}" data-act-project="${project}">${ACTION_LABELS[name]}</button>`)
+      .map((name) => `<button type="button" class="act act-${name}" data-act="${name}" data-act-job="${id}" data-act-project="${project}"${name === "approve" && openChanges(job) ? ' data-act-waive="1"' : ""}>${ACTION_LABELS[name]}</button>`)
       .join("");
     return `<div class="job-actions">${buttons}</div>`;
+  }
+
+  // The summary leads when the driver wrote one, the reason follows as detail when it differs.
+  function parkLines(job) {
+    const reason = job.reason || "needs a human";
+    const summary = typeof job.park_summary === "string" ? job.park_summary.trim() : "";
+    if (summary === "") return `<p class="reason">${escapeHtml(reason)}</p>`;
+    return (
+      `<p class="reason park-summary">${escapeHtml(summary)}</p>` +
+      (summary !== reason ? `<p class="reason-detail">${escapeHtml(reason)}</p>` : "")
+    );
   }
 
   function renderCard(job, now, specs) {
@@ -577,9 +602,14 @@
       : "";
     const reason =
       job.stage === "needs-human"
-        ? `<p class="reason">${escapeHtml(job.reason || "needs a human")}</p>` +
+        ? (job.park_kind ? `<span class="chip ${parkKindClass(job.park_kind)}">${escapeHtml(parkKindLabel(job.park_kind))}</span>` : "") +
+          parkLines(job) +
           parkButton(job) +
-          (reviewMissing(job) ? `<p class="review-missing">The review has not run.</p>` : "") +
+          (openChanges(job)
+            ? `<p class="review-missing">${escapeHtml(changesNotice(job))}</p>`
+            : reviewMissing(job)
+              ? `<p class="review-missing">The review has not run.</p>`
+              : "") +
           `<p class="hint">${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
     const warning = job.spec_warning
@@ -607,7 +637,7 @@
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
       progressBar(job) +
       `<div class="meta"><span class="round" title="builder rounds used">` +
-      `<span class="pips" aria-hidden="true">${roundPips(job.round)}</span>round ${Number(job.round) || 0}/${MAX_ROUNDS}</span>` +
+      `<span class="pips" aria-hidden="true">${roundPips(job.round)}</span>round ${Number(job.round) || 0}</span>` +
       (showAge ? `<span class="age">${formatAge(job.seconds_in_stage)} in stage</span>` : "") +
       `</div>` +
       planSection(job) +
@@ -783,6 +813,7 @@
     formatStamp,
     clock,
     reviewChip,
+    openChanges,
     agentLine,
     renderCard,
     actionButtons,
