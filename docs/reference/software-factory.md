@@ -18,6 +18,7 @@ factory run (no LLM tokens):
                  ^                              |  red: resume builder with trimmed output
                  |  CHANGES, at most 2 rounds   |
                  +------------------------------+
+  main moved -> merge main in, re-run checks and a sync review (review-code-r<N>-sync<K>.md, at most 2) -> merge
   APPROVE + no risk + under size cap + budget ok -> merge reviewed sha to local main -> next plan
   otherwise                                      -> needs-human (factory approve | factory rework | factory cancel)
 ```
@@ -29,7 +30,7 @@ factory run (no LLM tokens):
 - The decisions check always runs. When the plans touch risky paths and no `## Decisions` item says `Decided by: user`, the call is refused.
 - The spec review runs when `spec_review` is true (the default). A read-only reviewer (tools `Read, Grep, Glob`) reads the spec and the plans and answers APPROVE or CHANGES. A CHANGES verdict, or a missing verdict, refuses the call. The review is saved under `<state>/spec-reviews/` and the refusal names the file. When a preset is in use but has no spec reviewer agent file (a preset from before this check), the call is refused with `the spec reviewer agent is missing; run factory upgrade or factory presets refresh, or set spec_review = false`, and no agent runs.
 
-A refusal ends with the hint to record the user's answer as a `Decided by: user` decision, or to pass `--accept-spec "<reason>"` (one line, not empty, at most 200 characters). The `/factory` command shows the findings to the user, fixes the spec with them and runs `factory new` again. The supervisor create endpoint answers a refusal with 409 `conflict` and the same text, takes `accept_spec` in its body, and waits up to the project's `stall_minutes` plus two minutes for the review.
+A refusal ends with the hint to record the user's answer as a `Decided by: user` decision, or to pass `--accept-spec "<reason>"` (one line, not empty, at most 200 characters). The `/factory` command shows the findings to the user, fixes the spec with them and runs `factory new` again. The supervisor create endpoint answers a refusal with 409 `conflict` and the same text when it carries the `--accept-spec` override hint (a missing user decision, or a spec review that asked for changes or did not finish). Every other failure of `factory new` stays a 500. It takes `accept_spec` in its body, and waits up to the project's `stall_minutes` plus two minutes for the review.
 
 ## Job model
 
@@ -214,7 +215,7 @@ A risky diff gets the same fix rounds as any other (`risky_fix_rounds`, default 
 - `Rounds`: one line per review round, `round N (<source>): <verdict>, <B> blockers`, read from the ledger.
 - `Changed files`: the diff stat.
 
-`nothing-changed` after a review fix round, and `no-checks` or `no-tests` parks, put `Review` (and `Risk` when risky) before their other parts. `park.json` also records `verdict` and `risky`.
+`nothing-changed` after a review fix round, and `no-checks` or `no-tests` parks, put `Review` (and `Risk` when risky) before their other parts. `park.json` also records `verdict` and `risky`. In round 2 or later, before the new review runs, the Review part is the previous round's review, and its text names that round.
 
 The driver merges the reviewed sha only: it checks the branch tip equals the recorded head, preflights main (on `main`, clean, not mid-merge), makes a no-ff merge commit (the committer's message, or the fixed `chore(factory): merge job NNN <slug>` fallback), and verifies the second parent. If main moved it merges main into the job branch inside the worktree, re-runs checks and the reviewer on the sync diff (at most 2 syncs). A sync review is saved as `review-code-r<round>-sync<n>.md`, so the round review `review-code-r<round>.md` is never overwritten. It sets `last_review` with source `sync`, and the ledger line starts `sync review round <round> (sync)`. A conflict goes to `needs-human`. It never pushes and never rewrites history.
 
