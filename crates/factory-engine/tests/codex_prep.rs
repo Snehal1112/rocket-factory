@@ -121,6 +121,48 @@ fn builder_with_superpowers_installed_gets_skills_and_the_allowlist() {
 }
 
 #[test]
+fn builder_sees_the_worktree_skills_folder() {
+    let fx = codex(committing_fixture());
+    let wt = fx
+        .repo
+        .create_worktree(&factory_git::JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+            project: None,
+        })
+        .expect("worktree");
+    let tip = fx.repo.tip(&wt.branch).expect("tip");
+    set_job(&fx, |j| {
+        j.worktree = Some(wt.path.to_string_lossy().into_owned());
+        j.branch = wt.branch.clone();
+        j.base = Some(wt.base.clone());
+        j.head = Some(tip);
+    });
+    let skills = wt.path.join(".agents/skills");
+    for rel in ["superpowers/x", "other"] {
+        std::fs::create_dir_all(skills.join(rel)).expect("mkdir skill");
+        std::fs::write(skills.join(rel).join("SKILL.md"), "x\n").expect("write skill");
+    }
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let other = std::fs::canonicalize(skills.join("other/SKILL.md")).expect("canonical");
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(
+        spec.codex_config,
+        [
+            "skills.bundled.enabled=false".to_string(),
+            format!(
+                "skills.config=[{{path=\"{}\",enabled=false}}]",
+                other.display()
+            )
+        ]
+    );
+}
+
+#[test]
 fn unmatched_allowlist_has_no_skills_preface() {
     let fx = codex(committing_fixture());
     let runner = scripted_auto(vec![write_effect()]);

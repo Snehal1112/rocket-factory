@@ -260,13 +260,10 @@ impl CliCtx {
             .with_lease_owner(&self.owner);
         let user_home = std::env::var_os("HOME");
         let codex_home = std::env::var_os("CODEX_HOME");
-        let driver = driver.with_codex_skill_roots(match user_home {
-            Some(home) => factory_core::codex_user_skill_roots(
-                std::path::Path::new(&home),
-                codex_home.as_deref(),
-            ),
-            None => Vec::new(),
-        });
+        let driver = driver.with_codex_skill_roots(factory_core::codex_user_skill_roots_from_env(
+            user_home.as_deref(),
+            codex_home.as_deref(),
+        ));
         let driver = if self.agents.is_empty() {
             driver
         } else {

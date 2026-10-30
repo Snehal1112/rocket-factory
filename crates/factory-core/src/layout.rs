@@ -47,6 +47,17 @@ pub fn codex_user_skill_roots(user_home: &Path, codex_home_var: Option<&OsStr>) 
     ]
 }
 
+/// Like `codex_user_skill_roots` for raw environment values. Without a user home there are no roots.
+pub fn codex_user_skill_roots_from_env(
+    user_home: Option<&OsStr>,
+    codex_home_var: Option<&OsStr>,
+) -> Vec<PathBuf> {
+    match user_home {
+        Some(home) => codex_user_skill_roots(Path::new(home), codex_home_var),
+        None => Vec::new(),
+    }
+}
+
 /// True for `factory-<a-z, 0-9, ->.md`, the only names the exclude line covers and the engine writes.
 pub fn is_agent_file_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("factory-") else {
@@ -190,6 +201,18 @@ mod tests {
             vec![
                 PathBuf::from("/h/.agents/skills"),
                 PathBuf::from("/h/.codex/skills")
+            ]
+        );
+    }
+
+    #[test]
+    fn env_skill_roots_are_empty_without_a_home_and_use_codex_home() {
+        assert!(codex_user_skill_roots_from_env(None, Some(OsStr::new("/x"))).is_empty());
+        assert_eq!(
+            codex_user_skill_roots_from_env(Some(OsStr::new("/h")), Some(OsStr::new("/x"))),
+            vec![
+                PathBuf::from("/h/.agents/skills"),
+                PathBuf::from("/x/skills")
             ]
         );
     }

@@ -2,7 +2,7 @@
 //! and the sandbox, network and writable roots chosen by role.
 
 use factory_agent::AgentSpec;
-use factory_core::codex_worktree_skills_dir;
+use factory_core::{codex_worktree_skills_dir, Config};
 use factory_git::Repo;
 
 use crate::codex_skills::{allowed, codex_skill_args, discover_skills, FoundSkill};
@@ -42,14 +42,16 @@ pub(crate) fn codex_preface(has_skills: bool) -> String {
 
 /// True when the role names a skill and no allowed found skill belongs to it.
 fn skill_gap(role: &str, found: &[FoundSkill], allow: &[String]) -> bool {
-    let belongs: fn(&FoundSkill) -> bool =
-        if has_role(role, "committer") || has_role(role, "message") {
-            |s| s.group == "dev-workflow-skills"
-        } else if has_role(role, "kb") {
-            |s| s.group.is_empty() && s.name == "kb-refresh"
+    let Some(named) = Config::named_skill_for(role) else {
+        return false;
+    };
+    let belongs = |s: &FoundSkill| {
+        if s.group.is_empty() {
+            s.name == named
         } else {
-            return false;
-        };
+            s.group == named
+        }
+    };
     !found.iter().any(|s| belongs(s) && allowed(s, allow))
 }
 

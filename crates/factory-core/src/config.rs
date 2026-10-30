@@ -232,13 +232,20 @@ impl Config {
         }
     }
 
+    /// The skill (or skill group) the agent text of `role` names, if any.
+    pub fn named_skill_for(role: &str) -> Option<&'static str> {
+        match role {
+            "committer" | "message" => Some("dev-workflow-skills"),
+            "kb" => Some("kb-refresh"),
+            _ => None,
+        }
+    }
+
     /// The skills a run of `role` may see: its plugins plus the skill its agent text names.
     pub fn skill_allow_for(&self, role: &str) -> Vec<String> {
         let mut allow = self.plugins_for(role).to_vec();
-        let named = match role {
-            "committer" | "message" => "dev-workflow-skills",
-            "kb" => "kb-refresh",
-            _ => return allow,
+        let Some(named) = Self::named_skill_for(role) else {
+            return allow;
         };
         if !allow.iter().any(|e| e.split('@').next() == Some(named)) {
             allow.push(named.to_string());
