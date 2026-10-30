@@ -28,21 +28,21 @@ pub enum SpecRefusal {
 }
 
 /// How the user gets past a refusal.
-const OVERRIDE_HINT: &str =
+pub const SPEC_OVERRIDE_HINT: &str =
     "Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
 
 impl fmt::Display for SpecRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SpecRefusal::NoUserDecision(reason) => write!(f, "{reason}. {OVERRIDE_HINT}"),
+            SpecRefusal::NoUserDecision(reason) => write!(f, "{reason}. {SPEC_OVERRIDE_HINT}"),
             SpecRefusal::ReviewChanges { file, findings } => write!(
                 f,
-                "the spec review asked for changes:\n{findings}\nThe review is in {}. {OVERRIDE_HINT}",
+                "the spec review asked for changes:\n{findings}\nThe review is in {}. {SPEC_OVERRIDE_HINT}",
                 file.display()
             ),
             SpecRefusal::ReviewMissing { file } => write!(
                 f,
-                "the spec review gave no verdict; a missing verdict is not a pass. The review is in {}. {OVERRIDE_HINT}",
+                "the spec review gave no verdict; a missing verdict is not a pass. The review is in {}. {SPEC_OVERRIDE_HINT}",
                 file.display()
             ),
             SpecRefusal::ReviewerMissing => write!(
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn refusals_end_with_the_override_hint() {
-        let hint = "Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
+        let hint = SPEC_OVERRIDE_HINT;
         let file = PathBuf::from("/s/spec-reviews/k.md");
         for refusal in [
             SpecRefusal::NoUserDecision("the spec touches risky paths (a)".into()),
@@ -382,6 +382,31 @@ mod tests {
     fn no_files_no_risky_check() {
         let got =
             risky_without_user_decision(SPEC_NONE, &["### Task 1\n\n- [ ] step\n".into()], &cfg());
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn paths_outside_files_blocks_are_ignored() {
+        let text = "Touch `before.rs` first.\n\n**Files:**\n- Modify: `in.rs`\n\nSee `after.rs` too.\n- Modify: `late.rs`\n";
+        assert_eq!(plan_file_paths(text), vec!["in.rs"]);
+    }
+
+    #[test]
+    fn two_paths_on_one_line_are_both_read() {
+        let text = "**Files:**\n- Modify: `a.rs` and `b.rs`\n";
+        assert_eq!(plan_file_paths(text), vec!["a.rs", "b.rs"]);
+    }
+
+    #[test]
+    fn a_degraded_config_makes_every_path_risky() {
+        let cfg = Config {
+            risk_paths: vec!["**".to_string()],
+            ..Config::default()
+        };
+        let got = risky_without_user_decision(SPEC_NONE, &[plan("docs/a.md")], &cfg);
+        assert!(got.is_some());
+        let got =
+            risky_without_user_decision(SPEC_NONE, &["### Task 1\n\n- [ ] step\n".into()], &cfg);
         assert_eq!(got, None);
     }
 }

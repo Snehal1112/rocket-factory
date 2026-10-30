@@ -205,7 +205,7 @@ impl Engine<'_> {
                     "builder made no changes on resume"
                 };
                 let mut parts = if matches!(job.fix_source.as_deref(), Some("review" | "rework")) {
-                    self.lead_parts()
+                    self.lead_parts(&self.job_changed_paths().unwrap_or_default())
                 } else {
                     Vec::new()
                 };

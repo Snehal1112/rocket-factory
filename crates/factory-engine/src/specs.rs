@@ -563,7 +563,7 @@ impl Engine<'_> {
             .ok()
             .and_then(|j| j.last_review)
             .filter(|last| round > 1 && last.round < round)
-            .map(|last| (last.round, self.job_dir.join(&last.file)))
+            .and_then(|last| last.path_in(&self.job_dir).map(|path| (last.round, path)))
             .filter(|(_, path)| path.exists());
         let earlier_line = match &earlier {
             Some((r, path)) => format!(

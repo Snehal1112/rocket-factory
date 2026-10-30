@@ -596,10 +596,8 @@ fn run_job_inner(
             std::fs::read_to_string(driver.job_dir(&job).join("plan.md")).unwrap_or_default();
         crate::tasks::parse_tasks(&plan).len()
     };
-    let rounds = driver
-        .config()
-        .fix_rounds
-        .max(driver.config().fix_rounds_for(true));
+    let cfg = driver.config();
+    let rounds = cfg.fix_rounds.max(cfg.fix_rounds_for(true));
     let limit = rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
         if guard.lost() {
@@ -733,6 +731,26 @@ mod tests {
             Box::new(move |_| runner.clone()),
         )
         .expect("driver")
+    }
+
+    #[test]
+    fn unsettled_park_keeps_the_last_twenty_ledger_lines() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let job = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
+        let ledger: String = (1..=25).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(d.job_dir(&job).join("progress.md"), ledger).expect("ledger");
+        park_unsettled(&d, &job.id).expect("park");
+        let job = d.job(&job.id).expect("job");
+        let rec = factory_core::ParkRecord::read(&d.job_dir(&job)).expect("park.json");
+        assert_eq!(rec.reason, "run loop did not settle, see the ledger");
+        assert_eq!(rec.parts.len(), 1);
+        assert_eq!(rec.parts[0].title, "Ledger");
+        assert_eq!(rec.parts[0].source, "progress.md");
+        let lines: Vec<&str> = rec.parts[0].text.lines().collect();
+        assert_eq!(lines.len(), 20);
+        assert_eq!(lines[0], "line 6");
+        assert_eq!(lines[19], "line 25");
     }
 
     #[test]

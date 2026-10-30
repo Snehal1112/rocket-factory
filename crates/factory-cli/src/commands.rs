@@ -669,7 +669,10 @@ fn approve(
     let ruling = if let Some(reason) = waive {
         let review = job.last_review.as_ref();
         let file = review.map_or("", |r| r.file.as_str());
-        let text = std::fs::read_to_string(d.job_dir(&job).join(file)).unwrap_or_default();
+        let text = review
+            .and_then(|r| r.path_in(&d.job_dir(&job)))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default();
         let blockers = factory_engine::waived_blockers(&text);
         let count = blockers.len();
         factory_engine::record_waiver(
@@ -1048,15 +1051,19 @@ fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
     let mut text = String::new();
     let mut refused = false;
     for part in [tickets, waivers, minors] {
-        match part {
-            Ok(a) => text.push_str(&a),
+        let part_text = match part {
+            Ok(a) => a,
             Err(CliError::Refused(a)) => {
                 refused = true;
-                text.push_str(&a);
+                a
             }
             Err(e) => return Err(e),
+        };
+        // A step with nothing to say adds no blank line.
+        if !part_text.is_empty() {
+            text.push_str(&part_text);
+            text.push('\n');
         }
-        text.push('\n');
     }
     let text = text.trim_end().to_string();
     if refused {

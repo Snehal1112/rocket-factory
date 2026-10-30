@@ -33,5 +33,6 @@ Plans with no spec of their own:
 
 - `plans/2026-10-23-code-review-fixes.md`
 - `plans/2026-10-24-node-preset.md`
+- `plans/2026-10-30-review-gate-follow-ups.md` (issues #28 to #31)
 
 When you add a spec or a plan series, add a row here.

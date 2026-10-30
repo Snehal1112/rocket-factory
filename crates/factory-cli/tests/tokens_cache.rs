@@ -50,6 +50,21 @@ fn snapshot(fx: &Fixture) -> Vec<(PathBuf, u64)> {
 }
 
 #[test]
+fn cache_report_counts_spec_review_usage() {
+    let fx = Fixture::new();
+    let layout = factory_core::Layout::in_repo(&fx.root);
+    std::fs::create_dir_all(layout.spec_reviews_dir()).expect("dir");
+    let line = concat!(
+        r#"{"job":"spec-review","role":"spec-reviewer","input":10,"cache_creation":1000,"output":50,"cache_read":9000,"usage_v":2,"resumed":false,"round":1,"ts":1000,"secs":20}"#,
+        "\n",
+    );
+    std::fs::write(layout.spec_review_usage_file(), line).expect("usage");
+    let out = fx.run(&["tokens", "--cache"]).expect("cache report");
+    assert!(out.contains("spec-reviewer"), "{out}");
+    assert!(out.contains("(1 runs"), "{out}");
+}
+
+#[test]
 fn cache_report_reads_every_job_of_the_project() {
     let fx = Fixture::new();
     new_job(&fx, "a");

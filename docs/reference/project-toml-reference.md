@@ -56,7 +56,7 @@ Defaults come from `Config::default()` in `factory-core/src/config.rs`. A value 
 | `fix_rounds` | integer | 2 | Fix rounds allowed after a failure. When used up, failing checks park as `checks-failed` and review changes park as `changes-remain`. `0` parks on the first failure. |
 | `risky_fix_rounds` | integer | same as `fix_rounds` | Fix rounds a risky diff may use, for failing checks and for review findings, before it parks. 0 parks a risky diff at its first failing check or CHANGES verdict. |
 | `dependents_cap` | integer | 6 | Most direct dependents a `{dependents}` check command expands to. The rest are skipped, and `checks.md` names them. |
-| `unchecked_paths` | list of globs | `[]` | Paths that no check covers on purpose. They are never reported as uncovered. Doc paths are never reported either. |
+| `unchecked_paths` | list of globs | `[]` | Paths that no check covers on purpose. They are never reported as uncovered. Doc paths are never reported either. Matching ignores case. |
 | `stall_minutes` | integer | 10 | Minutes without any stream event before the driver kills the agent. Applies to builder, reviewer, committer, KB and message agents. The check is approximate. |
 
 Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factory-core/src/budget.rs`). When a builder is killed on budget it parks as `builder-stopped`. `budget-stopped` is only used when a reviewed round finds the budget gone.
@@ -225,12 +225,12 @@ Command validation (checked when the engine starts and by `factory project show`
 
 ## Globs
 
-Used by `risk_paths`, `checks`, `code_paths` and `test_paths` (`factory-core/src/risk.rs`).
+Used by `risk_paths`, `checks`, `code_paths`, `test_paths` and `unchecked_paths` (`factory-core/src/risk.rs`).
 
 - The pattern matches the whole repo-relative path, split on `/`.
 - `*` and `?` stay inside one segment. `**` as a whole segment matches zero or more segments. A trailing `**` needs at least one segment, so `a/**` does not match `a`.
 - Other characters are literal, including `[...]`.
-- `risk_paths`, `code_paths` and `test_paths` ignore case. `checks` does not.
+- `risk_paths`, `code_paths`, `test_paths` and `unchecked_paths` ignore case. `checks` does not.
 
 ## The repo override file
 

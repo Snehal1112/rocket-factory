@@ -277,8 +277,8 @@ impl Engine<'_> {
                 .map(Some);
         }
         let paths = self.job_changed_paths()?;
-        if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
-            return self.park_gate(kind, reason).map(Some);
+        if let Some((kind, reason)) = self.gate_checks(&paths) {
+            return self.park_gate(kind, reason, &paths).map(Some);
         }
         let commands: Vec<&str> = report.results.iter().map(|r| r.command.as_str()).collect();
         let list = if commands.is_empty() {

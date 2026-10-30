@@ -196,3 +196,30 @@ fn a_blank_blocker_gets_a_placeholder_title() {
         )
     );
 }
+
+#[test]
+fn no_waivers_gives_no_line() {
+    let t = FakeTracker::new("o/r");
+    let fx = merged(vec![], &t);
+    let report = waiver_tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.skipped, "{report:?}");
+    assert!(report.lines.is_empty(), "{report:?}");
+}
+
+#[test]
+fn superseded_waivers_say_so() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    record_waiver(&job_dir(&fx), two_blockers()).expect("record");
+    assert_eq!(supersede_waivers(&job_dir(&fx)).expect("supersede"), 1);
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    let report = waiver_tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.skipped, "{report:?}");
+    assert_eq!(
+        report.lines,
+        vec!["skipped: every waiver was superseded by a rework".to_string()]
+    );
+}
