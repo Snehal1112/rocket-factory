@@ -1051,15 +1051,19 @@ fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
     let mut text = String::new();
     let mut refused = false;
     for part in [tickets, waivers, minors] {
-        match part {
-            Ok(a) => text.push_str(&a),
+        let part_text = match part {
+            Ok(a) => a,
             Err(CliError::Refused(a)) => {
                 refused = true;
-                text.push_str(&a);
+                a
             }
             Err(e) => return Err(e),
+        };
+        // A step with nothing to say adds no blank line.
+        if !part_text.is_empty() {
+            text.push_str(&part_text);
+            text.push('\n');
         }
-        text.push('\n');
     }
     let text = text.trim_end().to_string();
     if refused {
