@@ -259,6 +259,23 @@ export const journeysFH: Suite[] = [
         why: "The API listens on `127.0.0.1:8766` by default and is protected by the secret token in `~/.factory/api.token`. The dashboard reads that file on its own server side, so you do not need to touch it.",
         source: "factory-user-guide.md § 7.7 The local API",
       },
+      {
+        id: "F17",
+        title: "Change how often factoryd checks the queue",
+        surface: "terminal",
+        phase: "operate",
+        precondition: "No factoryd is running for this home.",
+        command: `factoryd run --interval-ms 500`,
+        expected: `api listening on <address>`,
+        assert: "factoryd starts and prints api listening on <address>",
+        notes:
+          "The value is in milliseconds. The default is 2000 and the lowest accepted value is 50. This form keeps your terminal busy. Run `factoryd stop` to end it.",
+        why: "`--interval-ms` sets how often factoryd checks the queue. In normal mode it prints `api listening on <address>`, then loops until you run `factoryd stop`.",
+        after:
+          "A supervisor process runs until you run `factoryd stop`. If another `factoryd` already runs for this home, it stops with `factoryd is already running (pid N)`.",
+        related: [{ id: "F2", rel: "contrasts" }],
+        source: "factory-user-guide.md § 7.1 factoryd run",
+      },
     ],
   },
   {
@@ -476,15 +493,19 @@ problems: none`,
         phase: "operate",
         precondition: "G12 showed changes you accept.",
         command: `factory upgrade`,
-        expected: `Updates are reported for the command file, the Codex skill (if installed) and the presets. Any shadowed: lines name files that hide the new preset text.`,
-        assert: "The command file and presets are updated",
+        expected: `plugin: factory@rocket-factory is installed; update it with: claude plugin update factory@rocket-factory
+(without the plugin: the command file is updated, then the plugin install note from section 6.17, or note: to switch to the plugin, run the two commands below, then remove <path>: followed by the two claude plugin commands when factory.md exists)`,
+        assert: "With the plugin installed, upgrade prints the plugin update command",
         notes:
-          "The guide gives no exact lines. A changed old copy of `factory.md` is saved as `factory.md.bak`.",
-        why: "In order: it checks the home was not last used by a newer binary, updates `~/.claude/commands/factory.md`, updates the Codex skill only if already installed, refreshes presets you have not edited, reports `shadowed:` lines, and writes the version marker in the factory home.",
+          "The first line is what you see with the plugin `factory@rocket-factory` installed. In that case `factory.md` is left alone, and the duplicate note from section 6.17 is printed when `factory.md` still exists. Without the plugin, `factory.md` is updated and a changed old copy is saved as `factory.md.bak`. The Codex skill and the presets are updated either way, and any `shadowed:` lines name files that hide the new preset text. The guide gives no further exact lines.",
+        why: "In order: it checks the home was not last used by a newer binary, updates `~/.claude/commands/factory.md` only when the Claude Code plugin is not installed, updates the Codex skill only if already installed, refreshes presets you have not edited, reports `shadowed:` lines, and writes the version marker in the factory home.",
         after:
-          "A `factory.md.bak` next to the command file if the old copy had changed. The version marker in the factory home now matches the new binary.",
-        related: [{ id: "G12", rel: "depends" }],
-        source: "factory-user-guide.md § 6.18 factory upgrade",
+          "A `factory.md.bak` next to the command file if the plugin is not installed and the old copy had changed. The version marker in the factory home now matches the new binary.",
+        related: [
+          { id: "G12", rel: "depends" },
+          { id: "A10", rel: "contrasts" },
+        ],
+        source: "factory-user-guide.md § 6.18 factory upgrade; factory-user-guide.md § 6.17 factory install",
       },
       {
         id: "G14",
@@ -551,7 +572,151 @@ cat ~/.factory/VERSION`,
           { id: "G14", rel: "depends" },
         ],
         source:
-          "crates/factory-core/src/version.rs:42-53; crates/factory-core/src/version.rs:57-69; crates/factory-cli/src/project.rs:144; crates/factory-supervisor/src/bin/factoryd.rs:72; crates/factory-cli/src/upgrade.rs:85; factory-user-guide.md § 4.2 Put them on your PATH; factory-user-guide.md § 12 Where files live",
+          "crates/factory-core/src/version.rs:42-53; crates/factory-core/src/version.rs:57-69; crates/factory-cli/src/project.rs:170; crates/factory-supervisor/src/bin/factoryd.rs:72; crates/factory-cli/src/upgrade.rs:117; factory-user-guide.md § 4.2 Put them on your PATH; factory-user-guide.md § 12 Where files live",
+      },
+      {
+        id: "G17",
+        title: "Add the missing settings to one project as comments",
+        surface: "terminal",
+        phase: "operate",
+        precondition: "Project my-app is registered.",
+        command: `factory project defaults my-app`,
+        expected: `my-app: added the settings block
+my-app: already lists every setting`,
+        assert: "One line names my-app",
+        notes:
+          "The first line is printed when settings were added. The second line is printed when nothing was missing. With neither a name nor `--all` the command stops with `name a project or pass --all`.",
+        why: "It adds every setting the project's `project.toml` does not list yet, as a comment with its default. The rest of the file stays as it is, so it is a safe way to see which settings exist.",
+        after:
+          "Writes only `~/.factory/projects/my-app/project.toml`. Your repository does not change.",
+        related: [{ id: "G18", rel: "contrasts" }],
+        source: "factory-user-guide.md § 6.15 factory project (project defaults)",
+      },
+      {
+        id: "G18",
+        title: "Add the missing settings to every project",
+        surface: "terminal",
+        phase: "operate",
+        precondition: "At least one project is registered.",
+        command: `factory project defaults --all`,
+        expected: `<name>: added the settings block
+<name>: already lists every setting
+<name>: skipped, <why>`,
+        assert: "One line per registered project",
+        notes:
+          "A project that cannot be read prints the `skipped` line and the others still run.",
+        why: "`--all` runs the same change for every registered project.",
+        after:
+          "Writes only `~/.factory/projects/<name>/project.toml` of each project. Your repositories do not change.",
+        related: [{ id: "G17", rel: "contrasts" }],
+        source: "factory-user-guide.md § 6.15 factory project (project defaults)",
+      },
+      {
+        id: "G19",
+        title: "Probe what every agent sees",
+        surface: "terminal",
+        phase: "operate",
+        flag: "trap",
+        precondition:
+          "The agent program (`claude` or `codex`) is on your PATH and signed in. `factoryd` is not needed.",
+        command: `factory --project my-app probe`,
+        expected: `harness claude  cli <claude --version>
+
+role           agent_text  skills   bootstrap  no_extra_skills
+builder        ok          ok       ok         -
+...
+
+Report: <state dir>/probes/<stamp>-claude.json
+Transcripts: <state dir>/probes/<stamp>-claude`,
+        assert: "Exit code 0 and every expected cell reads ok",
+        notes:
+          "**It spends real tokens**: one short turn per role, at most 50,000 weighted tokens each. `factory run` and the tests never start it. The table is followed by one `Skills seen (<role>): ...` line per role and a `Missing (<role>) <channel>: <detail>` line for every channel that failed. Use it after you change agent files, skills or the agent program, and before a release.",
+        why: "For each role it builds the real agent setup, adds a unique marker to the agent text, turns every tool off and asks the agent, in one turn, what reached it. The channels are `agent_text`, `skills`, `bootstrap` and `no_extra_skills`.",
+        verify: {
+          look: "Every cell the table expects reads `ok`, and no `Missing` line is printed.",
+        },
+        after:
+          "Leaves a report and a transcripts folder under `<state dir>/probes/`. It does not touch the board, a job, a worktree or your repository, and it does not take the project lease.",
+        related: [
+          { id: "G20", rel: "contrasts" },
+          { id: "G22", rel: "contrasts" },
+        ],
+        source: "factory-user-guide.md § 6.19 factory probe",
+      },
+      {
+        id: "G20",
+        title: "Probe one role only",
+        surface: "terminal",
+        phase: "operate",
+        flag: "trap",
+        precondition:
+          "The agent program (`claude` or `codex`) is on your PATH and signed in.",
+        command: `factory --project my-app probe --role builder`,
+        expected: `(the same table with one row, builder, then the Skills seen line, and the Report and Transcripts lines)`,
+        assert: "The table has one row, builder",
+        notes:
+          "`--role` takes `builder`, `reviewer`, `spec-reviewer`, `committer` or `kb`. Repeat it for more than one role. It spends real tokens: one short turn for the role, at most 50,000 weighted tokens. A bad option value exits with code 2.",
+        why: "`--role` limits the probe to the roles you name. The default is all five.",
+        after:
+          "Leaves a report and a transcripts folder under `<state dir>/probes/`. Nothing else changes.",
+        related: [{ id: "G19", rel: "contrasts" }],
+        source: "factory-user-guide.md § 6.19 factory probe",
+      },
+      {
+        id: "G21",
+        title: "Print the probe report as JSON",
+        surface: "terminal",
+        phase: "operate",
+        flag: "trap",
+        precondition:
+          "The agent program (`claude` or `codex`) is on your PATH and signed in.",
+        command: `factory --project my-app probe --json`,
+        expected: `(the report as JSON and nothing else)`,
+        assert: "The output is JSON only, with no table",
+        notes:
+          "It spends real tokens: one short turn per role, at most 50,000 weighted tokens each.",
+        why: "`--json` prints the report as JSON and nothing else.",
+        after:
+          "Writes only under `<state dir>/probes/`. It does not touch the board, a job, a worktree or your repository.",
+        related: [{ id: "G19", rel: "contrasts" }],
+        source: "factory-user-guide.md § 6.19 factory probe",
+      },
+      {
+        id: "G22",
+        title: "A MISSING cell makes probe exit with code 1",
+        surface: "terminal",
+        phase: "operate",
+        flag: "trap",
+        precondition:
+          "A channel the probe expects did not reach one role, for example after you changed an agent file or a skill.",
+        command: `factory --project my-app probe; echo $?`,
+        expected: `(the table with a MISSING cell, then a line Missing (<role>) <channel>: <detail>)
+1`,
+        assert: "A MISSING cell, a Missing line and exit code 1",
+        notes:
+          "A cell is `ok` (expected and present), `MISSING` (expected and absent), `-` (not expected) or `extra` (not expected but present). The table is still printed when the exit code is 1. Exit code 0 means every expected channel is present, and 2 means a bad option value. It spends real tokens: one short turn per role, at most 50,000 weighted tokens each.",
+        why: "A `MISSING` cell means the channel was expected and absent for that role. The `Missing` line gives the detail.",
+        after:
+          "Leaves a report and a transcripts folder under `<state dir>/probes/`. Read the transcripts there to see what the agent answered.",
+        related: [{ id: "G19", rel: "contrasts" }],
+        source: "factory-user-guide.md § 6.19 factory probe",
+      },
+      {
+        id: "G23",
+        title: "Check that the plugin files are current",
+        surface: "terminal",
+        phase: "operate",
+        precondition:
+          "You work on the factory itself and your current folder is the root of a rocket-factory clone.",
+        command: `factory plugin sync --check`,
+        expected: `plugin files are current`,
+        assert: "Output is plugin files are current",
+        notes:
+          "Only people who work on the factory itself need this. In your own projects you never need it. Install the plugin as in A10. When a file differs the command stops with `plugin files out of date: <file>; run factory plugin sync`. Outside the repository root it stops with `<path> is not the repository root: .claude-plugin/marketplace.json is missing; use --repo`.",
+        why: "`--check` writes nothing and fails when a plugin file differs from the text generated from the command text built into the binary.",
+        after: "Nothing was written.",
+        related: [{ id: "A10", rel: "contrasts" }],
+        source: "factory-user-guide.md § 6.20 factory plugin sync",
       },
     ],
   },

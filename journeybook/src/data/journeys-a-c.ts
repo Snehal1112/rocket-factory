@@ -9,7 +9,7 @@ export const journeysAC: Suite[] = [
       "You build the factory programs, put them on your PATH, install the /factory command and register one project. You do this once per machine and once per project.",
     context: [
       "The factory is two programs. `factory` is the command you use for everything and works on one project at a time. `factoryd` is an optional background supervisor that you only need for several projects at once, queued runs or a daily token limit.",
-      "Setup has two halves. The first half (A1 to A5) is per machine: build, link the programs onto your PATH, and install the Claude command. The second half (A6 to A9) registers your repository as a project. Registering writes only into the factory home (`$FACTORY_HOME`, else `~/.factory`); it does not change your repository.",
+      "Setup has two halves. The first half (A1 to A5 and A10) is per machine: build, link the programs onto your PATH, and install the Claude command. The second half (A6 to A9) registers your repository as a project. Registering writes only into the factory home (`$FACTORY_HOME`, else `~/.factory`); it does not change your repository.",
       "You need Rust 1.82 or newer, a C compiler, git, a logged-in Claude Code, and the superpowers (7.0.0) and dev-workflow-skills plugins. Run the build steps from the rocket-factory repository root. The guide uses `my-app` as the project name throughout.",
     ],
     cases: [
@@ -66,18 +66,23 @@ which factory factoryd`,
       },
       {
         id: "A4",
-        title: "Install the /factory command",
+        title: "Install the /factory command (fallback)",
         surface: "terminal",
         phase: "setup",
         precondition: "A2 or A3 done, so `factory` runs from any folder.",
         command: `factory install`,
         expected: `installed <path>
+note: the Claude Code plugin is the preferred install:
+  claude plugin marketplace add Snehal1112/rocket-factory
+  claude plugin install factory@rocket-factory
 installed <path>`,
-        assert: "Two installed lines, one per target",
+        assert: "One installed line per target, with the plugin note after the Claude line",
         notes:
-          "The two targets are `~/.claude/commands/factory.md` (the Claude command) and `~/.agents/skills/factory/SKILL.md` (a Codex skill). One line per target is assumed from the two default targets in § 6.17.",
+          "The two targets are `~/.claude/commands/factory.md` (the Claude command) and `~/.agents/skills/factory/SKILL.md` (a Codex skill). The plugin is the preferred install for Claude Code (A10) and `factory install` is the fallback. With the plugin `factory@rocket-factory` installed, the Claude line instead reads `skipped Claude command: the factory plugin is installed`, and there is no plugin note.",
+        why: "`factory install` writes the Claude command and the Codex skill. Without the plugin it follows the Claude line with a note that names the plugin as the preferred install.",
         after:
           "Leaves two files under your home folder. `factory install --force` replaces a copy that differs.",
+        related: [{ id: "A10", rel: "contrasts" }],
         source: "factory-user-guide.md § 4.3 Install the /factory command; factory-user-guide.md § 6.17 factory install",
       },
       {
@@ -92,9 +97,33 @@ already installed: <path>`,
         assert: "Each target says already installed",
         flag: "divergence",
         notes:
-          "Section 4.3 of the guide writes this message as `already installed`. Section 6.17 writes it as `already installed: <path>`. This step uses the longer form from 6.17. One line per target is assumed from the two default targets in § 6.17.",
+          "Section 4.3 of the guide writes this message as `already installed`. Section 6.17 writes it as `already installed: <path>`. This step uses the longer form from 6.17, one line per target. With the plugin installed, the Claude line reads `skipped Claude command: the factory plugin is installed` instead.",
         related: [{ id: "A4", rel: "contrasts" }],
         source: "factory-user-guide.md § 6.17 factory install",
+      },
+      {
+        id: "A10",
+        title: "Install the /factory command as a plugin (preferred)",
+        surface: "terminal",
+        phase: "setup",
+        precondition: "Claude Code is installed and logged in.",
+        command: `claude plugin marketplace add Snehal1112/rocket-factory
+claude plugin install factory@rocket-factory`,
+        expected: `The guide shows no output for these commands.`,
+        assert: "Both commands finish without an error",
+        notes:
+          "This is the preferred install for Claude Code. After it, `factory install` skips the Claude command and still installs the Codex skill. If `factory.md` also exists, `factory install` adds `note: the factory plugin is installed and <path> also exists, so /factory is listed twice; remove it with: rm <path>`.",
+        verify: {
+          command: `factory install`,
+          look: "The Claude line reads `skipped Claude command: the factory plugin is installed`.",
+        },
+        after:
+          "Leaves the plugin `factory@rocket-factory` installed in Claude Code. `factory upgrade` then leaves `factory.md` alone and prints the plugin update command (G13).",
+        related: [
+          { id: "A4", rel: "contrasts" },
+          { id: "G13", rel: "contrasts" },
+        ],
+        source: "factory-user-guide.md § 4.3 Install the /factory command; factory-user-guide.md § 6.17 factory install; factory-user-guide.md § 6.18 factory upgrade",
       },
       {
         id: "A6",
@@ -560,7 +589,7 @@ Next plan: none`,
       },
       {
         id: "C13",
-        title: "--model is stored on the job and changes nothing else",
+        title: "--model runs every agent of the job on that model",
         surface: "terminal",
         phase: "build",
         command: `factory --project my-app new login-fix "Fix login redirect" \\
@@ -568,12 +597,40 @@ Next plan: none`,
   --plans docs/superpowers/plans/2026-10-25-login-fix/ \\
   --model opus`,
         expected: `created job 028 in <job folder>`,
-        assert: "Job created, builder and reviewer models unchanged",
-        flag: "gap",
+        assert: "Job created, and every agent of the job runs on opus",
         notes:
-          "Do not rely on `--model` to change which model runs. Set `builder_model` and `reviewer_model` in `project.toml` instead.",
-        why: "The value is stored on the job card and carried to the later jobs of a series. Nothing in the current code makes the builder or reviewer use it. Those models come from `builder_model` and `reviewer_model` in `project.toml`.",
-        source: "factory-user-guide.md § 6.1 factory new; factory-user-guide.md § 11 Settings that matter most",
+          "`factory new` refuses a blank model (`--model must not be blank`), a Fable model (`--model must not be a Fable model`) and a Claude model on a Codex project (`--model <name> is a Claude model, but this project runs Codex`).",
+        why: "The value is stored on the job card and carried to the later jobs of a series. Every agent of the job runs on it: the builder and its fix rounds, the reviewer, the committer, the merge message, the KB refresher and the helper agents they start. It replaces `builder_model`, `reviewer_model` and the other role models from `project.toml` for this job only.",
+        verify: {
+          look: "The review ledger line reads `review model: opus (job model)`.",
+        },
+        source: "factory-user-guide.md § 6.1 factory new",
+      },
+      {
+        id: "C14",
+        title: "Create the job although the spec check refused it",
+        surface: "terminal",
+        phase: "build",
+        precondition:
+          "`factory new` refused the spec because the plans touch risky paths and no `## Decisions` item says `Decided by: user`, or because the spec reviewer answered `CHANGES` or gave no verdict.",
+        command: `factory --project my-app new login-fix "Fix login redirect" \\
+  --spec docs/superpowers/specs/2026-10-25-login-fix-design.md \\
+  --plans docs/superpowers/plans/2026-10-25-login-fix/ \\
+  --accept-spec "risky paths reviewed by hand"`,
+        expected: `created job 028 in <job folder>`,
+        assert: "The job is created even though the spec check refused it",
+        flag: "trap",
+        notes:
+          "The reason is one line, at most 200 characters. The refusal message names the review file under the state folder `spec-reviews/`. The normal fix is to repair the spec, record your answers as `Decided by: user` decisions, commit, and run the same command again. Pass `--accept-spec` only when you decide to go ahead anyway. The guide gives the `created job` line for `factory new` in general and no separate output for this form.",
+        why: "A spec refusal creates nothing. `--accept-spec \"<reason>\"` creates the job although the spec check refused it.",
+        after:
+          "Leaves one or more jobs on the board and nothing is built yet.",
+        related: [
+          { id: "C6", rel: "contrasts" },
+          { id: "C7", rel: "contrasts" },
+          { id: "C8", rel: "contrasts" },
+        ],
+        source: "factory-user-guide.md § 6.1 factory new",
       },
     ],
   },

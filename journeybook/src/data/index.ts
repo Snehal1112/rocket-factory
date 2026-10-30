@@ -24,5 +24,5 @@ export const caseCount = allCases.length
 export const source = {
   doc: "docs/guides/factory-user-guide.md",
   branch: "main",
-  asOf: "2026-10-24",
+  asOf: "2026-10-30",
 }

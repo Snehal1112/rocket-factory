@@ -83,12 +83,13 @@ next: (the commands you can run)`,
         expected: `028 needs a human: review asked for changes after N fix rounds`,
         assert: "Reason reads review asked for changes after N fix rounds",
         notes:
-          "Run `approve` if you disagree with the reviewer, or `rework` with a note.",
+          "Run `rework` with a note, or `approve 028 --waive \"<reason>\"` if you disagree with the reviewer. A plain `approve` is refused (guide § 6.5, see D25).",
         related: [
-          { id: "D14", rel: "depends" },
+          { id: "D24", rel: "depends" },
+          { id: "D25", rel: "contrasts" },
           { id: "D16", rel: "depends" },
         ],
-        source: "factory-user-guide.md § 9 When a job stops: what to do",
+        source: "factory-user-guide.md § 9 When a job stops: what to do; factory-user-guide.md § 6.5 factory approve",
       },
       {
         id: "D5",
@@ -165,12 +166,13 @@ next: (the commands you can run)`,
         title: "Reason: no check covers the files that changed",
         surface: "terminal",
         phase: "stuck",
-        precondition: "Job 028 is in needs-human because no check ran.",
+        precondition:
+          "Job 028 is in needs-human because a changed code path matches no check rule.",
         command: `factory --project my-app status`,
-        expected: `028 needs a human: no check ran for N changed code path(s)`,
-        assert: "Reason reads no check ran for N changed code path(s)",
+        expected: `028 needs a human: no check covers N changed code path(s)`,
+        assert: "Reason reads no check covers N changed code path(s)",
         notes:
-          "Run `approve` if you accept that nothing was checked, or `rework`.",
+          "Run `approve` if you accept that, or `rework`.",
         related: [
           { id: "D14", rel: "depends" },
           { id: "D16", rel: "depends" },
@@ -296,12 +298,13 @@ git -C ~/code/my-app stash pop`,
         phase: "stuck",
         precondition: "Job 028 is in needs-human.",
         command: `factory --project my-app rework 028 "Handle the empty list case and add a test for it"`,
-        expected: `job N back to build, round reset to 0`,
-        assert: "rework prints job N back to build, round reset to 0",
+        expected: `job N back to build, round <N>
+job N back to build, same task`,
+        assert: "rework prints job N back to build, with round <N> or same task",
         flag: "trap",
         notes:
-          "The note must not be empty, must be one line and must be at most 200 characters. `rework` does not run the job, so run `factory --project my-app run 028` afterwards.",
-        why: "`rework` sends one line to the builder, resets the round counter to 0 and sends the job back to the build stage.",
+          "The note must not be empty, must be one line and must be at most 200 characters. `rework` does not run the job, so run `factory --project my-app run 028` afterwards. The first line is printed for a job parked at a task boundary. The second line is printed for a job parked in the middle of a task.",
+        why: "`rework` sends one line to the builder and sends the job back to the build stage. A job parked at a task boundary starts the next round: the round number goes up, the builder gets a fresh set of fix rounds, and it reads `changes-r<N>.md` with your note first and then the open review findings. Earlier review and builder files are kept. A job parked in the middle of a task keeps its round and reads your note from `rework-note.md`.",
         after:
           "The job is at stage build, and nothing runs until you run it. It also revives a cancelled job.",
         related: [{ id: "D17", rel: "contrasts" }],
@@ -427,6 +430,69 @@ echo $?`,
         related: [{ id: "D18", rel: "contrasts" }],
         source:
           "factory-user-guide.md § 6.2 factory run; factory-user-guide.md § 13 Troubleshooting; factory-user-guide.md § 6.0 Global options",
+      },
+      {
+        id: "D24",
+        title: "Merge a job whose review asked for changes, with a reason",
+        surface: "terminal",
+        phase: "stuck",
+        flag: "trap",
+        precondition:
+          "Job 028 is in needs-human or approve, and its last review asked for changes.",
+        command: `factory --project my-app approve 028 --waive "known flake, fixing in a follow-up"`,
+        expected: `merged <sha>`,
+        assert: "Output is merged <sha> with the waiver on record",
+        notes:
+          "The reason is one line, not empty and at most 200 characters. `--waive` cannot be combined with `--without-review`. The dashboard asks for the reason in a dialog when you press Approve on such a job.",
+        why: "`--waive` writes a ledger line, an `operator.approve` event and an entry in `waivers.json` in the job folder. After the merge it files one ticket for each waived blocker, whether or not `tickets_on_merge` is set. A ticket that cannot be filed never changes the merge result, and `factory tickets 028` retries it.",
+        after:
+          "The change is in your local base branch. Nothing was pushed. `waivers.json` is in the job folder.",
+        related: [
+          { id: "D25", rel: "depends" },
+          { id: "D14", rel: "contrasts" },
+        ],
+        source: "factory-user-guide.md § 6.5 factory approve",
+      },
+      {
+        id: "D25",
+        title: "A plain approve is refused while review blockers are open",
+        surface: "terminal",
+        phase: "stuck",
+        flag: "trap",
+        precondition:
+          "Job 028 is in needs-human and its last review asked for changes.",
+        command: `factory --project my-app approve 028`,
+        expected: `job N has B open review blockers from round R (FILE): use rework, cancel, or approve --waive "<reason>" to merge anyway`,
+        assert: "Refused with a message naming the open review blockers",
+        notes:
+          "The command exits with code 1. Use `rework`, `cancel`, or `approve --waive` (D24). Printed as `factory: <message>` (guide § 6.0).",
+        why: "A plain approve of a job whose last review asked for changes is refused. `--waive` is the way to merge it anyway.",
+        after: "Nothing was done. The job is unchanged.",
+        related: [
+          { id: "D24", rel: "contrasts" },
+          { id: "D16", rel: "contrasts" },
+        ],
+        source: "factory-user-guide.md § 6.5 factory approve",
+      },
+      {
+        id: "D26",
+        title: "--waive needs a review that asked for changes",
+        surface: "terminal",
+        phase: "stuck",
+        precondition:
+          "Job 028 is in needs-human, and its last review approved or it has no review yet.",
+        command: `factory --project my-app approve 028 --waive "known flake, fixing in a follow-up"`,
+        expected: `job N has no open review findings to waive`,
+        assert: "Refused with job N has no open review findings to waive",
+        notes:
+          "The command exits with code 1. Drop `--waive`, and add `--without-review` when no review ran. Printed as `factory: <message>` (guide § 6.0).",
+        why: "`--waive` needs a last review that asked for changes.",
+        after: "Nothing was done. The job is unchanged.",
+        related: [
+          { id: "D24", rel: "contrasts" },
+          { id: "D15", rel: "contrasts" },
+        ],
+        source: "factory-user-guide.md § 6.5 factory approve",
       },
     ],
   },
@@ -588,10 +654,10 @@ runs: one row per agent run, with the role, provider, round, turns and weighted 
         expected: `(a printout of what would happen; nothing is changed)`,
         assert: "A preview prints and no issue is created",
         notes:
-          "It skips, with exit code 0, when the job is not merged, is not the last plan of a series, or the feature text has no issue references.",
+          "It skips, with exit code 0, when the job is not merged, is not the last plan of a series, or the feature text has no issue references. That rule is written for the spec follow-ups and the parent issues. `factory tickets` also files one ticket for each waived blocker (guide § 6.5) and one ticket titled `Minor review findings from job <id>: <slug>`. The minor-findings ticket runs for every plan of a series.",
         why: "`--dry-run` prints what would happen and changes nothing.",
         related: [{ id: "E11", rel: "contrasts" }],
-        source: "factory-user-guide.md § 6.13 factory tickets",
+        source: "factory-user-guide.md § 6.13 factory tickets; factory-user-guide.md § 6.5 factory approve",
       },
       {
         id: "E11",
@@ -601,15 +667,15 @@ runs: one row per agent run, with the role, provider, round, turns and weighted 
         precondition:
           "The dry run in E10 showed what you expect. Run this against a scratch repository first.",
         command: `factory --project my-app tickets 028`,
-        expected: `(the follow-ups listed in the spec are filed as new GitHub issues; the parent issues named in the feature text are commented on and closed)`,
+        expected: `(the follow-ups listed in the spec are filed as new GitHub issues; the parent issues named in the feature text are commented on and closed; one ticket is filed for each waived blocker; open [minor] findings of the last review become one ticket titled Minor review findings from job <id>: <slug>)`,
         assert: "New GitHub issues exist for the spec follow-ups",
         notes:
-          "It is safe to run twice. Set `tickets_on_merge = true` in the project settings to run it after every merge. The default is off.",
-        why: "A marker file in the job folder stops any call from repeating. It never changes the merge result.",
+          "It is safe to run twice. Set `tickets_on_merge = true` in the project settings to run it after every merge. The default is off. The waived-blocker tickets and the minor-findings ticket are filed after a merge whether or not `tickets_on_merge` is set, and `minor_tickets = false` turns the minor-findings ticket off.",
+        why: "A marker file in the job folder stops any call from repeating, and `minors.json` in the job folder records the minor-findings ticket number so a re-run files nothing twice. It never changes the merge result.",
         after:
-          "New issues exist on GitHub, and the parent issues are commented on and closed. A marker file is left in the job folder.",
+          "New issues exist on GitHub, and the parent issues are commented on and closed. A marker file is left in the job folder, and `minors.json` records the minor-findings ticket.",
         related: [{ id: "E10", rel: "depends" }],
-        source: "factory-user-guide.md § 6.13 factory tickets",
+        source: "factory-user-guide.md § 6.13 factory tickets; factory-user-guide.md § 6.5 factory approve",
       },
       {
         id: "E12",

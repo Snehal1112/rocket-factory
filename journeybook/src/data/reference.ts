@@ -169,7 +169,7 @@ export const messageTable: MessageRow[] = [
   },
   {
     message: "review asked for changes after N fix rounds",
-    action: "`approve` if you disagree with the reviewer, or `rework`.",
+    action: "`rework` with a note, or `approve --waive \"<reason>\"` if you disagree with the reviewer. A plain `approve` is refused.",
   },
   {
     message: "diff has N changed lines, the cap is C",
@@ -188,8 +188,8 @@ export const messageTable: MessageRow[] = [
     action: "Nothing was produced. `rework`, or `cancel`.",
   },
   {
-    message: "no check ran for N changed code path(s)",
-    action: "No check covers the changed files. `approve` if you accept that, or `rework`.",
+    message: "no check covers N changed code path(s)",
+    action: "A changed code path matches no check rule. `approve` if you accept that, or `rework`.",
   },
   {
     message: "main busy: the main checkout has tracked changes",
@@ -277,10 +277,10 @@ export interface CommandGroup {
 }
 
 export const commandGroups: CommandGroup[] = [
-  { group: "factory new", subcommands: "<slug> <feature> --plans --spec --model --one-job --accept-over-budget" },
+  { group: "factory new", subcommands: "<slug> <feature> --plans --spec --model --one-job --accept-spec --accept-over-budget" },
   { group: "factory run", subcommands: "<id> --series" },
   { group: "factory status | show", subcommands: "status  |  show <id>" },
-  { group: "factory approve", subcommands: "<id> --without-review" },
+  { group: "factory approve", subcommands: "<id> --without-review | --waive <reason>" },
   { group: "factory rework", subcommands: "<id> <note>" },
   { group: "factory cancel", subcommands: "<id|draft> --reason --force" },
   { group: "factory cleanup", subcommands: "<id> --discard-commits" },
@@ -289,9 +289,11 @@ export const commandGroups: CommandGroup[] = [
   { group: "factory log", subcommands: "--job --level --event --tail" },
   { group: "factory tickets", subcommands: "<id> --dry-run" },
   { group: "factory kb-refresh", subcommands: "--job <id>" },
-  { group: "factory project", subcommands: "add | list | which | show | remove" },
+  { group: "factory project", subcommands: "add | list | which | show | defaults | remove" },
   { group: "factory presets", subcommands: "refresh --force" },
   { group: "factory install | upgrade", subcommands: "install --dir --force  |  upgrade --dry-run" },
+  { group: "factory probe", subcommands: "--role --harness --json --delivery" },
+  { group: "factory plugin sync", subcommands: "--check --repo" },
   { group: "factoryd", subcommands: "run | status | stop | is-running | enqueue" },
 ]
 
@@ -304,7 +306,7 @@ export const flagTraps: FlagTrap[] = [
   {
     command: "factory new --model <name>",
     gotcha:
-      "Stored on the job card. Nothing makes the builder or reviewer use it: their models come from `builder_model` and `reviewer_model` in `project.toml`.",
+      "Every agent of the job runs on it. It replaces `builder_model`, `reviewer_model` and the other role models from `project.toml` for this job only. Refused when blank, a Fable model, or a Claude model on a Codex project.",
   },
   {
     command: "factory cleanup --discard-commits",
@@ -402,8 +404,9 @@ export const corrections: Correction[] = [
   },
   {
     n: 8,
-    claimed: "`factory new --model` chooses the model that builds the job.",
-    actual: "The value is stored on the job and has no effect on which model runs.",
+    claimed: "`factory new --model` is only recorded on the job card.",
+    actual:
+      "Every agent of the job runs on that model, replacing the role models from `project.toml` for this job. The review ledger line reads `review model: <name> (job model)`.",
   },
   {
     n: 9,

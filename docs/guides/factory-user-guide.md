@@ -139,7 +139,14 @@ The factory home keeps a version marker, and a newer `factory` run from anywhere
 factory install
 ```
 
-This writes the Claude command to `~/.claude/commands/factory.md`. It also installs a Codex skill at `~/.agents/skills/factory/SKILL.md`. Running it again prints `already installed`.
+The preferred install for Claude Code is the plugin:
+
+```bash
+claude plugin marketplace add Snehal1112/rocket-factory
+claude plugin install factory@rocket-factory
+```
+
+`factory install` is the fallback. It writes the Claude command to `~/.claude/commands/factory.md` and installs a Codex skill at `~/.agents/skills/factory/SKILL.md`. Running it again prints `already installed`. When the plugin is installed, it skips the Claude command (section 6.17).
 
 See [`factory install`](#factory-install) for the options.
 
@@ -275,7 +282,7 @@ Creates a job on the board. Nothing is built yet.
 | `<FEATURE>` | One sentence on what you want. If it contains issue references like `#76`, they are recorded on the job. |
 | `--plans <path>` | A plan file, or a folder of `plan-NN` files. |
 | `--spec <file>` | The spec file. Needs `--plans`. |
-| `--model <name>` | Recorded on the job card. See the note below. |
+| `--model <name>` | Run every agent of the job on this model. See the note below. |
 | `--one-job` | Combine the whole plan chain into one job. Needs `--plans`. |
 | `--accept-spec "<reason>"` | Create the job although the spec check refused it. One line, at most 200 characters. |
 | `--accept-over-budget` | Allow a `--one-job` job whose estimate is over the budget. Needs `--one-job`. |
@@ -337,7 +344,7 @@ needs consent: this job is estimated at E weighted tokens and the budget is B; r
 
 With a chain of only one plan, `--one-job` has no effect and prints `note: --one-job had no effect: the chain has one plan`.
 
-**Note on `--model`.** In the current code, the value is stored on the job card and carried to the later jobs of a series. I found nothing that makes the builder or reviewer use it. The builder and reviewer models come from `builder_model` and `reviewer_model` in `project.toml`. Do not rely on `--model` to change which model runs.
+**Note on `--model`.** The value is stored on the job card and carried to the later jobs of a series. Every agent of the job runs on it: the builder and its fix rounds, the reviewer, the committer, the merge message, the KB refresher and the helper agents they start. It replaces `builder_model`, `reviewer_model` and the other role models from `project.toml` for this job only. The review ledger line then reads `review model: <name> (job model)`. `factory new` refuses a blank model (`--model must not be blank`), a Fable model (`--model must not be a Fable model`) and a Claude model on a Codex project (`--model <name> is a Claude model, but this project runs Codex`).
 
 **Common errors and what they mean:**
 
@@ -770,6 +777,29 @@ factory project remove my-app --force
 - It refuses while a driver holds the project lease. `--force` does not override this. Use `factory --project <name> cancel <job> --force`, or delete the lease file.
 - It never deletes job branches. It lists any it leaves in place.
 
+#### `factory project defaults`
+
+```
+factory project defaults [--all] [NAME]
+```
+
+| Option | Meaning |
+|---|---|
+| `[NAME]` | The project. Leave it out with `--all`. |
+| `--all` | Every registered project. |
+
+Adds every setting the project's `project.toml` does not list yet, as a comment with its default. The rest of the file stays as it is, so it is a safe way to see which settings exist.
+
+```bash
+factory project defaults my-app
+factory project defaults --all
+```
+
+- Prints one line per project: `<name>: added the settings block` or `<name>: already lists every setting`.
+- With `--all`, a project that cannot be read prints `<name>: skipped, <why>` and the others still run.
+- Neither a name nor `--all` stops with `name a project or pass --all`.
+- It writes only `~/.factory/projects/<name>/project.toml`. Your repository does not change.
+
 ### 6.16 `factory presets refresh`
 
 ```
@@ -813,8 +843,16 @@ factory install --dir ~/.claude/commands     # Claude command only, in a folder 
 factory install --force                      # replace changed copies
 ```
 
+- It is the fallback install. The Claude Code plugin is preferred (section 4.3).
 - Default targets: `~/.claude/commands/factory.md` and `~/.agents/skills/factory/SKILL.md`.
-- Output: `installed <path>` or `already installed: <path>`.
+- Output: `installed <path>` or `already installed: <path>`, one line per target.
+- Without the plugin, the Claude line is followed by:
+  ```
+  note: the Claude Code plugin is the preferred install:
+    claude plugin marketplace add Snehal1112/rocket-factory
+    claude plugin install factory@rocket-factory
+  ```
+- With the plugin `factory@rocket-factory` installed, the Claude line is `skipped Claude command: the factory plugin is installed`. If `factory.md` also exists, it adds `note: the factory plugin is installed and <path> also exists, so /factory is listed twice; remove it with: rm <path>`. `--force` writes the file anyway.
 - A differing `factory.md` stops with `<path> exists and differs from the shipped command, use --force to replace it`. For the Codex skill it is only a note, and the command still succeeds.
 
 ### 6.18 `factory upgrade`
@@ -837,11 +875,85 @@ factory upgrade
 In order, it:
 
 1. Checks that the home was not last used by a newer binary. If it was, it refuses and tells you to install a newer binary.
-2. Updates `~/.claude/commands/factory.md`. A changed old copy is saved as `factory.md.bak`.
+2. Updates `~/.claude/commands/factory.md`, only when the Claude Code plugin is not installed. A changed old copy is saved as `factory.md.bak`. It then prints the plugin install note from section 6.17, or, when `factory.md` exists, `note: to switch to the plugin, run the two commands below, then remove <path>:` with the two `claude plugin` commands. With the plugin installed it leaves `factory.md` alone and prints `plugin: factory@rocket-factory is installed; update it with: claude plugin update factory@rocket-factory`, or the duplicate note from section 6.17 when `factory.md` still exists.
 3. Updates the Codex skill, only if it is already installed.
 4. Refreshes the presets you have not edited (the same as `presets refresh` without `--force`).
 5. Reports `shadowed:` lines for project or repository files that hide the new preset text.
 6. Writes the version marker in the factory home.
+
+### 6.19 `factory probe`: check what each agent sees
+
+```
+factory probe [options]
+```
+
+Asks each role's agent what reaches its context, and reports a pass or fail per channel. Use it after you change agent files, skills or the agent program, and before a release.
+
+| Option | Meaning |
+|---|---|
+| `--harness <claude\|codex>` | The agent program to probe. Default: the project's `agent_cli`. |
+| `--role <ROLE>` | A role to probe: `builder`, `reviewer`, `spec-reviewer`, `committer` or `kb`. Repeat it for more than one. Default: all five. |
+| `--json` | Print the report as JSON and nothing else. |
+| `--delivery <agent\|append\|stdin>` | How the marker reaches Claude: a written agent file (`agent`, the default), `--append-system-prompt` (`append`) or the start of stdin (`stdin`). Codex ignores it. |
+
+```bash
+factory --project my-app probe
+factory --project my-app probe --role builder --role reviewer
+factory --project my-app probe --harness codex --json
+```
+
+For each role it builds the real agent setup, adds a unique marker to the agent text, turns every tool off and asks the agent, in one turn, what reached it. The channels are:
+
+| Channel | What a pass proves |
+|---|---|
+| `agent_text` | The agent file text arrived, because the agent echoes the marker. |
+| `skills` | Every skill the role may use is visible. |
+| `bootstrap` | The `You have superpowers` text from the plugin start hook arrived. |
+| `no_extra_skills` | The agent sees no skill outside the role's allowlist. |
+
+It prints a table like this, then one `Skills seen (<role>): ...` line per role and a `Missing (<role>) <channel>: <detail>` line for every channel that failed:
+
+```
+harness claude  cli <claude --version>
+
+role           agent_text  skills   bootstrap  no_extra_skills
+builder        ok          ok       ok         -
+...
+
+Report: <state dir>/probes/<stamp>-claude.json
+Transcripts: <state dir>/probes/<stamp>-claude
+```
+
+A cell is `ok` (expected and present), `MISSING` (expected and absent), `-` (not expected) or `extra` (not expected but present).
+
+- Exit code 0 when every expected channel is present, 1 when one is missing (the table is still printed), 2 on a bad option value.
+- **It spends real tokens**: one short turn per role, at most 50,000 weighted tokens each. `factory run` and the tests never start it.
+- It writes only under `<state dir>/probes/`. It does not touch the board, a job, a worktree or your repository, and it does not take the project lease.
+- It runs in a scratch folder, so the repository's own `CLAUDE.md`, `.claude/settings.json` and `.claude/skills` do not reach it. A pass on `no_extra_skills` covers your user and plugin skills only.
+- It needs the agent program (`claude` or `codex`) on your PATH and signed in. `factoryd` is not needed.
+
+### 6.20 `factory plugin sync`: refresh the plugin files of this repository
+
+```
+factory plugin sync [--check] [--repo <REPO>]
+```
+
+For people who work on the factory itself. It writes the Claude Code plugin files in a rocket-factory clone from the command text built into the binary.
+
+| Option | Meaning |
+|---|---|
+| `--check` | Write nothing. Fail when a plugin file differs from the generated text. |
+| `--repo <REPO>` | The rocket-factory repository root. Default: your current folder. |
+
+```bash
+factory plugin sync
+factory plugin sync --check
+```
+
+- Prints `wrote <file>` or `unchanged <file>` per plugin file.
+- `--check` prints `plugin files are current`, or stops with `plugin files out of date: <file>; run factory plugin sync`.
+- Outside the repository root it stops with `<path> is not the repository root: .claude-plugin/marketplace.json is missing; use --repo`.
+- In your own projects you never need it. Install the plugin as in section 4.3.
 
 ---
 
@@ -1034,7 +1146,7 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 |---|---|---|
 | `risky diff: risky paths (K): ...` | The change touched a sensitive file. This always needs you. | Read the diff. Then `approve`, or `rework` with a note. |
 | `checks failed after N fix rounds` | The tests still fail after the fix rounds. | `rework` with a hint. |
-| `review asked for changes after N fix rounds` | The reviewer still wants changes. | `approve` if you disagree, or `rework`. |
+| `review asked for changes after N fix rounds` | The reviewer still wants changes. | `rework` with a note, or `approve --waive "<reason>"` if you disagree. A plain `approve` is refused (section 6.5). |
 | `diff has N changed lines, the cap is C` | The change is too big to auto-merge. | `approve` after reading it, or `rework` to split it up. |
 | `budget is stopped` | The job used up its token budget. | `approve` or `cancel`. Raise `budget_weighted` if the job is legitimately large. |
 | `builder stopped: ...` | The builder ended early. | `rework`. |
@@ -1238,7 +1350,8 @@ factoryd enqueue --help
 
 ```bash
 # Setup (once)
-factory install
+claude plugin marketplace add Snehal1112/rocket-factory   # or: factory install
+claude plugin install factory@rocket-factory
 factory project add <repo> --preset rust|go|ruby|csharp|node [--name N] [--base B] [--agent-cli claude|codex]
 factory project show <name>
 
@@ -1248,13 +1361,13 @@ factory spec stage <slug> interviewing|writing-spec|writing-plans
 factory spec resume <slug>
 
 # Build a feature
-factory new <slug> "<feature>" [--spec FILE] [--plans FILE|DIR] [--one-job [--accept-over-budget]] [--model M]
+factory new <slug> "<feature>" [--spec FILE] [--plans FILE|DIR] [--one-job [--accept-over-budget]] [--model M] [--accept-spec "<reason>"]
 factory run <id> [--series]
 factory status
 factory show <id>
 
 # When it stops
-factory approve <id> [--without-review]
+factory approve <id> [--without-review | --waive "<reason>"]
 factory rework <id> "<one line note>"
 factory cancel <id> [--reason TEXT] [--force]
 factory cleanup <id> [--discard-commits]
@@ -1268,8 +1381,10 @@ factory kb-refresh --job <id>
 
 # Maintenance
 factory project list | which [PATH] | remove <name> [--force]
+factory project defaults <name> | --all
 factory presets refresh [--force]
 factory upgrade [--dry-run]
+factory probe [--role R]... [--harness claude|codex] [--json]
 
 # Background supervisor
 factoryd run [--interval-ms N] [--once]
