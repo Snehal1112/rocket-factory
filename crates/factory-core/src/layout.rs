@@ -1,5 +1,6 @@
 //! Where the driver keeps its files. Everything is passed in, nothing is a literal elsewhere.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// The git exclude line that covers every agent file the driver writes into a job worktree.
@@ -18,6 +19,32 @@ pub fn claude_commands_dir(user_home: &Path) -> PathBuf {
 /// The folder where Codex looks for user-wide skills: `<user home>/.agents/skills`.
 pub fn codex_skills_dir(user_home: &Path) -> PathBuf {
     user_home.join(".agents").join("skills")
+}
+
+/// The folder where Codex looks for skills in its home: `<codex home>/skills`.
+pub fn codex_home_skills_dir(codex_home: &Path) -> PathBuf {
+    codex_home.join("skills")
+}
+
+/// The Codex home: the variable when set and non-empty, else `<user home>/.codex`.
+pub fn codex_home_from_env(user_home: &Path, codex_home_var: Option<&OsStr>) -> PathBuf {
+    match codex_home_var {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => user_home.join(".codex"),
+    }
+}
+
+/// The folder where Codex looks for skills in a worktree: `<worktree>/.agents/skills`.
+pub fn codex_worktree_skills_dir(worktree: &Path) -> PathBuf {
+    codex_skills_dir(worktree)
+}
+
+/// The user-wide folders Codex reads skills from, in order.
+pub fn codex_user_skill_roots(user_home: &Path, codex_home_var: Option<&OsStr>) -> Vec<PathBuf> {
+    vec![
+        codex_skills_dir(user_home),
+        codex_home_skills_dir(&codex_home_from_env(user_home, codex_home_var)),
+    ]
 }
 
 /// True for `factory-<a-z, 0-9, ->.md`, the only names the exclude line covers and the engine writes.
@@ -136,6 +163,44 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn codex_home_defaults_to_dot_codex() {
+        let home = Path::new("/h");
+        assert_eq!(codex_home_from_env(home, None), PathBuf::from("/h/.codex"));
+        assert_eq!(
+            codex_home_from_env(home, Some(OsStr::new(""))),
+            PathBuf::from("/h/.codex")
+        );
+    }
+
+    #[test]
+    fn codex_home_var_wins() {
+        assert_eq!(
+            codex_home_from_env(Path::new("/h"), Some(OsStr::new("/x"))),
+            PathBuf::from("/x")
+        );
+    }
+
+    #[test]
+    fn user_skill_roots_lists_agents_then_codex_home() {
+        assert_eq!(
+            codex_user_skill_roots(Path::new("/h"), None),
+            vec![
+                PathBuf::from("/h/.agents/skills"),
+                PathBuf::from("/h/.codex/skills")
+            ]
+        );
+    }
+
+    #[test]
+    fn worktree_skills_dir_is_under_dot_agents() {
+        assert_eq!(
+            codex_worktree_skills_dir(Path::new("/w")),
+            PathBuf::from("/w/.agents/skills")
+        );
+    }
 
     #[test]
     fn log_file_is_in_the_state_dir() {
