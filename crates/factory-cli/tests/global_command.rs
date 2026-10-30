@@ -75,7 +75,11 @@ fn install_args(args: &[&str]) -> Result<String, factory_cli::CliError> {
     let mut full = vec!["factory", "install"];
     full.extend_from_slice(args);
     match Cli::try_parse_from(full).expect("parse").command {
-        Command::Install { dir, force } => install::run(dir.as_deref(), force),
+        Command::Install { dir, force } => install::run_with_claude(
+            dir.as_deref(),
+            force,
+            std::ffi::OsStr::new("/nonexistent/claude"),
+        ),
         _ => unreachable!(),
     }
 }
