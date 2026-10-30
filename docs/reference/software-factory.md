@@ -322,8 +322,9 @@ Limits:
 - There is no mid-run budget warning or stop. Codex reports usage only at the end of a turn, so the run total is added to the job tally after the run and the job parks when it is over budget. `stall_minutes` still stops a silent run.
 - `cache_ttl` does not apply and is not set. `builder_carry_session` is off.
 - There is no cold-start data, so the COLD STARTS tables show `n/a` for Codex.
-- The agent file text and a short preface go into the prompt. No skill is loaded.
+- The agent file text and a short preface go into the prompt. A Codex run lists the skills in `~/.agents/skills`, `$CODEX_HOME/skills` (default `~/.codex/skills`) and `<worktree>/.agents/skills`; only the catalog (name, description, path) is in context. The factory sets `skills.bundled.enabled=false` and disables, by canonical path in `skills.config`, every skill the role is not allowed. The allowlist is the role's plugin list: an entry `superpowers` allows the skills in a `superpowers` subfolder, an entry `foo` allows a top-level `foo` folder, and an empty list, or one that matches no installed skill, gives `skills.include_instructions=false`. Committer and message roles also get `dev-workflow-skills`, KB gets `kb-refresh`. Subagents stay off. When the skill a role names is not installed, the agent text keeps its short rules.
 - Runs pass `--ignore-user-config`, so your own `~/.codex/config.toml` is not read. The login still works. `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from the child unless `FACTORY_ALLOW_API_KEY=1`.
+- Runs set the `skills.*` flags above (`skills.bundled.enabled`, `skills.config`, `skills.include_instructions`) as `-c` values.
 - Runs set `features.apps=false` and `features.plugins=false`, so ChatGPT apps and Codex plugins add no tools. Codex has no switch that drops every MCP server, and `-c mcp_servers={}` merges instead of replacing.
 - Runs set `approval_policy="on-request"` and `approvals_reviewer="auto_review"` explicitly, which enables automatic review for fresh and resumed sessions while keeping the configured role sandbox boundary.
 - Switching a project from one CLI to the other clears the saved session ids of a running job once. One fresh builder runs next.
@@ -338,6 +339,35 @@ Sandbox by role:
 | reviewer | `read-only`, network off |
 
 A failed Codex commit falls back to the driver commit. The real smoke test is `#[ignore]`; run it by hand with `cargo test -j4 -p factory-agent real_codex_smoke -- --ignored`.
+
+## Checking what agents see
+
+`factory probe` builds each role's real agent spec (builder, reviewer, spec-reviewer, committer, kb), adds a unique marker to the agent text, and asks the agent in one turn, with every tool denied, what reached its context. It reports a pass or fail per channel and role:
+
+| Channel | What a pass proves |
+|---|---|
+| `agent_text` | The agent file text arrived, because the agent echoes the marker. |
+| `skills` | Every skill the role may use is visible. |
+| `bootstrap` | The `You have superpowers` bootstrap text from the plugin start hook arrived. |
+| `no_extra_skills` | The agent sees no skill outside the role's allowlist. |
+
+A channel the role does not expect shows `-`, or `extra` when it is present anyway. A `Skills seen:` line per role shows the raw answer, so the `--disable-slash-commands` result is readable.
+
+```bash
+factory [--project <name>] probe [--harness claude|codex] [--role <role>]... [--json] [--delivery agent|append|stdin]
+```
+
+The harness defaults to the project's `agent_cli`, the roles to all five. `--delivery` picks how the marker reaches Claude: a written agent file (`agent`), `--append-system-prompt` (`append`) or the start of stdin (`stdin`). The probe exits 1 when an expected channel is missing, 2 on bad flag values. Reports and per-role transcripts are written under `<state dir>/probes/`; `--json` prints the report and nothing else.
+
+The probe runs in a scratch folder under the state dir, not in the repo or a job worktree, so project-level context (the repo's `CLAUDE.md`, `.claude/settings.json`, `.claude/skills`) does not reach it. A pass on `no_extra_skills` covers user and plugin skills only, and real runs may still see project skills. Writing the probe agent file into the repo would risk replacing the real one.
+
+Each run costs one short turn per role with real credentials, so `cargo test` and `factory run` never start it. Run it by hand, and before each release (see `docs/operations/releasing.md`).
+
+Findings: the `--disable-slash-commands` and bootstrap answers are recorded here after the first live run.
+
+## Harness text
+
+The `/factory` command body and the agent files name no harness tool. Tool names live in one mapping file per harness, `tool-map-claude.md` and `tool-map-codex.md` in `crates/factory-core/assets/`. The Claude map is also the tail of `global-command.md`, and a test pins the two equal. The Codex skill is the shared body with `/factory` changed to `$factory`, then the Codex map. Codex runtime agent text is the preface, then the Codex map, then the agent body. Claude agent runs need no map. A third harness needs one map file and its words in `HARNESS_WORDS` in `crates/factory-cli/tests/tool_map.rs`. The prompt strings in `specs.rs` and `kb.rs` still name the Read, Agent and Workflow tools and are out of scope here.
 
 ## Token comparison
 

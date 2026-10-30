@@ -16,6 +16,7 @@ pub mod ledger;
 pub mod outcome_lines;
 pub mod park;
 pub mod preset;
+pub mod probe;
 pub mod project;
 pub mod resolve;
 pub mod risk;
@@ -28,6 +29,12 @@ pub mod version;
 
 /// The global `/factory` slash command that `factory install` writes.
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
+
+/// The Claude Code harness notes, also the tail of `GLOBAL_COMMAND`.
+pub const TOOL_MAP_CLAUDE: &str = include_str!("../assets/tool-map-claude.md");
+
+/// The Codex harness notes, appended to the Codex skill and agent text.
+pub const TOOL_MAP_CODEX: &str = include_str!("../assets/tool-map-codex.md");
 
 pub use agent_drift::{agent_drift, rules_marker};
 pub use board::{
@@ -55,11 +62,17 @@ pub use home::Home;
 pub use homeconfig::HomeConfig;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
 pub use layout::{
-    agent_files_rel_dir, claude_commands_dir, codex_skills_dir, is_agent_file_name, Layout, Scope,
-    AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE,
+    agent_files_rel_dir, claude_commands_dir, codex_home_from_env, codex_home_skills_dir,
+    codex_skills_dir, codex_user_skill_roots, codex_user_skill_roots_from_env,
+    codex_worktree_skills_dir, is_agent_file_name, plugin_rel_files, Layout, Scope,
+    AGENT_EXCLUDE_PATTERN, MARKETPLACE_REL_FILE, PROJECT_LEASE_FILE,
 };
 pub use ledger::{Ledger, TaskState};
 pub use park::{park_summary, ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
+pub use probe::{
+    allowed_skill_entries, evaluate, expected_channels, parse_probe_answer, probe_prompt, Channel,
+    Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe, KNOWN_BUILTIN_SKILLS,
+};
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
 pub use risk::{classify_paths, glob_match, DiffClass};
 pub use stage::Stage;

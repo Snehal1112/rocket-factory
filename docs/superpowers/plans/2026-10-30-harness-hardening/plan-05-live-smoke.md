@@ -17,7 +17,8 @@
 - Cargo per crate with `-j4`: `cargo test -j4 -p factory-cli --test live_smoke_script`; never `--workspace` or `--all`; never set `CARGO_TARGET_DIR`.
 - Git only through `factory_git::Repo` in Rust. The bash script may call `git` for the fixture repo only; `gh`, `claude`, `codex`, `tmux` may be spawned.
 - Paths reach the driver only through `Layout`; `cargo test -j4 -p factory-cli --test no_hardcoded_paths` must still pass (the new Rust test reads state only through the script's `--out` files).
-- The script never touches the user's real factory home or repos: `FACTORY_HOME` is a temp dir, the fixture repo is a temp dir, and `factory install` is never run.
+- The script never writes the user's real factory home or repos: `FACTORY_HOME` is a temp dir, the fixture repo is a temp dir, and `factory install` is never run. Its one read of the real home is `factory project show <key project>`, to copy the API key settings (Task 2).
+- The smoke run bills the same credential as real factory jobs: the throwaway `project.toml` gets the key project's `api_key_file` and `allow_api_key` when they are set there. The key itself is never copied, printed or saved to `--out`; only the path to the key file is.
 - The real CLI is never used in `cargo test` or CI: the Rust test uses the shim only.
 - Comments are short full sentences ending with a period. Docs go in `docs/`.
 - The driver makes the commits (with the `dev-workflow-skills:1-git-commit` skill); no task has a commit step.
@@ -27,7 +28,7 @@
 
 1. A job that parks as `needs-human` fails the script (exit 1) and still saves the board and transcripts (`fails_when_the_job_does_not_reach_merged`, Task 2).
 2. A failing probe stops the run before any job exists and says so (`fails_when_the_probe_fails`, Task 2).
-3. The real `~/.factory` is never read or written (`passes_on_the_fake_agent_and_saves_transcripts` sets `HOME` to a temp dir and asserts `.factory` does not appear there, Task 1).
+3. The real `~/.factory` is never written (`passes_on_the_fake_agent_and_saves_transcripts` sets `HOME` to a temp dir and asserts `.factory` does not appear there, Task 1). A key project without key settings, or no key project at all, leaves the throwaway project on the login and says so (`no_key_project_uses_the_login`, Task 2).
 4. A missing tool (`tmux`, `claude`, `codex`) exits 2 with the tool name, not a bash trace (`missing_tmux_exits_2`, `missing_agent_program_exits_2`, Tasks 2 and 3).
 5. A tmux session is always killed, also on failure or Ctrl-C (trap in Task 3).
 
@@ -48,11 +49,12 @@
 
 **Interfaces:**
 - Consumes: plan 01's `factory [--project <name>] probe [--harness claude|codex] --json` (exit 0 only when every expected channel is present). Existing commands: `factory project add <path> --preset node --name live-smoke --agent-cli <h>`, `factory project show live-smoke`, `factory --project live-smoke new <slug> <text> --plans <dir> --spec <file>`, `run 001`, `show 001` (pretty JSON with a `"stage"` field), `status`.
-- Produces: `scripts/live-smoke.sh [--harness claude|codex] [--interactive] [--no-probe] [--keep] [--out <dir>] [-h|--help]`. Exit 0 pass, 1 smoke failure, 2 usage error or missing tool. `--no-probe` exists only so the fake-agent test can pass; the help text says so. Env: `FACTORY_BIN` (default `target/debug/factory`, else `factory` on PATH), `TMUX_BIN` (default `tmux`), `LIVE_SMOKE_AGENT_PROGRAM` (overrides the program name checked with `command -v`, default the harness name; used by the test).
+- Produces: `scripts/live-smoke.sh [--harness claude|codex] [--interactive] [--no-probe] [--keep] [--key-from <project>] [--out <dir>] [-h|--help]`. `--key-from` names the registered project whose API key settings the run copies (Task 2); default: the output of `factory project which` run from `REPO_ROOT` with the real `FACTORY_HOME`. Exit 0 pass, 1 smoke failure, 2 usage error or missing tool. `--no-probe` exists only so the fake-agent test can pass; the help text says so. Env: `FACTORY_BIN` (default `target/debug/factory`, else `factory` on PATH), `TMUX_BIN` (default `tmux`), `LIVE_SMOKE_AGENT_PROGRAM` (overrides the program name checked with `command -v`, default the harness name; used by the test).
 - Produces: the `--out` layout, default `${TMPDIR:-/tmp}/factory-live-smoke/<UTC yyyymmddThhmmssZ>-<harness>`:
 
 ```
-summary.txt        PASS or FAIL line, harness, cli version, job id, stage, seconds
+summary.txt        PASS or FAIL line, harness, cli version, job id, stage, seconds, credentials line
+project.toml       the throwaway project's project.toml (key file path only, never the key)
 probe/             probe report JSON and its transcripts (absent with --no-probe)
 board.json  events.jsonl  log.jsonl   copied from <home>/projects/live-smoke/state/
 show-001.json  status.txt             output of factory show 001 and factory status
@@ -99,6 +101,7 @@ Expected: PASS. Also `bash -n scripts/live-smoke.sh`.
 **Interfaces:**
 - Consumes: Task 1's script and `run_script`.
 - Produces: the failure messages of Task 1's pass condition, exit codes 1 and 2.
+- Produces: `copy_key_settings` in the script, called by `register_project` before the throwaway `FACTORY_HOME` is exported. It runs `factory --project <key project> project show <key project>` with the real `FACTORY_HOME` (`${FACTORY_HOME:-$HOME/.factory}` as the script found it) and reads two lines, ignoring any that end in `(default)`: `api_key_file = "<path>" (<source>)` and `allow_api_key = <true|false> (<source>)`. A leading `~/` in the path becomes `$HOME/`, so the copy is absolute. It appends the found lines under `[settings]` of the throwaway `project.toml`, and writes `credentials: api_key_file <path> (from <key project>)`, or `credentials: login (no key settings in <key project>)`, or `credentials: login (no key project)` to `summary.txt` and stdout. It never reads the key file. When the real factory home folder does not exist, it calls no `factory` command at all (so none can create that folder) and writes `credentials: login (no factory home)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -106,15 +109,17 @@ Expected: PASS. Also `bash -n scripts/live-smoke.sh`.
 - `fails_when_the_probe_fails`: no `--no-probe`; the shim cannot answer the marker prompt, so `factory probe` exits 1. Assert exit 1, stderr contains `FAIL: marker probe failed`, `out/probe/` exists, `out/jobs` does not.
 - `unknown_option_exits_2_and_help_exits_0`: `--bogus` exits 2 and names the option; `--help` exits 0 and prints `--interactive`, `--harness`, `--out`.
 - `missing_agent_program_exits_2`: env `LIVE_SMOKE_AGENT_PROGRAM=definitely-missing-claude`. Assert exit 2 and stderr contains `Missing tool: definitely-missing-claude`.
+- `copies_the_api_key_settings_from_the_key_project`: build a "real" factory home in a temp dir and register a temp git repo in it as `keysrc` (`factory project add <repo> --preset node --name keysrc` with `FACTORY_HOME=<real home>`), then append `api_key_file = "~/keys/test.key"` and `allow_api_key = true` under its `[settings]`. Run with `FACTORY_HOME=<real home>`, `--no-probe --key-from keysrc`. Assert exit 0; `out/project.toml` contains `api_key_file = "<HOME>/keys/test.key"` (the test's temp `HOME`, expanded) and `allow_api_key = true`; `out/summary.txt` contains `credentials: api_key_file <HOME>/keys/test.key (from keysrc)`; the key file is never created by the script and no file under `out/` contains the text `test.key` other than `project.toml` and `summary.txt`.
+- `no_key_project_uses_the_login`: `--no-probe --key-from nosuch` with an empty real home; assert exit 0, `out/project.toml` has no `api_key_file`, and `out/summary.txt` contains `credentials: login`.
 
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `cargo test -j4 -p factory-cli --test live_smoke_script`
-Expected: the four new tests FAIL.
+Expected: the six new tests FAIL.
 
 - [ ] **Step 3: Implement**
 
-`assert_pass` prints the `FAIL:` lines to stderr and returns 1. `run_probe` writes `factory probe --json` to `out/probe/report.json` and copies the report's `transcript_dir`; on a nonzero exit it prints the `detail` of each channel that is expected and not present, then the FAIL line. The park reason comes from `jobs/*/park.json` with `grep -o`/`sed`. `--harness codex` passes `--agent-cli codex` to `project add`.
+`assert_pass` prints the `FAIL:` lines to stderr and returns 1. `run_probe` writes `factory probe --json` to `out/probe/report.json` and copies the report's `transcript_dir`; on a nonzero exit it prints the `detail` of each channel that is expected and not present, then the FAIL line. The park reason comes from `jobs/*/park.json` with `grep -o`/`sed`. `--harness codex` passes `--agent-cli codex` to `project add`. `copy_key_settings` as specified above; a missing key project or a failing `project show` is not an error, only the `credentials: login (...)` line. `save_evidence` copies the throwaway `project.toml` to `out/project.toml`.
 
 - [ ] **Step 4: Run all tests in the file**
 

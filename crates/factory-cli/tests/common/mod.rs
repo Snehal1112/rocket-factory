@@ -1,6 +1,20 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
+
+/// The `fake-claude` binary sits next to the test binaries once `factory-agent` is built.
+/// `cargo test -p factory-cli` does not build it, so a missing binary skips the test.
+pub fn fake_claude() -> Option<PathBuf> {
+    let exe = std::env::current_exe().expect("current exe");
+    let target = exe.parent().and_then(|p| p.parent()).expect("target dir");
+    let program = target.join("fake-claude");
+    if program.is_file() {
+        Some(program)
+    } else {
+        eprintln!("skipped: build fake-claude with `cargo build -p factory-agent` first");
+        None
+    }
+}
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

@@ -9,6 +9,16 @@ use factory_core::version::{read_marker, FACTORY_VERSION};
 use factory_core::{preset, Home};
 use git2::{Repository, RepositoryInitOptions, Signature};
 
+/// Runs the upgrade with a `claude` that does not exist, so no test starts the real CLI.
+fn run_no_claude(
+    home: &Home,
+    commands: &Path,
+    dry_run: bool,
+) -> Result<String, factory_cli::CliError> {
+    let claude = std::ffi::OsStr::new("/nonexistent/claude");
+    upgrade::run_with_claude(home, commands, dry_run, claude)
+}
+
 const LEGACY_BUILDER: &str =
     include_str!("../../factory-core/presets/legacy/rust-factory-builder.md");
 
@@ -113,7 +123,7 @@ fn codex_skill_backup_failure_does_not_block_claude_upgrade() {
     std::fs::write(&skill, "custom Codex skill").expect("skill");
     std::fs::create_dir(skill.with_file_name("SKILL.md.bak")).expect("block backup");
 
-    let err = upgrade::run(&e.home, &commands, false)
+    let err = run_no_claude(&e.home, &commands, false)
         .expect_err("partial upgrade reports Codex failure")
         .to_string();
     assert!(err.contains("Claude upgrade completed"), "{err}");
@@ -139,7 +149,7 @@ fn upgrade_reports_shadowing_overrides() {
     std::fs::write(builder(&e), LEGACY_BUILDER).expect("old text");
     // `project add` already stamped the marker, so remove it to see upgrade write it.
     std::fs::remove_file(e.home.version_file()).expect("rm marker");
-    let out = upgrade::run(&e.home, &e.commands, false).expect("upgrade");
+    let out = run_no_claude(&e.home, &e.commands, false).expect("upgrade");
     assert!(
         out.contains(&format!("updated: {}", builder(&e).display())),
         "{out}"
@@ -167,7 +177,7 @@ fn upgrade_reports_shadowing_overrides() {
 fn upgrade_updates_the_command_and_keeps_a_bak() {
     let e = env();
     let cmd = old_command(&e);
-    let out = upgrade::run(&e.home, &e.commands, false).expect("upgrade");
+    let out = run_no_claude(&e.home, &e.commands, false).expect("upgrade");
     let bak = e.commands.join("factory.md.bak");
     assert_eq!(
         out.lines().next().expect("first"),
@@ -202,7 +212,7 @@ fn upgrade_updates_the_codex_skill_with_a_backup_under_the_standard_home() {
     std::fs::create_dir_all(skill.parent().expect("skill dir")).expect("mkdir");
     std::fs::write(&skill, "# old Codex skill\n").expect("old skill");
 
-    let dry = upgrade::run(&e.home, &commands, true).expect("dry run");
+    let dry = run_no_claude(&e.home, &commands, true).expect("dry run");
     assert!(
         dry.contains(&format!("would updated {}", skill.display())),
         "{dry}"
@@ -212,7 +222,7 @@ fn upgrade_updates_the_codex_skill_with_a_backup_under_the_standard_home() {
         "# old Codex skill\n"
     );
 
-    let out = upgrade::run(&e.home, &commands, false).expect("upgrade");
+    let out = run_no_claude(&e.home, &commands, false).expect("upgrade");
 
     let backup = skill.with_file_name("SKILL.md.bak");
     assert!(
@@ -243,7 +253,7 @@ fn upgrade_dry_run_changes_nothing() {
     std::fs::write(builder(&e), LEGACY_BUILDER).expect("old text");
     let manifest = e.home.presets_dir().join(".manifest");
     let before = std::fs::read(&manifest).ok();
-    let out = upgrade::run(&e.home, &e.commands, true).expect("dry run");
+    let out = run_no_claude(&e.home, &e.commands, true).expect("dry run");
     assert!(
         out.lines()
             .next()
@@ -275,7 +285,7 @@ fn upgrade_refuses_edited_presets_and_says_how_to_force() {
     preset::seed(&e.home.presets_dir()).expect("seed");
     let config = e.home.presets_dir().join("rust/config.toml");
     std::fs::write(&config, "# mine\n").expect("edit");
-    let out = upgrade::run(&e.home, &e.commands, false).expect("upgrade");
+    let out = run_no_claude(&e.home, &e.commands, false).expect("upgrade");
     assert!(
         out.contains(&format!("refused: {}", config.display())),
         "{out}"
@@ -295,7 +305,7 @@ fn upgrade_stops_on_a_newer_marker() {
     let e = env();
     std::fs::create_dir_all(&e.home.dir).expect("mkdir");
     std::fs::write(e.home.version_file(), "999.0.0\n").expect("marker");
-    let err = upgrade::run(&e.home, &e.commands, false).expect_err("newer marker");
+    let err = run_no_claude(&e.home, &e.commands, false).expect_err("newer marker");
     let text = err.to_string();
     assert!(text.contains("999.0.0"), "{text}");
     assert!(text.contains(FACTORY_VERSION), "{text}");
@@ -312,8 +322,8 @@ fn a_second_upgrade_changes_nothing() {
     let e = env();
     demo_with_overrides(&e);
     std::fs::write(builder(&e), LEGACY_BUILDER).expect("old text");
-    upgrade::run(&e.home, &e.commands, false).expect("first");
-    let out = upgrade::run(&e.home, &e.commands, false).expect("second");
+    run_no_claude(&e.home, &e.commands, false).expect("first");
+    let out = run_no_claude(&e.home, &e.commands, false).expect("second");
     assert_eq!(
         out.lines().next().expect("first"),
         format!(
@@ -340,7 +350,7 @@ fn upgrade_stops_when_the_bak_cannot_be_written() {
     let keep = e.commands.join("factory.md.bak/keep");
     std::fs::create_dir_all(keep.parent().expect("parent")).expect("mkdir");
     std::fs::write(&keep, "x").expect("keep");
-    let err = upgrade::run(&e.home, &e.commands, false).expect_err("bak blocked");
+    let err = run_no_claude(&e.home, &e.commands, false).expect_err("bak blocked");
     assert!(err.to_string().contains("cannot save"), "{err}");
     assert_eq!(std::fs::read_to_string(&cmd).expect("cmd"), "# old\n");
     assert!(!e.home.presets_dir().exists());
@@ -352,7 +362,7 @@ fn upgrade_dry_run_reports_shadowing_from_the_files_it_would_update() {
     let e = env();
     demo_with_overrides(&e);
     std::fs::write(builder(&e), LEGACY_BUILDER).expect("old text");
-    let out = upgrade::run(&e.home, &e.commands, true).expect("dry run");
+    let out = run_no_claude(&e.home, &e.commands, true).expect("dry run");
     assert!(
         out.contains("shadowed: demo project-layer factory-builder.md"),
         "{out}"
@@ -393,7 +403,7 @@ fn upgrade_skips_a_project_whose_repo_is_gone() {
     .expect("add other");
     std::fs::write(builder(&e), LEGACY_BUILDER).expect("old text");
     std::fs::remove_dir_all(&demo_repo).expect("rm repo");
-    let out = upgrade::run(&e.home, &e.commands, false).expect("upgrade");
+    let out = run_no_claude(&e.home, &e.commands, false).expect("upgrade");
     let skipped: Vec<&str> = out
         .lines()
         .filter(|l| l.starts_with("skipped: demo ("))
@@ -432,7 +442,7 @@ fn upgrade_does_not_create_the_codex_skill() {
     std::fs::create_dir_all(&commands).expect("commands folder");
     std::fs::write(commands.join("factory.md"), "# old\n").expect("old command");
 
-    upgrade::run(&e.home, &commands, false).expect("upgrade");
+    run_no_claude(&e.home, &commands, false).expect("upgrade");
 
     assert!(!factory_core::codex_skills_dir(&e.home.dir).exists());
 }
@@ -447,13 +457,13 @@ fn upgrade_keeps_the_first_backup() {
     std::fs::create_dir_all(skill.parent().expect("skill dir")).expect("mkdir");
     std::fs::write(&skill, "original").expect("skill");
 
-    upgrade::run(&e.home, &commands, false).expect("first upgrade");
+    run_no_claude(&e.home, &commands, false).expect("first upgrade");
     std::fs::write(&skill, "second").expect("second");
-    let dry = upgrade::run(&e.home, &commands, true).expect("dry run");
+    let dry = run_no_claude(&e.home, &commands, true).expect("dry run");
     let bak1 = skill.with_file_name("SKILL.md.bak.1");
     assert!(dry.contains(&bak1.display().to_string()), "{dry}");
     assert!(!bak1.exists());
-    upgrade::run(&e.home, &commands, false).expect("second upgrade");
+    run_no_claude(&e.home, &commands, false).expect("second upgrade");
 
     assert_eq!(
         std::fs::read_to_string(skill.with_file_name("SKILL.md.bak")).expect("bak"),

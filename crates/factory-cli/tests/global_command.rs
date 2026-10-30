@@ -75,7 +75,11 @@ fn install_args(args: &[&str]) -> Result<String, factory_cli::CliError> {
     let mut full = vec!["factory", "install"];
     full.extend_from_slice(args);
     match Cli::try_parse_from(full).expect("parse").command {
-        Command::Install { dir, force } => install::run(dir.as_deref(), force),
+        Command::Install { dir, force } => install::run_with_claude(
+            dir.as_deref(),
+            force,
+            std::ffi::OsStr::new("/nonexistent/claude"),
+        ),
         _ => unreachable!(),
     }
 }
@@ -250,7 +254,7 @@ fn install_defaults_to_the_claude_commands_folder_under_home() {
         "report every `note:` line",
         "Report that refusal as it is",
         "ask whether to go ahead over the budget",
-        "as a long-running command using the available command execution tool",
+        "as a long-running command, see the `Shell and background runs` note",
         "keep the handle for harness notification",
         "Do not poll, do not sleep, do not read logs",
     ] {

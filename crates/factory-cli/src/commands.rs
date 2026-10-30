@@ -33,6 +33,9 @@ pub enum CliError {
     Core(#[from] factory_core::CoreError),
     #[error("{0}")]
     Json(#[from] serde_json::Error),
+    /// A probe report with a missing channel, carrying the rendered text. The binary prints it to stdout.
+    #[error("{0}")]
+    ProbeFailed(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -241,7 +244,7 @@ impl CliCtx {
         }
     }
 
-    fn driver(&self) -> Result<Driver, CliError> {
+    pub(crate) fn driver(&self) -> Result<Driver, CliError> {
         let config = match &self.config {
             Some(c) => c.clone(),
             None => Config::load(&self.layout.config_file),
@@ -255,6 +258,12 @@ impl CliCtx {
         let driver = driver
             .with_lock_wait(self.lock_wait)
             .with_lease_owner(&self.owner);
+        let user_home = std::env::var_os("HOME");
+        let codex_home = std::env::var_os("CODEX_HOME");
+        let driver = driver.with_codex_skill_roots(factory_core::codex_user_skill_roots_from_env(
+            user_home.as_deref(),
+            codex_home.as_deref(),
+        ));
         let driver = if self.agents.is_empty() {
             driver
         } else {
@@ -402,6 +411,12 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Tokens { id: Some(id), .. } => tokens(ctx, &norm(&id)?),
         Command::Tokens { days, .. } => cache_tokens(ctx, days),
         Command::Costs => costs(ctx),
+        Command::Probe {
+            harness,
+            role,
+            json,
+            delivery,
+        } => crate::probe::run_probe_command(ctx, harness, &role, json, delivery),
         Command::Project { .. } => Err(CliError::Refused(
             "project commands do not need a repository, run them through project::run".into(),
         )),
@@ -410,6 +425,9 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         )),
         Command::Install { .. } => Err(CliError::Refused(
             "install needs no repository, run it through install::run".into(),
+        )),
+        Command::Plugin { .. } => Err(CliError::Refused(
+            "plugin needs no project, run it through plugin::run".into(),
         )),
         Command::Upgrade { .. } => Err(CliError::Refused(
             "upgrade needs no repository, run it through upgrade::run".into(),

@@ -116,6 +116,10 @@ if ! node --test dashboard/tests/*.test.js; then
     echo -e "${RED}Dashboard JS tests failed. Fix them before releasing.${NC}"
     exit 1
 fi
+if ! cargo run -j4 -q -p factory-cli --bin factory -- plugin sync --check; then
+    echo -e "${RED}The plugin files drifted. Run 'factory plugin sync' and commit.${NC}"
+    exit 1
+fi
 echo -e "${GREEN}CI gate passed.${NC}"
 echo ""
 
@@ -228,7 +232,7 @@ if [[ "$dry_run" -eq 1 ]]; then
     check_signing || exit 1
     echo ""
     echo -e "${GREEN}Dry run passed. Nothing was changed.${NC}"
-    echo "A real run would bump both manifests and lockfiles, commit"
+    echo "A real run would bump both manifests and lockfiles, update the plugin files, commit"
     echo "\"chore: bump version to ${new_tag}\", create the signed tag ${new_tag},"
     echo "verify it, and push ${branch} and ${new_tag} to origin."
     exit 0
@@ -262,7 +266,11 @@ set_section_version "$DASH_MANIFEST" package "$new_version"
 cargo check -j4 --quiet
 cargo check -j4 --quiet --manifest-path "$DASH_MANIFEST"
 
-git add Cargo.toml Cargo.lock "$DASH_MANIFEST" dashboard/Cargo.lock
+# Regenerate the plugin files. This rebuilds with the new CARGO_PKG_VERSION,
+# so plugin.json gets the new version.
+cargo run -j4 -q -p factory-cli --bin factory -- plugin sync
+
+git add Cargo.toml Cargo.lock "$DASH_MANIFEST" dashboard/Cargo.lock plugins/factory
 git commit -m "chore: bump version to ${new_tag}"
 
 # Create the signed tag on the version bump commit.

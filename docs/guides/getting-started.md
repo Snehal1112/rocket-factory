@@ -137,13 +137,28 @@ Unset it (or open a new terminal) to go back to `~/.factory`. The home is create
 
 ## 6. Install the `/factory` command
 
-This puts the slash command in Claude Code, for every project:
+Install it as a Claude Code plugin:
+
+```bash
+claude plugin marketplace add Snehal1112/rocket-factory
+claude plugin install factory@rocket-factory
+```
+
+`claude plugin list` shows `factory@rocket-factory`, and `/factory` appears in a new session. The plugin does not install the `factory` binary, so `factory` must be on your PATH.
+
+To uninstall, run `claude plugin uninstall factory@rocket-factory`.
+
+### Fallback: `factory install`
+
+`factory install` writes the command as a file instead, and it also writes the Codex skill:
 
 ```bash
 factory install
 ```
 
 It writes `~/.claude/commands/factory.md`. You should see `installed /home/<you>/.claude/commands/factory.md`. Running it again prints `already installed`.
+
+To switch from the file to the plugin, install the plugin, then run `rm ~/.claude/commands/factory.md`. Otherwise you see two `/factory` entries.
 
 Note: a `.claude/commands/factory.md` inside a repo shadows the global one.
 
@@ -425,6 +440,7 @@ cargo build -j4 -p factory-cli -p factory-supervisor
 cargo build -j4 --manifest-path dashboard/Cargo.toml
 factory upgrade --dry-run        # optional preview
 factory upgrade                  # command, presets, shadow report, version marker
+claude plugin update factory@rocket-factory   # if you use the plugin
 factoryd stop                    # wait for running jobs first, then start it again
 nohup factoryd run >> ~/.factory/factoryd.log 2>&1 &
 ```

@@ -23,25 +23,73 @@ fn assistant(id: &str, output: u64) {
 }
 
 fn result(text: &str, is_error: bool, subtype: &str) {
-    let text = text.replace('\\', "\\\\").replace('"', "\\\"");
+    let text = text
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
     emit(&format!(
         r#"{{"type":"result","subtype":"{subtype}","is_error":{is_error},"result":"{text}","session_id":"fake-1"}}"#
     ));
+}
+
+/// The token after `Probe marker: ` in the first text that has one.
+fn find_marker(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("Probe marker:"))
+        .map(|t| t.trim().to_string())
+}
+
+/// Looks for the probe marker in the agent file, then the system prompt flag, then stdin.
+fn probe_marker(args: &[String], stdin: &str) -> Option<String> {
+    let value_of = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+    };
+    value_of("--agent")
+        .and_then(|name| {
+            let path = std::path::Path::new(".claude/agents").join(format!("{name}.md"));
+            find_marker(&std::fs::read_to_string(path).ok()?)
+        })
+        .or_else(|| value_of("--append-system-prompt").and_then(|t| find_marker(t)))
+        .or_else(|| find_marker(stdin))
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `claude plugin list --json` answers with two installed plugins, one listed twice.
     if args.first().map(String::as_str) == Some("plugin") {
-        emit(
-            r#"[{"id":"superpowers@official","enabled":true},{"id":"frontend-design@official","enabled":true},{"id":"frontend-design@official","enabled":true}]"#,
-        );
+        // `FAKE_PLUGIN_LIST` replaces the built-in answer.
+        match std::env::var("FAKE_PLUGIN_LIST") {
+            Ok(list) => emit(&list),
+            Err(_) => emit(
+                r#"[{"id":"superpowers@official","enabled":true},{"id":"frontend-design@official","enabled":true},{"id":"frontend-design@official","enabled":true}]"#,
+            ),
+        }
         return;
     }
     let mut prompt = String::new();
     let _ = std::io::stdin().read_to_string(&mut prompt);
-    let mode = prompt.lines().next().map_or("", str::trim).to_string();
+    let mut mode = prompt.lines().next().map_or("", str::trim).to_string();
+    // A probe whose agent text rides on stdin has that text before the `PROBE` line.
+    if prompt.lines().any(|l| l.trim() == "PROBE") {
+        mode = "PROBE".to_string();
+    }
     match mode.as_str() {
+        "PROBE" => {
+            let marker = probe_marker(&args, &prompt);
+            init("fake-1");
+            let bootstrap = std::env::var("FAKE_PROBE_BOOTSTRAP").unwrap_or_else(|_| "NONE".into());
+            let skills = std::env::var("FAKE_PROBE_SKILLS").unwrap_or_else(|_| "NONE".into());
+            result(
+                &format!(
+                    "MARKER: {}\nBOOTSTRAP: {bootstrap}\nTOOLS: Read,Grep,Glob\nSKILLS: {skills}",
+                    marker.as_deref().unwrap_or("NONE")
+                ),
+                false,
+                "success",
+            );
+        }
         "ok" => {
             init("fake-1");
             assistant("m1", 5);

@@ -6,6 +6,8 @@ const ALLOWED: &[&str] = &[
     "factory-core/src/layout.rs",
     "factory-git/src/repo.rs",
     "factory-cli/src/bin/factory-shots.rs",
+    // The fake Claude reads the agent file from the folder the real `claude --agent` searches.
+    "factory-agent/src/bin/fake-claude.rs",
     // The default risk patterns are a policy, not a path the driver opens. Plan 3 moves them into presets.
     "factory-core/src/config.rs",
     // The docs-only rule names Rocket folders. It is a policy too, and plan 3 moves it into presets.

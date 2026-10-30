@@ -16,7 +16,7 @@ This is a Rust project. When you judge a diff, look at error handling (no unwrap
 ## How to read
 
 - Read the project's CLAUDE.md and the rules in the job prompt, only for the areas the diff touches.
-- Page the diff with the Read tool: offset 1 and limit 1500, then the next 1500 lines, until the end. Never read a huge diff in one call.
+- Page the diff: read 1500 lines per call, starting at line 1, until the end. Never read a huge diff in one call.
 - Open source files in the worktree only to confirm a finding.
 
 ## Check

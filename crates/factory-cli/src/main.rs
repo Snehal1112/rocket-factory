@@ -43,6 +43,16 @@ fn main() {
         }
         return;
     }
+    if let Command::Plugin { cmd } = &cli.command {
+        match factory_cli::plugin::run(cmd) {
+            Ok(text) => println!("{text}"),
+            Err(e) => {
+                eprintln!("factory: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Command::Install { dir, force } = &cli.command {
         match factory_cli::install::run(dir.as_deref(), *force) {
             Ok(text) => println!("{text}"),
@@ -105,6 +115,10 @@ fn main() {
     };
     match dispatch(cli, &ctx) {
         Ok(text) => println!("{text}"),
+        Err(factory_cli::CliError::ProbeFailed(text)) => {
+            println!("{text}");
+            std::process::exit(1);
+        }
         Err(e) => {
             // The consent refusal is printed bare so its line starts with `needs consent:`.
             if matches!(

@@ -9,6 +9,7 @@ The pattern comes from rocket-mem and the release playbook in the knowledge base
 | File | What it does |
 |---|---|
 | `scripts/release.sh` | Runs the CI gate, bumps the version, commits, creates and verifies the signed tag, pushes. |
+| `scripts/live-smoke.sh` | Runs a tiny job through the real `claude` or `codex` and fails unless it merges. Run it before `release.sh`. |
 | `cliff.toml` | git-cliff config for the release notes. |
 | `.github/workflows/ci.yml` | fmt, clippy `-D warnings` and tests for the driver crates and the dashboard. |
 | `.github/workflows/release.yml` | Changelog, native builds, checksums, minisign signatures, draft release. |
@@ -20,7 +21,39 @@ The pattern comes from rocket-mem and the release playbook in the knowledge base
 - Each archive is minisign-signed in CI with a key used only by rocket-factory. It proves the archive is **what** that release's CI built.
 - The `.sha256` files only catch a broken download. Anyone can compute a checksum for a swapped file, so they are no proof of origin.
 
+## Before a release: the live smoke run
+
+Run the smoke script on both harnesses before `release.sh`:
+
+```bash
+cargo build -j4 -p factory-cli
+./scripts/live-smoke.sh                      # claude
+./scripts/live-smoke.sh --harness codex
+./scripts/live-smoke.sh --interactive        # claude in tmux, checks /factory status
+```
+
+**What it proves.** The real CLI's stream format and flags still work with the driver. The marker probe shows that agent text and skills reach the agent. One fixture job (one task) runs to `merged` with the real model.
+
+**Pass condition.** Job 001 reaches `merged`, `greeting.txt` is on `main`, and the board, events, usage and review transcripts are saved. Exit codes: 0 pass, 1 smoke failure (a failed probe, or a job that parks or fails), 2 usage error or a missing tool (`claude`, `codex`, `tmux`, `factory`).
+
+**Output.** `--out <dir>` (default a UTC-stamped folder under `${TMPDIR:-/tmp}/factory-live-smoke`) holds `summary.txt`, `project.toml`, `probe/`, `board.json`, `events.jsonl`, `log.jsonl`, `jobs/` (per-job transcripts and `usage.jsonl`), `show-001.json`, `status.txt`, and with `--interactive` `interactive/pane.txt`. A failure keeps the temp work dir and prints its path.
+
+**Needs.** A login on the harness, and `tmux` plus an installed `/factory` command (`factory install`) for `--interactive`. It runs under a throwaway `FACTORY_HOME` and temp repo and never writes your real home. It copies the key project's `api_key_file` and `allow_api_key` settings when set; the key itself is never copied or saved.
+
+**Not in CI.** Neither `cargo test` nor CI runs it. The test `live_smoke_script` runs it against a `claude` shim with no credentials.
+
+**Cost.** One run uses the real model. Rough cost: 150k to 300k weighted tokens per harness (the fixture job is capped at `budget_weighted = 300000`). This is an estimate; the first maintainer run replaces it with the measured number from `usage.jsonl`.
+
 ## Cutting a release
+
+Before tagging, run the live probe once for each harness:
+
+```bash
+factory probe --harness claude
+factory probe --harness codex
+```
+
+A failing channel blocks the release unless the release notes say why. Paste the CLI versions and the tables into the release notes. The probe uses real credentials and costs one short turn per role, so `release.sh` does not run it.
 
 ```bash
 ./scripts/release.sh --dry-run patch   # every check, nothing changed
@@ -30,14 +63,16 @@ The pattern comes from rocket-mem and the release playbook in the knowledge base
 The script does this, in order:
 
 1. Refuses a dirty tree or a detached HEAD.
-2. Runs the CI gate, the same commands as `ci.yml`. It names every crate with `-p`, because the repo rules forbid `--workspace` and `--all`.
+2. Runs the CI gate, the same commands as `ci.yml`, plus `factory plugin sync --check`, so plugin drift blocks a release before anything changes. It names every crate with `-p`, because the repo rules forbid `--workspace` and `--all`.
 3. Reads the current version from `[workspace.package]` in the root `Cargo.toml`. It never uses git tags for this, because the manifest is ahead of any tag.
 4. Computes the new tag and refuses one that exists locally or on `origin`.
 5. Asks `y/N`.
 6. Checks the signing setup: `gpg.format` is GPG, `user.signingkey` is set, gpg has its secret key, and `user.email` is a UID on that key (a warning only).
-7. Sets the new version in `Cargo.toml` and `dashboard/Cargo.toml`, refreshes both lockfiles and commits them as `chore: bump version to vX.Y.Z`. The script makes this commit itself, so it does not use the commit skill.
+7. Sets the new version in `Cargo.toml` and `dashboard/Cargo.toml`, refreshes both lockfiles, runs `factory plugin sync` to regenerate `plugins/factory/.claude-plugin/plugin.json` with the new version, and commits them all as `chore: bump version to vX.Y.Z`. The script makes this commit itself, so it does not use the commit skill.
 8. Runs `git tag -s`, then `git tag -v`. Without `Good signature` it deletes the tag and stops.
 9. Pushes the branch and the tag and prints the Actions link.
+
+Users pick up a release with `claude plugin update factory@rocket-factory`.
 
 The release workflow fails when the tag does not match both manifests, so a tag made by hand without the bump is refused.
 

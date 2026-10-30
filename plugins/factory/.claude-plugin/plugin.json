@@ -1,0 +1,8 @@
+{
+  "author": {
+    "name": "Snehal Dangroshiya"
+  },
+  "description": "Run the software factory on the current project: brainstorm, plan, then the factory driver builds, checks, reviews and merges.",
+  "name": "factory",
+  "version": "0.1.6"
+}

@@ -27,9 +27,32 @@ pub fn today() -> String {
     date_from_days((now_secs() / 86_400.0) as i64)
 }
 
+/// The UTC time `YYYYMMDD-HHMMSS` for a count of seconds since the epoch, used in file names.
+pub fn stamp_from_secs(secs: i64) -> String {
+    let date = date_from_days(secs.div_euclid(86_400)).replace('-', "");
+    let rest = secs.rem_euclid(86_400);
+    format!(
+        "{date}-{:02}{:02}{:02}",
+        rest / 3_600,
+        rest % 3_600 / 60,
+        rest % 60
+    )
+}
+
+/// The current UTC time as `YYYYMMDD-HHMMSS`.
+pub fn utc_stamp() -> String {
+    stamp_from_secs(now_secs() as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stamps_from_secs() {
+        assert_eq!(stamp_from_secs(0), "19700101-000000");
+        assert_eq!(stamp_from_secs(951_782_400 + 3_661), "20000229-010101");
+    }
 
     #[test]
     fn dates_from_days() {
