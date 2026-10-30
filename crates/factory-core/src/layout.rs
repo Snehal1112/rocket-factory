@@ -16,6 +16,18 @@ pub fn claude_commands_dir(user_home: &Path) -> PathBuf {
     user_home.join(".claude").join("commands")
 }
 
+/// The files of the Claude Code plugin, relative to the repo root.
+pub fn plugin_rel_files() -> [&'static str; 3] {
+    [
+        "plugins/factory/.claude-plugin/plugin.json",
+        "plugins/factory/commands/factory.md",
+        "plugins/factory/README.md",
+    ]
+}
+
+/// The marketplace file that marks the repository root, relative to the repo root.
+pub const MARKETPLACE_REL_FILE: &str = ".claude-plugin/marketplace.json";
+
 /// The folder where Codex looks for user-wide skills: `<user home>/.agents/skills`.
 pub fn codex_skills_dir(user_home: &Path) -> PathBuf {
     user_home.join(".agents").join("skills")

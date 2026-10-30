@@ -39,14 +39,16 @@ A failing channel blocks the release unless the release notes say why. Paste the
 The script does this, in order:
 
 1. Refuses a dirty tree or a detached HEAD.
-2. Runs the CI gate, the same commands as `ci.yml`. It names every crate with `-p`, because the repo rules forbid `--workspace` and `--all`.
+2. Runs the CI gate, the same commands as `ci.yml`, plus `factory plugin sync --check`, so plugin drift blocks a release before anything changes. It names every crate with `-p`, because the repo rules forbid `--workspace` and `--all`.
 3. Reads the current version from `[workspace.package]` in the root `Cargo.toml`. It never uses git tags for this, because the manifest is ahead of any tag.
 4. Computes the new tag and refuses one that exists locally or on `origin`.
 5. Asks `y/N`.
 6. Checks the signing setup: `gpg.format` is GPG, `user.signingkey` is set, gpg has its secret key, and `user.email` is a UID on that key (a warning only).
-7. Sets the new version in `Cargo.toml` and `dashboard/Cargo.toml`, refreshes both lockfiles and commits them as `chore: bump version to vX.Y.Z`. The script makes this commit itself, so it does not use the commit skill.
+7. Sets the new version in `Cargo.toml` and `dashboard/Cargo.toml`, refreshes both lockfiles, runs `factory plugin sync` to regenerate `plugins/factory/.claude-plugin/plugin.json` with the new version, and commits them all as `chore: bump version to vX.Y.Z`. The script makes this commit itself, so it does not use the commit skill.
 8. Runs `git tag -s`, then `git tag -v`. Without `Good signature` it deletes the tag and stops.
 9. Pushes the branch and the tag and prints the Actions link.
+
+Users pick up a release with `claude plugin update factory@rocket-factory`.
 
 The release workflow fails when the tag does not match both manifests, so a tag made by hand without the bump is refused.
 

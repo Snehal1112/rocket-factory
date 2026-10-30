@@ -318,6 +318,10 @@ writes when `FACTORY_HOME` names an empty folder, keep your own edits, then run 
 
 ### The global /factory command
 
+The recommended install is the Claude Code plugin: `claude plugin marketplace add Snehal1112/rocket-factory`,
+then `claude plugin install factory@rocket-factory`. Once the plugin is installed, `factory upgrade` stops
+touching the old `~/.claude/commands/factory.md`. `factory install` is the fallback.
+
 `factory install [--dir <path>] [--force]` writes the `/factory` slash command for Claude and a `factory`
 skill for Codex. Without `--dir`, these go to `~/.claude/commands/factory.md` and
 `~/.agents/skills/factory/SKILL.md`; without `--dir` an unset or empty `$HOME` is an error. With `--dir`,

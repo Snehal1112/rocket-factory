@@ -426,6 +426,9 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         Command::Install { .. } => Err(CliError::Refused(
             "install needs no repository, run it through install::run".into(),
         )),
+        Command::Plugin { .. } => Err(CliError::Refused(
+            "plugin needs no project, run it through plugin::run".into(),
+        )),
         Command::Upgrade { .. } => Err(CliError::Refused(
             "upgrade needs no repository, run it through upgrade::run".into(),
         )),

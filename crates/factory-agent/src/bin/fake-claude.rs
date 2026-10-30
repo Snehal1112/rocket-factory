@@ -59,9 +59,13 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `claude plugin list --json` answers with two installed plugins, one listed twice.
     if args.first().map(String::as_str) == Some("plugin") {
-        emit(
-            r#"[{"id":"superpowers@official","enabled":true},{"id":"frontend-design@official","enabled":true},{"id":"frontend-design@official","enabled":true}]"#,
-        );
+        // `FAKE_PLUGIN_LIST` replaces the built-in answer.
+        match std::env::var("FAKE_PLUGIN_LIST") {
+            Ok(list) => emit(&list),
+            Err(_) => emit(
+                r#"[{"id":"superpowers@official","enabled":true},{"id":"frontend-design@official","enabled":true},{"id":"frontend-design@official","enabled":true}]"#,
+            ),
+        }
         return;
     }
     let mut prompt = String::new();

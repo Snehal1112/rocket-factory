@@ -1,0 +1,134 @@
+---
+description: Run the software factory on the current project (brainstorm, plan, then the driver builds, checks, reviews and merges)
+argument-hint: "<feature> [--opus] [--one-job] | status | approve <id> | rework <id> <note> | cancel <id|slug> | cleanup <id> | tickets <id>"
+---
+
+# Factory
+
+Arguments: $ARGUMENTS
+
+You are a thin front end. The Rust driver does all mechanical work. Never edit the board, the ledger, the events log or any plan checkbox, and do not do the builder's or reviewer's work. The checks, the base branch and the risk rules come from the project's registry entry, not from this command.
+
+## Find the project
+
+1. Run `factory project which` from the current directory (use `$FACTORY_BIN` in place of `factory` when `FACTORY_BIN` is set). Its output is the project name, called `<name>` below.
+2. If it fails, show the user its error line, then stop. When the line says `no registered project`, add that they can run `factory project add <path> --preset <name>` for this repository. When it says `ambiguous match`, say the registry holds two names for one repository and must be fixed. When the command is not found, say the factory binaries are not on PATH.
+
+`<factory>` means `$FACTORY_BIN` when `FACTORY_BIN` is set, else `factory` on PATH. Pass `--project <name>` on every `<factory>` call, so each call is `<factory> --project <name> <subcommand> ...`.
+
+## Pick the subcommand
+
+Match by exact shape only, on the whole argument string:
+
+- `status` alone
+- `approve <digits>` (nothing after the digits)
+- `approve <digits> --without-review`
+- `approve <digits> --waive "<reason>"`
+- `cancel <digits>` (nothing after the digits)
+- `cancel <slug>`: one kebab-case word, not only digits, that is the slug of a draft listed under `drafts:` by `<factory> --project <name> status` (run it to check). When no draft has that slug, the whole argument is a feature text.
+- `cleanup <digits>` (nothing after the digits)
+- `tickets <digits>` (nothing after the digits)
+- `rework <digits> <note>` with a non-empty note
+
+Anything else is a feature text, for example `next button for pagination`, `status page for jobs`, `approve button for forms` or `cancel dialog 12 layout`. A feature may start or end with the single token `--one-job`: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`. See the `Model option` note. If the argument is `rework <digits>` with no note, print `rework needs a note: /factory rework <id> <note>` and stop without calling `<factory>`. If the argument is empty, print the argument hint and stop.
+
+## Other subcommands
+
+Each is one call and a one-line report of the output, nothing more:
+
+- `status`: `<factory> --project <name> status`
+- `approve <id>`: `<factory> --project <name> approve <id>`. The driver refuses a `needs-human` job whose code review has not run (the checks never passed or the reviewer never ran) and says so. Report that refusal as it is and offer `/factory rework <id> <note>`, or `/factory approve <id> --without-review` to merge unreviewed, which the user must ask for.
+- `approve <id> --without-review`: `<factory> --project <name> approve <id> --without-review`
+- `approve <id> --waive "<reason>"`: `<factory> --project <name> approve <id> --waive=<reason>`. Use the `=` form with the reason as one argument. The reason must be one line, not empty, at most 200 characters. The user must ask for it: it merges a job whose last review asked for changes, records the waiver and files a ticket for each waived blocker. It never combines with `--without-review`.
+- `rework <id> <note>`: `<factory> --project <name> rework <id> '<note>'` (the driver accepts a one-line note of at most 200 characters and refuses anything else)
+- `cancel <id>`: `<factory> --project <name> cancel <id>`
+- `cancel <slug>`: `<factory> --project <name> cancel <slug>` (it removes the draft card and keeps its spec file)
+- `cleanup <id>`: `<factory> --project <name> cleanup <id>`
+- `tickets <id>`: `<factory> --project <name> tickets <id>`
+
+Always escape the note when you put it in the shell: wrap text in single quotes and write an embedded single quote as `'\''`.
+
+## `<feature>`: new job
+
+The driver validates the spec and the plans when it creates the job, so both must exist, and be committed, before `<factory> --project <name> new`. Run git and `<factory> --project <name> new` from the repository top, even when the session started in a subfolder, and write the spec and plan paths relative to that top. Pick one short kebab-case `<slug>` from the feature before step 1, never only digits (the driver refuses those), and use the same slug for `spec start`, `spec stage` and `<factory> --project <name> new`: `new` adopts the draft card by slug, and with a different slug it leaves the draft card behind. `<date>` (YYYY-MM-DD) is the date in the spec path that `spec start` prints. The spec is `docs/superpowers/specs/<date>-<slug>-design.md`. The plans are in `docs/superpowers/plans/<date>-<slug>/` as `plan-01-<slug>.md`, `plan-02-<slug>.md` and so on. There is one copy of each, and both are committed for future reference. Nothing is drafted in a gitignored folder. Keep a visible task list for steps 1 to 6 and update it at each milestone. See the `Task list` note. The spec and the plans are committed on the branch this session is on. Job branches start from the project's base branch, and the driver copies the spec and the plans into the job folders, so the jobs run either way: the driver resolves `Next plan:` paths against the checkout the plan lives in and stores absolute paths, so a session in a linked worktree works. Tell the user which branch holds the docs, and that they reach the base branch only when that branch merges.
+
+1. Interview the user and write the spec, in this order:
+   - Survey the code and the ticket first, so your recommended answers rest on what is there. Reading is allowed before approval, and you need not offer it first.
+   - Run `<factory> --project <name> status`. If a draft under `drafts:` looks like this feature, ask the user whether it is the same. If it is, use its slug, run `<factory> --project <name> spec resume <slug>`, read the file it names and continue the interview from the first open question.
+   - Otherwise run `<factory> --project <name> spec start <slug> '<feature>'`, escaping the feature text as above. It puts a draft card in the Spec column and prints `draft <slug>`, `stage interviewing` and `file <repo-relative path> (exists|missing)`. Write the spec at that path. When the `file` line says `exists`, read the file and continue from it, never overwrite it. If it refuses because a draft with that slug already exists, ask the user whether it is the same feature: if it is, resume it as above; if not, pick another slug.
+   - Interview the user about the design before writing the spec. Cover the goal, alternatives, tradeoffs, edge cases and testing. Spec quality comes from the interview, so do not shorten it. See the `Interview` note. A ticket that looks clear is not a reason to skip questions. A detailed ticket, or the user saying the details are in the ticket, does not skip the interview. Use the ticket and the code survey to ask sharper questions.
+   - Interview rules:
+     - Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words. Ask one question at a time and record each answer in the spec.
+     - Always size it as a project with a written design. There is no quick-task, small-change or spike path, because the driver needs a spec.
+     - If the user skips the questions, tell them that `<factory> --project <name> new` needs a spec. If they still decline, run `<factory> --project <name> cancel <slug>` to remove the draft card and stop without building anything.
+     - After spec approval, commit the approved spec as the last bullet of this step, then write the plans in step 2.
+   - Write the spec file as the interview goes, so a later session can resume it. Each time the user answers a question, add one list-item line to its `## Decisions` section with the question, the options and the choice, ending with `Decided by: user`, for example `- Where does the draft live? Options: the spec file, a state folder. Chosen: the spec file. Decided by: user`. A choice you make on your own ends with `Decided by: call` instead. The driver counts only list-item lines that contain `Decided by: user`, and warns when there are none.
+   - When you start writing the document itself, run `<factory> --project <name> spec stage <slug> writing-spec`. The spec must have a `## Goal` section of at least 8 words and a `## Acceptance criteria` section with one bullet per check, and no `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences, because the driver refuses a spec without them. Headings must be exact level-2 lines such as `## Goal`.
+   - The spec also has a `## Follow-ups` section that lists, one bullet per piece, the work of the ticket that this spec does not build. Leave the section out when the ticket is fully done. The factory files one ticket per bullet and closes the ticket after the last plan merges.
+   - Write the spec to this quality bar, which is what a reviewer and a builder who cannot ask you anything need. Use these exact level-2 headings in this order, and leave one out only when it truly has nothing to say: `## Goal`, `## Overview` (the problem and the evidence for it), `## Current state` (how it works today as a table or list, with `path:line` references to code you read in this session, then the gaps it leaves), `## Non-goals`, `## Design` (a flow sketch first, then one numbered subsection per piece, each with its settings and defaults, function signatures or data shapes, and a short example), `## Error handling and edge cases` (a table of case and behaviour), `## Testing` (named tests per crate or module, and the commands), `## Files changed`, `## Constraints`, `## Acceptance criteria`, `## Out of scope`, `## Follow-ups`, `## Decisions`.
+   - Rules for that spec: cite code you read, never memory, and check every name, path and default against the source. State each default, boundary and empty-input behaviour. Every behaviour in `## Design` has a test line in `## Testing` and a bullet in `## Acceptance criteria`. Keep the document consistent: where two sections disagree, fix it before the user sees it. Look for the case the ticket did not mention that would make the design misfire (for example a test layout the default rule would flag wrongly) and ask the user about it with a recommended answer. A good spec runs 150 to 250 lines. Prose stays short and plain, without process words.
+   - Before showing the spec to the user, review it against the quality bar and check that a builder can implement it without asking questions. Do the interview and writing yourself; do not do the builder's or reviewer's work.
+   - Then show the spec to the user and wait for an explicit approval. If the user asks for changes, edit the spec and ask for approval again. Do not write any plan before that approval. After it, stage the spec path, check that `git diff --cached --name-only` lists only that path, and commit with an exact pathspec (`git commit --only -- <spec path>`), so files staged by anything else stay out. Then run `<factory> --project <name> spec stage <slug> writing-plans`.
+2. Write the plans using the rules below. The factory driver is the execution method; do not offer to run the plans yourself. See the `Plan writing` note. Save every plan in `docs/superpowers/plans/<date>-<slug>/`. Before the per-plan rules, run `<factory> --project <name> project show <name>` and apply every line of its `plan rules:` block to every plan, as if listed with the rules below. When the output has no `plan rules:` block, there is nothing extra to apply. Rules for each plan:
+   - the header names the plan and includes `> **Spec:** docs/superpowers/specs/<date>-<slug>-design.md` and this executor line: `> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.`
+   - a File Structure map before the tasks, an `**Interfaces:**` block in every task, and steps that give signatures and named test assertions instead of function bodies; no placeholders such as TBD, "add error handling" or "similar to Task N"
+   - every task is a TDD cycle in separate steps: read the reference docs and the code the task touches (its own step); write the failing tests as real code with their names and assertions, using exact inputs; run them with the exact `cargo test` command and state the expected failure, for example `cannot find function 'x' in this scope`; implement from a signature; run again and state the expected pass count
+   - test steps carry the test's name and its assertions as code. Where several cases share a shape, show one full example and list the others in a table by name and inputs; a table of names alone is not enough
+   - a refactor that must not change output uses a golden test: the test compares the actual output with a `GOLDEN` constant that starts empty, the run fails and shows the actual values, the builder pastes them in, and the run then passes on unchanged code. That golden step comes before any production change
+   - reuse the fixtures of existing tests by naming them (for example "build OAuth1Auth as `explicit_timestamp_and_nonce_override_the_defaults` does") instead of inventing types
+   - tests use `.expect("...")` and `expect_err`, never the unwrap call
+   - Review Focus as a numbered list: the input classes and failure modes the spec implies that no task's tests exercise. Each item names the input, what a user would expect, and the test name that pins it. Expected values that follow from the spec go into the test code, for example an expected JSON error message is built from the real library error instead of hard-coded. Each test is added to the task that owns the code
+   - no commit steps: the driver commits, so a plan that still has them is harmless but wasteful, because the builder is told to skip every commit step
+   - at most 3 tasks, each ending with an independently testable deliverable, each task heading written as `### Task N: <title>`
+   - review each plan against these rules and fix every finding
+   - the last line of the file is `Next plan: docs/superpowers/plans/<date>-<slug>/plan-NN-<slug>.md` (the repo-relative path of the next plan file), or exactly `Next plan: none` in the last plan
+
+   A chain holds at most 6 plans, and the driver refuses more. When a feature needs more, split it into more than one series. The first uses `<slug>`, later ones `<slug>-2`, `<slug>-3` and so on, each with its own plans folder (`docs/superpowers/plans/<date>-<slug>-2/`, plan files named with that series slug) and the same `--spec`. Take each series through steps 3 to 6 in turn. Only the series created with `<slug>` adopts the draft card. Only the last series carries `#N` or the issue URL in its feature text; earlier series name the ticket without `#`, because the driver closes the ticket and files the follow-ups when a series' last plan merges.
+3. Always validate before creating the job: every plan has at most 3 tasks (count the `### Task` headings), each plan's last line starts with `Next plan:`, the chain of paths leads from `plan-01-<slug>.md` to the final `Next plan: none`, every plan file in the folder is on that chain, and the spec file exists with a non-empty `## Goal` and `## Acceptance criteria` and no placeholder. `<factory> --project <name> new` refuses a plan with `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences, the same rule as for the spec. If something is wrong, fix the plan with the user. Do not run an invalid series. Then list the plans for the user and wait for an explicit approval of the plans. After that approval stage the plan paths, check that `git diff --cached --name-only` lists only them, and commit with an exact pathspec (`git commit --only -- <plan paths>`). If the user asks for plan changes, edit the plans, commit them the same way and ask for approval again. Do not run `<factory> --project <name> new` before that approval.
+4. Run `<factory> --project <name> new <slug> '<feature>' --plans docs/superpowers/plans/<date>-<slug> --spec docs/superpowers/specs/<date>-<slug>-design.md`, adding `--one-job` when `--one-job` was given. Escape the feature text as above, so quotes, `$`, backticks and newlines stay literal. Its output is `created job <id> in <folder>`. Read the job id and the folder name from it. Report every `warning:` line printed after it to the user (plan-lint findings and the warning that no decision was answered by the user), and report every `note:` line the same way (for example that `--one-job` has no effect on a single plan); the job runs anyway. The driver checks the spec and copies it into every job's folder. When the work belongs to a GitHub ticket, put it in the feature text as `#N` or as the issue URL (in a split feature only in the last series, see step 2), so the driver can write the footer and file the follow-ups.
+
+   When `new` refuses the spec (the exit is non-zero and the text ends with a `--accept-spec` hint), no job exists. Show the user the reason or the findings and the review file path it prints. Fix the spec with them: where a finding needs their decision, ask them, and record the answer in `## Decisions` as a list item ending with `Decided by: user`. Commit the fix like the spec, then run the same `new` call again. Pass `--accept-spec "<reason>"` (one line, at most 200 characters) only when the user says so, with their reason, never on your own.
+
+   With `--one-job` the driver combines the plans into one job. When the estimate is over the job budget, `new` creates nothing and exits non-zero. The command output shows a line starting `needs consent:` (on stderr) with the estimate and the budget. The non-zero exit is expected, not an error to fix. Then tell the user the estimate and the budget in one or two plain sentences, and ask whether to go ahead over the budget. Raising `budget_weighted` is the other way out. On a yes, re-run the same `new` call with `--accept-over-budget` added and handle its output as above (it prints a `warning:` line about the budget). On a no, or when the user wants another budget, stop without creating a job. Never edit `project.toml` yourself. Plans are still written with at most 3 tasks each, and step 3 still counts them.
+5. Start the run. First run `factoryd is-running`. If it exits 0, a supervisor is running: run `factoryd enqueue --project <name> --job <id> --series`, which prints a request id, then run `factoryd status` once. If the first line of that output contains `reached`, tell the user in one line that the run is queued as that request id and waits for the daily budget, giving the reset time from that line; otherwise tell the user in one line that the factory is running, with the request id. For any other exit code of `factoryd is-running` (including command not found) treat it as not running: start `<factory> --project <name> run <id> --series` as a long-running command, see the `Shell and background runs` note. If it returns a still-running session or process handle, keep the handle for harness notification when it finishes. Tell the user in one line that the factory is running. Then stop. Do not poll, do not sleep, do not read logs. If it returns a final exit/completion result, including a non-zero exit, continue to step 6 immediately. Do not report a completed or failed process as running.
+6. When the run ends (the command tool returns a final result, the harness notifies you that a live session ended, the user asks, or the dashboard shows it), run `<factory> --project <name> status` once and report the line for this job. If it is `needs-human`, add that the user can run `/factory approve <id>` or `/factory rework <id> <note>`. When the status line says the review has not run, the plain approve is refused, so name `/factory approve <id> --without-review` instead.
+
+The driver never asks questions during a run, so the plans must be complete before step 5. A blocker found by the builder moves the job to `needs-human`.
+
+## Harness notes: Claude Code
+
+### Task list
+
+Keep the visible task list with `TaskCreate` and `TaskUpdate`.
+
+### Shell and background runs
+
+Run commands with the `Bash` tool. Run `<factory> --project <name> run <id> --series` as a `Bash` command with `run_in_background` set to true. The harness notifies you when the run ends.
+
+### Skills
+
+Invoke a skill with the `Skill` tool.
+
+### Subagents
+
+Start a subagent with the `Agent` tool.
+
+### File tools
+
+Read files with `Read`, change them with `Edit` and `Write`, and search with `Grep` and `Glob`.
+
+### Interview
+
+Invoke `superpowers:brainstorming` yourself, with the user, in this session, and follow it fully. Spec quality comes from the interview, so do not shorten it. These overrides win where the skill says otherwise: every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words. The user asked for this because open questions were too hard to answer. It replaces the skill's open first question, its "a single sentence with no list of example answers", its "Offer a short menu only when they're stuck" and its Red Flags row "Options steer". If the user takes the skill's opt-out and skips the questions, follow the shared text. The skill goes from approval straight to `superpowers:writing-plans`. Here the commit after the spec approval comes first (the last bullet of the spec step), then the plans step. The skill's builder check reads the spec before the user sees it. It is the one subagent this step uses: do the interview and the writing yourself, and do not do the builder's or reviewer's work.
+
+### Plan writing
+
+Invoke `superpowers:writing-plans` yourself and write the plans in its style. The factory driver is the execution method: skip the skill's execution handoff question and do not offer to run the plans yourself. The plan header is the skill's template, with the repo-relative spec path (`docs/superpowers/specs/<date>-<slug>-design.md`) as its Spec line and its line for agentic workers, which offers a choice of executor, replaced by this executor line: `> **Executor:** the factory driver runs this plan using superpowers:subagent-driven-development, with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.` Write Review Focus as the skill defines it, as a numbered list. Run the skill's plan self-review and fix its findings.
+
+### Commit
+
+Commit through the `dev-workflow-skills:1-git-commit` skill with a pathspec.
+
+### Model option
+
+A feature may start or end with the single token `--opus`. Remove that token from the text and pass `--model claude-opus-5-5` to `<factory> --project <name> new`. It may likewise start or end with the single token `--one-job`, in any order together with `--opus` (either token may be at the start or the end), handled the same way: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`. When you add the job, add `--model claude-opus-5-5` when `--opus` was given and `--one-job` when `--one-job` was given.

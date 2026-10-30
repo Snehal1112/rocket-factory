@@ -157,7 +157,11 @@ fn codex_skill_has_no_claude_words() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let old = std::env::var("HOME").ok();
     std::env::set_var("HOME", tmp.path());
-    let result = factory_cli::install::run(None, false);
+    let result = factory_cli::install::run_with_claude(
+        None,
+        false,
+        std::ffi::OsStr::new("/nonexistent/claude"),
+    );
     match old {
         Some(home) => std::env::set_var("HOME", home),
         None => std::env::remove_var("HOME"),

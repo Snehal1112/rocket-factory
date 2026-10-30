@@ -1,7 +1,9 @@
 //! `factory upgrade`: updates the command and the unedited presets, then reports shadowing overrides.
 
+use std::ffi::OsStr;
 use std::path::Path;
 
+use factory_agent::installed_plugin_ids;
 use factory_core::preset::{self, ShadowLine};
 use factory_core::version::{self, FACTORY_VERSION};
 use factory_core::{project, BaseTipFiles, Home};
@@ -9,7 +11,7 @@ use factory_engine::RepoTip;
 use factory_git::Repo;
 
 use crate::presets::report_lines;
-use crate::{install, CliError};
+use crate::{install, plugin, CliError};
 
 /// A repo that owns its handle and reads files from the tip of its base branch.
 struct OwnedTip(Repo);
@@ -37,8 +39,38 @@ fn tip_for(home: &Home) -> impl Fn(&str) -> Result<Box<dyn BaseTipFiles>, String
 
 /// Runs the upgrade. With `dry_run` nothing is written.
 pub fn run(home: &Home, commands_dir: &Path, dry_run: bool) -> Result<String, CliError> {
+    run_with_claude(home, commands_dir, dry_run, OsStr::new("claude"))
+}
+
+/// Like `run`, asking `claude_program` which plugins are installed.
+pub fn run_with_claude(
+    home: &Home,
+    commands_dir: &Path,
+    dry_run: bool,
+    claude_program: &OsStr,
+) -> Result<String, CliError> {
     version::check(home, FACTORY_VERSION)?;
-    let mut lines = vec![install::upgrade_into(commands_dir, dry_run)?];
+    let old_command = install::command_file(commands_dir);
+    // Plugin state is read only for the standard commands folder, never for a temp one.
+    let standard = install::home_of_standard_commands_dir(commands_dir).is_some();
+    let has_plugin = standard && plugin::plugin_installed(&installed_plugin_ids(claude_program));
+    let mut lines = Vec::new();
+    if has_plugin {
+        lines.push(if old_command.exists() {
+            plugin::duplicate_note(&old_command)
+        } else {
+            plugin::update_line()
+        });
+    } else {
+        lines.push(install::upgrade_into(commands_dir, dry_run)?);
+        if standard {
+            lines.push(if old_command.exists() {
+                plugin::switch_note(&old_command)
+            } else {
+                plugin::install_hint()
+            });
+        }
+    }
     let codex_error = match install::upgrade_codex_skill(commands_dir, dry_run) {
         Ok(Some(line)) => {
             lines.push(line);

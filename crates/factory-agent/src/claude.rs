@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -96,7 +96,7 @@ pub struct ClaudeRunner {
 }
 
 /// The installed plugin ids, each once. An empty list when the command fails.
-fn list_plugins(program: &OsString) -> Vec<String> {
+pub fn installed_plugin_ids(program: &OsStr) -> Vec<String> {
     let out = Command::new(program)
         .args(["plugin", "list", "--json"])
         .stdin(Stdio::null())
@@ -177,7 +177,9 @@ impl ClaudeRunner {
         let (remove_env, set_env) = self.key_env(spec)?;
         let mut args = spec.args(&self.caps);
         if spec.plugins.is_some() {
-            let installed = self.installed.get_or_init(|| list_plugins(&self.program));
+            let installed = self
+                .installed
+                .get_or_init(|| installed_plugin_ids(&self.program));
             if let Some(settings) = spec.plugin_settings(installed) {
                 args.push("--settings".to_string());
                 args.push(settings);
