@@ -438,6 +438,9 @@ impl Driver {
         let probes_dir = self.layout.probes_dir();
         let scratch = probes_dir.join("work");
         let events = EventSink::null("probe");
+        // The flag overrides the project's agent CLI for this run only.
+        let mut config = self.config.clone();
+        config.agent_cli = Some(harness.as_str().to_string());
         let engine = Engine::new(
             self.store.board_path().to_path_buf(),
             scratch.clone(),
@@ -445,7 +448,7 @@ impl Driver {
             scratch.join("plan.md"),
             &self.repo,
             runner,
-            self.config.clone(),
+            config,
             &events,
         )?
         .with_agent_files(self.agent_files.clone());

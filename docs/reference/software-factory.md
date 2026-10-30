@@ -358,6 +358,8 @@ factory [--project <name>] probe [--harness claude|codex] [--role <role>]... [--
 
 The harness defaults to the project's `agent_cli`, the roles to all five. `--delivery` picks how the marker reaches Claude: a written agent file (`agent`), `--append-system-prompt` (`append`) or the start of stdin (`stdin`). The probe exits 1 when an expected channel is missing, 2 on bad flag values. Reports and per-role transcripts are written under `<state dir>/probes/`; `--json` prints the report and nothing else.
 
+The probe runs in a scratch folder under the state dir, not in the repo or a job worktree, so project-level context (the repo's `CLAUDE.md`, `.claude/settings.json`, `.claude/skills`) does not reach it. A pass on `no_extra_skills` covers user and plugin skills only, and real runs may still see project skills. Writing the probe agent file into the repo would risk replacing the real one.
+
 Each run costs one short turn per role with real credentials, so `cargo test` and `factory run` never start it. Run it by hand, and before each release (see `docs/operations/releasing.md`).
 
 Findings: the `--disable-slash-commands` and bootstrap answers are recorded here after the first live run.

@@ -206,25 +206,6 @@ fn missing_agent_file_is_an_error() {
 }
 
 #[test]
-fn a_harness_that_differs_from_the_config_is_an_error() {
-    let fx = fixture(Harness::Claude);
-    let runner = FakeRunner::new(vec![]);
-    let dir = work_dir(&fx);
-    let err = fx
-        .engine(&runner)
-        .with_agent_files(files())
-        .probe_role_with(
-            ProbeRole::Builder,
-            Harness::Codex,
-            Delivery::Agent,
-            MARKER,
-            &dir,
-        )
-        .expect_err("mismatch");
-    assert!(err.to_string().contains("agent_cli"), "{err}");
-}
-
-#[test]
 fn run_probe_writes_report_and_transcripts() {
     let fx = fixture(Harness::Claude);
     let none = "MARKER: NONE\nBOOTSTRAP: NONE\nTOOLS: NONE\nSKILLS: NONE";

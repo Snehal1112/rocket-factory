@@ -82,15 +82,6 @@ impl Engine<'_> {
         self.job_dir.join("probe").join(role.as_str())
     }
 
-    /// Probes one role with the agent file delivery and a fresh marker.
-    pub fn probe_role(&self, role: ProbeRole, harness: Harness) -> Result<RoleProbe, EngineError> {
-        let work_dir = self.probe_scratch(role);
-        let marker = fresh_marker();
-        let (probe, _) =
-            self.probe_role_with(role, harness, Delivery::Agent, &marker, &work_dir)?;
-        Ok(probe)
-    }
-
     /// Probes one role. The second value is the raw answer text for the transcript.
     pub fn probe_role_with(
         &self,
@@ -148,14 +139,6 @@ impl Engine<'_> {
         marker: &str,
         work_dir: &Path,
     ) -> Result<(RoleProbe, String, AgentSpec), EngineError> {
-        let configured = Harness::from_config(&self.config);
-        if configured != harness {
-            return Err(EngineError::Msg(format!(
-                "the probe harness {} does not match agent_cli {}",
-                harness.as_str(),
-                configured.as_str()
-            )));
-        }
         let mut spec = self.probe_base_spec(role, work_dir);
         self.shape_spec(&mut spec).map_err(EngineError::Msg)?;
         spec.prompt = probe_prompt(marker);

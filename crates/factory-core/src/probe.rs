@@ -76,14 +76,6 @@ impl ProbeRole {
             ProbeRole::Kb => "kb",
         }
     }
-
-    /// The role string `Config::plugins_for` takes.
-    pub fn config_role(self) -> &'static str {
-        match self {
-            ProbeRole::SpecReviewer => "spec-reviewer",
-            other => other.as_str(),
-        }
-    }
 }
 
 impl FromStr for ProbeRole {
@@ -200,7 +192,7 @@ pub fn allowed_skill_entries(role: ProbeRole, harness: Harness, config: &Config)
     match (role, harness) {
         (ProbeRole::Reviewer | ProbeRole::SpecReviewer, Harness::Claude)
         | (ProbeRole::SpecReviewer, Harness::Codex) => Vec::new(),
-        _ => config.skill_allow_for(role.config_role()),
+        _ => config.skill_allow_for(role.as_str()),
     }
 }
 
