@@ -1,5 +1,29 @@
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand};
+use factory_core::{Harness, ProbeRole};
+use factory_engine::Delivery;
 use std::path::PathBuf;
+
+/// A parser for a value that must be one of `names`, then read with `FromStr`.
+/// An unknown value fails as an invalid value, not as a validation error.
+fn one_of<T>(names: &[&'static str]) -> impl TypedValueParser<Value = T>
+where
+    T: std::str::FromStr<Err = String> + Clone + Send + Sync + 'static,
+{
+    PossibleValuesParser::new(names.to_vec()).try_map(|s| s.parse::<T>())
+}
+
+fn harness_parser() -> impl TypedValueParser<Value = Harness> {
+    one_of(&["claude", "codex"])
+}
+
+fn role_parser() -> impl TypedValueParser<Value = ProbeRole> {
+    one_of(&ProbeRole::ALL.map(ProbeRole::as_str))
+}
+
+fn delivery_parser() -> impl TypedValueParser<Value = Delivery> {
+    one_of(&["agent", "append", "stdin"])
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "factory", version, about = "Software factory driver")]
@@ -92,6 +116,21 @@ pub enum Command {
     },
     /// Print the cost of every job and the figures per size group, and write costs.json.
     Costs,
+    /// Ask each role's agent what reaches its context, using a marker, and report a pass or fail per channel.
+    Probe {
+        /// The agent CLI to probe. Defaults to the project's agent_cli.
+        #[arg(long, value_parser = harness_parser())]
+        harness: Option<Harness>,
+        /// A role to probe, repeatable. Defaults to every role.
+        #[arg(long, value_parser = role_parser())]
+        role: Vec<ProbeRole>,
+        /// Print the report as JSON and nothing else.
+        #[arg(long)]
+        json: bool,
+        /// How the marker reaches Claude: agent (a written agent file), append or stdin.
+        #[arg(long, value_parser = delivery_parser(), default_value = "agent")]
+        delivery: Delivery,
+    },
     /// Track a feature that is still being specified, before it has a job.
     Spec {
         #[command(subcommand)]
@@ -341,6 +380,47 @@ mod tests {
             matches!(cli.command, Command::Spec { cmd: SpecCmd::Resume { ref slug } } if slug == "demo")
         );
         assert!(Cli::try_parse_from(["factory", "spec", "start", "demo"]).is_err());
+    }
+
+    #[test]
+    fn probe_parses_flags() {
+        let cli = Cli::try_parse_from([
+            "factory",
+            "probe",
+            "--harness",
+            "codex",
+            "--role",
+            "builder",
+            "--role",
+            "kb",
+            "--json",
+        ])
+        .expect("parses");
+        match cli.command {
+            Command::Probe {
+                harness,
+                role,
+                json,
+                delivery,
+            } => {
+                assert_eq!(harness, Some(Harness::Codex));
+                assert_eq!(role, vec![ProbeRole::Builder, ProbeRole::Kb]);
+                assert!(json);
+                assert_eq!(delivery, Delivery::Agent);
+            }
+            other => panic!("not a probe: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_rejects_unknown_role() {
+        let err = Cli::try_parse_from(["factory", "probe", "--role", "nope"]).expect_err("role");
+        assert_eq!(err.kind(), ErrorKind::InvalidValue);
+        let err = Cli::try_parse_from(["factory", "probe", "--harness", "gpt"]).expect_err("cli");
+        assert_eq!(err.kind(), ErrorKind::InvalidValue);
+        let err =
+            Cli::try_parse_from(["factory", "probe", "--delivery", "pipe"]).expect_err("delivery");
+        assert_eq!(err.kind(), ErrorKind::InvalidValue);
     }
 
     #[test]

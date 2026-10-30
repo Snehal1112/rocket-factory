@@ -6,6 +6,7 @@ mod costs;
 pub mod install;
 mod log;
 pub mod presets;
+mod probe;
 pub mod project;
 mod status;
 pub mod tokens;
@@ -18,4 +19,5 @@ pub use commands::{
 };
 pub use costs::{estimate_lines, format_estimate, render_costs};
 pub use log::run_log;
+pub use probe::render_probe;
 pub use status::{render_park_details, render_parked, render_status};

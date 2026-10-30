@@ -339,6 +339,29 @@ Sandbox by role:
 
 A failed Codex commit falls back to the driver commit. The real smoke test is `#[ignore]`; run it by hand with `cargo test -j4 -p factory-agent real_codex_smoke -- --ignored`.
 
+## Checking what agents see
+
+`factory probe` builds each role's real agent spec (builder, reviewer, spec-reviewer, committer, kb), adds a unique marker to the agent text, and asks the agent in one turn, with every tool denied, what reached its context. It reports a pass or fail per channel and role:
+
+| Channel | What a pass proves |
+|---|---|
+| `agent_text` | The agent file text arrived, because the agent echoes the marker. |
+| `skills` | Every skill the role may use is visible. |
+| `bootstrap` | The `You have superpowers` bootstrap text from the plugin start hook arrived. |
+| `no_extra_skills` | The agent sees no skill outside the role's allowlist. |
+
+A channel the role does not expect shows `-`, or `extra` when it is present anyway. A `Skills seen:` line per role shows the raw answer, so the `--disable-slash-commands` result is readable.
+
+```bash
+factory [--project <name>] probe [--harness claude|codex] [--role <role>]... [--json] [--delivery agent|append|stdin]
+```
+
+The harness defaults to the project's `agent_cli`, the roles to all five. `--delivery` picks how the marker reaches Claude: a written agent file (`agent`), `--append-system-prompt` (`append`) or the start of stdin (`stdin`). The probe exits 1 when an expected channel is missing, 2 on bad flag values. Reports and per-role transcripts are written under `<state dir>/probes/`; `--json` prints the report and nothing else.
+
+Each run costs one short turn per role with real credentials, so `cargo test` and `factory run` never start it. Run it by hand, and before each release (see `docs/operations/releasing.md`).
+
+Findings: the `--disable-slash-commands` and bootstrap answers are recorded here after the first live run.
+
 ## Token comparison
 
 | | Raw tokens | Weighted tokens | Status |
