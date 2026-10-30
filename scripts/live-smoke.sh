@@ -208,9 +208,11 @@ run_probe() {
     echo -e "${BLUE}Probing $harness...${NC}"
     mkdir -p "$out/probe"
     local ok=1
-    factory --project "$PROJECT" probe --harness "$harness" --json >"$out/probe/report.json" || ok=0
+    factory --project "$PROJECT" probe --harness "$harness" --json >"$work/probe-report.json" || ok=0
     # The probe writes its report and transcripts under the project state dir.
+    # Copy them first so the stdout report below is never overwritten.
     [ ! -d "$state/probes" ] || cp -R "$state/probes/." "$out/probe/"
+    cp "$work/probe-report.json" "$out/probe/report.json"
     if [ "$ok" -eq 0 ]; then
         # Each channel object prints name, expected, present, detail in that order.
         awk -F'"' '
@@ -370,7 +372,9 @@ main() {
     out="$(cd "$out" && pwd)"
 
     work="$(mktemp -d "${TMPDIR:-/tmp}/factory-live-smoke-work.XXXXXX")"
-    trap cleanup EXIT INT TERM
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     state="$work/home/projects/$PROJECT/state"
     cli_version="$("${LIVE_SMOKE_AGENT_PROGRAM:-$harness}" --version 2>/dev/null | head -n 1 || true)"
     cli_version="${cli_version:-unknown}"
