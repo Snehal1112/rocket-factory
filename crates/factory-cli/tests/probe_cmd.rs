@@ -170,18 +170,9 @@ fn harness_flag_overrides_the_project_agent_cli() {
     assert!(spec.agent_prompt.is_some());
 }
 
-/// The `fake-claude` binary sits next to the test binaries once `factory-agent` is built.
-/// `cargo test -p factory-cli` does not build it, so a missing binary skips the test.
-fn fake_claude() -> Option<PathBuf> {
-    let exe = std::env::current_exe().expect("current exe");
-    let target = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    Some(target.join("fake-claude")).filter(|p| p.is_file())
-}
-
 #[test]
 fn probe_through_fake_claude_finds_the_marker() {
-    let Some(program) = fake_claude() else {
-        eprintln!("skipped: build fake-claude with `cargo build -p factory-agent` first");
+    let Some(program) = common::fake_claude() else {
         return;
     };
     let fx = Fixture::new();

@@ -49,7 +49,7 @@ pub fn run_with_claude(
     } else {
         let line = install_file(&commands, FILE_NAME, &command, force)?;
         if has_plugin {
-            line
+            format!("{line}\n{}", plugin::duplicate_note(&old_command))
         } else {
             format!("{line}\n{}", plugin::install_hint())
         }

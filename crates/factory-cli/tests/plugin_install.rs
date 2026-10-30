@@ -1,3 +1,5 @@
+mod common;
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -46,20 +48,6 @@ impl Drop for EnvGuard {
     }
 }
 
-/// The `fake-claude` binary sits next to the test binaries once `factory-agent` is built.
-/// `cargo test -p factory-cli` does not build it, so a missing binary skips the test.
-fn fake_claude() -> Option<OsString> {
-    let exe = std::env::current_exe().expect("current exe");
-    let target = exe.parent().and_then(|p| p.parent()).expect("target dir");
-    let program = target.join("fake-claude");
-    if program.is_file() {
-        Some(program.into_os_string())
-    } else {
-        eprintln!("skipped: build fake-claude with `cargo build -p factory-agent` first");
-        None
-    }
-}
-
 fn s(p: &Path) -> &str {
     p.to_str().expect("utf8")
 }
@@ -73,7 +61,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(list: &str) -> Option<Fixture> {
-        let program = fake_claude()?;
+        let program = common::fake_claude()?.into_os_string();
         let tmp = tempfile::tempdir().expect("tempdir");
         let env = EnvGuard::set(&[("HOME", s(tmp.path())), ("FAKE_PLUGIN_LIST", list)]);
         Some(Fixture {
@@ -120,11 +108,11 @@ fn detects_the_plugin_by_id() {
 
 #[test]
 fn detects_nothing_from_bad_output() {
-    let Some(program) = fake_claude() else {
+    let Some(program) = common::fake_claude() else {
         return;
     };
     let _env = EnvGuard::set(&[("FAKE_PLUGIN_LIST", "not json")]);
-    assert!(installed_plugin_ids(&program).is_empty());
+    assert!(installed_plugin_ids(program.as_os_str()).is_empty());
     let missing = std::path::Path::new("/nonexistent/claude-does-not-exist");
     assert!(installed_plugin_ids(missing.as_os_str()).is_empty());
 }
@@ -154,8 +142,12 @@ fn install_skips_the_command_when_plugin_installed() {
         "{out}"
     );
     assert!(!fx.old_command().exists());
-    fx.install(None, true);
+    let forced = fx.install(None, true);
     assert!(fx.old_command().is_file());
+    assert!(
+        forced.contains(&duplicate_note(&fx.old_command())),
+        "{forced}"
+    );
 }
 
 #[test]
