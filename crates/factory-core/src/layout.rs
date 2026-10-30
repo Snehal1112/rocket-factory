@@ -88,6 +88,11 @@ impl Layout {
         self.state_dir.join("spec-reviews")
     }
 
+    /// The folder of saved probe reports.
+    pub fn probes_dir(&self) -> PathBuf {
+        self.state_dir.join("probes")
+    }
+
     /// The usage log of the spec reviews. No job owns those runs, so their tokens are logged here.
     pub fn spec_review_usage_file(&self) -> PathBuf {
         self.spec_reviews_dir().join("usage.jsonl")
@@ -220,6 +225,15 @@ mod tests {
         assert_eq!(
             l.spec_reviews_dir(),
             PathBuf::from("/r/.superpowers/factory/spec-reviews")
+        );
+    }
+
+    #[test]
+    fn probes_dir_is_under_the_state_dir() {
+        let l = Layout::in_repo(Path::new("/r"));
+        assert_eq!(
+            l.probes_dir(),
+            PathBuf::from("/r/.superpowers/factory/probes")
         );
     }
 

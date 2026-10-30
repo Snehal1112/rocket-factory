@@ -105,6 +105,10 @@ fn main() {
     };
     match dispatch(cli, &ctx) {
         Ok(text) => println!("{text}"),
+        Err(factory_cli::CliError::ProbeFailed(text)) => {
+            println!("{text}");
+            std::process::exit(1);
+        }
         Err(e) => {
             // The consent refusal is printed bare so its line starts with `needs consent:`.
             if matches!(

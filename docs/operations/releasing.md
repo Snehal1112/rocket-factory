@@ -22,6 +22,15 @@ The pattern comes from rocket-mem and the release playbook in the knowledge base
 
 ## Cutting a release
 
+Before tagging, run the live probe once for each harness:
+
+```bash
+factory probe --harness claude
+factory probe --harness codex
+```
+
+A failing channel blocks the release unless the release notes say why. Paste the CLI versions and the tables into the release notes. The probe uses real credentials and costs one short turn per role, so `release.sh` does not run it.
+
 ```bash
 ./scripts/release.sh --dry-run patch   # every check, nothing changed
 ./scripts/release.sh patch             # or minor, major, or an explicit v1.2.3

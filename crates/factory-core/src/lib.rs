@@ -16,6 +16,7 @@ pub mod ledger;
 pub mod outcome_lines;
 pub mod park;
 pub mod preset;
+pub mod probe;
 pub mod project;
 pub mod resolve;
 pub mod risk;
@@ -60,6 +61,10 @@ pub use layout::{
 };
 pub use ledger::{Ledger, TaskState};
 pub use park::{park_summary, ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
+pub use probe::{
+    allowed_skill_entries, evaluate, expected_channels, parse_probe_answer, probe_prompt, Channel,
+    Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe, KNOWN_BUILTIN_SKILLS,
+};
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
 pub use risk::{classify_paths, glob_match, DiffClass};
 pub use stage::Stage;

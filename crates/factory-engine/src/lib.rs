@@ -24,6 +24,7 @@ mod park;
 mod permissions;
 mod planlint;
 mod ports;
+mod probe;
 pub mod procinfo;
 mod project_lease;
 mod repo_lock;
@@ -54,7 +55,7 @@ use thiserror::Error;
 
 pub use build::build_stage;
 pub use checks_stage::checks_stage;
-pub use clock::{date_from_days, now_secs, today};
+pub use clock::{date_from_days, now_secs, today, utc_stamp};
 pub use combine::{combine_plans, CombinedPlan};
 pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef,
@@ -80,6 +81,7 @@ pub use one_job::{
 pub use permissions::{builder_allowed_tools, builder_denied_tools, restore_file};
 pub use planlint::{lint_plan, PlanLint};
 pub use ports::set_stage_logged;
+pub use probe::{run_probe, Delivery};
 pub use project_lease::{
     acquire_project_lease, force_release_project_lease, lease_owner_dead, owner_pid, process_gone,
     project_lease_status, release_project_lease, LeaseTake, ProjectLease, ProjectLeaseError,
