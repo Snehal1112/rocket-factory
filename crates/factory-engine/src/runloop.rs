@@ -596,10 +596,8 @@ fn run_job_inner(
             std::fs::read_to_string(driver.job_dir(&job).join("plan.md")).unwrap_or_default();
         crate::tasks::parse_tasks(&plan).len()
     };
-    let rounds = driver
-        .config()
-        .fix_rounds
-        .max(driver.config().fix_rounds_for(true));
+    let cfg = driver.config();
+    let rounds = cfg.fix_rounds.max(cfg.fix_rounds_for(true));
     let limit = rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
         if guard.lost() {
