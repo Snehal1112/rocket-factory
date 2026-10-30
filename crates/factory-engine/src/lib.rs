@@ -94,7 +94,9 @@ pub use runloop::{
 };
 pub use scope::scope_violation;
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};
-pub use spec_check::{plan_file_paths, review_spec, risky_without_user_decision, SpecRefusal};
+pub use spec_check::{
+    plan_file_paths, review_spec, risky_without_user_decision, SpecRefusal, SPEC_OVERRIDE_HINT,
+};
 pub use specs::{
     ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS, RULES_VERSION,
 };

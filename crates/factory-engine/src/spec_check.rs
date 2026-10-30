@@ -28,21 +28,21 @@ pub enum SpecRefusal {
 }
 
 /// How the user gets past a refusal.
-const OVERRIDE_HINT: &str =
+pub const SPEC_OVERRIDE_HINT: &str =
     "Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
 
 impl fmt::Display for SpecRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SpecRefusal::NoUserDecision(reason) => write!(f, "{reason}. {OVERRIDE_HINT}"),
+            SpecRefusal::NoUserDecision(reason) => write!(f, "{reason}. {SPEC_OVERRIDE_HINT}"),
             SpecRefusal::ReviewChanges { file, findings } => write!(
                 f,
-                "the spec review asked for changes:\n{findings}\nThe review is in {}. {OVERRIDE_HINT}",
+                "the spec review asked for changes:\n{findings}\nThe review is in {}. {SPEC_OVERRIDE_HINT}",
                 file.display()
             ),
             SpecRefusal::ReviewMissing { file } => write!(
                 f,
-                "the spec review gave no verdict; a missing verdict is not a pass. The review is in {}. {OVERRIDE_HINT}",
+                "the spec review gave no verdict; a missing verdict is not a pass. The review is in {}. {SPEC_OVERRIDE_HINT}",
                 file.display()
             ),
             SpecRefusal::ReviewerMissing => write!(
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn refusals_end_with_the_override_hint() {
-        let hint = "Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
+        let hint = SPEC_OVERRIDE_HINT;
         let file = PathBuf::from("/s/spec-reviews/k.md");
         for refusal in [
             SpecRefusal::NoUserDecision("the spec touches risky paths (a)".into()),

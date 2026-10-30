@@ -268,9 +268,6 @@ fn create_timeout(home: &Home, name: &str) -> Duration {
     Duration::from_secs((u64::from(stall) + 2) * 60)
 }
 
-/// The text that every `factory new` spec refusal carries.
-const SPEC_REFUSAL_HINT: &str = "--accept-spec";
-
 /// `POST /projects/{p}/jobs`.
 pub fn create(home: &Home, deps: &ApiDeps, name: &str, body: &[u8]) -> ApiResponse {
     match create_inner(home, deps, name, body) {
@@ -322,9 +319,9 @@ fn create_inner(
     let run = deps
         .cli
         .run_with_timeout(name, &args, create_timeout(home, name));
-    // A spec refusal names `--accept-spec`, so it is a conflict the caller can resolve.
-    let refused = matches!(&run, Ok(o) if o.code == 1
-        && (o.stderr.contains(SPEC_REFUSAL_HINT) || o.stdout.contains(SPEC_REFUSAL_HINT)));
+    // A spec refusal ends with the shared override hint, so it is a conflict the caller can resolve.
+    let hint = factory_engine::SPEC_OVERRIDE_HINT;
+    let refused = matches!(&run, Ok(o) if o.code == 1 && (o.stderr.contains(hint) || o.stdout.contains(hint)));
     let out = finished(run, refused)?;
     let job = created_id(&out.stdout).ok_or_else(|| {
         error_response(
@@ -967,8 +964,11 @@ mod tests {
     #[test]
     fn create_refusal_is_a_conflict() {
         let f = fx();
-        let text = "factory: the spec has no user decision. Record the user's answer as a \"Decided by: user\" decision, or pass --accept-spec \"<reason>\".";
-        f.cli.reply(1, "", text);
+        let text = format!(
+            "factory: the spec has no user decision. {}",
+            factory_engine::SPEC_OVERRIDE_HINT
+        );
+        f.cli.reply(1, "", &text);
         let r = post(
             &f,
             "/projects/good/jobs",
@@ -977,6 +977,97 @@ mod tests {
         assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
         let msg = r.body["error"]["message"].as_str().unwrap_or("");
         assert!(msg.contains("--accept-spec"), "{msg}");
+        assert_eq!(f.cli.calls().len(), 1);
+        assert_eq!(queued(&f), 0);
+    }
+
+    fn open_changes_board(f: &Fx) {
+        let job = job_json("001", "001-first").replace(
+            r#""stage":"build""#,
+            r#""stage":"needs-human","last_review":{"round":2,"verdict":"changes","blockers":2,"file":"review-2.md","source":"review"}"#,
+        );
+        write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
+    }
+
+    #[test]
+    fn waive_with_without_review_is_a_bad_request() {
+        let f = fx();
+        open_changes_board(&f);
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            br#"{"waive_reason":"x","without_review":true}"#,
+        );
+        assert_eq!(code(&r), (400, "bad_request".to_string()), "{}", r.body);
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn waive_without_open_changes_is_a_conflict() {
+        let f = fx();
+        board_with(&f, "needs-human", false);
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            br#"{"waive_reason":"known flake"}"#,
+        );
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
+        let msg = r.body["error"]["message"].as_str().unwrap_or("");
+        assert!(
+            msg.contains("has no open review findings to waive"),
+            "{msg}"
+        );
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn waive_reason_length_is_checked() {
+        let f = fx();
+        open_changes_board(&f);
+        let body = |reason: &str| json!({"waive_reason": reason}).to_string();
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            body(&"x".repeat(201)).as_bytes(),
+        );
+        assert_eq!(code(&r), (400, "bad_request".to_string()), "{}", r.body);
+        assert_eq!(
+            r.body["error"]["message"].as_str(),
+            Some("the waive reason is longer than 200 characters")
+        );
+        for blank in ["\r", "   "] {
+            let r = post(&f, "/projects/good/jobs/1/approve", body(blank).as_bytes());
+            assert_eq!(code(&r), (400, "bad_request".to_string()), "{blank:?}");
+            assert_eq!(
+                r.body["error"]["message"].as_str(),
+                Some("the waive reason is empty"),
+                "{blank:?}"
+            );
+        }
+        assert_eq!(queued(&f), 0);
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            body(&"x".repeat(200)).as_bytes(),
+        );
+        assert_eq!(r.status, 202, "{}", r.body);
+        assert_eq!(queued(&f), 1);
+    }
+
+    #[test]
+    fn create_refusal_on_stdout_is_a_conflict() {
+        let f = fx();
+        let text = format!(
+            "factory: the spec has no user decision. {}\n",
+            factory_engine::SPEC_OVERRIDE_HINT
+        );
+        f.cli.reply(1, &text, "");
+        let r = post(
+            &f,
+            "/projects/good/jobs",
+            create_body(&f).to_string().as_bytes(),
+        );
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
         assert_eq!(f.cli.calls().len(), 1);
         assert_eq!(queued(&f), 0);
     }
