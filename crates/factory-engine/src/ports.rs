@@ -207,6 +207,25 @@ impl Engine<'_> {
         (!model.is_empty()).then(|| model.to_string())
     }
 
+    /// The provider-specific part of a run spec: Codex gets its agent text and sandbox, Claude gets
+    /// the cache env, its plugins and the subagent model. The probe shapes its specs the same way.
+    pub(crate) fn shape_spec(&self, spec: &mut AgentSpec) -> Result<(), String> {
+        if self.config.agent_cli() == "codex" {
+            return self.prepare_for_codex(spec).map_err(|e| e.to_string());
+        }
+        if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
+            spec.env.push((var.0.to_string(), var.1.to_string()));
+        }
+        // Each role loads only its own plugins, so other skills stay out of the prompt.
+        spec.plugins = Some(self.config.plugins_for(&spec.role).to_vec());
+        // Helper agents run on the run's own model, so a skill cannot pick another one.
+        if let Some(model) = spec.model.clone() {
+            spec.env
+                .push(("CLAUDE_CODE_SUBAGENT_MODEL".to_string(), model));
+        }
+        Ok(())
+    }
+
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
     pub(crate) fn run_agent(&self, mut spec: AgentSpec) -> Result<AgentRun, EngineError> {
         self.sync_provider()?;
@@ -218,21 +237,8 @@ impl Engine<'_> {
                 spec.model = Some(model);
             }
         }
-        if self.config.agent_cli() == "codex" {
-            if let Err(e) = self.prepare_for_codex(&mut spec) {
-                return Ok(AgentRun::failed(&e.to_string()));
-            }
-        } else {
-            if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
-                spec.env.push((var.0.to_string(), var.1.to_string()));
-            }
-            // Each role loads only its own plugins, so other skills stay out of the prompt.
-            spec.plugins = Some(self.config.plugins_for(&spec.role).to_vec());
-            // Helper agents run on the run's own model, so a skill cannot pick another one.
-            if let Some(model) = spec.model.clone() {
-                spec.env
-                    .push(("CLAUDE_CODE_SUBAGENT_MODEL".to_string(), model));
-            }
+        if let Err(e) = self.shape_spec(&mut spec) {
+            return Ok(AgentRun::failed(&e));
         }
         // Every agent that runs in a job worktree finds the resolved agent files as resolved.
         if !self.agent_files.is_empty() {

@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use factory_agent::AgentSpec;
-use factory_core::rules_marker;
+use factory_core::{rules_marker, Config};
+use factory_git::Repo;
 
 use crate::ports::{short_sha, JobView};
 use crate::tasks::{plan_header, spec_excerpt, task_section, PlanTask};
@@ -671,40 +672,48 @@ impl Driver {
         spec: &Path,
         plans: &[PathBuf],
     ) -> AgentSpec {
-        let plan_lines: Vec<String> = plans.iter().map(|p| p.display().to_string()).collect();
-        let prompt = format!(
-            "Review this spec and its plans before the build.\n\
-             Spec: {spec}\nPlans: {plans}\nMain checkout: {cwd}\n\
-             Report only the three kinds of finding in your agent rules. \
-             Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
-            spec = spec.display(),
-            plans = plan_lines.join(", "),
-            cwd = cwd.display(),
-        );
-        let model = self
-            .config()
-            .reviewer_model_large
-            .as_deref()
-            .unwrap_or(&self.config().reviewer_model);
-        let mut agent = AgentSpec::new(
-            SPEC_REVIEW_JOB,
-            "spec-reviewer",
-            self.repo().workdir_in(cwd),
-            &prompt,
-        );
-        agent.agent = Some(SPEC_REVIEWER_AGENT.to_string());
-        agent.max_turns = Some(REVIEWER_MAX_TURNS);
-        agent.strict_mcp = true;
-        agent.disable_slash_commands = true;
-        agent.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
-        agent.tools = Some("Read,Grep,Glob".to_string());
-        agent.model = Some(model.to_string());
-        agent.budget_weighted = Some(self.config().budget_weighted);
-        agent.stall_after = Some(Duration::from_secs(
-            u64::from(self.config().stall_minutes) * 60,
-        ));
-        agent
+        spec_reviewer_agent(self.repo(), self.config(), cwd, spec, plans)
     }
+}
+
+/// The spec reviewer spec. The probe builds it too, because it has no `Driver`.
+pub(crate) fn spec_reviewer_agent(
+    repo: &Repo,
+    config: &Config,
+    cwd: &Path,
+    spec: &Path,
+    plans: &[PathBuf],
+) -> AgentSpec {
+    let plan_lines: Vec<String> = plans.iter().map(|p| p.display().to_string()).collect();
+    let prompt = format!(
+        "Review this spec and its plans before the build.\n\
+         Spec: {spec}\nPlans: {plans}\nMain checkout: {cwd}\n\
+         Report only the three kinds of finding in your agent rules. \
+         Your last line, alone, must be exactly `VERDICT: APPROVE` or `VERDICT: CHANGES`.",
+        spec = spec.display(),
+        plans = plan_lines.join(", "),
+        cwd = cwd.display(),
+    );
+    let model = config
+        .reviewer_model_large
+        .as_deref()
+        .unwrap_or(&config.reviewer_model);
+    let mut agent = AgentSpec::new(
+        SPEC_REVIEW_JOB,
+        "spec-reviewer",
+        repo.workdir_in(cwd),
+        &prompt,
+    );
+    agent.agent = Some(SPEC_REVIEWER_AGENT.to_string());
+    agent.max_turns = Some(REVIEWER_MAX_TURNS);
+    agent.strict_mcp = true;
+    agent.disable_slash_commands = true;
+    agent.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
+    agent.tools = Some("Read,Grep,Glob".to_string());
+    agent.model = Some(model.to_string());
+    agent.budget_weighted = Some(config.budget_weighted);
+    agent.stall_after = Some(Duration::from_secs(u64::from(config.stall_minutes) * 60));
+    agent
 }
 
 /// The job id the spec reviewer runs under, since no job exists yet.

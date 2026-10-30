@@ -424,6 +424,42 @@ impl Driver {
         Ledger::new(self.job_dir(job).join("progress.md"))
     }
 
+    /// Runs the live marker probe with `runner` and saves the report under the probes folder.
+    /// The probe has no job, so its engine works in a scratch folder next to the reports.
+    pub fn probe(
+        &self,
+        runner: &dyn AgentRunner,
+        harness: factory_core::Harness,
+        roles: &[factory_core::ProbeRole],
+        delivery: crate::Delivery,
+        cli_version: &str,
+        stamp: &str,
+    ) -> Result<factory_core::ProbeReport, EngineError> {
+        let probes_dir = self.layout.probes_dir();
+        let scratch = probes_dir.join("work");
+        let events = EventSink::null("probe");
+        let engine = Engine::new(
+            self.store.board_path().to_path_buf(),
+            scratch.clone(),
+            "probe".to_string(),
+            scratch.join("plan.md"),
+            &self.repo,
+            runner,
+            self.config.clone(),
+            &events,
+        )?
+        .with_agent_files(self.agent_files.clone());
+        crate::run_probe(
+            &engine,
+            harness,
+            roles,
+            delivery,
+            cli_version,
+            &probes_dir,
+            stamp,
+        )
+    }
+
     /// Builds the runner and event sink for this job and runs `f` on a per-job engine.
     pub(crate) fn with_engine<R>(
         &self,
