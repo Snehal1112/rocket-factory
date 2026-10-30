@@ -21,3 +21,4 @@ factory-telemetry = { path = "../factory-telemetry" }
 [dev-dependencies]
 git2.workspace = true
 tempfile.workspace = true
+toml.workspace = true

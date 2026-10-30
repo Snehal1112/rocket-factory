@@ -63,6 +63,9 @@ pub fn codex_args(spec: &AgentSpec) -> Vec<String> {
     if spec.network {
         config("sandbox_workspace_write.network_access=true".to_string());
     }
+    for value in &spec.codex_config {
+        config(value.clone());
+    }
     if let Some(id) = &spec.resume {
         a.push(id.clone());
     }
@@ -382,6 +385,42 @@ mod tests {
         assert_eq!(a[a.len() - 2], "abc");
         assert!(a.contains(&"approvals_reviewer=\"auto_review\"".to_string()));
         assert_eq!(a.last().map(String::as_str), Some("-"));
+    }
+
+    #[test]
+    fn codex_config_values_become_c_flags_in_order() {
+        let mut s = args_spec("workspace-write");
+        s.codex_config = strs(&["a=1", "b=2"]);
+        let a = codex_args(&s);
+        let sandbox = a
+            .iter()
+            .position(|x| x == "sandbox_mode=\"workspace-write\"")
+            .expect("sandbox value");
+        let first = a.iter().position(|x| x == "a=1").expect("a=1");
+        assert!(first > sandbox);
+        assert_eq!(
+            &a[first - 1..first + 3],
+            &strs(&["-c", "a=1", "-c", "b=2"])[..]
+        );
+        assert_eq!(&a[a.len() - 2..], &strs(&["b=2", "-"])[..]);
+    }
+
+    #[test]
+    fn codex_config_comes_before_the_resume_id() {
+        let mut s = args_spec("read-only");
+        s.codex_config = strs(&["a=1"]);
+        s.resume = Some("sess".to_string());
+        let a = codex_args(&s);
+        assert_eq!(&a[a.len() - 4..], &strs(&["-c", "a=1", "sess", "-"])[..]);
+    }
+
+    #[test]
+    fn no_codex_config_leaves_args_unchanged() {
+        let a = codex_args(&args_spec("read-only"));
+        assert_eq!(
+            &a[a.len() - 3..],
+            &strs(&["-c", "sandbox_mode=\"read-only\"", "-"])[..]
+        );
     }
 
     #[test]

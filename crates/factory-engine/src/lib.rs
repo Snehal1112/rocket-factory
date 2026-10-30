@@ -5,6 +5,7 @@ mod carry;
 mod checks_stage;
 mod clock;
 mod codex_prep;
+mod codex_skills;
 mod combine;
 mod commit;
 mod compat;
@@ -160,6 +161,8 @@ pub struct Engine<'a> {
     pub commit_context: Option<PathBuf>,
     /// Agent files written into each new job worktree. Empty by default.
     pub agent_files: Vec<AgentFile>,
+    /// The user-wide folders Codex lists skills from. Empty by default.
+    pub codex_skill_roots: Vec<PathBuf>,
     /// Set once the job's provider matches the config, so later calls skip the board read.
     /// An engine lives for one driver call and its config never changes, so it cannot go stale.
     pub provider_synced: std::cell::Cell<bool>,
@@ -190,6 +193,7 @@ impl<'a> Engine<'a> {
             lock_wait: DEFAULT_LOCK_WAIT,
             commit_context: None,
             agent_files: Vec::new(),
+            codex_skill_roots: Vec::new(),
             provider_synced: std::cell::Cell::new(false),
         })
     }
@@ -209,6 +213,12 @@ impl<'a> Engine<'a> {
     /// Sets the agent files written into each new job worktree.
     pub fn with_agent_files(mut self, files: Vec<AgentFile>) -> Self {
         self.agent_files = files;
+        self
+    }
+
+    /// Sets the user-wide skill folders a Codex run lists skills from.
+    pub fn with_codex_skill_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.codex_skill_roots = roots;
         self
     }
 

@@ -187,10 +187,10 @@ A 1 hour write costs twice a plain input token and a 5 minute write costs 1.25 t
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `builder_plugins` | string list | `["superpowers"]` | Claude Code plugins every builder run loads. |
-| `reviewer_plugins` | string list | `[]` | Plugins every reviewer run loads. |
-| `commit_plugins` | string list | `["dev-workflow-skills"]` | Plugins the committer and the merge and sync message agents load. |
-| `kb_plugins` | string list | `[]` | Plugins the KB refresher loads. Its `kb-refresh` skill is a user skill, not a plugin, so it needs none. |
+| `builder_plugins` | string list | `["superpowers"]` | Claude Code plugins every builder run loads. Under Codex the same list selects the skills the run sees (see Using Codex). |
+| `reviewer_plugins` | string list | `[]` | Plugins every reviewer run loads. Under Codex the same list selects the skills the run sees (see Using Codex). |
+| `commit_plugins` | string list | `["dev-workflow-skills"]` | Plugins the committer and the merge and sync message agents load. Under Codex the same list selects the skills the run sees (see Using Codex). |
+| `kb_plugins` | string list | `[]` | Plugins the KB refresher loads. Its `kb-refresh` skill is a user skill, not a plugin, so it needs none. Under Codex the same list selects the skills the run sees (see Using Codex). |
 
 A name is a plugin name such as `superpowers` or a full id such as `superpowers@claude-plugins-official`. Each entry is one non-empty word. Before the first Claude run, the driver reads the installed plugins once with `claude plugin list --json`. Each run then gets `--settings` with `enabledPlugins`, which turns on the role's plugins and turns off every other installed plugin, together with its skills. A plugin that is not installed is skipped, unless it is given as a full id. The defaults keep about 2.5k tokens of unused skill descriptions out of every session.
 

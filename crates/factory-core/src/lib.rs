@@ -56,8 +56,10 @@ pub use home::Home;
 pub use homeconfig::HomeConfig;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};
 pub use layout::{
-    agent_files_rel_dir, claude_commands_dir, codex_skills_dir, is_agent_file_name, Layout, Scope,
-    AGENT_EXCLUDE_PATTERN, PROJECT_LEASE_FILE,
+    agent_files_rel_dir, claude_commands_dir, codex_home_from_env, codex_home_skills_dir,
+    codex_skills_dir, codex_user_skill_roots, codex_user_skill_roots_from_env,
+    codex_worktree_skills_dir, is_agent_file_name, Layout, Scope, AGENT_EXCLUDE_PATTERN,
+    PROJECT_LEASE_FILE,
 };
 pub use ledger::{Ledger, TaskState};
 pub use park::{park_summary, ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};

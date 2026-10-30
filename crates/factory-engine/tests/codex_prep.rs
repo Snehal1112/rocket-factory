@@ -72,6 +72,174 @@ fn committer_message_and_kb_get_the_skill_sentence() {
     }
 }
 
+const BAN: &str = "Do not load or invoke skills";
+const SENTENCE: &str = "The skill your instructions name is not available";
+
+fn skill_root(fx: &Fixture, rels: &[&str]) -> std::path::PathBuf {
+    let root = fx.tmp.path().join("skills");
+    for rel in rels {
+        let dir = root.join(rel);
+        std::fs::create_dir_all(&dir).expect("mkdir skill");
+        std::fs::write(dir.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+    }
+    root
+}
+
+fn agent_text(runner: &common::ScriptedRunner, role: &str) -> String {
+    runner
+        .last_spec_for(role)
+        .expect(role)
+        .agent_prompt
+        .expect("agent text")
+}
+
+#[test]
+fn builder_with_superpowers_installed_gets_skills_and_the_allowlist() {
+    let fx = codex(committing_fixture());
+    let root = skill_root(&fx, &["superpowers/tdd", "other"]);
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .with_codex_skill_roots(vec![root.clone()])
+        .build_stage()
+        .expect("build");
+    let other = std::fs::canonicalize(root.join("other/SKILL.md")).expect("canonical");
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(
+        spec.codex_config,
+        [
+            "skills.bundled.enabled=false".to_string(),
+            format!(
+                "skills.config=[{{path=\"{}\",enabled=false}}]",
+                other.display()
+            )
+        ]
+    );
+    let text = spec.agent_prompt.expect("agent text");
+    assert!(!text.contains(BAN), "{text}");
+    assert!(text.contains("skill catalog"), "{text}");
+}
+
+#[test]
+fn builder_sees_the_worktree_skills_folder() {
+    let fx = codex(committing_fixture());
+    let wt = fx
+        .repo
+        .create_worktree(&factory_git::JobRef {
+            id: "001".into(),
+            slug: "demo".into(),
+            project: None,
+        })
+        .expect("worktree");
+    let tip = fx.repo.tip(&wt.branch).expect("tip");
+    set_job(&fx, |j| {
+        j.worktree = Some(wt.path.to_string_lossy().into_owned());
+        j.branch = wt.branch.clone();
+        j.base = Some(wt.base.clone());
+        j.head = Some(tip);
+    });
+    let skills = wt.path.join(".agents/skills");
+    for rel in ["superpowers/x", "other"] {
+        std::fs::create_dir_all(skills.join(rel)).expect("mkdir skill");
+        std::fs::write(skills.join(rel).join("SKILL.md"), "x\n").expect("write skill");
+    }
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let other = std::fs::canonicalize(skills.join("other/SKILL.md")).expect("canonical");
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(
+        spec.codex_config,
+        [
+            "skills.bundled.enabled=false".to_string(),
+            format!(
+                "skills.config=[{{path=\"{}\",enabled=false}}]",
+                other.display()
+            )
+        ]
+    );
+}
+
+#[test]
+fn unmatched_allowlist_has_no_skills_preface() {
+    let fx = codex(committing_fixture());
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(spec.codex_config, ["skills.include_instructions=false"]);
+    assert!(spec.agent_prompt.expect("agent text").contains(BAN));
+}
+
+#[test]
+fn reviewer_gets_no_skills() {
+    let fx = codex(committing_fixture());
+    let root = skill_root(&fx, &["superpowers/tdd"]);
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .checks_stage()
+        .expect("checks");
+    let reviewer = scripted_auto(vec![reply("ok\nVERDICT: APPROVE")]);
+    let mut list = files();
+    list.push(AgentFile {
+        name: "factory-code-reviewer.md".to_string(),
+        content: "BODY reviewer\n".to_string(),
+    });
+    fx.engine(&reviewer)
+        .with_agent_files(list)
+        .with_codex_skill_roots(vec![root])
+        .review_stage()
+        .expect("review");
+    let spec = reviewer.last_spec_for("reviewer").expect("reviewer");
+    assert_eq!(spec.codex_config, ["skills.include_instructions=false"]);
+}
+
+#[test]
+fn committer_keeps_the_skill_sentence_only_when_the_commit_skill_is_missing() {
+    let fx = codex(committing_fixture());
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    assert!(agent_text(&runner, "committer").contains(SENTENCE));
+
+    let fx = codex(committing_fixture());
+    let root = skill_root(&fx, &["dev-workflow-skills/1-git-commit"]);
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .with_codex_skill_roots(vec![root])
+        .build_stage()
+        .expect("build");
+    let text = agent_text(&runner, "committer");
+    assert!(!text.contains(SENTENCE), "{text}");
+    assert!(text.contains("skill catalog"), "{text}");
+}
+
+#[test]
+fn kb_with_kb_refresh_installed_has_no_skill_sentence() {
+    let fx = with_kb(codex(Fixture::new()));
+    let root = skill_root(&fx, &["kb-refresh"]);
+    let runner = scripted(vec![reply("No relevant changes")]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .with_codex_skill_roots(vec![root])
+        .kb_refresh_step(None)
+        .expect("kb");
+    let text = agent_text(&runner, "kb");
+    assert!(!text.contains(SENTENCE), "{text}");
+}
+
 #[test]
 fn network_is_on_only_for_builder_roles() {
     let fx = codex(committing_fixture());
