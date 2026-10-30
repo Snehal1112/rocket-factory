@@ -1051,6 +1051,32 @@ fn review_part_without_the_file_names_the_verdict() {
 }
 
 #[test]
+fn review_part_reads_the_file_inside_the_job_folder() {
+    let mut fx = committing_fixture();
+    fx.config.fix_rounds = 0;
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let rr = reviewer(TWO_BLOCKERS);
+    let e = fx.engine(&rr);
+    let out = e.review_stage().expect("review");
+    // A stored path with folders must still resolve to the file in the job folder.
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board
+        .find_mut("001")
+        .expect("job")
+        .last_review
+        .as_mut()
+        .expect("last_review")
+        .file = "../x/review-code-r1.md".into();
+    board.save(&fx.board_path).expect("save");
+    e.apply_decision(&out).expect("apply");
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.parts[0].title, "Review");
+    let text = &rec.parts[0].text;
+    assert!(text.contains("[blocker]"), "{text}");
+    assert!(!text.contains("findings file missing"), "{text}");
+}
+
+#[test]
 fn nothing_changed_after_a_review_fix_shows_the_review() {
     let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);

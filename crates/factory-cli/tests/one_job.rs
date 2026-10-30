@@ -194,6 +194,10 @@ fn new_refuses_a_risky_spec_without_a_user_decision() {
         "{err}"
     );
     assert!(err.to_string().contains("--accept-spec"), "{err}");
+    assert!(
+        err.to_string().contains(factory_engine::SPEC_OVERRIDE_HINT),
+        "{err}"
+    );
     assert_no_jobs(&fx);
 }
 
@@ -247,6 +251,7 @@ fn accept_spec_is_validated_before_anything_is_created() {
         ("   ", "the accept-spec reason is empty"),
         ("two\nlines", "the accept-spec reason must be one line"),
         ("a\rb", "the accept-spec reason must be one line"),
+        ("\r", "the accept-spec reason is empty"),
         (
             long.as_str(),
             "the accept-spec reason is longer than 200 characters",
@@ -259,6 +264,31 @@ fn accept_spec_is_validated_before_anything_is_created() {
         assert!(err.to_string().contains(message), "{err}");
     }
     assert_no_jobs(&fx);
+}
+
+#[test]
+fn accept_spec_of_exactly_200_characters_is_not_refused() {
+    let fx = Fixture::with_risk_path("src-tauri/**");
+    let plans = plans_folder(&fx, 1, 1);
+    let risky = std::fs::read_to_string(plans.join("plan-01-x.md"))
+        .expect("plan")
+        .replace("`a.rs`", "`src-tauri/src/lib.rs`");
+    std::fs::write(plans.join("plan-01-x.md"), risky).expect("plan");
+    let spec = SPEC.replace("Decided by: user", "Decided by: call");
+    std::fs::write(plans.join("spec.md"), spec).expect("spec");
+    let dir = plans.to_str().expect("utf8");
+    let reason = "x".repeat(200);
+    let out = fx
+        .run(&["new", "demo", "f", "--plans", dir, "--accept-spec", &reason])
+        .expect("created");
+    assert!(out.contains("warning: spec accepted by the user"), "{out}");
+    let board = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    )
+    .load()
+    .expect("board");
+    assert_eq!(board.jobs.len(), 1);
 }
 
 #[test]

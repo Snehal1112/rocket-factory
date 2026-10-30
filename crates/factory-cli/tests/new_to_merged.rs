@@ -874,6 +874,7 @@ fn waive_reason_must_be_one_short_line() -> TestResult {
             "the waive reason must be one line",
         ),
         ("a\rb".to_string(), "the waive reason must be one line"),
+        ("\r".to_string(), "the waive reason is empty"),
         (
             "x".repeat(201),
             "the waive reason is longer than 200 characters",
