@@ -94,6 +94,8 @@ pub struct AgentSpec {
     pub writable_roots: Vec<PathBuf>,
     /// Allows network access in the Codex workspace-write sandbox. Claude ignores it.
     pub network: bool,
+    /// Extra `-c` values for the Codex runner. Claude ignores them.
+    pub codex_config: Vec<String>,
 }
 
 impl AgentSpec {
@@ -124,6 +126,7 @@ impl AgentSpec {
             sandbox: None,
             writable_roots: Vec::new(),
             network: false,
+            codex_config: Vec::new(),
         }
     }
 
