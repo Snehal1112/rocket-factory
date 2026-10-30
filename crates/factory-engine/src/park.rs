@@ -109,19 +109,18 @@ impl Engine<'_> {
 
     /// Evidence for a park the decision step chose. Anything that cannot be read is left out.
     pub(crate) fn decision_parts(&self, kind: ParkKind, reason: &str) -> Vec<ParkPart> {
-        let paths = self.job_changed_paths().unwrap_or_default();
         match kind {
             ParkKind::ChecksFailed => part_from_file(&self.job_dir, "checks.md", "Checks")
                 .into_iter()
                 .collect(),
             ParkKind::ChangesRemain => {
-                let mut parts = self.lead_parts(&paths);
+                let mut parts = self.lead_parts(&self.job_changed_paths().unwrap_or_default());
                 parts.extend(self.rounds_part());
                 parts.extend(self.stat_part());
                 parts
             }
             ParkKind::RiskyDiff => {
-                let mut parts = self.lead_parts(&paths);
+                let mut parts = self.lead_parts(&self.job_changed_paths().unwrap_or_default());
                 if parts.is_empty() {
                     parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 }
@@ -135,7 +134,7 @@ impl Engine<'_> {
                 parts
             }
             ParkKind::NoChecks | ParkKind::NoTests => {
-                let mut parts = self.lead_parts(&paths);
+                let mut parts = self.lead_parts(&self.job_changed_paths().unwrap_or_default());
                 parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks"));
                 parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 parts
