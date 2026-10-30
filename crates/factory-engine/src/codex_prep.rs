@@ -191,6 +191,16 @@ mod tests {
         assert!(skill_gap("committer", &[commit], &[]));
         assert!(!skill_gap("kb", &[kb], &list(&["kb-refresh"])));
         assert!(skill_gap("kb", &[other], &list(&["kb-refresh"])));
+        assert!(!skill_gap(
+            "kb",
+            &[found("kb-refresh", "refresh")],
+            &list(&["kb-refresh"])
+        ));
+        assert!(!skill_gap(
+            "committer",
+            &[found("", "dev-workflow-skills")],
+            &list(&["dev-workflow-skills"])
+        ));
     }
 
     #[test]
