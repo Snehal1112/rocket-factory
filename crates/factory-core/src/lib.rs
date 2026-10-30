@@ -30,6 +30,12 @@ pub mod version;
 /// The global `/factory` slash command that `factory install` writes.
 pub const GLOBAL_COMMAND: &str = include_str!("../assets/global-command.md");
 
+/// The Claude Code harness notes, also the tail of `GLOBAL_COMMAND`.
+pub const TOOL_MAP_CLAUDE: &str = include_str!("../assets/tool-map-claude.md");
+
+/// The Codex harness notes, appended to the Codex skill and agent text.
+pub const TOOL_MAP_CODEX: &str = include_str!("../assets/tool-map-codex.md");
+
 pub use agent_drift::{agent_drift, rules_marker};
 pub use board::{
     Board, BuilderLast, Draft, Job, JobTokens, LastReview, Lease, ReviewState, SeriesPos,

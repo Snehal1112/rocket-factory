@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 
 pub use factory_core::GLOBAL_COMMAND;
-use factory_core::{claude_commands_dir, codex_skills_dir, write_atomic};
+use factory_core::{
+    claude_commands_dir, codex_skills_dir, write_atomic, TOOL_MAP_CLAUDE, TOOL_MAP_CODEX,
+};
 
 use crate::CliError;
 
@@ -105,100 +107,20 @@ fn codex_skill() -> Result<String, CliError> {
     build_codex_skill(GLOBAL_COMMAND)
 }
 
-fn replace_required(body: String, from: &str, to: &str) -> Result<String, CliError> {
-    if !body.contains(from) {
-        let head: String = from.chars().take(60).collect();
-        return Err(CliError::Refused(format!(
-            "global command text changed: {head}"
-        )));
-    }
-    Ok(body.replace(from, to))
-}
-
 fn build_codex_skill(command: &str) -> Result<String, CliError> {
     let body = command
         .split_once("\n---\n")
         .map(|(_, body)| body.trim_start())
         .unwrap_or(command);
-    let mut body = body
+    let body = body
         .strip_prefix("# Factory\n\nArguments: $ARGUMENTS\n")
-        .unwrap_or(body)
-        .replace("/factory", "$factory");
-    for (claude, codex) in [
-        (
-            "Keep a visible task list (TaskCreate and TaskUpdate) for steps 1 to 6 and update it at each milestone.",
-            "Keep a visible task list for steps 1 to 6 and update it at each milestone.",
-        ),
-        (
-            "Invoke `superpowers:brainstorming` yourself, with the user, in this session, and follow it fully. Spec quality comes from the interview, so do not shorten it.",
-            "Interview the user about the design before writing the spec. Cover the goal, alternatives, tradeoffs, edge cases and testing. Spec quality comes from the interview, so do not shorten it.",
-        ),
-        (
-            "These overrides win where the skill says otherwise:",
-            "Interview rules:",
-        ),
-        (
-            "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words. The user asked for this because open questions were too hard to answer. It replaces the skill's open first question, its \"a single sentence with no list of example answers\", its \"Offer a short menu only when they're stuck\" and its Red Flags row \"Options steer\".",
-            "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words. Ask one question at a time and record each answer in the spec.",
-        ),
-        (
-            "If the user takes the skill's opt-out and skips the questions,",
-            "If the user skips the questions,",
-        ),
-        (
-            "The skill goes from approval straight to `superpowers:writing-plans`. Here the commit after the spec approval comes first (the last bullet of this step), then step 2.",
-            "After spec approval, commit the approved spec as the last bullet of this step, then write the plans in step 2.",
-        ),
-        (
-            "The skill's builder check reads the spec before the user sees it. It is the one subagent this step uses: do the interview and the writing yourself, and do not do the builder's or reviewer's work.",
-            "Before showing the spec to the user, review it against the quality bar and check that a builder can implement it without asking questions. Do the interview and writing yourself; do not do the builder's or reviewer's work.",
-        ),
-        (
-            "commit through the `dev-workflow-skills:1-git-commit` skill with a pathspec",
-            "commit with an exact pathspec",
-        ),
-        (
-            "Invoke `superpowers:writing-plans` yourself and write the plans in its style. The factory driver is the execution method: skip the skill's execution handoff question and do not offer to run the plans yourself.",
-            "Write the plans using the rules below. The factory driver is the execution method; do not offer to run the plans yourself.",
-        ),
-        (
-            "the header is the skill's template, with the repo-relative spec path (`docs/superpowers/specs/<date>-<slug>-design.md`) as its Spec line and its line for agentic workers, which offers a choice of executor, replaced by this executor line: `> **Executor:** the factory driver runs this plan using superpowers:subagent-driven-development, with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.`",
-            "the header names the plan and includes `> **Spec:** docs/superpowers/specs/<date>-<slug>-design.md` and this executor line: `> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.`",
-        ),
-        (
-            "Review Focus as the skill defines it, as a numbered list:",
-            "Review Focus as a numbered list:",
-        ),
-        (
-            "the skill's plan self-review is run and its findings fixed",
-            "review each plan against these rules and fix every finding",
-        ),
-        (
-            "The Bash output shows a line starting `needs consent:`",
-            "The command output shows a line starting `needs consent:`",
-        ),
-        (
-            "run `<factory> --project <name> run <id> --series` as a Bash command with `run_in_background` set to true, and tell the user in one line that the factory is running. Then stop. Do not poll, do not sleep, do not read logs. The supervisor or the harness reports the end.",
-            "start `<factory> --project <name> run <id> --series` as a long-running command using the available command execution tool. If it returns a still-running session or process handle, keep the handle for harness notification when it finishes. Tell the user in one line that the factory is running. Then stop. Do not poll, do not sleep, do not read logs. If it returns a final exit/completion result, including a non-zero exit, continue to step 6 immediately. Do not report a completed or failed process as running.",
-        ),
-        (
-            "When the run ends (the harness notifies you for a background run; with the supervisor the user asks, or the dashboard shows it),",
-            "When the run ends (the command tool returns a final result, the harness notifies you that a live session ended, the user asks, or the dashboard shows it),",
-        ),
-    ] {
-        body = replace_required(body, claude, codex)?;
-    }
-    let opus_instruction = "A feature may start or end with the single token `--opus`. Remove that token from the text and pass `--model claude-opus-5-5` to `<factory> --project <name> new`. It may likewise start or end with the single token `--one-job`, in any order together with `--opus` (either token may be at the start or the end), handled the same way: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`.";
-    body = replace_required(body, opus_instruction, "`--opus` is a Claude-only option. If it appears at the start or end of a feature request, explain that this Codex skill does not accept it and ask the user to select a Codex model in the project configuration; stop before creating a draft or job. A feature may start or end with the single token `--one-job`: remove it from the feature text and slug, and pass `--one-job` to `<factory> --project <name> new`.")?;
-    let new_instruction =
-        "adding `--model claude-opus-5-5` when `--opus` was given and `--one-job` when `--one-job` was given";
-    body = replace_required(
-        body,
-        new_instruction,
-        "adding `--one-job` when `--one-job` was given",
-    )?;
+        .unwrap_or(body);
+    let shared = body.strip_suffix(TOOL_MAP_CLAUDE).ok_or_else(|| {
+        CliError::Refused("global command must end with the Claude tool map".into())
+    })?;
+    let shared = shared.trim_end().replace("/factory", "$factory");
     Ok(format!(
-        "---\nname: factory\ndescription: {SKILL_DESCRIPTION}\n---\n\n# Factory\n\nUse the user's accompanying request as the factory arguments.\n\n{body}"
+        "---\nname: factory\ndescription: {SKILL_DESCRIPTION}\n---\n\n# Factory\n\nUse the user's accompanying request as the factory arguments.\n\n{shared}\n\n{TOOL_MAP_CODEX}"
     ))
 }
 
@@ -294,12 +216,9 @@ mod tests {
     }
 
     #[test]
-    fn codex_skill_reports_a_changed_command() {
-        let error = build_codex_skill("# Factory\n\nnothing the rewrite expects\n")
-            .expect_err("changed command must be an error");
-        assert!(
-            error.to_string().contains("global command text changed"),
-            "{error}"
-        );
+    fn codex_skill_reports_a_missing_claude_map() {
+        let error = build_codex_skill("# Factory\n\nno map here\n")
+            .expect_err("a command without the Claude map must be an error");
+        assert!(error.to_string().contains("Claude tool map"), "{error}");
     }
 }
