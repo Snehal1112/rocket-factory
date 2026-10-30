@@ -275,6 +275,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn round_line_renders_round_sync_and_old_lines() {
+        assert_eq!(
+            round_line("Ruling: sync review round 1 (sync) verdict Approve, 0 blockers"),
+            Some("round 1 (sync): approve, 0 blockers".to_string())
+        );
+        assert_eq!(
+            round_line("Ruling: review round 2 (rework) verdict Changes, 3 blockers"),
+            Some("round 2 (rework): changes, 3 blockers".to_string())
+        );
+        assert_eq!(
+            round_line("Ruling: review round 2 verdict Changes"),
+            Some("round 2 (?): changes, ? blockers".to_string())
+        );
+        assert_eq!(round_line("Task 1: complete"), None);
+    }
+
+    #[test]
     fn builder_stop_parts_carry_the_stop_reason_and_the_last_message() {
         let mut run = factory_agent::AgentRun::failed("boom");
         run.result_text = "I could not find the file.".to_string();

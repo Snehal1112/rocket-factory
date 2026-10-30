@@ -156,3 +156,35 @@ fn a_park_writes_the_summary_on_the_board() {
     assert!(summary.starts_with("verdict changes"), "{summary}");
     assert!(!summary.contains('\n') && summary.chars().count() <= 160);
 }
+
+#[test]
+fn a_merge_error_is_its_own_part() {
+    let fx = common::approved_job();
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.head = None;
+            Ok(())
+        })
+        .expect("clear head");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Parked(_)), "{r:?}");
+    let rec = merge_record(&fx);
+    let part = only_part(&rec);
+    assert_eq!(part.title, "Merge error");
+    assert_eq!(part.source, "git");
+    assert!(part.text.contains("no recorded head"), "{}", part.text);
+}
+
+#[test]
+fn a_job_without_a_plan_names_the_missing_file() {
+    let fx = common::SeriesFixture::new("x");
+    let job = factory_engine::create_job(&fx.driver, "x", "f", None, None).expect("create");
+    factory_engine::run_job(&fx.driver, &job.id).expect("run");
+    let job = fx.driver.job(&job.id).expect("job");
+    let rec = ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    let part = &rec.parts[0];
+    assert_eq!(part.title, "Missing plan");
+    assert!(part.text.starts_with("expected "), "{}", part.text);
+    assert!(part.text.ends_with("plan.md"), "{}", part.text);
+}

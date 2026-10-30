@@ -928,13 +928,13 @@ fn risky_failing_checks_with_zero_rounds_park_at_once() {
         .job_dir
         .join(format!("changes-r{}.md", parked_round + 1))
         .exists());
-    let mut fx = committing_fixture();
-    fx.config.checks = failing_check();
+    let mut control = committing_fixture();
+    control.config.checks = failing_check();
     assert_eq!(
-        run_risky_build_with_failing_check(&fx),
+        run_risky_build_with_failing_check(&control),
         StageOutcome::Advanced(Stage::Build)
     );
-    assert!(fx.job().round > parked_round);
+    assert!(control.job_dir.join("changes-r2.md").exists());
 }
 
 fn titles(rec: &factory_core::ParkRecord) -> Vec<&str> {
@@ -980,12 +980,7 @@ fn risky_park_evidence_starts_with_the_review() {
         "{}",
         rec.parts[0].text
     );
-    assert!(
-        rec.parts[2].text.contains("round 1 (build): approve")
-            || rec.parts[2].text.contains("round 1 (build): Approve"),
-        "{}",
-        rec.parts[2].text
-    );
+    assert_eq!(rec.parts[2].text, "round 1 (build): approve, 0 blockers");
     assert_eq!(rec.verdict.as_deref(), Some("approve"));
     assert_eq!(rec.risky, Some(true));
     let raw = std::fs::read_to_string(fx.job_dir.join(factory_core::PARK_FILE)).expect("raw");
@@ -1093,6 +1088,42 @@ fn risky_final_check_park_keeps_the_risk_part() {
     ));
     let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, factory_core::ParkKind::ChecksFailed);
-    assert_eq!(&titles(&rec)[..2], &["Review", "Risk"]);
+    assert_eq!(titles(&rec), vec!["Review", "Risk", "Failing checks"]);
+    let last = rec.parts.last().expect("last part");
+    assert_eq!(last.source, "checks");
+    assert!(!last.text.is_empty());
     assert_eq!(rec.risky, Some(true));
+}
+
+#[test]
+fn a_round_two_gate_park_shows_the_round_one_review() {
+    let mut fx = committing_fixture();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let rr = reviewer(TWO_BLOCKERS);
+    let e = fx.engine(&rr);
+    let out = e.review_stage().expect("review");
+    e.apply_decision(&out).expect("apply");
+    fx.config.checks = vec![factory_core::CheckRule {
+        paths: vec!["src/**".into()],
+        commands: vec!["false".into()],
+    }];
+    let builder: Effect = Box::new(|spec| {
+        std::fs::write(spec.cwd.join("b.txt"), "y\n").expect("write");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![builder]);
+    fx.engine(&runner).build_stage().expect("build r2");
+    assert!(matches!(
+        fx.engine(&runner).checks_stage().expect("checks r2"),
+        StageOutcome::NeedsHuman(_)
+    ));
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::NoChecks);
+    assert_eq!(fx.job().round, 2);
+    assert_eq!(rec.parts[0].title, "Review");
+    assert!(
+        rec.parts[0].text.starts_with("verdict changes, round 1"),
+        "{}",
+        rec.parts[0].text
+    );
 }
