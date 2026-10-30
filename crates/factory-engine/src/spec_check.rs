@@ -384,4 +384,29 @@ mod tests {
             risky_without_user_decision(SPEC_NONE, &["### Task 1\n\n- [ ] step\n".into()], &cfg());
         assert_eq!(got, None);
     }
+
+    #[test]
+    fn paths_outside_files_blocks_are_ignored() {
+        let text = "Touch `before.rs` first.\n\n**Files:**\n- Modify: `in.rs`\n\nSee `after.rs` too.\n- Modify: `late.rs`\n";
+        assert_eq!(plan_file_paths(text), vec!["in.rs"]);
+    }
+
+    #[test]
+    fn two_paths_on_one_line_are_both_read() {
+        let text = "**Files:**\n- Modify: `a.rs` and `b.rs`\n";
+        assert_eq!(plan_file_paths(text), vec!["a.rs", "b.rs"]);
+    }
+
+    #[test]
+    fn a_degraded_config_makes_every_path_risky() {
+        let cfg = Config {
+            risk_paths: vec!["**".to_string()],
+            ..Config::default()
+        };
+        let got = risky_without_user_decision(SPEC_NONE, &[plan("docs/a.md")], &cfg);
+        assert!(got.is_some());
+        let got =
+            risky_without_user_decision(SPEC_NONE, &["### Task 1\n\n- [ ] step\n".into()], &cfg);
+        assert_eq!(got, None);
+    }
 }

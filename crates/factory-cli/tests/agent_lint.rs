@@ -825,15 +825,19 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
     Ok(())
 }
 
+/// Every reviewer agent file: the repo copy and the five presets.
+const REVIEWER_FILES: [&str; 6] = [
+    ".claude/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
+    "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
+];
+
 #[test]
 fn reviewer_files_carry_the_vision_rule_and_declined_to_judge() -> TestResult {
-    for path in [
-        ".claude/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
-    ] {
+    for path in REVIEWER_FILES {
         let text = read(path)?;
         require_all(
             &text,
@@ -904,13 +908,7 @@ fn presets_name_subagent_driven_development_and_not_executing_plans() -> TestRes
 
 #[test]
 fn reviewer_files_name_the_review_focus_and_the_builder_rulings() -> TestResult {
-    for path in [
-        ".claude/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
-    ] {
+    for path in REVIEWER_FILES {
         require_all(&read(path)?, path, &["Review Focus", "rulings", "concerns"])?;
     }
     Ok(())
@@ -918,29 +916,23 @@ fn reviewer_files_name_the_review_focus_and_the_builder_rulings() -> TestResult 
 
 #[test]
 fn reviewer_files_tag_fixed_findings() -> TestResult {
-    for path in [
-        ".claude/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
-    ] {
-        require_all(&read(path)?, path, &["[fixed]", "keeps no other tag"])?;
+    for path in REVIEWER_FILES {
+        require_all(
+            &read(path)?,
+            path,
+            &[
+                "[fixed]",
+                "keeps no other tag",
+                "- When the prompt says this is a re-review, give a verdict for each earlier finding. A finding that is fixed is tagged `[fixed]` and keeps no other tag. A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. Inspect the fix diff only, and put anything else under `Out-of-scope observations` without changing the verdict.",
+            ],
+        )?;
     }
     Ok(())
 }
 
 #[test]
 fn reviewer_files_carry_the_grading_rubric() -> TestResult {
-    for path in [
-        ".claude/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
-    ] {
+    for path in REVIEWER_FILES {
         let text = read(path)?;
         require_all(
             &text,
@@ -1029,14 +1021,7 @@ fn builder_files_carry_the_quality_bar() -> TestResult {
 
 #[test]
 fn reviewer_files_check_edge_cases_reuse_and_efficiency() -> TestResult {
-    for path in [
-        ".claude/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/csharp/agents/factory-code-reviewer.md",
-        "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
-    ] {
+    for path in REVIEWER_FILES {
         require_all(
             &read(path)?,
             path,

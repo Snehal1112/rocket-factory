@@ -33,6 +33,27 @@ fn plans_folder(fx: &Fixture, count: usize, tasks: usize) -> PathBuf {
     plans
 }
 
+/// Asserts that the board holds no job.
+fn assert_no_jobs(fx: &Fixture) {
+    let board = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    )
+    .load()
+    .expect("board");
+    assert!(board.jobs.is_empty());
+}
+
+/// Puts a risky path in plan-01 and makes every spec decision a call.
+fn make_risky(plans: &std::path::Path) {
+    let risky = std::fs::read_to_string(plans.join("plan-01-x.md"))
+        .expect("plan")
+        .replace("`a.rs`", "`src-tauri/src/lib.rs`");
+    std::fs::write(plans.join("plan-01-x.md"), risky).expect("plan");
+    let spec = SPEC.replace("Decided by: user", "Decided by: call");
+    std::fs::write(plans.join("spec.md"), spec).expect("spec");
+}
+
 fn set_budget(fx: &Fixture, budget: u64) {
     let path = fx.root.join(".claude/factory/config.toml");
     let mut text = std::fs::read_to_string(&path).expect("config");
@@ -173,8 +194,46 @@ fn new_refuses_a_risky_spec_without_a_user_decision() {
         "{err}"
     );
     assert!(err.to_string().contains("--accept-spec"), "{err}");
-    let status = fx.run(&["status"]).expect("status");
-    assert!(!status.contains("demo"), "{status}");
+    assert_no_jobs(&fx);
+}
+
+#[test]
+fn a_series_with_a_risky_plan_is_refused() {
+    let fx = Fixture::with_risk_path("src-tauri/**");
+    let plans = plans_folder(&fx, 2, 1);
+    make_risky(&plans);
+    let err = fx
+        .run(&["new", "demo", "f", "--plans", plans.to_str().expect("utf8")])
+        .expect_err("refused");
+    assert!(
+        err.to_string()
+            .contains("no decision in it was answered by the user"),
+        "{err}"
+    );
+    assert_no_jobs(&fx);
+}
+
+#[test]
+fn one_job_with_a_risky_plan_is_refused() {
+    let fx = Fixture::with_risk_path("src-tauri/**");
+    let plans = plans_folder(&fx, 2, 1);
+    make_risky(&plans);
+    let err = fx
+        .run(&[
+            "new",
+            "demo",
+            "f",
+            "--plans",
+            plans.to_str().expect("utf8"),
+            "--one-job",
+        ])
+        .expect_err("refused");
+    assert!(
+        err.to_string()
+            .contains("no decision in it was answered by the user"),
+        "{err}"
+    );
+    assert_no_jobs(&fx);
 }
 
 #[test]
@@ -182,14 +241,24 @@ fn accept_spec_is_validated_before_anything_is_created() {
     let fx = Fixture::new();
     let plans = plans_folder(&fx, 1, 1);
     let dir = plans.to_str().expect("utf8");
-    for reason in ["", "two\nlines", &"x".repeat(201)] {
+    let long = "x".repeat(201);
+    let cases = [
+        ("", "the accept-spec reason is empty"),
+        ("   ", "the accept-spec reason is empty"),
+        ("two\nlines", "the accept-spec reason must be one line"),
+        ("a\rb", "the accept-spec reason must be one line"),
+        (
+            long.as_str(),
+            "the accept-spec reason is longer than 200 characters",
+        ),
+    ];
+    for (reason, message) in cases {
         let err = fx
             .run(&["new", "demo", "f", "--plans", dir, "--accept-spec", reason])
             .expect_err("refused");
-        assert!(err.to_string().contains("accept-spec reason"), "{err}");
+        assert!(err.to_string().contains(message), "{err}");
     }
-    let status = fx.run(&["status"]).expect("status");
-    assert!(!status.contains("demo"), "{status}");
+    assert_no_jobs(&fx);
 }
 
 #[test]
