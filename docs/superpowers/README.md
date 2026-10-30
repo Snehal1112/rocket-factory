@@ -28,10 +28,11 @@ This index lists each spec with its plans. It does not track whether a series me
 | Codex support audit | `specs/2026-10-22-codex-support-audit-design.md` | `plans/2026-10-22-codex-support-audit.md` |
 | Structured logging gaps | `specs/2026-10-24-structured-logging-design.md` | `plans/2026-10-24-structured-logging/` |
 | Act on review findings | `specs/2026-10-29-act-on-review-findings-design.md` | `plans/2026-10-29-act-on-review-findings/` |
+| Harness hardening (issue #40) | `specs/2026-10-30-harness-hardening-design.md` | `plans/2026-10-30-harness-hardening/` |
 
 Plans with no spec of their own:
 
 - `plans/2026-10-23-code-review-fixes.md`
 - `plans/2026-10-24-node-preset.md`
-
+- `plans/2026-10-30-review-gate-follow-ups.md` (issues #28 to #31)
 When you add a spec or a plan series, add a row here.

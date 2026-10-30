@@ -55,6 +55,16 @@ pub(crate) fn part_from_file(dir: &Path, file: &str, title: &str) -> Option<Park
     Some(ParkPart::new(title, file, &text))
 }
 
+/// The evidence list, or one `Why it stopped` part with the reason when it is empty.
+pub(crate) fn evidence_or_reason(parts: Vec<ParkPart>, reason: &str) -> Vec<ParkPart> {
+    // No park keeps an empty evidence list.
+    if parts.is_empty() {
+        vec![ParkPart::new("Why it stopped", "driver", reason)]
+    } else {
+        parts
+    }
+}
+
 /// Replaces `park.json` in `dir`. The old record goes first, so a failed write leaves none behind.
 pub(crate) fn write_record(dir: &Path, record: &ParkRecord) {
     let _ = std::fs::remove_file(dir.join(factory_core::PARK_FILE));
@@ -70,29 +80,19 @@ impl Engine<'_> {
         reason: String,
         parts: Vec<ParkPart>,
     ) -> Result<StageOutcome, EngineError> {
+        // A park must still happen when the board cannot be read, so a missing job falls back to round 1.
         let job = self.job().ok();
         let round = job.as_ref().map_or(1, |j| j.round);
         let review_missing = job.as_ref().is_some_and(|j| j.review_missing);
         let at = now().max(0.0) as u64;
-        // No park keeps an empty evidence list.
-        let parts = if parts.is_empty() {
-            vec![ParkPart::new("Why it stopped", "driver", &reason)]
-        } else {
-            parts
-        };
+        let parts = evidence_or_reason(parts, &reason);
         let mut record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
         // A park that offers approve says so when the review has not run, because a plain approve is refused.
         record.verdict = job
             .as_ref()
             .and_then(|j| j.last_review.as_ref())
             .map(|r| r.verdict.clone());
-        let changes_open = job.as_ref().is_some_and(|j| j.changes_open);
-        let hint = if changes_open {
-            Some("changes")
-        } else {
-            record.verdict.as_deref()
-        };
-        record.next = kind.next_for(&self.job_id, review_missing, hint);
+        record.next = kind.next_for(&self.job_id, review_missing, record.verdict.as_deref());
         if self.is_risky() {
             record.risky = Some(true);
         }
@@ -109,18 +109,20 @@ impl Engine<'_> {
 
     /// Evidence for a park the decision step chose. Anything that cannot be read is left out.
     pub(crate) fn decision_parts(&self, kind: ParkKind, reason: &str) -> Vec<ParkPart> {
+        // The changed paths are read only by the kinds that lead with Review and Risk.
+        let lead = || self.lead_parts(&self.job_changed_paths().unwrap_or_default());
         match kind {
             ParkKind::ChecksFailed => part_from_file(&self.job_dir, "checks.md", "Checks")
                 .into_iter()
                 .collect(),
             ParkKind::ChangesRemain => {
-                let mut parts = self.lead_parts();
+                let mut parts = lead();
                 parts.extend(self.rounds_part());
                 parts.extend(self.stat_part());
                 parts
             }
             ParkKind::RiskyDiff => {
-                let mut parts = self.lead_parts();
+                let mut parts = lead();
                 if parts.is_empty() {
                     parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 }
@@ -134,7 +136,7 @@ impl Engine<'_> {
                 parts
             }
             ParkKind::NoChecks | ParkKind::NoTests => {
-                let mut parts = self.lead_parts();
+                let mut parts = lead();
                 parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks"));
                 parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 parts
@@ -158,9 +160,9 @@ impl Engine<'_> {
     }
 
     /// The Review part, then the Risk part when the diff is risky.
-    pub(crate) fn lead_parts(&self) -> Vec<ParkPart> {
+    pub(crate) fn lead_parts(&self, paths: &[String]) -> Vec<ParkPart> {
         let mut parts: Vec<ParkPart> = self.review_part().into_iter().collect();
-        parts.extend(self.risk_part());
+        parts.extend(self.risk_part(paths));
         parts
     }
 
@@ -168,8 +170,11 @@ impl Engine<'_> {
     pub(crate) fn review_part(&self) -> Option<ParkPart> {
         let last = self.job().ok()?.last_review?;
         let head = format!("verdict {}, round {}", last.verdict, last.round);
-        let text = match std::fs::read_to_string(self.job_dir.join(&last.file)) {
-            Ok(reply) if last.verdict == "approve" => {
+        let reply = last
+            .path_in(&self.job_dir)
+            .and_then(|path| std::fs::read_to_string(path).ok());
+        let text = match reply {
+            Some(reply) if last.verdict == "approve" => {
                 let open = open_blockers(&reply);
                 if open.is_empty() {
                     head
@@ -177,19 +182,18 @@ impl Engine<'_> {
                     format!("{head}\n{}", open.join("\n"))
                 }
             }
-            Ok(reply) => format!("{head}\n{}", blocker_lines(&reply)),
-            Err(_) => format!("verdict {}, findings file missing", last.verdict),
+            Some(reply) => format!("{head}\n{}", blocker_lines(&reply)),
+            None => format!("verdict {}, findings file missing", last.verdict),
         };
         Some(ParkPart::new("Review", &last.file, &text))
     }
 
     /// The risky paths, and the ones fix rounds added after the first review. `None` when the diff is not risky.
-    pub(crate) fn risk_part(&self) -> Option<ParkPart> {
-        let paths = self.job_changed_paths().ok()?;
-        if classify_paths(&paths, &self.config) != DiffClass::Risky {
+    pub(crate) fn risk_part(&self, paths: &[String]) -> Option<ParkPart> {
+        if classify_paths(paths, &self.config) != DiffClass::Risky {
             return None;
         }
-        let mut text = risk_summary(&paths, &self.config);
+        let mut text = risk_summary(paths, &self.config);
         if let Ok(first) = std::fs::read_to_string(self.job_dir.join(RISKY_PATHS_FILE)) {
             let added: Vec<&str> = paths
                 .iter()
@@ -270,6 +274,23 @@ pub(crate) fn builder_blocked_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_line_renders_round_sync_and_old_lines() {
+        assert_eq!(
+            round_line("Ruling: sync review round 1 (sync) verdict Approve, 0 blockers"),
+            Some("round 1 (sync): approve, 0 blockers".to_string())
+        );
+        assert_eq!(
+            round_line("Ruling: review round 2 (rework) verdict Changes, 3 blockers"),
+            Some("round 2 (rework): changes, 3 blockers".to_string())
+        );
+        assert_eq!(
+            round_line("Ruling: review round 2 verdict Changes"),
+            Some("round 2 (?): changes, ? blockers".to_string())
+        );
+        assert_eq!(round_line("Task 1: complete"), None);
+    }
 
     #[test]
     fn builder_stop_parts_carry_the_stop_reason_and_the_last_message() {

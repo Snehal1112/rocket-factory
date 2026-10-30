@@ -3,7 +3,7 @@ use crate::fsutil::write_atomic;
 use crate::stage::Stage;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -208,14 +208,26 @@ pub struct SeriesPos {
 /// The latest code review of a job. New in the act-on-review-findings series, absent in older boards.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastReview {
+    /// The job round the review ran in.
     pub round: u32,
     /// `approve`, `changes` or `missing`.
     pub verdict: String,
     /// Open `[blocker]` lines in the review file.
     pub blockers: u32,
+    /// The review file's bare name in the job folder, for example `review-code-r2.md` or
+    /// `review-code-r1-sync1.md`.
     pub file: String,
     /// What started the review: `build`, `checks`, `review`, `rework` or `sync`.
     pub source: String,
+}
+
+impl LastReview {
+    /// The review file in `job_dir`. Only the last component of `file` is joined, so a hand-edited
+    /// board cannot point outside the job folder. `None` when `file` has no file name.
+    pub fn path_in(&self, job_dir: &Path) -> Option<PathBuf> {
+        let name = Path::new(&self.file).file_name()?;
+        Some(job_dir.join(name))
+    }
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -282,7 +294,8 @@ impl Job {
             .is_some_and(|r| r.verdict == "changes")
     }
 
-    /// The refusal that approve gives while the latest code review has open blockers.
+    /// The refusal that approve gives while the latest code review has open blockers. It is reached
+    /// only while `changes_open()` holds, so a `last_review` exists and its round is 1 or more.
     pub fn changes_open_message(&self) -> String {
         let (blockers, round, file) = self
             .last_review
@@ -861,11 +874,34 @@ mod tests {
 
     #[test]
     fn old_board_without_new_fields_loads() {
-        let text = serde_json::to_string(&job()).expect("json");
-        let back: Job = serde_json::from_str(&text).expect("old job loads");
+        let text = r#"{"id":"001","dir":"d","slug":"s","created":"2026-10-13","feature":"f",
+          "branch":"factory/001-s","stage":"needs-human","round":2,"stage_since":1.0,
+          "reviews":{"code":"changes"}}"#;
+        let back: Job = serde_json::from_str(text).expect("old job loads");
         assert_eq!(back.last_review, None);
         assert_eq!(back.rework_base, 0);
         assert!(!back.changes_open());
+    }
+
+    #[test]
+    fn last_review_path_stays_in_the_job_folder() {
+        let dir = Path::new("/jobs/001");
+        let mut last = LastReview {
+            round: 2,
+            verdict: "changes".into(),
+            blockers: 1,
+            file: "review-code-r2.md".into(),
+            source: "review".into(),
+        };
+        assert_eq!(last.path_in(dir), Some(dir.join("review-code-r2.md")));
+        last.file = "../../etc/passwd".into();
+        assert_eq!(last.path_in(dir), Some(dir.join("passwd")));
+        last.file = "/abs/review.md".into();
+        assert_eq!(last.path_in(dir), Some(dir.join("review.md")));
+        last.file = "..".into();
+        assert_eq!(last.path_in(dir), None);
+        last.file = String::new();
+        assert_eq!(last.path_in(dir), None);
     }
 
     fn job() -> Job {

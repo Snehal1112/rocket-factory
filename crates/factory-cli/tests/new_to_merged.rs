@@ -866,14 +866,32 @@ fn approve_with_waive_on_a_clean_job_is_refused() -> TestResult {
 #[test]
 fn waive_reason_must_be_one_short_line() -> TestResult {
     let sc = parked_with_changes()?;
-    for reason in ["".to_string(), "x".repeat(201)] {
+    let cases = [
+        ("".to_string(), "the waive reason is empty"),
+        ("   ".to_string(), "the waive reason is empty"),
+        (
+            "two\nlines".to_string(),
+            "the waive reason must be one line",
+        ),
+        ("a\rb".to_string(), "the waive reason must be one line"),
+        ("\r".to_string(), "the waive reason is empty"),
+        (
+            "x".repeat(201),
+            "the waive reason is longer than 200 characters",
+        ),
+    ];
+    for (reason, message) in cases {
         let e = sc
             .run(&["approve", "1", "--waive", &reason])
             .expect_err("bad reason");
         let text = e.to_string();
-        assert!(text.contains("waive reason"), "{text}");
+        assert!(text.contains(message), "{text}");
         assert_eq!(sc.stage("001")?, "needs-human");
     }
+    // Exactly 200 characters is accepted.
+    let out = sc.run(&["approve", "1", "--waive", &"x".repeat(200)])?;
+    assert!(out.starts_with("merged"), "{out}");
+    assert_eq!(sc.stage("001")?, "merged");
     Ok(())
 }
 
@@ -924,6 +942,24 @@ impl factory_engine::Tracker for CountCreates {
     fn close(&self, _: u32) -> Result<(), String> {
         Ok(())
     }
+}
+
+#[test]
+fn tickets_with_minor_tickets_off_says_so() -> TestResult {
+    let tracker = std::sync::Arc::new(CountCreates::default());
+    let sc = Scenario::new(
+        "minor_tickets = false\n",
+        vec![
+            build(vec![("b.txt", "b\n")], 1_000),
+            review("- [minor] nit\nVERDICT: APPROVE"),
+        ],
+    )?
+    .with_tracker(tracker.clone());
+    assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
+    let out = sc.run(&["tickets", "1"])?;
+    assert!(out.contains("skipped: minor_tickets is off"), "{out}");
+    assert_eq!(tracker.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
 }
 
 #[test]
@@ -1089,9 +1125,13 @@ fn rework_grants_a_full_set_of_fix_rounds() -> TestResult {
     assert_eq!(sc.job("1")?.round, 2);
     sc.run(&["rework", "1", "again"])?;
     assert_eq!(sc.job("1")?.round, 3);
-    sc.run(&["run", "1"])?;
+    assert_eq!(sc.job("1")?.rework_base, 2);
+    let end = sc.run(&["run", "1"])?;
+    assert!(end.starts_with("needs-human"), "{end}");
     // The CHANGES review of the rework round still started a fix round.
     assert_eq!(sc.job("1")?.round, 4);
+    assert_eq!(sc.stage("1")?, "needs-human");
+    assert_eq!(sc.job("1")?.park_kind.as_deref(), Some("changes-remain"));
     Ok(())
 }
 

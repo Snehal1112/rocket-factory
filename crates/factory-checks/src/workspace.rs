@@ -169,4 +169,45 @@ mod tests {
     fn bad_json_is_an_error() {
         assert!(Workspace::from_metadata("nope", Path::new("/r")).is_err());
     }
+
+    #[test]
+    fn load_reads_a_real_workspace() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = [
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"crates/core\", \"crates/app\"]\n",
+            ),
+            (
+                "crates/core/Cargo.toml",
+                "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("crates/core/src/lib.rs", "pub fn f() {}\n"),
+            (
+                "crates/app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ncore = { path = \"../core\" }\n",
+            ),
+            ("crates/app/src/lib.rs", "pub fn g() {}\n"),
+        ];
+        for (name, body) in files {
+            let path = dir.path().join(name);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            std::fs::write(path, body).expect("write");
+        }
+        let ws = Workspace::load(dir.path()).expect("load");
+        assert_eq!(ws.owner("crates/core/src/lib.rs"), Some("core"));
+        assert_eq!(ws.owner("crates/app/src/lib.rs"), Some("app"));
+        assert_eq!(ws.dependents(&set(&["core"])), ["app"]);
+    }
+
+    #[test]
+    fn load_fails_without_a_manifest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = Workspace::load(dir.path()).expect_err("no manifest");
+        assert!(
+            err.to_string()
+                .starts_with("workspace map: cargo metadata failed: "),
+            "{err}"
+        );
+    }
 }

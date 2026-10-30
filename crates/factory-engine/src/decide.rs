@@ -74,7 +74,8 @@ pub fn decide(i: &DecideInput) -> Decision {
     }
 }
 
-/// The fix rounds spent since the last rework, when the job is in `round`. Round 1 is the first build.
+/// The fix rounds spent since the last rework, when the job is in `round`.
+/// Round 1 is the first build.
 pub(crate) fn fix_rounds_used(round: u32, rework_base: u32) -> u32 {
     round.saturating_sub(1).saturating_sub(rework_base)
 }

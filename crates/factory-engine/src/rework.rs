@@ -31,12 +31,13 @@ impl Engine<'_> {
         let job = self.job()?;
         if let Some(last) = &job.last_review {
             if matches!(last.verdict.as_str(), "changes" | "missing") {
-                if let Ok(text) = std::fs::read_to_string(self.job_dir.join(&last.file)) {
+                let path = last.path_in(&self.job_dir);
+                if let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) {
                     return Ok(text);
                 }
             }
         }
-        if park_kind_is_checks_failed(&self.board_path, &self.job_id) {
+        if job.park_kind.as_deref() == Some("checks-failed") {
             if let Ok(text) = std::fs::read_to_string(self.job_dir.join("checks.md")) {
                 let fails: Vec<&str> = text.lines().filter(|l| l.starts_with("FAIL")).collect();
                 return Ok(fails.join("\n"));
@@ -44,15 +45,6 @@ impl Engine<'_> {
         }
         Ok(String::new())
     }
-}
-
-fn park_kind_is_checks_failed(board_path: &std::path::Path, id: &str) -> bool {
-    factory_core::board::Board::load(board_path)
-        .ok()
-        .and_then(|b| b.find(id).ok().map(|j| j.park_kind.clone()))
-        .flatten()
-        .as_deref()
-        == Some("checks-failed")
 }
 
 impl Driver {

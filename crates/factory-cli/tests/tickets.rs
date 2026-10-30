@@ -47,3 +47,22 @@ fn tickets_on_an_unmerged_job_skips_without_calls() {
         "{out}"
     );
 }
+
+#[test]
+fn tickets_prints_no_waiver_line_without_waivers() {
+    let mut fx = Fixture::new();
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&[
+        "new",
+        "hello",
+        "say hello",
+        "--plans",
+        plans.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    fx.ctx = fx.ctx.clone().with_tracker(Arc::new(NoCalls));
+    let out = fx.run(&["tickets", "1"]).expect("tickets");
+    assert!(!out.contains("waiver"), "{out}");
+    assert!(!out.contains("\n\n"), "{out}");
+}

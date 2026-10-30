@@ -89,8 +89,8 @@ pub(crate) struct JobView {
     /// The model the stored builder session ran on, if known.
     pub builder_session_model: Option<String>,
     pub review_missing: bool,
-    /// True when the latest code review asked for changes.
-    pub changes_open: bool,
+    /// The kind of the park the job is in, if any.
+    pub park_kind: Option<String>,
     /// The saved builder session of the task that was running, if any.
     pub task_session: Option<factory_core::board::TaskSession>,
     /// The last finished builder, task or fix, if any.
@@ -122,7 +122,7 @@ impl Engine<'_> {
             escalated_model: job.escalated_model.clone(),
             builder_session_model: job.builder_session_model.clone(),
             review_missing: job.review_missing(),
-            changes_open: job.changes_open(),
+            park_kind: job.park_kind.clone(),
             task_session: job.task_session.clone(),
             builder_last: job.builder_last.clone(),
             rework_base: job.rework_base,

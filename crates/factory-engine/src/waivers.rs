@@ -127,9 +127,12 @@ pub fn waiver_tickets_step(
     let mut list = read_waivers(&dir);
     if list.iter().all(|w| w.superseded) {
         report.skipped = true;
-        report
-            .lines
-            .push("skipped: the job has no waivers".to_string());
+        // A job that never had a waiver says nothing, so the line only shows when a rework dropped them.
+        if !list.is_empty() {
+            report
+                .lines
+                .push("skipped: every waiver was superseded by a rework".to_string());
+        }
         return Ok(report);
     }
     let base = driver.repo().base_branch().to_string();

@@ -24,6 +24,10 @@ fn built(fx: &Fixture, files: Vec<(&'static str, &'static str)>) -> ScriptedRunn
     runner
 }
 
+fn titles(rec: &ParkRecord) -> Vec<&str> {
+    rec.parts.iter().map(|p| p.title.as_str()).collect()
+}
+
 fn only_src_checks(fx: &mut Fixture) {
     fx.config.checks = vec![CheckRule {
         paths: vec!["src/**".into()],
@@ -85,6 +89,15 @@ fn risky_diff_with_an_unchecked_path_parks() {
     }
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, ParkKind::NoChecks);
+    assert_eq!(titles(&rec), ["Risk", "Checks", "Why it stopped"]);
+    assert!(
+        rec.parts[0]
+            .text
+            .starts_with("risky paths (1): src-tauri/src/lib.rs"),
+        "{}",
+        rec.parts[0].text
+    );
+    assert_eq!(rec.risky, Some(true));
 }
 
 #[test]
@@ -116,6 +129,37 @@ fn the_final_checks_gate_parks_an_approved_job() {
         ParkKind::NoChecks
     );
     assert_ne!(fx.job().stage, Stage::Approve);
+}
+
+#[test]
+fn a_risky_approve_meets_the_no_checks_gate() {
+    let mut fx = committing_fixture();
+    let runner = built(&fx, vec![("src-tauri/src/lib.rs", "x\n")]);
+    fx.engine(&runner)
+        .checks_stage()
+        .expect("checks mapped at round 1");
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let review = fx.engine(&rr).review_stage().expect("review");
+    assert!(
+        matches!(
+            review.decision,
+            Decision::NeedsHuman {
+                kind: ParkKind::RiskyDiff,
+                ..
+            }
+        ),
+        "{:?}",
+        review.decision
+    );
+    only_src_checks(&mut fx);
+    let out = fx.engine(&rr).apply_decision(&review).expect("apply");
+    assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::NoChecks);
+    assert_eq!(titles(&rec)[..2], ["Review", "Risk"]);
+    assert_eq!(rec.risky, Some(true));
+    assert_eq!(rec.verdict.as_deref(), Some("approve"));
+    assert_eq!(fx.job().stage, Stage::NeedsHuman);
 }
 
 fn ledger(fx: &Fixture) -> String {

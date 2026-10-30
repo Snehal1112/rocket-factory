@@ -1,7 +1,8 @@
 use factory_core::{park_summary, ParkKind, ParkPart, ParkRecord, Stage};
 use factory_git::{BaseState, MergeOutcome, Preflight};
 
-use crate::park::write_record;
+use crate::park::{evidence_or_reason, write_record};
+use crate::tickets::TicketsReport;
 use crate::{
     now_secs, sync_stage, tick_plan, Driver, EngineError, MessageKind, StoreError, SyncOutcome,
 };
@@ -41,12 +42,7 @@ pub fn park_with_parts(
 ) -> Result<(), EngineError> {
     let now = now_secs();
     let at = now.max(0.0) as u64;
-    // No park keeps an empty evidence list.
-    let parts = if parts.is_empty() {
-        vec![ParkPart::new("Why it stopped", "driver", reason)]
-    } else {
-        parts
-    };
+    let parts = evidence_or_reason(parts, reason);
     let summary = park_summary(reason, &parts);
     let job = driver.store().update_job(id, |job| {
         // A park written earlier, such as a failed check in the sync, keeps its kind and evidence.
@@ -79,6 +75,27 @@ pub fn park_with_parts(
     Ok(())
 }
 
+/// Reports the result of a step after the merge. A failure never changes the merge result.
+fn report_soft_step(
+    driver: &Driver,
+    id: &str,
+    step: &str,
+    result: Result<TicketsReport, EngineError>,
+) {
+    match result {
+        Ok(report) if report.failed => {
+            let text = report.lines.join("; ");
+            tracing::error!(event = "step.error", step, msg = %format!("{step} error for job {id}: {text}"));
+            crate::tickets::notify_failure(driver, id, &text);
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::error!(event = "step.error", step, msg = %format!("{step} error for job {id}: {err}"));
+            crate::tickets::notify_failure(driver, id, &err.to_string());
+        }
+    }
+}
+
 /// Merges the reviewed head into main, syncing first when main moved. Any failure parks the job.
 pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError> {
     match try_merge(driver, id) {
@@ -97,45 +114,27 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
             }
             // Ticket hygiene is best effort too: a failure is written to the ledger, the job output and the events, and never changes the merge.
             if driver.config().tickets_on_merge {
-                match crate::tickets::tickets_step(driver, id, false) {
-                    Ok(report) if report.failed => {
-                        let text = report.lines.join("; ");
-                        tracing::error!(event = "step.error", step = "tickets", msg = %format!("tickets error for job {id}: {text}"));
-                        crate::tickets::notify_failure(driver, id, &text);
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        tracing::error!(event = "step.error", step = "tickets", msg = %format!("tickets error for job {id}: {err}"));
-                        crate::tickets::notify_failure(driver, id, &err.to_string());
-                    }
-                }
+                report_soft_step(
+                    driver,
+                    id,
+                    "tickets",
+                    crate::tickets::tickets_step(driver, id, false),
+                );
             }
             // Waiver tickets are filed whether or not tickets_on_merge is set, and fail the same soft way.
-            match crate::waivers::waiver_tickets_step(driver, id, false) {
-                Ok(report) if report.failed => {
-                    let text = report.lines.join("; ");
-                    tracing::error!(event = "step.error", step = "waivers", msg = %format!("waivers error for job {id}: {text}"));
-                    crate::tickets::notify_failure(driver, id, &text);
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    tracing::error!(event = "step.error", step = "waivers", msg = %format!("waivers error for job {id}: {err}"));
-                    crate::tickets::notify_failure(driver, id, &err.to_string());
-                }
-            }
+            report_soft_step(
+                driver,
+                id,
+                "waivers",
+                crate::waivers::waiver_tickets_step(driver, id, false),
+            );
             // The minor ticket follows the same soft rule and has no series gate.
-            match crate::minors::minor_tickets_step(driver, id, false) {
-                Ok(report) if report.failed => {
-                    let text = report.lines.join("; ");
-                    tracing::error!(event = "step.error", step = "minors", msg = %format!("minors error for job {id}: {text}"));
-                    crate::tickets::notify_failure(driver, id, &text);
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    tracing::error!(event = "step.error", step = "minors", msg = %format!("minors error for job {id}: {err}"));
-                    crate::tickets::notify_failure(driver, id, &err.to_string());
-                }
-            }
+            report_soft_step(
+                driver,
+                id,
+                "minors",
+                crate::minors::minor_tickets_step(driver, id, false),
+            );
             // The costs refresh runs last so that it counts the kb run of this job.
             if let Err(err) = crate::costs::refresh_costs(driver) {
                 tracing::error!(event = "step.error", step = "costs_refresh", msg = %format!("costs refresh error for job {id}: {err}"));

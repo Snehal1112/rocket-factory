@@ -1769,6 +1769,29 @@ fn a_capped_away_dependents_check_still_leaves_its_note() {
 }
 
 #[test]
+fn a_broken_workspace_map_still_runs_the_checks() {
+    let mut fx = two_task_fixture();
+    fx.config.checks = vec![
+        rule("crates/core/**", "cargo test -j4 -p {dependents}"),
+        rule("crates/core/**", "true"),
+    ];
+    let write_broken: Effect = Box::new(|spec| {
+        std::fs::write(spec.cwd.join("Cargo.toml"), "not toml\n").expect("write manifest");
+        let path = spec.cwd.join("crates/core/src/lib.rs");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+        std::fs::write(path, "pub fn f() {}\n").expect("write");
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![write_broken]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
+    assert!(md.contains("NOTE workspace map unavailable"), "{md}");
+    assert!(md.contains("PASS true"), "{md}");
+    // Without a map the dependents rule plans no command.
+    assert!(!md.contains("cargo test -j4 -p"), "{md}");
+}
+
+#[test]
 fn a_task_with_no_mapped_checks_writes_nothing() {
     let mut fx = two_task_fixture();
     fx.config.checks = vec![rule("src/**", "false")];

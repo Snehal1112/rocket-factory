@@ -454,7 +454,9 @@ Refusals, each exiting with code 1:
 | `job N was cancelled` | Use `rework` to revive it. |
 | `job N is in stage X, approve needs needs-human or approve` | The job is not waiting for you. |
 | `job N has no code review yet ...` | Use `rework`, or `approve --without-review` to merge anyway. |
-| `the review asked for changes ...` | Use `rework`, `cancel`, or `approve --waive "<reason>"` to merge anyway. |
+| `job N has B open review blockers from round R (FILE): use rework, cancel, or approve --waive "<reason>" to merge anyway` | The last review asked for changes. Use `rework`, `cancel`, or `approve --waive` to merge anyway. |
+| `job N has no open review findings to waive` | `--waive` needs a last review that asked for changes. The job's last review approved, or it has none yet. Drop `--waive`, and add `--without-review` when no review ran. |
+| `job N review did not finish in round R: use rework, cancel, or approve --without-review to merge anyway` | The reviewer started but gave no verdict. |
 | `job N cannot be approved, the job changed files outside <sub>` | Monorepo projects only. Use `rework` so the builder removes those changes. |
 | `job N has a pending batch commit, use rework to finish it` | Use `rework`. |
 | `project is blocked: <reason>` | Fix the project settings. |

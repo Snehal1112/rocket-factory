@@ -116,9 +116,11 @@ fn a_risky_changes_verdict_runs_a_fix_round_then_waits_for_approve() -> TestResu
             review(APPROVE),
         ],
     )?;
+    let before = sc.main_tip()?;
     let end = sc.start(&sc.plan_b, false)?;
     assert!(end.starts_with("needs-human"), "{end}");
     assert_eq!(sc.stage("001")?, "needs-human");
+    assert_eq!(sc.main_tip()?, before);
     let layout = factory_core::Layout::in_repo(&sc.root);
     let dir = layout.job_dir(&sc.job("001")?.dir);
     assert!(dir.join("review-code-r1.md").exists());
@@ -126,6 +128,7 @@ fn a_risky_changes_verdict_runs_a_fix_round_then_waits_for_approve() -> TestResu
     let reviewed = sc.job("001")?.head.ok_or("no reviewed head")?;
     let approved = sc.run(&["approve", "1"])?;
     assert!(approved.starts_with("merged"), "{approved}");
+    assert_eq!(sc.stage("001")?, "merged");
     assert_eq!(sc.second_parent_of_last_merge()?, reviewed);
     Ok(())
 }

@@ -644,6 +644,40 @@ mod tests {
         );
     }
 
+    const OLD_REVIEWER_NOTE: &str = "agent drift: factory-code-reviewer.md lacks the rules marker, the section Stack, the section How to read, the section Check, the section Judging and the section Report; compare it with the rust preset or remove the override";
+
+    #[test]
+    fn an_old_override_lists_every_missing_item() {
+        let e = env();
+        let own = e.home.project_dir("p").join("agents");
+        std::fs::write(own.join("factory-code-reviewer.md"), "old reviewer\n").expect("write");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let drift: Vec<&String> = r
+            .notes
+            .iter()
+            .filter(|n| n.starts_with("agent drift"))
+            .collect();
+        assert_eq!(drift, [OLD_REVIEWER_NOTE]);
+    }
+
+    #[test]
+    fn a_base_tip_override_gives_a_drift_note() {
+        let e = env();
+        let mut tip = Tip::default();
+        tip.dirs.insert(
+            AGENTS_DIR.to_string(),
+            vec![("factory-code-reviewer.md".into(), "old\n".into())],
+        );
+        let r = resolve(&e.home, "p", &tip).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(
+            r.notes.iter().any(|n| n == OLD_REVIEWER_NOTE),
+            "{:?}",
+            r.notes
+        );
+    }
+
     #[test]
     fn no_override_no_drift() {
         let e = env();

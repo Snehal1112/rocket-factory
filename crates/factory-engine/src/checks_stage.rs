@@ -113,11 +113,7 @@ impl Engine<'_> {
     }
 
     /// The no-checks gate: a park kind and reason when a changed code path has no check rule.
-    pub(crate) fn gate_checks(
-        &self,
-        paths: &[String],
-        _report: &ChecksReport,
-    ) -> Option<(ParkKind, String)> {
+    pub(crate) fn gate_checks(&self, paths: &[String]) -> Option<(ParkKind, String)> {
         no_checks_reason(paths, &self.config).map(|r| (ParkKind::NoChecks, r))
     }
 
@@ -126,13 +122,14 @@ impl Engine<'_> {
         &self,
         kind: ParkKind,
         reason: String,
+        paths: &[String],
     ) -> Result<StageOutcome, EngineError> {
         self.ruling(&format!("parked, {reason}"))?;
         // A scope violation parks before any review, so only the other gates lead with the review.
         let mut parts = if kind == ParkKind::Other {
             Vec::new()
         } else {
-            self.lead_parts()
+            self.lead_parts(paths)
         };
         parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks"));
         parts.push(ParkPart::new("Why it stopped", "driver", &reason));
@@ -200,7 +197,8 @@ impl Engine<'_> {
     ) -> Result<StageOutcome, EngineError> {
         let job = self.job()?;
         let used = fix_rounds_used(job.round, job.rework_base);
-        let risky = classify_paths(&self.job_changed_paths()?, &self.config) == DiffClass::Risky;
+        let paths = self.job_changed_paths()?;
+        let risky = classify_paths(&paths, &self.config) == DiffClass::Risky;
         if used >= self.config.fix_rounds_for(risky) {
             let title = if kind == ParkKind::ChecksFailed {
                 "Failing checks"
@@ -208,7 +206,11 @@ impl Engine<'_> {
                 "Reviewer findings"
             };
             // A risky diff leads with the review and the risk, like every other risky park.
-            let mut parts = if risky { self.lead_parts() } else { Vec::new() };
+            let mut parts = if risky {
+                self.lead_parts(&paths)
+            } else {
+                Vec::new()
+            };
             parts.push(ParkPart::new(title, source, findings));
             return self.park_with(kind, format!("{reason} after {used} fix rounds"), parts);
         }
@@ -256,7 +258,7 @@ impl Engine<'_> {
         let job = self.job()?;
         if let Some(head) = job.head.as_deref() {
             if let Some(reason) = crate::scope::scope_violation(self.repo, head)? {
-                return self.park_gate(ParkKind::Other, reason);
+                return self.park_gate(ParkKind::Other, reason, &[]);
             }
         }
         let report = self.run_checks_now()?;
@@ -264,8 +266,8 @@ impl Engine<'_> {
         if report.all_passed() {
             self.ruling(&format!("checks round {round} pass"))?;
             let paths = self.job_changed_paths()?;
-            if let Some((kind, reason)) = self.gate_checks(&paths, &report) {
-                return self.park_gate(kind, reason);
+            if let Some((kind, reason)) = self.gate_checks(&paths) {
+                return self.park_gate(kind, reason, &paths);
             }
             {
                 let (base, head) = self.job_range()?;
@@ -278,7 +280,7 @@ impl Engine<'_> {
                     if self.config.require_tests {
                         let code = code_paths_of(&paths, &self.config);
                         let reason = format!("no test was added in {}", code_path_list(&code));
-                        return self.park_gate(ParkKind::NoTests, reason);
+                        return self.park_gate(ParkKind::NoTests, reason, &paths);
                     }
                     self.ruling(NO_TESTS_NOTE)?;
                 }
