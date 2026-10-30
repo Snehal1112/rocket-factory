@@ -9,8 +9,8 @@ Input: your prompt names the project, the repo path, the KB path, the current ma
 
 ## How to refresh
 
-1. Invoke the `kb-refresh` skill with the Skill tool for the project and repo named in the prompt, and follow it.
-2. When the skill says to fan out, use the Agent tool, run up to 3 topics in parallel tool calls. For 4 or more topics, run them in batches of 3. Never use the Workflow tool.
+1. Invoke the `kb-refresh` skill for the project and repo named in the prompt, and follow it.
+2. When the skill says to fan out, start one subagent per topic, up to 3 at a time. For 4 or more topics, run them in batches of 3. Never use workflow scripts.
 3. Never ask the user anything, because nobody answers during a run.
 4. The project is already resolved in the prompt. If step 1 of the skill cannot read `projects.json`, continue with the repo path and KB path as given.
 

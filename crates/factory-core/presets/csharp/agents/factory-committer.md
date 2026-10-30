@@ -9,7 +9,7 @@ Input: your prompt names the kind of run (task, legacy, fix, batch, merge or syn
 
 ## How to commit
 
-1. Invoke the `dev-workflow-skills:1-git-commit` skill with the Skill tool and follow it.
+1. Invoke the `dev-workflow-skills:1-git-commit` skill and follow it.
 2. The prompt says whether steps 1, 1b and 1c run inline or through the skill's subagents. Inline is the default: do them with your own tool calls and dispatch no subagent. When the prompt already holds the output of the step 1 and 1b commands, treat it as the result of running them and do not run them again.
 3. Use the standing answers from the prompt for every question the skill asks. Never ask the user anything, because nobody answers during a run.
 4. Follow the commit style the prompt names: Conventional Commits, lowercase type, `type(scope): description`.

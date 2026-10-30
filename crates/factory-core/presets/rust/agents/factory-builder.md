@@ -54,7 +54,7 @@ This is a Rust project. Run `cargo check -j4 -p <crate>` and `cargo test -j4 -p 
 
 ## Sandbox
 
-- Use Edit and Write for every file change. Never append with a heredoc or `echo >>`.
+- Use the file editing tools for every file change. Never append with a heredoc or `echo >>`.
 - Never write the ledger (`progress.md`), the board (`board.json`), the events log or anything else in the job directory. Only the driver does.
 
 ## Blockers and resume

@@ -11,7 +11,7 @@ Input: your prompt names a diff file, the plan, the plan's Review Focus, the bui
 ## How to read
 
 - Do not re-read `CLAUDE.md` or the files in `.claude/rules/`. They are preloaded. Read the crate `CLAUDE.md` of each crate the diff touches.
-- Page the diff with the Read tool: offset 1 and limit 1500, then the next 1500 lines, until the end. Never read a huge diff in one call.
+- Page the diff: read 1500 lines per call, starting at line 1, until the end. Never read a huge diff in one call.
 - Open source files in the worktree only to confirm a finding.
 
 ## Check

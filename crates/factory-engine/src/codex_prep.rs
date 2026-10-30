@@ -2,7 +2,7 @@
 //! and the sandbox, network and writable roots chosen by role.
 
 use factory_agent::AgentSpec;
-use factory_core::{codex_worktree_skills_dir, Config};
+use factory_core::{codex_worktree_skills_dir, Config, TOOL_MAP_CODEX};
 use factory_git::Repo;
 
 use crate::codex_skills::{allowed, codex_skill_args, discover_skills, FoundSkill};
@@ -29,6 +29,11 @@ pub(crate) fn strip_frontmatter(text: &str) -> &str {
 
 fn has_role(role: &str, prefix: &str) -> bool {
     role.starts_with(prefix)
+}
+
+/// Codex agent text: the preface first so its rules win, then the tool map, then the agent body.
+fn codex_agent_text(preface: &str, body: &str) -> String {
+    format!("{preface}\n\n{TOOL_MAP_CODEX}\n\n{body}")
 }
 
 /// The Codex preface. With allowed skills the catalog may be used, subagents stay off either way.
@@ -104,7 +109,7 @@ impl Engine<'_> {
             if skill_gap(&spec.role, &found, &allow) {
                 preface = format!("{preface} {SKILL_SENTENCE}");
             }
-            spec.agent_prompt = Some(format!("{preface}\n\n{}", strip_frontmatter(&file.content)));
+            spec.agent_prompt = Some(codex_agent_text(&preface, strip_frontmatter(&file.content)));
             spec.agent = None;
         }
         spec.max_turns = None;
@@ -132,6 +137,17 @@ impl Engine<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_text_orders_preface_map_and_body() {
+        let text = codex_agent_text("P", "B");
+        assert!(text.starts_with("P\n\n## Harness notes: Codex"), "{text}");
+        assert!(text.ends_with("\n\nB"), "{text}");
+        let stripped = strip_frontmatter("---\nname: x\n---\nBody");
+        let text = codex_agent_text("P", stripped);
+        assert!(!text.lines().any(|l| l == "name: x"), "{text}");
+        assert!(text.ends_with("\n\nBody"), "{text}");
+    }
 
     #[test]
     fn strip_frontmatter_removes_only_a_leading_block() {
