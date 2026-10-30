@@ -250,7 +250,7 @@ fn install_defaults_to_the_claude_commands_folder_under_home() {
         "report every `note:` line",
         "Report that refusal as it is",
         "ask whether to go ahead over the budget",
-        "as a long-running command using the available command execution tool",
+        "as a long-running command, see the `Shell and background runs` note",
         "keep the handle for harness notification",
         "Do not poll, do not sleep, do not read logs",
     ] {

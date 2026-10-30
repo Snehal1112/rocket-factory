@@ -365,6 +365,10 @@ Each run costs one short turn per role with real credentials, so `cargo test` an
 
 Findings: the `--disable-slash-commands` and bootstrap answers are recorded here after the first live run.
 
+## Harness text
+
+The `/factory` command body and the agent files name no harness tool. Tool names live in one mapping file per harness, `tool-map-claude.md` and `tool-map-codex.md` in `crates/factory-core/assets/`. The Claude map is also the tail of `global-command.md`, and a test pins the two equal. The Codex skill is the shared body with `/factory` changed to `$factory`, then the Codex map. Codex runtime agent text is the preface, then the Codex map, then the agent body. Claude agent runs need no map. A third harness needs one map file and its words in `HARNESS_WORDS` in `crates/factory-cli/tests/tool_map.rs`. The prompt strings in `specs.rs` and `kb.rs` still name the Read, Agent and Workflow tools and are out of scope here.
+
 ## Token comparison
 
 | | Raw tokens | Weighted tokens | Status |
