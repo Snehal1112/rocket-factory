@@ -232,6 +232,20 @@ impl Config {
         }
     }
 
+    /// The skills a run of `role` may see: its plugins plus the skill its agent text names.
+    pub fn skill_allow_for(&self, role: &str) -> Vec<String> {
+        let mut allow = self.plugins_for(role).to_vec();
+        let named = match role {
+            "committer" | "message" => "dev-workflow-skills",
+            "kb" => "kb-refresh",
+            _ => return allow,
+        };
+        if !allow.iter().any(|e| e.split('@').next() == Some(named)) {
+            allow.push(named.to_string());
+        }
+        allow
+    }
+
     /// Every path matches `**`, so every diff is risky and nothing auto-merges.
     pub fn fail_closed() -> Config {
         Config {
@@ -1004,6 +1018,16 @@ mod tests {
         assert!(cfg.plugins_for("reviewer").is_empty());
         assert!(cfg.plugins_for("kb").is_empty());
         assert!(cfg.plugins_for("someone-else").is_empty());
+    }
+
+    #[test]
+    fn skill_allow_for_adds_the_named_skill_once() {
+        let cfg = Config::default();
+        assert_eq!(cfg.skill_allow_for("kb"), ["kb-refresh"]);
+        assert_eq!(cfg.skill_allow_for("committer"), ["dev-workflow-skills"]);
+        assert_eq!(cfg.skill_allow_for("builder"), ["superpowers"]);
+        let cfg = Config::parse("kb_plugins = [\"kb-refresh@x\"]").expect("parse");
+        assert_eq!(cfg.skill_allow_for("kb"), ["kb-refresh@x"]);
     }
 
     #[test]
