@@ -26,6 +26,8 @@ pub struct ApiDeps {
     pub now_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
     /// Runs the commands only factory-cli implements.
     pub cli: Arc<dyn FactoryCli>,
+    /// Reads the version of the `factory` binary the jobs run, or why it cannot.
+    pub factory_version: Arc<dyn Fn() -> Result<String, String> + Send + Sync>,
 }
 
 /// Handler threads that may run at once. A further request is answered with `conflict`.

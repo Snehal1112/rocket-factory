@@ -19,7 +19,7 @@ cargo run -j4 --manifest-path dashboard/Cargo.toml -- --home ~/.factory --api 12
 `--home` shows every project of a factory home and needs `factoryd run` for the API. `--home` and `--root` cannot be
 used together, and `--api` (default `127.0.0.1:8766`) must be a loopback `host:port`. The server reads
 `<home>/api.token` for each call and sends it as `Authorization: Bearer ...`. The token never appears in a page, a
-reply body, a header or a log line. The page title is "Software factory" and there is a tab per project. A project
+reply body, a header or a log line. The page title is "Rocket Factory" and there is a tab per project. A project
 the API marks `disabled` shows its reason and an empty board. The board, events, costs and job folders come from the
 API's `stateDir` and `jobsDir`; a missing file shows empty, never an error. The page can create a job and approve,
 rework or cancel one. Errors show as a banner with the stable code (`unauthorized`, `bad_request`, `not_found`,
@@ -54,6 +54,7 @@ It never writes any of these files. If it is not running, the factory works the 
 | `/projects.js` | the project, form and action helpers |
 | `/api/state` | JSON (only with `--root`): `generated_at`, `board_error`, `skipped_lines`, `jobs[]` (with `stage_history`, `stage_durations`, `series`, `provider` (a chip on the card, none when missing), `token_view`), `specs[]` (`series_id`, `title`, `goal`, `stage`, `stage_since` (the latest of its plans), `plans[]`; each column lists spec and job cards in one list, newest first by `stage_since`, and Merged shows the 10 newest), `drafts[]` (the board's interview drafts plus `seconds_since_update` and `stale`, shown first in the Spec column; the card carries copyable `factory spec resume` and `factory cancel` commands, no buttons), `spec_warning` on a job (shown on its card), `unassigned_agents[]` |
 | `/healthz` | `ok` |
+| `GET /api/version` | `{dashboard}` with `--root`. In home mode also `factoryd` and `factory` from factoryd `GET /version` (and `factoryError` when it gave one), or `apiError` with the reason when factoryd gave none. Always 200, and the token never appears. The header shows `v<factoryd version>` (home mode) or `v<dashboard version>` (root mode) next to the title, lists every version on hover, and turns amber when they differ. It is read at load and then once a minute |
 | `GET /api/projects` | home mode only: `[{name, repo, preset, baseBranch, status, reason, activeJob}]` by name (404 with `--root`, which is how the page tells the modes apart) |
 | `GET /api/projects/{p}/state` | home mode: the same state view for one project |
 | `GET /api/projects/{p}/jobs/{id}/park` | home mode: park details of a job |

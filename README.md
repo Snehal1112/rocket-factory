@@ -476,6 +476,7 @@ does not check the daily budget.
 |---|---|
 | `GET /projects` | `[{name, repo, preset, baseBranch, status, reason, stateDir, jobsDir, activeJob}]`, `status` is `ready`, `busy` or `disabled` |
 | `GET /projects/{p}/jobs` | `{jobs, drafts, queued, lastResults}` from the board, the queue and the result records. `drafts` is `[{slug, stage, updatedAt, stale}]` for the interview drafts on the board (`stale` once a draft is older than `draft_stale_hours`) |
+| `GET /version` | `{factoryd, factory}`: the version of this factoryd and of the `factory` binary the jobs run, read with `factory --version` on each call. When that fails, `factory` is `null` and `factoryError` says why |
 | `GET /usage?days=N` | `{days, projects: [{name, total, perDay: [{day, tokens}]}], dailyBudget?}`, weighted tokens per UTC day, `N` 1 to 90 (default 14). `dailyBudget` is `{limit, used, resetsAt}` (`resetsAt` is an RFC 3339 UTC time) and is present only when `daily_budget_weighted` is set |
 
 Write endpoints. A body is JSON of at most 64 KiB, unknown fields are refused, and everything is checked before a

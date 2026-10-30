@@ -62,6 +62,7 @@ fn start() -> Server {
     let deps = ApiDeps {
         now_ms: Arc::new(move || clock.fetch_add(1, std::sync::atomic::Ordering::SeqCst)),
         cli: cli.clone(),
+        factory_version: Arc::new(|| Ok("0.0.0".to_string())),
     };
     let handle =
         ApiServer::start(home.clone(), "127.0.0.1:0".parse().expect("addr"), deps).expect("start");

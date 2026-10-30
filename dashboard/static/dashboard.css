@@ -1,6 +1,6 @@
 /* Follows the journeybook design system: one monospace face, cool-grey oklch chrome,
    hairline borders instead of shadows, 10px panels, pill badges, teal for identity,
-   green and red only for pass and fail. */
+   green and red only for pass and fail. The brand word in the title has its own token. */
 :root {
   color-scheme: light;
   --background: oklch(0.984 0.0025 225);
@@ -14,6 +14,7 @@
   --primary: oklch(0.47 0.085 190);
   --primary-wash: oklch(0.47 0.085 190 / 10%);
   --success: oklch(0.47 0.13 160);
+  --brand: oklch(0.47 0.13 160);
   --success-wash: oklch(0.47 0.13 160 / 12%);
   --destructive: oklch(0.51 0.2 27);
   --destructive-wash: oklch(0.51 0.2 27 / 10%);
@@ -38,6 +39,7 @@
     --primary: oklch(0.72 0.121 180);
     --primary-wash: oklch(0.72 0.121 180 / 14%);
     --success: oklch(0.782 0.166 162);
+    --brand: oklch(0.782 0.166 162);
     --success-wash: oklch(0.782 0.166 162 / 14%);
     --destructive: oklch(0.706 0.166 20);
     --destructive-wash: oklch(0.706 0.166 20 / 16%);
@@ -75,7 +77,10 @@ code {
 .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacing: -0.025em; }
 @media (min-width: 48rem) { h1 { font-size: 27px; } }
-.project { color: var(--primary); }
+.title { display: flex; align-items: baseline; gap: 0.6rem; }
+.brand { color: var(--brand); }
+.version { color: var(--muted-foreground); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.version-warn { color: var(--attention); }
 
 .status {
   display: inline-flex;

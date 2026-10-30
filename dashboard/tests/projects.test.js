@@ -201,3 +201,37 @@ test("budgetStrip text holds numbers and a fixed phrase only", () => {
 test("budgetStrip is global: it takes only the usage reply, never a project", () => {
   assert.equal(projects.budgetStrip.length, 1);
 });
+
+test("versionLabel shows the dashboard version in root mode", () => {
+  const label = projects.versionLabel({ dashboard: "0.1.6" });
+  assert.deepEqual(label, { text: "v0.1.6", title: "dashboard 0.1.6", warn: false });
+});
+
+test("versionLabel shows the factoryd version and lists all three in home mode", () => {
+  const label = projects.versionLabel({ dashboard: "0.1.6", factoryd: "0.1.6", factory: "0.1.6" });
+  assert.equal(label.text, "v0.1.6");
+  assert.equal(label.title, "dashboard 0.1.6, factoryd 0.1.6, factory 0.1.6");
+  assert.equal(label.warn, false);
+});
+
+test("versionLabel warns when the versions differ", () => {
+  const label = projects.versionLabel({ dashboard: "0.1.6", factoryd: "0.1.7", factory: "0.1.6" });
+  assert.equal(label.text, "v0.1.7");
+  assert.equal(label.warn, true);
+  assert.match(label.title, /The versions differ/);
+});
+
+test("versionLabel adds why a version is missing", () => {
+  const label = projects.versionLabel({ dashboard: "0.1.6", apiError: "factoryd is down", factoryError: "no binary" });
+  assert.equal(label.text, "v0.1.6");
+  assert.equal(label.warn, false);
+  assert.match(label.title, /factory: no binary/);
+  assert.match(label.title, /factoryd is down/);
+});
+
+test("versionLabel ignores replies without a sane dashboard version", () => {
+  assert.equal(projects.versionLabel(null).text, "");
+  assert.equal(projects.versionLabel({}).text, "");
+  assert.equal(projects.versionLabel({ dashboard: "<b>x</b>" }).text, "");
+  assert.equal(projects.versionLabel({ dashboard: "0.1.6", factoryd: "<i>" }).text, "v0.1.6");
+});

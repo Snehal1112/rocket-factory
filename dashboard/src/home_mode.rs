@@ -11,7 +11,9 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::paths::Paths;
-use crate::server::{api_park, json_reply, state_reply, HomeState, Project, Reply, Request};
+use crate::server::{
+    api_park, json_reply, state_reply, HomeState, Project, Reply, Request, DASHBOARD_VERSION,
+};
 
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a write may wait for factoryd. factoryd gives `factory new|rework|cancel` 60 seconds, and the
@@ -423,13 +425,45 @@ fn api_usage(home: &HomeState) -> Reply {
     }
 }
 
-/// Handles every `/api/projects` route and `/api/usage`. Other paths return `None` and fall through to the shared routes.
+/// The dashboard version plus the factoryd and factory versions from factoryd's `GET /version`.
+/// It always answers 200 so the header can show the dashboard version, and `apiError` says why
+/// factoryd gave none. Only the known version fields are copied from the API reply.
+fn api_version(home: &HomeState) -> Reply {
+    let mut out = json!({ "dashboard": DASHBOARD_VERSION });
+    let api_error = match get_api(home, "/version") {
+        Ok(reply) if reply.status == 200 => match serde_json::from_slice::<Value>(&reply.body) {
+            Ok(body) => {
+                for key in ["factoryd", "factory", "factoryError"] {
+                    if let Some(v) = body.get(key).and_then(Value::as_str) {
+                        out[key] = json!(v);
+                    }
+                }
+                None
+            }
+            Err(_) => Some("The factory API answered /version with a body that is not JSON."),
+        },
+        Ok(reply) if reply.status == 404 => {
+            Some("This factoryd does not report its version. Restart it after an update.")
+        }
+        Ok(reply) if reply.status == 401 => Some("The factory API rejected the dashboard token."),
+        Ok(_) => Some("The factory API did not answer /version."),
+        Err(_) => Some("The factory API is not reachable. Check that factoryd is running."),
+    };
+    if let Some(message) = api_error {
+        out["apiError"] = json!(message);
+    }
+    json_reply(200, &out)
+}
+
+/// Handles every `/api/projects` route, `/api/usage` and `/api/version`. Other paths return `None` and fall through to the shared routes.
 pub fn route(home: &HomeState, request: &Request, path: &str, now: f64) -> Option<Reply> {
-    if path == "/api/usage" {
-        return Some(if request.method == "GET" {
+    if path == "/api/usage" || path == "/api/version" {
+        return Some(if request.method != "GET" {
+            error_reply(405, "method_not_allowed", "Method not allowed.")
+        } else if path == "/api/usage" {
             api_usage(home)
         } else {
-            error_reply(405, "method_not_allowed", "Method not allowed.")
+            api_version(home)
         });
     }
     let rest = path.strip_prefix("/api/projects")?;
@@ -562,6 +596,11 @@ mod tests {
                     (401, r#"{"error":{"code":"unauthorized","message":"a valid bearer token is required"}}"#.to_string())
                 } else if method == "GET" && url == "/projects" {
                     (200, projects.to_string())
+                } else if method == "GET" && url == "/version" {
+                    (
+                        200,
+                        r#"{"factoryd":"0.1.6","factory":"0.1.5","extra":"dropped"}"#.to_string(),
+                    )
                 } else if method == "GET" && url == "/usage?days=14" {
                     (200, r#"{"days":14,"projects":[],"dailyBudget":{"limit":100,"used":42,"resetsAt":"2026-10-18T00:00:00Z"}}"#.to_string())
                 } else {
@@ -780,6 +819,43 @@ mod tests {
             .status,
             405
         );
+        Ok(())
+    }
+
+    #[test]
+    fn version_adds_the_factoryd_versions() -> TestResult {
+        let s = setup()?;
+        let reply = get(&s.app, "/api/version");
+        assert_eq!(reply.status, 200);
+        let json: Value = serde_json::from_slice(&reply.body)?;
+        assert_eq!(
+            json,
+            json!({ "dashboard": DASHBOARD_VERSION, "factoryd": "0.1.6", "factory": "0.1.5" })
+        );
+        assert!(!String::from_utf8_lossy(&reply.body).contains(TOKEN));
+        Ok(())
+    }
+
+    #[test]
+    fn version_keeps_the_dashboard_version_when_factoryd_gives_none() -> TestResult {
+        let s = setup_with("another-token", 201, "{}")?;
+        let json: Value = serde_json::from_slice(&get(&s.app, "/api/version").body)?;
+        assert_eq!(json["dashboard"], DASHBOARD_VERSION);
+        assert!(json.get("factoryd").is_none());
+        assert_eq!(
+            json["apiError"],
+            "The factory API rejected the dashboard token."
+        );
+        let home = tempfile::tempdir()?;
+        std::fs::write(home.path().join("api.token"), format!("{TOKEN}\n"))?;
+        let dead = App::for_home(home.path().to_path_buf(), "127.0.0.1:1".to_string());
+        let reply = get(&dead, "/api/version");
+        assert_eq!(reply.status, 200);
+        let json: Value = serde_json::from_slice(&reply.body)?;
+        assert_eq!(json["dashboard"], DASHBOARD_VERSION);
+        assert!(json["apiError"]
+            .as_str()
+            .is_some_and(|m| m.contains("not reachable")));
         Ok(())
     }
 

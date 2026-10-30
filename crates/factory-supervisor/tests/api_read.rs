@@ -71,6 +71,7 @@ fn stalled_unauthenticated_bodies_do_not_hold_handler_slots() {
     let deps = ApiDeps {
         now_ms: Arc::new(|| 1_700_000_000_000),
         cli: Arc::new(NoCli),
+        factory_version: Arc::new(|| Ok("0.0.0".to_string())),
     };
     let handle = ApiServer::start(home, "127.0.0.1:0".parse().expect("addr"), deps).expect("start");
     let addr = handle.addr;
@@ -109,6 +110,7 @@ fn the_server_checks_token_and_host_and_lists_projects() {
     let deps = ApiDeps {
         now_ms: Arc::new(|| 1_700_000_000_000),
         cli: Arc::new(NoCli),
+        factory_version: Arc::new(|| Ok("0.0.0".to_string())),
     };
     let handle = ApiServer::start(home, "127.0.0.1:0".parse().expect("addr"), deps).expect("start");
     let addr = handle.addr;

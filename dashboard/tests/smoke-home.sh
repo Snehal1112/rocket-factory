@@ -113,6 +113,10 @@ if [ -n "$request_id" ]; then pass "a valid create answers with a request id"; e
 check "the request reached factoryd" bash -c "grep -rl '$request_id' '$FACTORY_HOME' >/dev/null"
 check "the create reply does not carry the token" bash -c "! printf '%s' '$reply' | grep -q '$token'"
 
+# The header version: the dashboard's own plus factoryd's, without the token.
+check "/api/version names the dashboard and factoryd versions" bash -c "curl -fs $url/api/version | jq -e '(.dashboard | type) == \"string\" and (.factoryd | type) == \"string\"'"
+check "/api/version does not carry the token" bash -c "! (curl -fs $url/api/version | grep -q '$token')"
+
 # The daily budget strip: absent without a limit, present with one and a usage fixture for today.
 check "/api/usage has no dailyBudget without a limit" bash -c "curl -fs $url/api/usage | jq -e 'has(\"dailyBudget\") | not'"
 check "/api/usage refuses a POST with 405" bash -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -X POST $url/api/usage)\" = 405 ]"

@@ -161,7 +161,35 @@
     return { text: `Daily budget: ${count(used)} of ${count(limit)} tokens used (${percent}%)${resets}.`, level };
   }
 
+  // A version is shown only when it looks like one, so a strange reply never reaches the header.
+  function versionText(value) {
+    return typeof value === "string" && /^[0-9A-Za-z.+-]{1,32}$/.test(value) ? value : null;
+  }
+
+  // The header version from a /api/version reply. The text names the version that runs the jobs:
+  // factoryd's in home mode, else the dashboard's. The title lists every version and why one is missing.
+  function versionLabel(reply) {
+    const none = { text: "", title: "", warn: false };
+    if (!reply || typeof reply !== "object") return none;
+    const dashboard = versionText(reply.dashboard);
+    if (!dashboard) return none;
+    const factoryd = versionText(reply.factoryd);
+    const factory = versionText(reply.factory);
+    const parts = [`dashboard ${dashboard}`];
+    if (factoryd) parts.push(`factoryd ${factoryd}`);
+    if (factory) parts.push(`factory ${factory}`);
+    const known = [dashboard, factoryd, factory].filter(Boolean);
+    const warn = known.some((v) => v !== known[0]);
+    const notes = [];
+    if (warn) notes.push("The versions differ. Restart factoryd and the dashboard after an update.");
+    if (typeof reply.factoryError === "string") notes.push(`factory: ${reply.factoryError}`);
+    if (typeof reply.apiError === "string") notes.push(reply.apiError);
+    const title = [parts.join(", "), ...notes].join("\n");
+    return { text: `v${factoryd || dashboard}`, title, warn };
+  }
+
   const api = {
+    versionLabel,
     budgetStrip,
     acceptReply,
     jobPathFor,

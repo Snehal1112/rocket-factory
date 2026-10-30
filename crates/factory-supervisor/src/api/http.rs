@@ -1,5 +1,6 @@
 //! The request router. It is pure: no socket, so tests call `route` directly.
 
+use factory_core::version::FACTORY_VERSION;
 use factory_core::Home;
 use serde_json::{json, Value};
 
@@ -96,7 +97,7 @@ pub fn route(
     }
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let allowed: &[&str] = match segments.as_slice() {
-        ["projects"] | ["usage"] => &["GET"],
+        ["projects"] | ["usage"] | ["version"] => &["GET"],
         ["projects", _, "jobs"] => &["GET", "POST"],
         ["projects", _, "jobs", _, "approve" | "rework" | "cancel"] => &["POST"],
         _ => return error_response(404, "not_found", "no such endpoint"),
@@ -110,6 +111,7 @@ pub fn route(
     }
     match (method, segments.as_slice()) {
         (_, ["projects"]) => read::projects(home, deps),
+        (_, ["version"]) => version(deps),
         ("GET", ["projects", name, "jobs"]) => read::jobs(home, deps, name),
         (_, ["projects", name, "jobs"]) => write::create(home, deps, name, body),
         (_, ["projects", name, "jobs", id, "approve"]) => {
@@ -118,6 +120,18 @@ pub fn route(
         (_, ["projects", name, "jobs", id, "rework"]) => write::rework(home, deps, name, id, body),
         (_, ["projects", name, "jobs", id, _]) => write::cancel(home, deps, name, id, body),
         _ => usage::report(home, deps, query),
+    }
+}
+
+/// The factoryd version and the version of the `factory` binary, `null` with a reason when unreadable.
+fn version(deps: &ApiDeps) -> ApiResponse {
+    match (deps.factory_version)() {
+        Ok(v) => ApiResponse::ok(json!({ "factoryd": FACTORY_VERSION, "factory": v })),
+        Err(why) => ApiResponse::ok(json!({
+            "factoryd": FACTORY_VERSION,
+            "factory": null,
+            "factoryError": why,
+        })),
     }
 }
 
@@ -211,5 +225,34 @@ mod tests {
             (r.status, r.body["error"]["code"].as_str()),
             (404, Some("not_found"))
         );
+    }
+
+    #[test]
+    fn version_reports_both_binaries() {
+        let (_t, home) = fixture();
+        let r = get(&home, "/version", "", Some(TOKEN), "localhost:1");
+        assert_eq!(r.status, 200);
+        assert_eq!(r.body["factoryd"], FACTORY_VERSION);
+        assert_eq!(r.body["factory"], "9.8.7");
+        assert!(r.body.get("factoryError").is_none());
+    }
+
+    #[test]
+    fn version_names_why_the_binary_cannot_be_read() {
+        let (_t, home) = fixture();
+        let mut d = deps();
+        d.factory_version = std::sync::Arc::new(|| Err("no factory binary".to_string()));
+        let h = headers(Some(TOKEN), "localhost:1");
+        let r = route(&home, &d, "GET", "/version", "", &h, b"");
+        assert_eq!(r.status, 200);
+        assert_eq!(r.body["factoryd"], FACTORY_VERSION);
+        assert!(r.body["factory"].is_null());
+        assert_eq!(r.body["factoryError"], "no factory binary");
+    }
+
+    #[test]
+    fn version_needs_the_token() {
+        let (_t, home) = fixture();
+        assert_eq!(get(&home, "/version", "", None, "localhost:1").status, 401);
     }
 }
