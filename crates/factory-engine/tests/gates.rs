@@ -67,6 +67,38 @@ fn a_code_diff_with_no_mapped_check_parks_as_no_checks_before_the_review() {
 }
 
 #[test]
+fn a_crate_rule_with_no_owner_parks_no_checks() {
+    let mut fx = committing_fixture();
+    fx.config.checks = vec![CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["cargo check -j4 -p {crate}".into()],
+    }];
+    let runner = built(&fx, vec![("a.rs", "x\n")]);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    match out {
+        StageOutcome::NeedsHuman(r) => assert!(
+            r.contains("a.rs (a rule matches but planned no command)"),
+            "{r}"
+        ),
+        other => panic!("unexpected {other:?}"),
+    }
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::NoChecks);
+}
+
+#[test]
+fn a_path_covered_by_a_planned_command_is_not_gated() {
+    let mut fx = committing_fixture();
+    fx.config.checks = vec![CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["true".into()],
+    }];
+    let runner = built(&fx, vec![("a.rs", "x\n")]);
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+}
+
+#[test]
 fn a_docs_only_diff_with_no_mapped_check_is_not_parked() {
     let mut fx = committing_fixture();
     only_src_checks(&mut fx);

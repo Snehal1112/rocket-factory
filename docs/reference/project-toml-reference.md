@@ -230,6 +230,8 @@ How it works (`factory-checks/src/plan.rs`):
 - `{crate}` is the cargo package that owns a matching path, read from `cargo metadata`, so `src-tauri` expands to its package name. If `cargo metadata` fails, it falls back to the folder after the first `crates` segment and `checks.md` says so. With several crates the command runs once per crate, in alphabetical order. A command that uses `{crate}` but has no matching crate runs nothing.
 - `{dependents}` expands to the direct dependents of the changed packages, alphabetically, at most `dependents_cap` of them. The rest are skipped and `checks.md` names them.
 - A changed code path that no rule matches and `unchecked_paths` does not exempt parks the job as `no-checks`, see the gates in `software-factory.md`.
+- A path whose `{crate}` or `{dependents}` rule plans no command is uncovered too, and parks the same way. Exempt it with `unchecked_paths`.
+- One command must not use both `{crate}` and `{dependents}`. Config validation refuses it. Use two commands instead.
 - Duplicate commands run once.
 - Every command runs, even after a failure. The default timeout is 900 seconds.
 - A failure sends the job back to the builder for a fix round, or parks it when `fix_rounds` is used up.
