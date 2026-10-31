@@ -85,6 +85,7 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("tickets_on_merge", None),
             ("minor_tickets", None),
             ("spec_review", None),
+            ("spec_review_budget_weighted", None),
             ("log_level", Some("\"debug\"  # Unset means info.")),
             ("risk_paths", None),
         ],

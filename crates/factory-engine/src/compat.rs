@@ -87,6 +87,19 @@ pub struct Driver {
     /// The running heartbeat, one for all nested guards.
     beat: Mutex<Option<Heartbeat>>,
     tracker: Box<dyn crate::Tracker>,
+    /// The spec review `factory new` used last, or the reason the last run did not finish.
+    pub(crate) last_review: Mutex<Option<ReviewRecord>>,
+}
+
+/// One spec review kept in memory, so a call that validates twice reviews once.
+#[derive(Clone)]
+pub(crate) struct ReviewRecord {
+    pub(crate) key: String,
+    pub(crate) file: PathBuf,
+    pub(crate) text: String,
+    pub(crate) saved: bool,
+    /// Why the run did not finish. Such a record has no text and no file on disk.
+    pub(crate) failure: Option<String>,
 }
 
 /// What the heartbeat renews right now.
@@ -239,7 +252,13 @@ impl Driver {
             lost: Arc::new(AtomicBool::new(false)),
             beat: Mutex::new(None),
             tracker,
+            last_review: Mutex::new(None),
         })
+    }
+
+    /// The spec review the last `factory new` call used, for its note. `None` when none ran or the run failed.
+    pub fn last_spec_review(&self) -> Option<crate::SpecReviewInfo> {
+        crate::spec_check::last_review_info(self)
     }
 
     /// Replaces the issue tracker. Tests pass a fake.

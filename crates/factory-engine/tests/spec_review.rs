@@ -70,6 +70,26 @@ const CHANGES: &str =
     "1. [blocker] Decisions - contradicts the code - src/lib.rs:10 - change it\nVERDICT: CHANGES";
 
 #[test]
+fn the_reviewer_gets_its_own_budget_cap() {
+    let cfg = Config {
+        spec_review_budget_weighted: 12_345,
+        ..Config::default()
+    };
+    let fx = fixture(vec![reviewer(APPROVE)], cfg);
+    new(&fx, None).expect("created");
+    assert_eq!(
+        fx.runner.specs_for("spec-reviewer")[0].budget_weighted,
+        Some(12_345)
+    );
+    let fx = fixture(vec![reviewer(APPROVE)], Config::default());
+    new(&fx, None).expect("created");
+    assert_eq!(
+        fx.runner.specs_for("spec-reviewer")[0].budget_weighted,
+        Some(100_000)
+    );
+}
+
+#[test]
 fn an_approved_spec_creates_the_jobs() {
     let fx = fixture(vec![reviewer(APPROVE)], Config::default());
     new(&fx, None).expect("created");
@@ -242,6 +262,192 @@ fn the_review_run_is_logged_for_the_token_reports() {
         .find(|c| c.id == "spec-review")
         .expect("record");
     assert_eq!(rec.runs, 1);
+}
+
+fn saved_reviews(fx: &Fx) -> usize {
+    std::fs::read_dir(fx.driver.layout().spec_reviews_dir())
+        .map(|dir| {
+            dir.flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "md"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn one_job(fx: &Fx, accept: Option<&str>) -> Result<factory_engine::OneJob, EngineError> {
+    factory_engine::create_one_job_accepting(
+        &fx.driver,
+        "demo",
+        "f",
+        &fx.plan,
+        Some(&fx.spec),
+        None,
+        false,
+        accept,
+    )
+}
+
+#[test]
+fn a_failed_review_run_refuses_and_saves_nothing() {
+    let fx = fixture(vec![], Config::default());
+    let err = new(&fx, None).expect_err("refused");
+    let text = err.to_string();
+    assert!(
+        text.contains("did not finish (failed: script exhausted)"),
+        "{text}"
+    );
+    assert!(text.contains("--accept-spec"), "{text}");
+    assert_eq!(saved_reviews(&fx), 0);
+    assert_eq!(jobs(&fx), 0);
+}
+
+#[test]
+fn a_failed_review_is_run_again_by_a_new_process() {
+    let fx = fixture(vec![], Config::default());
+    new(&fx, None).expect_err("first refused");
+    let second = driver_for(fx.driver.root(), fx.runner.clone(), Config::default());
+    create_job_with_spec_accepting(
+        &second,
+        "demo",
+        "f",
+        Some(&fx.plan),
+        Some(&fx.spec),
+        None,
+        None,
+    )
+    .expect_err("second refused");
+    assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 2);
+}
+
+#[test]
+fn a_failed_review_with_accept_spec_in_one_job_runs_once() {
+    let fx = fixture(vec![], Config::default());
+    one_job(&fx, Some("checked")).expect("created");
+    assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 1);
+}
+
+#[test]
+fn accept_spec_passes_a_failed_review_and_records_the_reason() {
+    let fx = fixture(vec![], Config::default());
+    let job = new(&fx, Some("checked by hand")).expect("created");
+    let warning = job.spec_warning.expect("warning");
+    assert!(
+        warning.contains("spec accepted by the user: checked by hand"),
+        "{warning}"
+    );
+    assert!(!warning.contains("no agent review ran"), "{warning}");
+}
+
+#[test]
+fn an_unwritable_review_folder_still_reviews_once() {
+    let fx = fixture(vec![reviewer(CHANGES)], Config::default());
+    let dir = fx.driver.layout().spec_reviews_dir();
+    std::fs::create_dir_all(dir.parent().expect("state dir")).expect("state dir");
+    std::fs::write(&dir, "not a folder").expect("block the folder");
+    let made = one_job(&fx, Some("checked")).expect("created");
+    assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 1);
+    assert!(made
+        .job
+        .spec_warning
+        .expect("warning")
+        .contains("spec accepted by the user"));
+    let info = fx.driver.last_spec_review().expect("info");
+    assert!(!info.saved);
+}
+
+#[test]
+fn last_spec_review_reports_the_file_and_verdict() {
+    let fx = fixture(vec![reviewer(APPROVE)], Config::default());
+    new(&fx, None).expect("created");
+    let info = fx.driver.last_spec_review().expect("info");
+    assert_eq!(info.verdict, "approved");
+    assert!(info.saved && info.file.exists());
+    let fx = fixture(vec![reviewer(CHANGES)], Config::default());
+    new(&fx, Some("checked")).expect("created");
+    let info = fx.driver.last_spec_review().expect("info");
+    assert_eq!(info.verdict, "asked for changes");
+    assert!(info.saved && info.file.exists());
+}
+
+#[test]
+fn a_reused_review_is_still_reported() {
+    let fx = fixture(vec![reviewer(APPROVE)], Config::default());
+    new(&fx, None).expect("first");
+    new(&fx, None).expect("second");
+    assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 1);
+    assert!(fx.driver.last_spec_review().is_some());
+}
+
+#[test]
+fn no_review_means_no_note() {
+    let config = Config {
+        spec_review: false,
+        ..Config::default()
+    };
+    let fx = fixture(vec![], config);
+    new(&fx, None).expect("created");
+    assert!(fx.driver.last_spec_review().is_none());
+}
+
+#[test]
+fn accept_spec_on_a_risky_spec_says_no_agent_review_ran() {
+    let config = Config {
+        risk_paths: vec!["a.rs".into()],
+        ..Config::default()
+    };
+    let fx = fixture(vec![reviewer(APPROVE)], config);
+    std::fs::write(
+        &fx.spec,
+        SPEC.replace("Decided by: user", "Decided by: call"),
+    )
+    .expect("spec");
+    let job = new(&fx, Some("checked")).expect("created");
+    let warning = job.spec_warning.expect("warning");
+    assert!(
+        warning.contains("spec accepted by the user: checked (no agent review ran)"),
+        "{warning}"
+    );
+    assert!(fx.runner.specs_for("spec-reviewer").is_empty());
+    assert!(fx.driver.last_spec_review().is_none());
+}
+
+struct StopRunner;
+
+impl factory_agent::AgentRunner for StopRunner {
+    fn run(&self, _spec: &AgentSpec) -> factory_agent::AgentRun {
+        factory_agent::AgentRun {
+            stop_reason: factory_agent::StopReason::BudgetStop,
+            ..factory_agent::AgentRun::done("looks fine\nVERDICT: APPROVE")
+        }
+    }
+}
+
+#[test]
+fn a_budget_stop_with_an_approve_line_still_refuses() {
+    let fx = fixture(vec![], Config::default());
+    let factory: factory_engine::RunnerFactory = Box::new(|_| Arc::new(StopRunner));
+    let driver = Driver::new(
+        factory_core::Layout::in_repo(fx.driver.root()),
+        Config::default(),
+        factory,
+    )
+    .expect("driver");
+    let err = create_job_with_spec_accepting(
+        &driver,
+        "demo",
+        "f",
+        Some(&fx.plan),
+        Some(&fx.spec),
+        None,
+        None,
+    )
+    .expect_err("refused");
+    assert!(
+        err.to_string().contains(
+            "did not finish (stopped at the cap of 100000 weighted tokens; raise spec_review_budget_weighted)"
+        ),
+        "{err}"
+    );
 }
 
 fn with_agent_file(fx: Fx) -> Fx {

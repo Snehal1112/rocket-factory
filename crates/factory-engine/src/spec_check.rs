@@ -3,10 +3,11 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use factory_agent::{AgentRun, AgentSpec};
+use factory_agent::{AgentRun, AgentSpec, StopReason};
 use factory_core::{classify_paths, Config, DiffClass, AGENT_EXCLUDE_PATTERN};
 use sha2::{Digest, Sha256};
 
+use crate::compat::ReviewRecord;
 use crate::runloop::user_decisions;
 use crate::specs::{SPEC_REVIEWER_AGENT, SPEC_REVIEW_JOB};
 use crate::Driver;
@@ -25,6 +26,19 @@ pub enum SpecRefusal {
     ReviewMissing { file: PathBuf },
     /// The resolved preset has no spec reviewer agent file, so the run would have no rules.
     ReviewerMissing,
+    /// The review run did not finish, so it gave no verdict to trust.
+    ReviewFailed { reason: String },
+}
+
+/// What `factory new` tells the user about the review it used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecReviewInfo {
+    /// Where the review is, or would have been saved.
+    pub file: PathBuf,
+    /// `approved`, `asked for changes` or `gave no verdict`.
+    pub verdict: &'static str,
+    /// False when the review file could not be written.
+    pub saved: bool,
 }
 
 /// How the user gets past a refusal.
@@ -44,6 +58,10 @@ impl fmt::Display for SpecRefusal {
                 f,
                 "the spec review gave no verdict; a missing verdict is not a pass. The review is in {}. {SPEC_OVERRIDE_HINT}",
                 file.display()
+            ),
+            SpecRefusal::ReviewFailed { reason } => write!(
+                f,
+                "the spec review did not finish ({reason}). {SPEC_OVERRIDE_HINT}"
             ),
             SpecRefusal::ReviewerMissing => write!(
                 f,
@@ -179,6 +197,56 @@ fn log_review_usage(driver: &Driver, agent: &AgentSpec, run: &AgentRun, secs: u6
     }
 }
 
+/// Why a review run did not finish, or `None` when it did. A run that stopped at the cap is never a
+/// pass, even when its partial text ends in an APPROVE line.
+fn incomplete_reason(run: &AgentRun, cap: u64) -> Option<String> {
+    match run.stop_reason {
+        StopReason::Done => None,
+        StopReason::Failed => Some(format!(
+            "failed: {}",
+            run.error.as_deref().unwrap_or("no error text")
+        )),
+        StopReason::Stalled => Some("stalled".to_string()),
+        StopReason::TurnLimit => Some("stopped at the turn limit".to_string()),
+        StopReason::BudgetStop => Some(format!(
+            "stopped at the cap of {cap} weighted tokens; raise spec_review_budget_weighted"
+        )),
+    }
+}
+
+/// The stderr warning for a review file that could not be written.
+fn unsaved_warning(file: &Path, err: &std::io::Error) -> String {
+    format!(
+        "warning: could not save the spec review to {}: {err}",
+        file.display()
+    )
+}
+
+/// The verdict words for the note, from the last line of a review.
+fn verdict_name(text: &str) -> &'static str {
+    match last_line(text) {
+        "VERDICT: APPROVE" => "approved",
+        "VERDICT: CHANGES" => "asked for changes",
+        _ => "gave no verdict",
+    }
+}
+
+/// The review `factory new` used last in this process, or `None` after none or a failed run.
+pub(crate) fn last_review_info(driver: &Driver) -> Option<SpecReviewInfo> {
+    let kept = driver.last_review.lock().unwrap_or_else(|e| e.into_inner());
+    let rec = kept.as_ref().filter(|r| r.failure.is_none())?;
+    Some(SpecReviewInfo {
+        file: rec.file.clone(),
+        verdict: verdict_name(&rec.text),
+        saved: rec.saved,
+    })
+}
+
+/// Keeps the review of this process, for a second validation and the note.
+fn keep(driver: &Driver, record: ReviewRecord) {
+    *driver.last_review.lock().unwrap_or_else(|e| e.into_inner()) = Some(record);
+}
+
 /// Maps the last line of a review to a result.
 fn verdict_of(text: &str, file: PathBuf) -> Result<(), SpecRefusal> {
     match last_line(text) {
@@ -217,8 +285,35 @@ pub(crate) fn review_spec_with(
     let plan_texts: Vec<String> = plans.iter().map(|p| read(p)).collect();
     let key = review_key(&read(spec), &plan_texts, reviewer_file_text(driver));
     let file = driver.layout().spec_reviews_dir().join(format!("{key}.md"));
-    let saved = read(&file);
+    let kept = driver
+        .last_review
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .filter(|r| r.key == key);
+    // A failed run is not run again by this process, so a call that validates twice pays once.
+    if let Some(reason) = kept.as_ref().and_then(|r| r.failure.clone()) {
+        return Err(SpecRefusal::ReviewFailed { reason });
+    }
+    let mut saved = read(&file);
+    let mut on_disk = true;
+    if saved.is_empty() {
+        if let Some(rec) = kept {
+            saved = rec.text;
+            on_disk = rec.saved;
+        }
+    }
     if last_line(&saved) == "VERDICT: APPROVE" || (reuse_saved && !saved.is_empty()) {
+        keep(
+            driver,
+            ReviewRecord {
+                key,
+                file: file.clone(),
+                text: saved.clone(),
+                saved: on_disk,
+                failure: None,
+            },
+        );
         return verdict_of(&saved, file);
     }
     write_reviewer_file(driver);
@@ -226,13 +321,39 @@ pub(crate) fn review_spec_with(
     let started = std::time::Instant::now();
     let run = driver.run_agent_for(SPEC_REVIEW_JOB, &agent);
     log_review_usage(driver, &agent, &run, started.elapsed().as_secs());
+    let cap = driver.config().spec_review_budget_weighted;
+    if let Some(reason) = incomplete_reason(&run, cap) {
+        keep(
+            driver,
+            ReviewRecord {
+                key,
+                file,
+                text: String::new(),
+                saved: false,
+                failure: Some(reason.clone()),
+            },
+        );
+        return Err(SpecRefusal::ReviewFailed { reason });
+    }
     let mut text = run.result_text.trim_end().to_string();
     text.push('\n');
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    // An unsaved review still refuses with its path, so the write result is not checked.
-    let _ = std::fs::write(&file, &text);
+    let written = std::fs::write(&file, &text);
+    if let Err(err) = &written {
+        eprintln!("{}", unsaved_warning(&file, err));
+    }
+    keep(
+        driver,
+        ReviewRecord {
+            key,
+            file: file.clone(),
+            text: text.clone(),
+            saved: written.is_ok(),
+            failure: None,
+        },
+    );
     verdict_of(&text, file)
 }
 
@@ -353,9 +474,60 @@ mod tests {
                 findings: "1. [blocker] x".into(),
             },
             SpecRefusal::ReviewMissing { file },
+            SpecRefusal::ReviewFailed {
+                reason: "stalled".into(),
+            },
         ] {
             assert!(refusal.to_string().ends_with(hint), "{refusal}");
         }
+        let failed = SpecRefusal::ReviewFailed {
+            reason: "stalled".into(),
+        };
+        assert!(failed.to_string().contains("did not finish (stalled)"));
+    }
+
+    fn stopped(reason: factory_agent::StopReason, error: Option<&str>) -> AgentRun {
+        AgentRun {
+            stop_reason: reason,
+            error: error.map(str::to_string),
+            ..AgentRun::done("")
+        }
+    }
+
+    #[test]
+    fn incomplete_reason_names_each_stop() {
+        use factory_agent::StopReason::{BudgetStop, Failed, Stalled, TurnLimit};
+        assert_eq!(incomplete_reason(&AgentRun::done("x"), 100), None);
+        assert_eq!(
+            incomplete_reason(&stopped(Failed, Some("boom")), 100).as_deref(),
+            Some("failed: boom")
+        );
+        assert_eq!(
+            incomplete_reason(&stopped(Failed, None), 100).as_deref(),
+            Some("failed: no error text")
+        );
+        assert_eq!(
+            incomplete_reason(&stopped(Stalled, None), 100).as_deref(),
+            Some("stalled")
+        );
+        assert_eq!(
+            incomplete_reason(&stopped(TurnLimit, None), 100).as_deref(),
+            Some("stopped at the turn limit")
+        );
+        assert_eq!(
+            incomplete_reason(&stopped(BudgetStop, None), 100).as_deref(),
+            Some("stopped at the cap of 100 weighted tokens; raise spec_review_budget_weighted")
+        );
+    }
+
+    #[test]
+    fn the_unsaved_warning_names_the_path_and_error() {
+        let err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let text = unsaved_warning(Path::new("/s/spec-reviews/k.md"), &err);
+        assert_eq!(
+            text,
+            "warning: could not save the spec review to /s/spec-reviews/k.md: denied"
+        );
     }
 
     #[test]
