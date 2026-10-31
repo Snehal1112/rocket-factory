@@ -45,7 +45,7 @@ Flow: the checks stage plans the commands for the diff and gets, with the plan, 
 
 ### 1. The planner reports unplanned paths
 
-`CheckPlan` gets a new field `pub unplanned: Vec<String>`. In `plan_checks_in`, a rule that matches some changed paths and expands, after `validate_command`, to at least one command covers all the paths it matched. A command that another rule planned first still counts for this rule. After all rules, `unplanned` holds, in input order and without repeats, the paths that some rule matched and no matching rule covered. A path that no rule matches is not in `unplanned`, because the existing check already finds it.
+`CheckPlan` gets a new field `pub unplanned: Vec<String>`. In `plan_checks_in`, a rule covers a matched path when it plans a command for that path: a template without placeholders covers every path the rule matched, a `{crate}` template covers a matched path that has an owning crate, and a `{dependents}` template covers the matched paths when at least one dependent is left after the cap. An expansion that fails `validate_command` plans nothing. A command that another rule planned first still counts for this rule. After all rules, `unplanned` holds, in input order and without repeats, the paths that some rule matched and no matching rule covered. A path that no rule matches is not in `unplanned`, because the existing check already finds it.
 
 Example: with the rule `paths = ["**"]`, `commands = ["cargo test -j4 -p {crate}"]` and no workspace map, the path `Cargo.toml` has no `crates/` segment, so `commands` is empty and `unplanned` is `["Cargo.toml"]`.
 
@@ -79,6 +79,7 @@ Example: `no check covers 2 changed code paths: Cargo.toml (a rule matches but p
 | A code file under `crates/<dir>/` that no workspace crate owns | parks `no-checks` with the suffix. The user exempts it with `unchecked_paths` |
 | `dependents_cap = 0` and a rule with only `{dependents}` commands | its paths are `unplanned` |
 | A rule with one `{dependents}` command and one plain command | the plain command covers the paths |
+| One `{crate}` rule matches a crate path and a root path | the crate path is covered, the root path is `unplanned` |
 | A path matched by two rules, one plans a command | covered by the other rule |
 | A rule plans only a command another rule already planned | still covered |
 | A doc path with a rule that plans nothing | not code, never gated |
@@ -89,7 +90,7 @@ Example: `no check covers 2 changed code paths: Cargo.toml (a rule matches but p
 
 ## Testing
 
-`factory-checks` (`plan.rs` tests; the workspace fixture of `dependents_expand_and_cap` is reused): `a_crate_rule_for_a_root_file_plans_nothing_and_reports_the_path`, `dependents_over_the_cap_leave_the_paths_unplanned`, `a_path_with_a_planned_command_is_not_unplanned`, `a_second_rule_that_plans_a_command_covers_the_path`, `a_duplicate_command_still_counts_as_planned`, `a_path_no_rule_matches_is_not_unplanned`, `validate_config_rejects_crate_with_dependents`.
+`factory-checks` (`plan.rs` tests; the workspace fixture of `dependents_expand_and_cap` is reused): `a_crate_rule_for_a_root_file_plans_nothing_and_reports_the_path`, `dependents_over_the_cap_leave_the_paths_unplanned`, `a_path_with_a_planned_command_is_not_unplanned`, `a_second_rule_that_plans_a_command_covers_the_path`, `a_duplicate_command_still_counts_as_planned`, `a_path_no_rule_matches_is_not_unplanned`, `a_rule_that_plans_for_one_path_leaves_an_unowned_path_unplanned`, `validate_config_rejects_crate_with_dependents`, `validate_config_accepts_crate_and_dependents_in_separate_commands`.
 
 `factory-core` (`gate.rs` tests): `an_unplanned_path_is_uncovered_and_flagged`, `an_exempt_unplanned_path_is_not_uncovered`, `an_unplanned_doc_path_is_not_code`, `uncovered_code_paths_is_unchanged_without_a_plan`.
 
