@@ -398,7 +398,7 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "to every plan, as if listed with the rules below",
         "does not skip the interview",
         "Use the ticket and the code survey to ask sharper questions",
-        // The 7.0.0 interview, the draft card and the spec the driver needs.
+        // The interview, the draft card and the spec the driver needs.
         "<factory> --project <name> spec start <slug> '<feature>'",
         "<factory> --project <name> spec stage <slug> writing-spec",
         "<factory> --project <name> spec stage <slug> writing-plans",
@@ -410,11 +410,9 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "## Decisions",
         "`Decided by: user`",
         "`Decided by: call`",
-        "builder check",
-        "opt-out",
         "## Goal",
         "## Acceptance criteria",
-        // The 7.0.0 plans, run by the driver.
+        // The plans, run by the driver.
         "superpowers:subagent-driven-development",
         "one fresh factory-builder implementer per task",
         "File Structure",
@@ -432,9 +430,9 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
         "two or three alternatives",
         "because open questions were too hard to answer",
-        "\"a single sentence with no list of example answers\"",
-        "\"Offer a short menu only when they're stuck\"",
-        "Red Flags row \"Options steer\"",
+        "\"ask one focused question about purpose or intended use\"",
+        "\"open-ended is fine too\"",
+        "the skill's spike and bounded paths do not apply",
         "Always size it as a project with a written design",
         "If they still decline, run `<factory> --project <name> cancel <slug>` to remove the draft card and stop without building anything.",
         "Survey the code and the ticket first",
@@ -475,7 +473,7 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         pos("the commit after the spec approval comes first")
             < pos("Invoke `superpowers:writing-plans`")
     );
-    // The 6.4.1 rules that 7.0.0 removed, and the inline executor.
+    // The 6.4.1 rules that no longer apply, and the inline executor.
     for removed in [
         "executing-plans",
         "architectural path",

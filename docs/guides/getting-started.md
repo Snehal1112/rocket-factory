@@ -44,7 +44,7 @@ The factory runs on Linux and macOS (see the note at the end). It is built from 
 | A C compiler (`gcc` or `clang`) | The git library (libgit2) compiles C code. | `cc --version` |
 | `git` | To clone this repo, and your repos are git repos. | `git --version` |
 | Claude Code, logged in | The factory runs `claude -p` for every agent. | `claude --version` |
-| The `superpowers` plugin for Claude Code, version 7.0.0 | `/factory` uses `superpowers:brainstorming`, `superpowers:writing-plans` and the builder uses `superpowers:subagent-driven-development`. | In Claude Code, run `/plugin` and look for it. |
+| The `superpowers` plugin for Claude Code, version 6.4.2 | `/factory` uses `superpowers:brainstorming`, `superpowers:writing-plans` and the builder uses `superpowers:subagent-driven-development`. | In Claude Code, run `/plugin` and look for it. |
 | The `dev-workflow-skills` plugin | The committer agent writes commits with the `dev-workflow-skills:1-git-commit` skill. | In Claude Code, run `/plugin` and look for it. |
 | `gh` (GitHub CLI), optional | Only for ticket hygiene (`tickets_on_merge`). Skip it if you do not use GitHub issues. | `gh --version` |
 | `cargo` on the machine, only for Rust projects | The `rust` preset checks run `cargo check` and `cargo test` in your project. | `cargo --version` |

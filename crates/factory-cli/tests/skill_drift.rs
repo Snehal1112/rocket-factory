@@ -4,9 +4,9 @@
 use std::path::{Path, PathBuf};
 
 /// The superpowers version the commands were written against.
-const SKILLS_TESTED_AGAINST: &str = "7.0.0";
+const SKILLS_TESTED_AGAINST: &str = "6.4.2";
 
-/// Splits `7.0.0` into numbers so versions compare in order. Non-numeric parts count as 0.
+/// Splits `6.4.2` into numbers so versions compare in order. Non-numeric parts count as 0.
 fn version_key(name: &str) -> Vec<u64> {
     name.split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
@@ -47,21 +47,14 @@ fn installed_skills_still_have_what_the_commands_rely_on() {
     if version != SKILLS_TESTED_AGAINST {
         println!("note: the commands were written against superpowers {SKILLS_TESTED_AGAINST}, found {version}");
     }
-    assert!(
-        skills
-            .join("brainstorming/builder-check-prompt.md")
-            .is_file(),
-        "builder-check-prompt.md is gone"
-    );
     // The command overrides these brainstorming sentences by quoting them, so they must still be there.
     let brainstorming = read(&skills.join("brainstorming/SKILL.md"))
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
     for quoted in [
-        "a single sentence with no list of example answers",
-        "Offer a short menu only when they're stuck",
-        "Options steer.",
+        "ask one focused question about purpose or intended use",
+        "open-ended is fine too",
     ] {
         assert!(
             brainstorming.contains(quoted),

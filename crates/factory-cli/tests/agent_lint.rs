@@ -421,7 +421,7 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "--plans docs/superpowers/plans/<date>-<slug> --spec docs/superpowers/specs/<date>-<slug>-design.md",
             "docs/superpowers/specs/<date>-<slug>-design.md",
             "docs/superpowers/plans/<date>-<slug>/",
-            // The 7.0.0 interview and the draft card.
+            // The interview and the draft card.
             "<factory> --project <name> spec start <slug> '<feature>'",
             "<factory> --project <name> spec stage <slug> writing-spec",
             "<factory> --project <name> spec stage <slug> writing-plans",
@@ -432,13 +432,11 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "recommended answer",
             "`Decided by: user`",
             "`Decided by: call`",
-            "builder check",
-            "opt-out",
             "dev-workflow-skills:1-git-commit",
             "git commit --only -- <spec path>",
             "git commit --only -- <plan paths>",
             "## Decisions",
-            // The 7.0.0 plans, run by the driver.
+            // The plans, run by the driver.
             "superpowers:subagent-driven-development",
             "one fresh factory-builder implementer per task",
             "File Structure",
@@ -453,7 +451,8 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             // The overrides of the brainstorming skill, the drafts and a split feature's ticket.
             "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
             "because open questions were too hard to answer",
-            "Red Flags row \"Options steer\"",
+            "It replaces the skill's \"ask one focused question about purpose or intended use\" and its \"open-ended is fine too\".",
+            "the skill's spike and bounded paths do not apply",
             "Always size it as a project with a written design",
             "If they still decline, run `<factory> --project <name> cancel <slug>` to remove the draft card and stop without building anything.",
             "Survey the code and the ticket first",
@@ -494,7 +493,7 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "SendMessage",
             // Nothing is drafted in a gitignored folder any more.
             ".superpowers/sdd/draft-",
-            // The 6.4.1 rules that 7.0.0 removed, and the inline executor.
+            // The 6.4.1 rules that no longer apply, and the inline executor.
             "executing-plans",
             "architectural path",
             "never classify",
@@ -537,7 +536,6 @@ fn docs_describe_the_new_design() -> TestResult {
             "`--spec` needs `--plans`",
             "FACTORY_ALLOW_API_KEY",
             "Decided by: user",
-            "builder check",
             "superpowers:subagent-driven-development",
         ],
     )?;
