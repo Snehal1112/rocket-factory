@@ -16,6 +16,8 @@ pub struct CheckPlan {
     pub timeout: Duration,
     /// Lines for `checks.md` that explain what the plan left out.
     pub notes: Vec<String>,
+    /// Changed paths that a rule matched but no matching rule planned a command for.
+    pub unplanned: Vec<String>,
 }
 
 /// Rejects a cargo command that lacks `-j4` or uses `--workspace` or `--all`.
@@ -47,6 +49,9 @@ pub fn validate_command(cmd: &str) -> Result<(), CheckError> {
 pub fn validate_config(cfg: &Config) -> Result<(), CheckError> {
     for rule in &cfg.checks {
         for cmd in &rule.commands {
+            if cmd.contains("{crate}") && cmd.contains("{dependents}") {
+                return Err(CheckError::CrossProduct(cmd.clone()));
+            }
             validate_command(cmd)?;
         }
     }
@@ -77,19 +82,20 @@ pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Worksp
     let mut seen = BTreeSet::new();
     let mut commands = Vec::new();
     let mut notes: Vec<String> = Vec::new();
+    let mut matched_any: BTreeSet<&str> = BTreeSet::new();
+    let mut covered: BTreeSet<&str> = BTreeSet::new();
+    let owner_of = |p: &str| -> Option<String> {
+        match ws {
+            Some(ws) => ws.owner(p).map(str::to_string),
+            None => crate_of(p),
+        }
+    };
     for rule in &cfg.checks {
         let matched: Vec<&String> = changed_paths.iter().filter(|p| rule.matches(p)).collect();
         if matched.is_empty() {
             continue;
         }
-        let crates: BTreeSet<String> = match ws {
-            Some(ws) => matched
-                .iter()
-                .filter_map(|p| ws.owner(p))
-                .map(str::to_string)
-                .collect(),
-            None => matched.iter().filter_map(|p| crate_of(p)).collect(),
-        };
+        let crates: BTreeSet<String> = matched.iter().filter_map(|p| owner_of(p)).collect();
         let uses_dependents = rule.commands.iter().any(|c| c.contains("{dependents}"));
         let mut dependents = match ws {
             Some(ws) if uses_dependents => ws.dependents(&crates),
@@ -117,18 +123,46 @@ pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Worksp
                     .flat_map(|t| dependents.iter().map(|d| t.replace("{dependents}", d)))
                     .collect();
             }
-            for cmd in expanded {
-                // A command that breaks the cargo rules never runs.
-                if validate_command(&cmd).is_ok() && seen.insert(cmd.clone()) {
+            // A command that breaks the cargo rules never runs.
+            let valid: Vec<String> = expanded
+                .into_iter()
+                .filter(|cmd| validate_command(cmd).is_ok())
+                .collect();
+            if !valid.is_empty() {
+                for path in &matched {
+                    // A `{crate}` template plans nothing for a path without an owning crate.
+                    let planned = !template.contains("{crate}")
+                        || owner_of(path).is_some_and(|c| {
+                            validate_command(&template.replace("{crate}", &c)).is_ok()
+                        });
+                    if planned {
+                        covered.insert(path.as_str());
+                    }
+                }
+            }
+            for cmd in valid {
+                if seen.insert(cmd.clone()) {
                     commands.push(cmd);
                 }
             }
         }
+        matched_any.extend(matched.iter().map(|p| p.as_str()));
     }
+    let mut listed = BTreeSet::new();
+    let unplanned = changed_paths
+        .iter()
+        .filter(|p| {
+            matched_any.contains(p.as_str())
+                && !covered.contains(p.as_str())
+                && listed.insert(p.as_str())
+        })
+        .cloned()
+        .collect();
     CheckPlan {
         commands,
         timeout: DEFAULT_TIMEOUT,
         notes,
+        unplanned,
     }
 }
 
@@ -290,6 +324,100 @@ mod tests {
         let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, None);
         assert_eq!(plan.commands, ["cargo test -j4 -p core"]);
         assert!(plan.notes.is_empty());
+    }
+
+    #[test]
+    fn a_crate_rule_for_a_root_file_plans_nothing_and_reports_the_path() {
+        let c = cfg(vec![(&["**"], &["cargo test -j4 -p {crate}"])]);
+        let plan = plan_checks_in(&paths(&["Cargo.toml"]), &c, None);
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.unplanned, paths(&["Cargo.toml"]));
+    }
+
+    #[test]
+    fn dependents_over_the_cap_leave_the_paths_unplanned() {
+        let mut c = cfg(vec![(&["crates/**"], &["cargo test -j4 -p {dependents}"])]);
+        c.dependents_cap = 0;
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, Some(&ws()));
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.unplanned, paths(&["crates/core/src/a.rs"]));
+    }
+
+    #[test]
+    fn a_rule_that_plans_for_one_path_leaves_an_unowned_path_unplanned() {
+        let c = cfg(vec![(&["**"], &["cargo test -j4 -p {crate}"])]);
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs", "Cargo.toml"]), &c, None);
+        assert_eq!(plan.commands, ["cargo test -j4 -p core"]);
+        assert_eq!(plan.unplanned, paths(&["Cargo.toml"]));
+    }
+
+    #[test]
+    fn validate_config_rejects_crate_with_dependents() {
+        let c = cfg(vec![(
+            &["crates/**"],
+            &["cargo test -j4 -p {crate} -p {dependents}"],
+        )]);
+        let err = validate_config(&c).expect_err("cross product");
+        assert!(matches!(err, crate::CheckError::CrossProduct(_)), "{err:?}");
+        assert!(
+            err.to_string().contains("{crate} and {dependents}"),
+            "{err}"
+        );
+        assert!(
+            err.to_string()
+                .contains("cargo test -j4 -p {crate} -p {dependents}"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_path_with_a_planned_command_is_not_unplanned() {
+        let c = cfg(vec![(&["crates/**"], &["cargo test -j4 -p {crate}"])]);
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, Some(&ws()));
+        assert!(plan.unplanned.is_empty());
+        assert_eq!(plan.commands, ["cargo test -j4 -p core"]);
+    }
+
+    #[test]
+    fn a_second_rule_that_plans_a_command_covers_the_path() {
+        let c = cfg(vec![
+            (&["**"], &["cargo test -j4 -p {crate}"]),
+            (&["Cargo.toml"], &["cargo check -j4"]),
+        ]);
+        let plan = plan_checks_in(&paths(&["Cargo.toml"]), &c, None);
+        assert_eq!(plan.commands, ["cargo check -j4"]);
+        assert!(plan.unplanned.is_empty());
+    }
+
+    #[test]
+    fn a_duplicate_command_still_counts_as_planned() {
+        let c = cfg(vec![
+            (&["crates/**"], &["cargo check -j4"]),
+            (&["crates/core/**"], &["cargo check -j4"]),
+        ]);
+        let plan = plan_checks_in(&paths(&["crates/core/a.rs"]), &c, None);
+        assert_eq!(plan.commands, ["cargo check -j4"]);
+        assert!(plan.unplanned.is_empty());
+    }
+
+    #[test]
+    fn a_path_no_rule_matches_is_not_unplanned() {
+        let c = cfg(vec![(&["docs/**"], &["yarn check"])]);
+        let plan = plan_checks_in(&paths(&["src/a.ts"]), &c, None);
+        assert!(plan.commands.is_empty());
+        assert!(plan.unplanned.is_empty());
+    }
+
+    #[test]
+    fn validate_config_accepts_crate_and_dependents_in_separate_commands() {
+        let c = cfg(vec![(
+            &["crates/**"],
+            &[
+                "cargo test -j4 -p {crate}",
+                "cargo test -j4 -p {dependents}",
+            ],
+        )]);
+        assert!(validate_config(&c).is_ok());
     }
 
     fn rust_preset() -> Config {
