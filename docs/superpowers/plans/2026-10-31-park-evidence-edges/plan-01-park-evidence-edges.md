@@ -24,13 +24,14 @@
 1. Final checks that cannot run after a sync must still park, with the risky kind and a Checks part that says why. Pinned by `final_checks_that_cannot_run_keep_the_risky_kind_and_say_why`.
 2. A failing final check on the sync path must start no fix round and no builder run. Pinned by `failing_final_checks_after_a_sync_park_as_checks_failed_without_a_fix_round`.
 3. A ledger that holds only blank lines must leave out the Ledger part like a missing one. Pinned by `a_blank_ledger_leaves_out_the_ledger_part`.
-4. A stage move that fails after a successful board update must leave no `park.json`. Pinned by `a_failed_stage_move_leaves_no_park_record`.
+4. A stage move that fails after a successful board update must leave no `park.json`, and a ledger ruling that fails after the record is written must keep it. Pinned by `a_failed_stage_move_leaves_no_park_record` and `a_failed_ruling_leaves_the_park_record`.
 5. A sync park that is not risky (a conflict) must keep kind `other`. Pinned by `other_sync_parks_stay_kind_other`.
 
 ## File Structure
 
 | File | Responsibility |
 |---|---|
+| `crates/factory-engine/src/ports.rs` | `Engine::park` split into `move_to_needs_human` and the ruling |
 | `crates/factory-engine/src/park.rs` | `in_park_order`, `risk_unknown_part`, `lead_parts_from`, `Engine::lead_parts_for_card`, `sync_park_choice`, `Engine::park_after_sync`, the new `park_with` order, unit tests |
 | `crates/factory-engine/src/compat.rs` | `Driver::park_after_sync` |
 | `crates/factory-engine/src/sync.rs` | the risky arm calls `park_after_sync` |
@@ -41,19 +42,20 @@
 ### Task 1: The write order, the unknown Risk part and the blank ledger
 
 **Files:**
-- Modify: `crates/factory-engine/src/park.rs`, `crates/factory-engine/src/runloop.rs`
+- Modify: `crates/factory-engine/src/park.rs`, `crates/factory-engine/src/ports.rs`, `crates/factory-engine/src/runloop.rs`
 - Test: `crates/factory-engine/src/park.rs` (tests module), `crates/factory-engine/src/runloop.rs` (tests module)
 
 **Interfaces:**
 - Produces, in `park.rs`:
-  - `fn in_park_order<T>(update: impl FnOnce() -> Result<(), EngineError>, stage: impl FnOnce() -> Result<T, EngineError>, record: impl FnOnce()) -> Result<T, EngineError>`. It runs `update`, then `stage`, then `record`, and stops at the first error without calling the later steps.
+  - `fn in_park_order(update: impl FnOnce() -> Result<(), EngineError>, stage: impl FnOnce() -> Result<(), EngineError>, record: impl FnOnce(), ruling: impl FnOnce() -> Result<(), EngineError>) -> Result<(), EngineError>`. It runs `update`, `stage`, `record` and `ruling` in that order and stops at the first error without calling the later steps. `record` is infallible, so a failed `ruling` still leaves the record written.
+- Produces, in `ports.rs`: `pub(crate) fn move_to_needs_human(&self, reason: &str) -> Result<(), EngineError>` (the `set_stage` and `log_park` calls of `Engine::park`). `Engine::park` calls it, then writes the ruling, so its behaviour is unchanged.
   - `fn risk_unknown_part(err: &EngineError) -> ParkPart`.
   - `fn lead_parts_from(paths: Result<Vec<String>, EngineError>, review: Option<ParkPart>, risk: impl FnOnce(&[String]) -> Option<ParkPart>) -> Vec<ParkPart>`.
   - `pub(crate) fn lead_parts_for_card(&self) -> Vec<ParkPart>` on `Engine`.
 
 - [ ] **Step 1: Read the code this task touches**
 
-Read all of `park.rs` (the `park_with` body at lines 77-108, `decision_parts` at 111-154, `lead_parts` at 163-167), `park_unsettled` and its test `unsettled_park_keeps_the_last_twenty_ledger_lines` in `runloop.rs` (`driver` and `add_job` helpers), `Engine::park` in `ports.rs:177-182` and `evidence_or_reason` in `park.rs:58-66`.
+Read all of `park.rs` (the `park_with` body at lines 77-108, `decision_parts` at 111-154, `lead_parts` at 163-167), `park_unsettled` and its test `unsettled_park_keeps_the_last_twenty_ledger_lines` in `runloop.rs` (`driver` and `add_job` helpers), `Engine::park` in `ports.rs:177-182` (its `set_stage` and `log_park` calls move to `move_to_needs_human`) and `evidence_or_reason` in `park.rs:58-66`.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -61,22 +63,25 @@ In the `park.rs` tests module:
 
 ```rust
 #[test]
-fn park_steps_run_update_then_stage_then_record() {
+fn park_steps_run_update_then_stage_then_record_then_ruling() {
     let order = std::cell::RefCell::new(Vec::new());
-    let out = in_park_order(
+    in_park_order(
         || {
             order.borrow_mut().push("update");
             Ok(())
         },
         || {
             order.borrow_mut().push("stage");
-            Ok("parked")
+            Ok(())
         },
         || order.borrow_mut().push("record"),
+        || {
+            order.borrow_mut().push("ruling");
+            Ok(())
+        },
     )
     .expect("parked");
-    assert_eq!(out, "parked");
-    assert_eq!(*order.borrow(), vec!["update", "stage", "record"]);
+    assert_eq!(*order.borrow(), vec!["update", "stage", "record", "ruling"]);
 }
 
 #[test]
@@ -89,6 +94,7 @@ fn a_failed_board_update_leaves_no_park_record() {
             Ok(())
         },
         || order.borrow_mut().push("record"),
+        || Ok(()),
     )
     .expect_err("update failed");
     assert_eq!(err.to_string(), "board locked");
@@ -112,7 +118,8 @@ fn an_unreadable_diff_gets_a_risk_unknown_part() {
 
 | Test | Setup | Assertions |
 |---|---|---|
-| `a_failed_stage_move_leaves_no_park_record` | `update` returns `Ok(())`, `stage` returns `Err(EngineError::Msg("stage failed".into()))` | the call fails with `stage failed`; the recorded order is `["update"]` and `record` was not called |
+| `a_failed_stage_move_leaves_no_park_record` | `update` returns `Ok(())`, `stage` returns `Err(EngineError::Msg("stage failed".into()))`, `record` and `ruling` push their names | the call fails with `stage failed`; the recorded order is `["update"]`, so neither `record` nor `ruling` ran |
+| `a_failed_ruling_leaves_the_park_record` | `update` and `stage` return `Ok(())`, `record` pushes `"record"`, `ruling` returns `Err(EngineError::Msg("ledger locked".into()))` | the call fails with `ledger locked`; the recorded order is `["record"]` plus the earlier steps, so the record was written before the ruling failed |
 | `a_readable_diff_keeps_the_lead_parts` | `lead_parts_from(Ok(vec!["a.rs".to_string()]), Some(review), |paths| { assert_eq!(paths, ["a.rs"]); Some(ParkPart::new("Risk", "driver", "risky: a.rs")) })` | titles are `["Review", "Risk"]` and the Risk text is `risky: a.rs` |
 
 In the `runloop.rs` tests module, built like `unsettled_park_keeps_the_last_twenty_ledger_lines`:
@@ -142,12 +149,12 @@ Expected: compile errors `cannot find function 'in_park_order' in this scope`, a
 
 - [ ] **Step 4: Implement**
 
-Add the helpers above in `park.rs`. `risk_unknown_part` returns `ParkPart::new("Risk", "driver", &format!("unknown: the job diff could not be read ({err})"))`. `lead_parts_from` returns the review part (when any) followed by the risk part from the closure on `Ok`, or by `risk_unknown_part` on `Err`. `lead_parts_for_card` calls it with `self.job_changed_paths()`, `self.review_part()` and a closure over `self.risk_part`. `decision_parts` uses `lead_parts_for_card` in place of `self.lead_parts(&self.job_changed_paths().unwrap_or_default())`. `park_with` builds the record as today, then calls `in_park_order` with the board update, `self.park(reason)` and `write_record(&self.job_dir, &record)`. `park_unsettled` passes an empty list of parts when the tail is blank, so `evidence_or_reason` adds `Why it stopped`.
+Add the helpers above in `park.rs`. `risk_unknown_part` returns `ParkPart::new("Risk", "driver", &format!("unknown: the job diff could not be read ({err})"))`. `lead_parts_from` returns the review part (when any) followed by the risk part from the closure on `Ok`, or by `risk_unknown_part` on `Err`. `lead_parts_for_card` calls it with `self.job_changed_paths()`, `self.review_part()` and a closure over `self.risk_part`. `decision_parts` uses `lead_parts_for_card` in place of `self.lead_parts(&self.job_changed_paths().unwrap_or_default())`. In `ports.rs`, move the `set_stage` and `log_park` calls of `Engine::park` into `move_to_needs_human`; `park` calls it and then `self.ruling(...)?`, so every other caller behaves as before. `park_with` builds the record as today, then calls `in_park_order` with the board update, `self.move_to_needs_human(&reason)`, `write_record(&self.job_dir, &record)` and `self.ruling(&format!("needs-human, {reason}"))`, and returns `Ok(StageOutcome::NeedsHuman(reason))` on success. `park_unsettled` passes an empty list of parts when the tail is blank, so `evidence_or_reason` adds `Why it stopped`.
 
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `cargo test -j4 -p factory-engine`
-Expected: all pass, the six new tests included, and the existing park tests unchanged.
+Expected: all pass, the seven new tests included, and the existing park tests unchanged.
 
 - [ ] **Step 6: Format and lint**
 
