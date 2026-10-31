@@ -206,7 +206,8 @@ fn show_prints_every_setting_with_its_value_and_source() {
         "  read_first = [\"CLAUDE.md\"] (preset)",
         "  base_branch = \"main\" (project)",
         "  reviewer_model_large = \"claude-opus-5-5\" (default)",
-        "  checks = 2 rules (preset)",
+        "  checks = 3 rules (preset)",
+        "  unchecked_paths = 8 entries (preset)",
         "  builder_rules = 3 entries (preset)",
     ] {
         assert!(out.contains(want), "missing {want:?} in\n{out}");
