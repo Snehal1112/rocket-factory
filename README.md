@@ -290,6 +290,23 @@ ends with `factoryd <version>` and a `warning:` line when it differs from the `f
 Boards written before this release have no `last_review`. A job parked there with a CHANGES review approves
 as before, with no `--waive`. The first review after the upgrade writes the field.
 
+#### Check coverage
+
+The rust preset now covers the root `Cargo.toml` and `Cargo.lock` with `cargo check -j4` and exempts generic non-code files such as `LICENSE` and `.gitignore`. Run `factory upgrade`: it refreshes an unedited rust preset.
+
+A project that sets `[[settings.checks]]` or `unchecked_paths` in `project.toml` keeps its own values. It must add the root rule and the exempt paths itself:
+
+```toml
+[[settings.checks]]
+paths = ["Cargo.toml", "Cargo.lock"]
+commands = ["cargo check -j4"]
+
+[settings]
+unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*", ".gitignore", ".gitattributes", ".editorconfig"]
+```
+
+A job that parks as `no-checks` shows in `factory --project <name> status`.
+
 ### Refreshing seeded presets
 
 `factory presets refresh [--force]` brings `<home>/presets/` up to the text built into the binary. It needs no
