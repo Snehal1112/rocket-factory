@@ -80,6 +80,115 @@ fn merge_record(fx: &common::MergeFixture) -> ParkRecord {
     ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json")
 }
 
+fn risky_config(checks: Vec<factory_core::CheckRule>) -> factory_core::Config {
+    factory_core::Config {
+        risk_paths: vec!["docs/**".to_string()],
+        checks,
+        ..factory_core::Config::default()
+    }
+}
+
+fn docs_rule(command: &str) -> factory_core::CheckRule {
+    factory_core::CheckRule {
+        paths: vec!["docs/**".to_string()],
+        commands: vec![command.to_string()],
+    }
+}
+
+fn risky_sync_fixture(checks: Vec<factory_core::CheckRule>) -> common::MergeFixture {
+    let fx = common::approved_job_config(common::approving_runner(3), false, risky_config(checks));
+    // Main moves, so the merge syncs first.
+    common::commit_file(&fx.main, "other.md", "o");
+    fx
+}
+
+fn titles(rec: &ParkRecord) -> Vec<&str> {
+    rec.parts.iter().map(|p| p.title.as_str()).collect()
+}
+
+#[test]
+fn a_risky_park_after_a_sync_keeps_the_review_and_risk_evidence() {
+    let fx = risky_sync_fixture(Vec::new());
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("after sync")),
+        "{r:?}"
+    );
+    let rec = merge_record(&fx);
+    assert_eq!(rec.kind, ParkKind::RiskyDiff);
+    assert_eq!(rec.risky, Some(true));
+    assert!(
+        titles(&rec).starts_with(&["Review", "Risk"]),
+        "{:?}",
+        titles(&rec)
+    );
+}
+
+#[test]
+fn a_risky_park_after_a_sync_runs_the_final_checks() {
+    let fx = risky_sync_fixture(vec![docs_rule("true")]);
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Parked(_)), "{r:?}");
+    let job = fx.driver.job(&fx.id).expect("job");
+    let checks =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("checks.md")).expect("checks.md");
+    assert!(
+        checks.lines().any(|l| l.starts_with("PASS true")),
+        "{checks}"
+    );
+    assert!(titles(&merge_record(&fx)).contains(&"Checks"));
+}
+
+#[test]
+fn failing_final_checks_after_a_sync_park_as_checks_failed_without_a_fix_round() {
+    // The sync checks stage also runs the rule on the whole job diff, so the script passes the first
+    // run and fails every later one. Only the final checks after the sync review see it fail.
+    let scripts = tempfile::tempdir().expect("scripts dir");
+    let script = scripts.path().join("pass-once.sh");
+    let marker = scripts.path().join("ran");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nif [ -e {m} ]; then exit 1; fi\ntouch {m}\n",
+            m = marker.display()
+        ),
+    )
+    .expect("write script");
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .expect("chmod");
+    let fx = risky_sync_fixture(vec![docs_rule(&script.to_string_lossy())]);
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Parked(_)), "{r:?}");
+    let rec = merge_record(&fx);
+    assert_eq!(rec.kind, ParkKind::ChecksFailed, "{rec:?}");
+    assert!(
+        rec.reason.contains("final checks failed after sync"),
+        "{}",
+        rec.reason
+    );
+    assert!(fx.runner.specs_for("builder").is_empty());
+    let titles = titles(&rec);
+    for want in ["Review", "Risk", "Checks"] {
+        assert!(titles.contains(&want), "{titles:?}");
+    }
+}
+
+#[test]
+fn other_sync_parks_stay_kind_other() {
+    let fx =
+        common::approved_job_config(common::approving_runner(3), false, risky_config(Vec::new()));
+    let wt = common::worktree_of(&fx);
+    common::commit_file(&wt, "same.txt", "branch");
+    common::record_head(&fx, &common::branch_tip(&fx));
+    common::commit_file(&fx.main, "same.txt", "main");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("conflict")),
+        "{r:?}"
+    );
+    assert_eq!(merge_record(&fx).kind, ParkKind::Other);
+}
+
 #[test]
 fn main_busy_lists_the_dirty_files() {
     let fx = common::approved_job();

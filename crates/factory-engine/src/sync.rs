@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use factory_core::Stage;
+use factory_core::{ParkKind, Stage};
 use factory_git::{MergeOutcome, Worktree};
 
 use crate::{now_secs, Decision, Driver, EngineError, MessageKind, StageOutcome, MAX_SYNCS};
@@ -81,8 +81,12 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
             _ => Ok(SyncOutcome::Parked("final checks failed after sync".into())),
         },
         Decision::FixRound => Ok(SyncOutcome::Parked("sync review asked for changes".into())),
-        Decision::NeedsHuman { reason: why, .. } => {
-            Ok(SyncOutcome::Parked(format!("after sync: {why}")))
+        Decision::NeedsHuman { kind, reason: why } => {
+            let text = format!("after sync: {why}");
+            if *kind == ParkKind::RiskyDiff {
+                driver.park_after_sync(id, &text)?;
+            }
+            Ok(SyncOutcome::Parked(text))
         }
     }
 }

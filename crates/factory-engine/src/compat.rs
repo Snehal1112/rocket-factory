@@ -629,4 +629,8 @@ impl Driver {
     pub fn apply(&self, id: &str, outcome: &ReviewOutcome) -> Result<StageOutcome, EngineError> {
         self.with_engine(id, |e| e.apply_decision(outcome))
     }
+    /// Parks a job whose sync review found a risky diff. It runs the final checks and writes the full card.
+    pub fn park_after_sync(&self, id: &str, reason: &str) -> Result<StageOutcome, EngineError> {
+        self.with_engine(id, |e| e.park_after_sync(reason))
+    }
 }
