@@ -881,6 +881,96 @@ test("the empty panel invites an action and does not throw on missing data", () 
   }
 });
 
+const noFigures = { n_approx: 0, per_line: null, median_turns: null, resumed_pct: null, rework_pct: null, park_pct: null };
+const trend = {
+  warnings: ["marker late (job 099) is past the latest job"],
+  markers: [
+    {
+      names: ["carry-cap-45k"], from: ["004"], cut: "005",
+      groups: {
+        small: {
+          verdict: "fell", change_pct: -38,
+          before: { n: 6, n_approx: 1, per_line: { n: 6, median: 1223, low: 900, high: 1500 }, median_turns: 21, resumed_pct: 40, rework_pct: 17, park_pct: 33 },
+          after: { n: 5, n_approx: 0, per_line: { n: 5, median: 760, low: 700, high: 800 }, median_turns: 14, resumed_pct: 55, rework_pct: 0, park_pct: 20 },
+        },
+        medium: {
+          verdict: "not-enough-data", change_pct: null,
+          before: Object.assign({ n: 2 }, noFigures),
+          after: Object.assign({ n: 4 }, noFigures),
+        },
+      },
+    },
+  ],
+};
+
+function trendWith(marker) {
+  return { warnings: [], markers: [Object.assign({ names: ["m"], from: ["001"], cut: "002", groups: {} }, marker)] };
+}
+
+test("renderTrendPanel draws a block, a table and bars per marker", () => {
+  const html = board.renderTrendPanel(trend);
+  assert.match(html, /carry-cap-45k/);
+  assert.match(html, /cut at 005/);
+  assert.match(html, /<th scope="row">small<\/th>/);
+  assert.match(html, /1223 tokens per line/);
+  assert.match(html, /760 tokens per line/);
+  assert.match(html, /-38%/);
+  assert.match(html, /fell/);
+  assert.equal((html.match(/<rect /g) || []).length, 2, "two bars for the one group with data");
+  assert.match(html, /past the latest job/);
+});
+
+test("renderTrendPanel shows not enough data and draws no bars for that group", () => {
+  const html = board.renderTrendPanel(trendWith({ groups: { medium: trend.markers[0].groups.medium } }));
+  assert.match(html, /not enough data \(2 before, 4 after\)/);
+  assert.doesNotMatch(html, /<rect /);
+});
+
+test("renderTrendPanel escapes marker names", () => {
+  const html = board.renderTrendPanel(trendWith({ names: ["<b>x</b>"], groups: { small: trend.markers[0].groups.small } }));
+  assert.match(html, /&lt;b&gt;x&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>x<\/b>/);
+});
+
+test("renderTrendPanel gives the chart a title and each bar an aria-label", () => {
+  const html = board.renderTrendPanel(trend);
+  assert.match(html, /<svg[^>]*>\s*<title>/);
+  assert.match(html, /aria-label="small before: 1223 tokens per line"/);
+  assert.match(html, /aria-label="small after: 760 tokens per line"/);
+});
+
+test("renderTrendPanel shows only the warnings when there are no markers", () => {
+  const html = board.renderTrendPanel({ markers: [], warnings: ["w"] });
+  assert.match(html, /<p class="cost-note">w<\/p>/);
+  assert.doesNotMatch(html, /<table/);
+});
+
+test("renderTrendPanel draws no bars when both medians are zero", () => {
+  const side = { n: 3, n_approx: 0, per_line: { n: 3, median: 0, low: 0, high: 0 }, median_turns: 1, resumed_pct: 0, rework_pct: 0, park_pct: 0 };
+  const html = board.renderTrendPanel(trendWith({ groups: { small: { verdict: "flat", change_pct: 0, before: side, after: side } } }));
+  assert.doesNotMatch(html, /<rect /);
+  assert.doesNotMatch(html, /NaN/);
+});
+
+test("renderTrendPanel says so when a marker has no groups", () => {
+  assert.match(board.renderTrendPanel(trendWith({ groups: {} })), /No jobs with data around this cut/);
+});
+
+test("renderTrendPanel survives a malformed trend", () => {
+  const bad = ["x", { markers: {} }, null, undefined, { markers: ["x", { groups: "y" }, { groups: { small: null } }], warnings: "w" }];
+  for (const value of bad) assert.equal(typeof board.renderTrendPanel(value), "string");
+  assert.equal(board.renderTrendPanel({ markers: {} }), "");
+});
+
+test("renderCostPanel without trend is unchanged", () => {
+  assert.doesNotMatch(board.renderCostPanel(costs, 160), /cost-trend/);
+});
+
+test("renderCostPanel appends the trend after the role bar", () => {
+  const html = board.renderCostPanel(Object.assign({}, costs, { trend }), 160);
+  assert.ok(html.indexOf("cost-trend") > html.indexOf("role-bar"), html);
+});
+
 test("an unmerged card with an estimate shows the range, group and caveats", () => {
   const job = makeJob({ stage: "build", estimate: { group: "small", median: 280000, low: 220000, high: 370000, n: 4, n_approx: 4 } });
   const html = board.renderCard(job, 200, []);

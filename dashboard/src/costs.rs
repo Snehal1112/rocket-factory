@@ -38,6 +38,49 @@ pub struct CostsView {
     pub generated_at: f64,
     pub groups: BTreeMap<String, GroupView>,
     pub roles: BTreeMap<String, u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trend: Option<TrendView>,
+}
+
+/// The trend report: one block per marker cut, plus the warnings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct TrendView {
+    pub markers: Vec<MarkerView>,
+    pub warnings: Vec<String>,
+}
+
+/// One cut: the marker names that map to it and the size group figures.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct MarkerView {
+    pub names: Vec<String>,
+    pub from: Vec<String>,
+    pub cut: String,
+    pub groups: BTreeMap<String, GroupTrendView>,
+}
+
+/// Before and after figures of one size group, with the verdict.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GroupTrendView {
+    pub before: SideView,
+    pub after: SideView,
+    pub change_pct: Option<i64>,
+    pub verdict: String,
+}
+
+/// The figures of one side of a cut.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SideView {
+    pub n: u32,
+    pub n_approx: u32,
+    pub per_line: Option<SpreadView>,
+    pub median_turns: Option<u64>,
+    pub resumed_pct: Option<u32>,
+    pub rework_pct: Option<u32>,
+    pub park_pct: Option<u32>,
 }
 
 /// `None` when the file is missing or unreadable.
@@ -97,5 +140,33 @@ mod tests {
             v.groups["small"].corrected.as_ref().map(|c| c.median),
             Some(4)
         );
+    }
+
+    #[test]
+    fn trend_loads_from_costs_json() {
+        let root = tempfile::tempdir().expect("tempdir");
+        write(
+            root.path(),
+            r#"{"groups":{},"roles":{},"trend":{"warnings":["w"],"markers":[{"names":["m"],"from":["004"],"cut":"005",
+            "groups":{"small":{"verdict":"fell","change_pct":-38,
+              "before":{"n":3,"n_approx":0,"per_line":{"n":3,"median":1223,"low":1000,"high":1300},"median_turns":21,"resumed_pct":40,"rework_pct":17,"park_pct":33},
+              "after":{"n":3,"n_approx":1,"per_line":{"n":3,"median":760,"low":700,"high":800},"median_turns":14,"resumed_pct":55,"rework_pct":0,"park_pct":20}}}}]}}"#,
+        );
+        let v = load_costs(&Paths::for_root(root.path())).expect("costs");
+        let t = v.trend.expect("trend");
+        assert_eq!(t.warnings, vec!["w".to_string()]);
+        let g = &t.markers[0].groups["small"];
+        assert_eq!((g.change_pct, g.verdict.as_str()), (Some(-38), "fell"));
+        assert_eq!(g.after.per_line.as_ref().map(|s| s.median), Some(760));
+        assert_eq!(g.after.n_approx, 1);
+    }
+
+    #[test]
+    fn a_costs_file_without_trend_has_none() {
+        let root = tempfile::tempdir().expect("tempdir");
+        write(root.path(), r#"{"groups":{},"roles":{}}"#);
+        let v = load_costs(&Paths::for_root(root.path())).expect("costs");
+        assert!(v.trend.is_none());
+        assert!(!serde_json::to_string(&v).expect("json").contains("trend"));
     }
 }

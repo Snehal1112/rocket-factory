@@ -538,6 +538,120 @@
     );
   }
 
+  const TREND_COLUMNS = 8;
+  const TREND_BAR_MAX = 200;
+  const TREND_ROW_HEIGHT = 36;
+  const TREND_VERDICT_CLASS = ["fell", "rose"];
+
+  // A finite number from file data, or null.
+  function finiteOrNull(value) {
+    return value !== null && value !== undefined && Number.isFinite(Number(value)) ? Number(value) : null;
+  }
+
+  // A class only for the two verdicts that get a colour, never from file text.
+  function trendVerdictClass(verdict) {
+    return TREND_VERDICT_CLASS.includes(verdict) ? `trend-verdict-${verdict}` : "";
+  }
+
+  function isObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function perLineMedian(side) {
+    return isObject(side) && isObject(side.per_line) ? finiteOrNull(side.per_line.median) : null;
+  }
+
+  // "before -> after" for one figure, with a dash for a missing side.
+  function trendPair(before, after, suffix) {
+    const show = (v) => (finiteOrNull(v) === null ? "-" : `${Number(v)}${suffix}`);
+    return escapeHtml(`${show(before)} -> ${show(after)}`);
+  }
+
+  function trendChange(pct) {
+    const n = finiteOrNull(pct);
+    return n === null ? "-" : `${n > 0 ? "+" : ""}${n}%`;
+  }
+
+  function trendRow(name, g) {
+    const before = isObject(g.before) ? g.before : {};
+    const after = isObject(g.after) ? g.after : {};
+    const head = `<tr><th scope="row">${escapeHtml(name)}</th>`;
+    if (g.verdict === "not-enough-data") {
+      const text = `not enough data (${Number(before.n) || 0} before, ${Number(after.n) || 0} after)`;
+      return `${head}<td class="cost-notes" colspan="${TREND_COLUMNS}">${escapeHtml(text)}</td></tr>`;
+    }
+    const line = (side) => {
+      const m = perLineMedian(side);
+      return m === null ? "-" : escapeHtml(`${m} tokens per line`);
+    };
+    const verdict = String(g.verdict);
+    const verdictClass = trendVerdictClass(verdict);
+    return (
+      `${head}<td>${line(before)}</td><td>${line(after)}</td><td>${escapeHtml(trendChange(g.change_pct))}</td>` +
+      `<td class="${verdictClass}">${escapeHtml(verdict)}</td>` +
+      `<td>${trendPair(before.median_turns, after.median_turns, "")}</td>` +
+      `<td>${trendPair(before.resumed_pct, after.resumed_pct, "%")}</td>` +
+      `<td>${trendPair(before.rework_pct, after.rework_pct, "%")}</td>` +
+      `<td>${trendPair(before.park_pct, after.park_pct, "%")}</td></tr>`
+    );
+  }
+
+  // Two bars per group with figures. Bars scale to the larger median of the marker, so zero gives no bar.
+  function trendChart(names, rows) {
+    const charted = rows
+      .map(([name, g]) => [name, g, perLineMedian(g.before), perLineMedian(g.after)])
+      .filter(([, , b, a]) => b !== null && a !== null);
+    if (!charted.length) return "";
+    const max = Math.max(...charted.flatMap(([, , b, a]) => [b, a]));
+    const width = (m) => Math.round((m / max) * TREND_BAR_MAX);
+    const bar = (name, side, m, y) => {
+      if (max <= 0) return "";
+      const label = escapeHtml(`${name} ${side}: ${m} tokens per line`);
+      return `<rect class="trend-bar trend-${side}" x="70" y="${y}" width="${width(m)}" height="10" aria-label="${label}"></rect>`;
+    };
+    const body = charted
+      .map(([name, g, b, a], i) => {
+        const y = i * TREND_ROW_HEIGHT + 4;
+        const verdict = String(g.verdict);
+        return (
+          `<text x="0" y="${y + 14}" class="trend-label">${escapeHtml(name)}</text>` +
+          bar(name, "before", b, y) +
+          bar(name, "after", a, y + 14) +
+          `<text x="274" y="${y + 14}" class="trend-label ${trendVerdictClass(verdict)}">${escapeHtml(verdict)}</text>`
+        );
+      })
+      .join("");
+    const title = escapeHtml(`Tokens per changed line before and after ${names}`);
+    return `<svg class="trend-chart" role="img" viewBox="0 0 320 ${charted.length * TREND_ROW_HEIGHT + 4}"><title>${title}</title>${body}</svg>`;
+  }
+
+  function trendMarker(marker) {
+    if (!isObject(marker)) return "";
+    const names = (Array.isArray(marker.names) ? marker.names : []).map(String).join(", ");
+    const groups = isObject(marker.groups) ? marker.groups : {};
+    const keys = [...GROUP_ORDER.filter((k) => k in groups), ...Object.keys(groups).filter((k) => !GROUP_ORDER.includes(k))];
+    const rows = keys.filter((k) => isObject(groups[k])).map((k) => [k, groups[k]]);
+    const heading = `<h4>${escapeHtml(names)} (cut at ${escapeHtml(String(marker.cut))})</h4>`;
+    if (!rows.length) return `${heading}<p class="cost-empty">No jobs with data around this cut.</p>`;
+    return (
+      heading +
+      `<div class="cost-scroll"><table class="cost-table"><caption class="sr-only">Cost per changed line before and after ${escapeHtml(names)}</caption>` +
+      `<thead><tr><th scope="col">size</th><th scope="col">before</th><th scope="col">after</th><th scope="col">change</th>` +
+      `<th scope="col">verdict</th><th scope="col">turns</th><th scope="col">resumed</th><th scope="col">rework</th><th scope="col">parked</th></tr></thead>` +
+      `<tbody>${rows.map(([k, g]) => trendRow(k, g)).join("")}</tbody></table></div>` +
+      trendChart(names, rows)
+    );
+  }
+
+  // The trend block under the cost panel. Empty for a missing or malformed trend.
+  function renderTrendPanel(trend) {
+    if (!isObject(trend)) return "";
+    const markers = Array.isArray(trend.markers) ? trend.markers : [];
+    const warnings = Array.isArray(trend.warnings) ? trend.warnings : [];
+    const body = markers.map(trendMarker).join("") + warnings.map((w) => `<p class="cost-note">${escapeHtml(String(w))}</p>`).join("");
+    return body ? `<div class="cost-trend"><h3 class="cost-sub">Cost trend</h3>${body}</div>` : "";
+  }
+
   function renderCostPanel(costs, now) {
     const groups = (costs && costs.groups) || {};
     const names = [...GROUP_ORDER.filter((g) => groups[g]), ...Object.keys(groups).filter((g) => !GROUP_ORDER.includes(g))];
@@ -564,7 +678,8 @@
       `<thead><tr><th scope="col">size</th><th scope="col">jobs</th><th scope="col">median</th><th scope="col">range</th><th scope="col">notes</th></tr></thead>` +
       `<tbody>${rows.map((name) => costRow(name, groups[name])).join("")}</tbody></table></div>` +
       (corrected.length ? `<p class="cost-note">Exact counts only</p><ul class="cost-corrected">${corrected.join("")}</ul>` : "") +
-      `<h3 class="cost-sub">Where the tokens go</h3>${roleBar(costs && costs.roles)}`
+      `<h3 class="cost-sub">Where the tokens go</h3>${roleBar(costs && costs.roles)}` +
+      renderTrendPanel(costs && costs.trend)
     );
   }
 
@@ -826,6 +941,7 @@
     headerStatus,
     copyChip,
     renderCostPanel,
+    renderTrendPanel,
     estimateLine,
     roleBar,
     parkKindLabel,

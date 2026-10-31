@@ -323,6 +323,14 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .cost-corrected { margin: 0; padding-left: 1rem; font-size: 12.5px; }
 .cost-sub { margin: 0.9rem 0 0.4rem; color: var(--muted-foreground); font-size: 11.5px; font-weight: 500; }
 .cost-empty { margin: 0; color: var(--muted-foreground); }
+.cost-trend h4 { margin: 0.9rem 0 0.4rem; font-size: 12.5px; font-weight: 600; }
+.trend-chart { max-width: 100%; height: auto; margin-top: 0.5rem; }
+.trend-label { fill: var(--foreground); font-size: 11px; }
+.trend-bar { rx: 2; }
+.trend-before { fill: var(--muted-foreground); }
+.trend-after { fill: var(--primary, currentColor); }
+.cost-table td.trend-verdict-fell, .trend-label.trend-verdict-fell { color: var(--success); fill: var(--success); }
+.cost-table td.trend-verdict-rose, .trend-label.trend-verdict-rose { color: var(--destructive); fill: var(--destructive); }
 .role-bar { display: flex; height: 0.5rem; border-radius: 999px; background: var(--muted); overflow: hidden; }
 .role-seg { display: block; height: 100%; border-right: 1px solid var(--card); }
 .role-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin: 0.5rem 0 0; padding: 0; list-style: none; font-size: 12px; }
