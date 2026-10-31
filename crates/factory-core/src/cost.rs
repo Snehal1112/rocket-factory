@@ -9,6 +9,7 @@ use crate::budget::weighted_tokens;
 use crate::config::Config;
 use crate::error::CoreError;
 use crate::fsutil::write_atomic;
+use crate::trend::{build_trend, TrendReport};
 
 /// How big a job is, by the size of its plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +70,10 @@ pub struct UsageSummary {
     pub weighted: u64,
     pub raw: u64,
     pub runs: u32,
+    /// Agent turns over all runs. A line without a numeric `turns` counts as zero.
+    pub turns: u32,
+    /// Runs that resumed an earlier session.
+    pub resumed_runs: u32,
     /// True when any line predates the corrected output count (`usage_v` below 2).
     pub approx: bool,
     /// Weighted tokens per agent role.
@@ -104,6 +109,12 @@ pub fn usage_summary(text: &str, job: &str) -> UsageSummary {
         s.weighted = s.weighted.saturating_add(weighted);
         s.raw = s.raw.saturating_add(raw);
         s.runs = s.runs.saturating_add(1);
+        s.turns = s
+            .turns
+            .saturating_add(u32::try_from(n("turns")).unwrap_or(u32::MAX));
+        if v["resumed"].as_bool() == Some(true) {
+            s.resumed_runs = s.resumed_runs.saturating_add(1);
+        }
         if n("usage_v") < 2 {
             s.approx = true;
         }
@@ -135,7 +146,7 @@ pub struct Estimate {
 }
 
 /// The cost of one board job, derived from its folder and git.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct JobCost {
     pub id: String,
     pub slug: String,
@@ -152,6 +163,14 @@ pub struct JobCost {
     pub roles: BTreeMap<String, u64>,
     pub providers: BTreeMap<String, u64>,
     pub provider_roles: BTreeMap<String, u64>,
+    /// Agent turns over all runs.
+    pub turns: u32,
+    /// Runs that resumed an earlier session.
+    pub resumed_runs: u32,
+    /// Fix rounds the job went through.
+    pub round: u32,
+    /// True when the job ever entered `needs-human`.
+    pub parked: bool,
 }
 
 impl JobCost {
@@ -190,7 +209,7 @@ pub struct GroupStats {
     pub corrected: Option<Spread>,
 }
 
-fn median_of(sorted: &[u64]) -> u64 {
+pub(crate) fn median_of(sorted: &[u64]) -> u64 {
     let n = sorted.len();
     if n == 0 {
         return 0;
@@ -203,7 +222,7 @@ fn median_of(sorted: &[u64]) -> u64 {
     a / 2 + b / 2 + (a % 2 + b % 2) / 2
 }
 
-fn spread(values: &mut [u64]) -> Spread {
+pub(crate) fn spread(values: &mut [u64]) -> Spread {
     values.sort_unstable();
     Spread {
         n: values.len() as u32,
@@ -324,6 +343,9 @@ pub struct CostsFile {
     pub thresholds: Thresholds,
     pub groups: BTreeMap<String, GroupStats>,
     pub roles: BTreeMap<String, u32>,
+    /// The cost trend per marker, absent when no marker is configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trend: Option<TrendReport>,
 }
 
 impl CostsFile {
@@ -341,6 +363,7 @@ impl CostsFile {
             },
             groups,
             roles,
+            trend: build_trend(jobs, &cfg.cost_markers),
         }
     }
 
@@ -394,6 +417,26 @@ mod tests {
         assert!(!s.approx);
         assert_eq!(s.roles.get("builder"), Some(&700));
         assert_eq!(s.roles.get("reviewer"), Some(&10));
+    }
+
+    #[test]
+    fn usage_summary_counts_turns_and_resumed_runs() {
+        let text = concat!(
+            "{\"job\":\"001\",\"role\":\"builder\",\"turns\":7,\"resumed\":true,\"usage_v\":2}\n",
+            "{\"job\":\"001\",\"role\":\"builder\",\"turns\":5,\"resumed\":false,\"usage_v\":2}\n",
+            "{\"job\":\"001\",\"role\":\"reviewer\",\"turns\":\"x\",\"usage_v\":2}\n",
+        );
+        let s = usage_summary(text, "001");
+        assert_eq!((s.turns, s.resumed_runs, s.runs), (12, 1, 3));
+    }
+
+    #[test]
+    fn usage_summary_treats_missing_turns_as_zero() {
+        let s = usage_summary(
+            "{\"job\":\"001\",\"role\":\"builder\",\"usage_v\":2}\n",
+            "001",
+        );
+        assert_eq!((s.turns, s.resumed_runs, s.runs), (0, 0, 1));
     }
 
     #[test]
@@ -458,6 +501,10 @@ mod tests {
                 ("claude:builder".to_string(), builder),
                 ("claude:reviewer".to_string(), weighted - builder),
             ]),
+            turns: 0,
+            resumed_runs: 0,
+            round: 0,
+            parked: false,
         }
     }
 
@@ -513,6 +560,30 @@ mod tests {
         assert_eq!(second["claude:reviewer"], 50);
         assert_eq!(second["codex:builder"], 50);
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn the_costs_file_carries_the_trend_and_omits_it_without_markers() {
+        let jobs: Vec<JobCost> = Vec::new();
+        let with =
+            Config::parse("[[cost_markers]]\nname = \"a\"\njob = \"001\"\n").expect("parses");
+        let file = CostsFile::build(&jobs, &with, 1.0);
+        assert!(file.trend.is_some());
+        let json = serde_json::to_string(&file).expect("json");
+        assert!(json.contains("\"trend\""), "{json}");
+        let without = CostsFile::build(&jobs, &Config::default(), 1.0);
+        assert!(!serde_json::to_string(&without)
+            .expect("json")
+            .contains("trend"));
+    }
+
+    #[test]
+    fn an_old_costs_file_without_trend_still_loads() {
+        let old = r#"{"generated_at":1.0,"thresholds":{"small_max_bytes":1,"medium_max_bytes":2},
+            "groups":{"all":{"n":1,"n_approx":0,"median":5,"low":5,"high":5,"roles":{"builder":100},"corrected":null}},
+            "roles":{"builder":100}}"#;
+        let file: CostsFile = serde_json::from_str(old).expect("old file loads");
+        assert!(file.trend.is_none());
     }
 
     #[test]
