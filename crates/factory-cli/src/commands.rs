@@ -520,6 +520,14 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
     for note in &notes {
         out.push_str(&format!("\nnote: {note}"));
     }
+    if let Some(review) = d.last_spec_review() {
+        let place = if review.saved {
+            format!("saved at {}", review.file.display())
+        } else {
+            format!("not saved ({})", review.file.display())
+        };
+        out.push_str(&format!("\nnote: spec review {}, {place}", review.verdict));
+    }
     for warning in job.spec_warning.iter().flat_map(|w| w.split("; ")) {
         out.push_str(&format!("\nwarning: {warning}"));
     }

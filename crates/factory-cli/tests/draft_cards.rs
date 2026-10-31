@@ -119,6 +119,55 @@ fn new_prints_the_created_line_first_then_the_warning() {
     );
 }
 
+fn new_output_with_a_review(extra: &[&str]) -> String {
+    let fx = Fixture::new();
+    fx.run(&["spec", "start", "demo", "f"]).expect("start");
+    let plan = fx.write_plan("plan-01-a.md", 1, "none");
+    let folder = plan.parent().expect("plans folder");
+    let spec =
+        "# Spec\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n\
+                ## Acceptance criteria\n\n- It is done.\n";
+    std::fs::write(folder.join("spec.md"), spec).expect("spec");
+    let mut args = vec![
+        "new",
+        "demo",
+        "f",
+        "--plans",
+        folder.to_str().expect("utf8"),
+    ];
+    args.extend_from_slice(extra);
+    fx.run(&args).expect("new")
+}
+
+fn assert_one_review_note(out: &str) {
+    let notes: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("note: spec review "))
+        .collect();
+    assert_eq!(notes.len(), 1, "{out}");
+    assert!(
+        notes[0].starts_with("note: spec review approved, saved at "),
+        "{out}"
+    );
+    assert!(
+        out.lines()
+            .next()
+            .expect("first line")
+            .starts_with("created job "),
+        "{out}"
+    );
+}
+
+#[test]
+fn new_prints_the_spec_review_note_once_after_created() {
+    assert_one_review_note(&new_output_with_a_review(&[]));
+}
+
+#[test]
+fn new_one_job_prints_the_spec_review_note_once() {
+    assert_one_review_note(&new_output_with_a_review(&["--one-job"]));
+}
+
 #[test]
 fn spec_start_refuses_a_digit_only_slug() {
     let fx = Fixture::new();

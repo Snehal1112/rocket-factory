@@ -118,6 +118,8 @@ pub struct Config {
     pub minor_tickets: bool,
     /// Run the spec reviewer agent in `factory new`. The risky-decision check runs whatever this is.
     pub spec_review: bool,
+    /// Per-run cap on weighted tokens for one spec review run.
+    pub spec_review_budget_weighted: u64,
     /// The Rocket knowledge base folder. `None` turns the KB read side and refresh off.
     pub kb_path: Option<String>,
     pub kb_model: String,
@@ -213,6 +215,7 @@ impl Default for Config {
             tickets_on_merge: false,
             minor_tickets: true,
             spec_review: true,
+            spec_review_budget_weighted: 100_000,
             kb_path: None,
             kb_model: "claude-sonnet-5-5".to_string(),
             kb_budget_weighted: 150_000,
@@ -330,9 +333,13 @@ impl Config {
                 "diff_cap_lines and budget_weighted must be above zero".into(),
             ));
         }
-        if cfg.commit_budget_weighted == 0 || cfg.kb_budget_weighted == 0 {
+        if cfg.commit_budget_weighted == 0
+            || cfg.kb_budget_weighted == 0
+            || cfg.spec_review_budget_weighted == 0
+        {
             return Err(CoreError::Config(
-                "commit_budget_weighted and kb_budget_weighted must be above zero".into(),
+                "commit_budget_weighted, kb_budget_weighted and spec_review_budget_weighted must be above zero"
+                    .into(),
             ));
         }
         let models = [
@@ -1033,6 +1040,28 @@ mod tests {
                 .minor_tickets
         );
         assert!(Config::parse("minor_tickets = \"no\"").is_err());
+    }
+
+    #[test]
+    fn spec_review_budget_defaults_to_100000() {
+        assert_eq!(Config::default().spec_review_budget_weighted, 100_000);
+        let cfg = Config::parse("spec_review = true").expect("valid");
+        assert_eq!(cfg.spec_review_budget_weighted, 100_000);
+    }
+
+    #[test]
+    fn spec_review_budget_key_overrides_the_default() {
+        let cfg = Config::parse("spec_review_budget_weighted = 150000").expect("valid");
+        assert_eq!(cfg.spec_review_budget_weighted, 150_000);
+    }
+
+    #[test]
+    fn a_zero_spec_review_budget_is_refused() {
+        let err = Config::parse("spec_review_budget_weighted = 0").expect_err("refused");
+        assert!(
+            err.to_string().contains("spec_review_budget_weighted"),
+            "{err}"
+        );
     }
 
     #[test]

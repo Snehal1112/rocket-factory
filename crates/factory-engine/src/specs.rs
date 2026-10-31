@@ -711,7 +711,7 @@ pub(crate) fn spec_reviewer_agent(
     agent.allowed_tools = vec!["Read".to_string(), "Grep".to_string(), "Glob".to_string()];
     agent.tools = Some("Read,Grep,Glob".to_string());
     agent.model = Some(model.to_string());
-    agent.budget_weighted = Some(config.budget_weighted);
+    agent.budget_weighted = Some(config.spec_review_budget_weighted);
     agent.stall_after = Some(Duration::from_secs(u64::from(config.stall_minutes) * 60));
     agent
 }

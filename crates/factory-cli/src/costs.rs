@@ -8,14 +8,27 @@ use crate::status::human;
 
 const FEW_JOBS: u32 = 3;
 
+/// The id of the cost record that holds the spec review runs, which no job owns.
+const SPEC_REVIEW_ID: &str = "spec-review";
+
 fn opt(n: Option<u64>) -> String {
     n.map_or("-".to_string(), |v| v.to_string())
 }
 
 /// The per-job table, the per-group table, the corrected figures and the role split.
-pub fn render_costs(jobs: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> String {
+pub fn render_costs(all: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> String {
+    let (reviews, jobs): (Vec<&JobCost>, Vec<&JobCost>) =
+        all.iter().partition(|j| j.id == SPEC_REVIEW_ID);
+    let review_line = reviews.first().map_or(String::new(), |r| {
+        let tilde = if r.approx { " ~" } else { "" };
+        format!(
+            "SPEC REVIEWS  {} runs, {}{tilde} weighted (no job)\n",
+            r.runs,
+            human(r.weighted)
+        )
+    });
     if jobs.is_empty() {
-        return "no jobs\n".to_string();
+        return format!("no jobs\n{review_line}");
     }
     let mut out = String::from(
         "JOB  STAGE        GROUP    TASKS  LINES  FILES  WEIGHTED     RAW       RUNS\n",
@@ -45,6 +58,7 @@ pub fn render_costs(jobs: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> 
     out.push('\n');
     if groups.is_empty() {
         out.push_str("no merged jobs with data yet\n");
+        out.push_str(&review_line);
         return out;
     }
     out.push_str("GROUP    JOBS  MEDIAN     RANGE                NOTES\n");
@@ -114,6 +128,7 @@ pub fn render_costs(jobs: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> 
             ));
         }
     }
+    out.push_str(&review_line);
     out
 }
 
@@ -447,6 +462,50 @@ mod tests {
         assert!(line("005").contains("no data"), "{text}");
         assert!(
             line("003").contains("small") && line("003").contains("300"),
+            "{text}"
+        );
+    }
+
+    fn review_record(approx: bool) -> JobCost {
+        let mut r = cost("spec-review", None, "spec-review", 90_000, approx, 3);
+        r.lines = None;
+        r.files = None;
+        r
+    }
+
+    #[test]
+    fn the_spec_review_record_leaves_the_job_table() {
+        let jobs = vec![
+            cost("1", Some(SizeGroup::Small), "merged", 300_000, false, 1),
+            review_record(false),
+        ];
+        let text = render_costs(&jobs, &stats(&jobs));
+        assert!(
+            !text.lines().any(|l| l.starts_with("spec-review")),
+            "{text}"
+        );
+        assert!(
+            text.contains("SPEC REVIEWS  3 runs, 90.0K weighted (no job)"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn only_spec_reviews_print_no_jobs_and_the_line() {
+        let jobs = vec![review_record(false)];
+        let text = render_costs(&jobs, &stats(&jobs));
+        assert_eq!(
+            text,
+            "no jobs\nSPEC REVIEWS  3 runs, 90.0K weighted (no job)\n"
+        );
+    }
+
+    #[test]
+    fn an_approximate_spec_review_gets_a_tilde() {
+        let jobs = vec![review_record(true)];
+        let text = render_costs(&jobs, &stats(&jobs));
+        assert!(
+            text.contains("SPEC REVIEWS  3 runs, 90.0K ~ weighted (no job)"),
             "{text}"
         );
     }

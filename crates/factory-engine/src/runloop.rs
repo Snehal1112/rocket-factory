@@ -392,6 +392,11 @@ pub(crate) fn validate_series(
         };
         if let Some(refusal) = refusal {
             match accept_spec {
+                Some(reason)
+                    if matches!(refusal, crate::spec_check::SpecRefusal::NoUserDecision(_)) =>
+                {
+                    accepted = Some(format!("{reason} (no agent review ran)"));
+                }
                 Some(reason) => accepted = Some(reason.to_string()),
                 None => return Err(EngineError::SpecRefused(refusal)),
             }

@@ -123,7 +123,11 @@ fn without_the_flag_new_is_unchanged() {
         .run(&["new", "demo", "f", "--plans", plans.to_str().expect("utf8")])
         .expect("new");
     assert!(out.starts_with("created job 001 in "), "{out}");
-    assert!(!out.contains("note: "), "{out}");
+    let other_notes = out
+        .lines()
+        .filter(|l| l.starts_with("note: ") && !l.starts_with("note: spec review "))
+        .count();
+    assert_eq!(other_notes, 0, "{out}");
 }
 
 #[test]
