@@ -61,11 +61,11 @@ New `SpecRefusal::ReviewFailed { reason: String }`. Display: `the spec review di
 | `TurnLimit` | `stopped at the turn limit` |
 | `BudgetStop` | `stopped at the cap of <cap> weighted tokens; raise spec_review_budget_weighted` |
 
-When the reason is `Some`, `review_spec_with` logs the usage, saves no file, keeps nothing in memory and returns `ReviewFailed`. The next `factory new` runs the reviewer again. `--accept-spec` turns the refusal into a pass like any other, with the user's reason recorded.
+When the reason is `Some`, `review_spec_with` logs the usage, saves no file and returns `ReviewFailed`. It keeps the failure for the process (section 3), so a second validation of the same text in the same process, as the one-job path does, returns the same refusal without a second run. The next `factory new` process runs the reviewer again. `--accept-spec` turns the refusal into a pass like any other, with the user's reason recorded.
 
 ### 3. A review file that cannot be saved
 
-`Driver` gets a private field `last_review: Mutex<Option<ReviewRecord>>`, where `ReviewRecord { key: String, file: PathBuf, text: String, saved: bool }`. `review_spec_with` stores the record after every finished run. Before it runs the agent, it reads the file as today; when the file is empty and the record's key equals this key, it uses the record's text. A failed `std::fs::write` sets `saved = false` and prints `warning: could not save the spec review to <path>: <error>` to stderr once. A pure function `unsaved_warning(file: &Path, err: &std::io::Error) -> String` builds the text.
+`Driver` gets a private field `last_review: Mutex<Option<ReviewRecord>>`, where `ReviewRecord { key: String, file: PathBuf, text: String, saved: bool, failure: Option<String> }`. A failed run stores a record with `failure: Some(reason)`, and `last_spec_review` returns `None` for it. `review_spec_with` stores the record after every finished run. Before it runs the agent, it returns `ReviewFailed` with the stored reason when the record has the same key and a `failure`; otherwise it reads the file as today; when the file is empty and the record's key equals this key, it uses the record's text. A failed `std::fs::write` sets `saved = false` and prints `warning: could not save the spec review to <path>: <error>` to stderr once. A pure function `unsaved_warning(file: &Path, err: &std::io::Error) -> String` builds the text.
 
 ### 4. The review note after `created job`
 
@@ -88,6 +88,7 @@ The agent review stays skipped. `validate_series` records the reason as `<reason
 | Run fails with no error text | reason `failed: no error text` |
 | Run ends `Done` with an empty text | `ReviewMissing`, as today |
 | Failed run with `--accept-spec` | the job is created, the reason is recorded, no review note |
+| Failed run, then a second validation in the same process (one-job series) | the same refusal from memory, no second run |
 | Review folder is read-only or full | warning on stderr, review kept in memory, one agent run per process |
 | Second `factory new` process after an unsaved review | the agent runs again, which cannot be avoided without a file |
 | Reused saved review | `last_spec_review` is set, so the note is printed |
@@ -101,7 +102,7 @@ The agent review stays skipped. `validate_series` records the reason as `<reason
 
 `factory-engine` unit tests in `spec_check.rs`: `incomplete_reason_names_each_stop`, `the_unsaved_warning_names_the_path_and_error`, and `ReviewFailed` added to `refusals_end_with_the_override_hint`.
 
-`factory-engine` integration tests in `tests/spec_review.rs`: `the_reviewer_gets_its_own_budget_cap`, `a_failed_review_run_refuses_and_saves_nothing`, `a_failed_review_is_run_again_next_time`, `accept_spec_passes_a_failed_review_and_records_the_reason`, `an_unwritable_review_folder_still_reviews_once`, `last_spec_review_reports_the_file_and_verdict`, `a_reused_review_is_still_reported`, `no_review_means_no_note`, `accept_spec_on_a_risky_spec_says_no_agent_review_ran`.
+`factory-engine` integration tests in `tests/spec_review.rs`: `the_reviewer_gets_its_own_budget_cap`, `a_failed_review_run_refuses_and_saves_nothing`, `a_failed_review_is_run_again_by_a_new_process`, `a_failed_review_with_accept_spec_in_one_job_runs_once`, `accept_spec_passes_a_failed_review_and_records_the_reason`, `an_unwritable_review_folder_still_reviews_once`, `last_spec_review_reports_the_file_and_verdict`, `a_reused_review_is_still_reported`, `no_review_means_no_note`, `accept_spec_on_a_risky_spec_says_no_agent_review_ran`.
 
 `factory-cli`: in `costs.rs` tests, `the_spec_review_record_leaves_the_job_table` and `only_spec_reviews_print_no_jobs_and_the_line`; in `tests/e2e.rs` or the existing `new` tests, `new_prints_the_spec_review_note_after_created`.
 
@@ -136,7 +137,7 @@ Commands: `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine`, 
 
 - The reviewer's `AgentSpec.budget_weighted` is `spec_review_budget_weighted`, default 100,000.
 - `spec_review_budget_weighted = 0` is refused by `Config::parse`, and the key is documented and listed in the settings block.
-- A run that is not `Done` refuses with `the spec review did not finish (<reason>)`, saves no review file and is run again on the next `factory new`.
+- A run that is not `Done` refuses with `the spec review did not finish (<reason>)`, saves no review file, runs once per process and is run again by the next `factory new`.
 - A budget stop names the cap and `spec_review_budget_weighted`.
 - A failed write of the review file prints a warning with the path and the error, and the agent runs once per process.
 - After `created job`, `factory new` prints `note: spec review <verdict>, saved at <path>` whenever a review ran or was reused.
@@ -158,4 +159,5 @@ Commands: `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine`, 
 - Should `factory new` print the review path after an APPROVE? Options: a `note:` line whenever a review ran or a saved one was reused; only when the agent ran; nothing; leave it. Chosen: one `note:` line after the `created job` line whenever a review ran or a saved one was reused. Decided by: user
 - Should `--accept-spec` on a "no user decision" refusal still run the agent review? Options: keep skipping it and say so in the recorded warning; run it and refuse on CHANGES; run it and never refuse; leave it. Chosen: keep skipping, and add "(no agent review ran)" to the recorded warning. Decided by: user
 - What happens to the `spec-review` row in `factory costs`? Options: take it out of the job table and print one summary line; keep the row and mark its columns; remove it from `factory costs`; leave it. Chosen: take it out of the job table and print one `SPEC REVIEWS` summary line. Decided by: user
+- How does a failed review avoid a second paid run in one process? Options: keep the failure in the same in-memory record under the review key; save a marker file; accept the second run. Chosen: keep the failure in the in-memory record, because the spec review of the first `factory new` attempt found that the one-job path validates twice. Decided by: call
 - Where does the in-memory review live, and how does the CLI learn the path? Options: a private `Mutex` field on `Driver` with a `last_spec_review` accessor; a new field on `Job`; a return value through `Validated`. Chosen: the `Driver` field and accessor, because it adds no board field and no signature change. Decided by: call

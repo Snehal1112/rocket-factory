@@ -25,7 +25,7 @@
 ## Review Focus
 
 1. A run that stops at the cap but whose partial text ends in `VERDICT: APPROVE` must refuse, never approve. Pinned by `a_budget_stop_with_an_approve_line_still_refuses`.
-2. A review folder that cannot be written, with `--accept-spec` and a one-job series that validates twice, must still run the agent once. Pinned by `an_unwritable_review_folder_still_reviews_once`.
+2. A one-job series validates twice. With `--accept-spec`, an unwritable review folder and a failed review run must each still run the agent once. Pinned by `an_unwritable_review_folder_still_reviews_once` and `a_failed_review_with_accept_spec_in_one_job_runs_once`.
 3. `factory new --one-job` prints the review note exactly once. Pinned by `new_prints_the_spec_review_note_once_after_created`.
 4. A `spec_review_budget_weighted = 0` in a project file is refused and the message names the key. Pinned by `a_zero_spec_review_budget_is_refused`.
 5. A spec review record whose figure is approximate shows ` ~`, and a table with only the spec review record prints `no jobs` first. Pinned by `an_approximate_spec_review_gets_a_tilde` and `only_spec_reviews_print_no_jobs_and_the_line`.
@@ -130,7 +130,7 @@ Run `cargo fmt -p factory-core -- --check`, `cargo fmt -p factory-engine -- --ch
 
 **Interfaces:**
 - Consumes: `Config.spec_review_budget_weighted` from the setting task, `factory_agent::{AgentRun, StopReason}`.
-- Produces: `SpecRefusal::ReviewFailed { reason: String }`; `fn incomplete_reason(run: &AgentRun, cap: u64) -> Option<String>`; `fn unsaved_warning(file: &Path, err: &std::io::Error) -> String`; `pub struct SpecReviewInfo { pub file: PathBuf, pub verdict: &'static str, pub saved: bool }` exported from `lib.rs`; `Driver::last_spec_review(&self) -> Option<SpecReviewInfo>`; `pub(crate) struct ReviewRecord { key: String, file: PathBuf, text: String, saved: bool }` in `compat.rs`, held in `last_review: Mutex<Option<ReviewRecord>>` (set to `Mutex::new(None)` in `Driver::new`).
+- Produces: `SpecRefusal::ReviewFailed { reason: String }`; `fn incomplete_reason(run: &AgentRun, cap: u64) -> Option<String>`; `fn unsaved_warning(file: &Path, err: &std::io::Error) -> String`; `pub struct SpecReviewInfo { pub file: PathBuf, pub verdict: &'static str, pub saved: bool }` exported from `lib.rs`; `Driver::last_spec_review(&self) -> Option<SpecReviewInfo>`; `pub(crate) struct ReviewRecord { key: String, file: PathBuf, text: String, saved: bool, failure: Option<String> }` in `compat.rs`, with a `failure: Option<String>` field, held in `last_review: Mutex<Option<ReviewRecord>>` (set to `Mutex::new(None)` in `Driver::new`).
 
 - [ ] **Step 1: Read the code this task touches**
 
@@ -189,7 +189,8 @@ In `tests/spec_review.rs`. First split `fixture` so the driver comes from a clos
 | Test | Setup | Assertions |
 |---|---|---|
 | `a_failed_review_run_refuses_and_saves_nothing` | `fixture(vec![], Config::default())` | `new(&fx, None)` fails with `did not finish (failed: script exhausted)` and `--accept-spec`; zero `.md` files in `spec_reviews_dir()` (a missing folder counts as zero); `jobs(&fx) == 0` |
-| `a_failed_review_is_run_again_next_time` | same | two `new` calls both fail; `specs_for("spec-reviewer").len() == 2` |
+| `a_failed_review_is_run_again_by_a_new_process` | same | `new` fails; build a second driver on the same checkout as `driver_for` does (`fx.driver.root()`) and call `create_job_with_spec_accepting` with it; it fails too; `specs_for("spec-reviewer").len() == 2` |
+| `a_failed_review_with_accept_spec_in_one_job_runs_once` | `fixture(vec![], Config::default())` | `create_one_job_accepting` with `Some("checked")` as in `an_unwritable_review_folder_still_reviews_once` creates the job; `specs_for("spec-reviewer").len() == 1` |
 | `accept_spec_passes_a_failed_review_and_records_the_reason` | same | `new(&fx, Some("checked by hand"))` creates the job; its `spec_warning` contains `spec accepted by the user: checked by hand` and not `no agent review ran` |
 | `last_spec_review_reports_the_file_and_verdict` | `[reviewer(APPROVE)]`, then `[reviewer(CHANGES)]` with `Some("checked")` | verdict `approved` then `asked for changes`; `saved` is true; `file.exists()` |
 | `a_reused_review_is_still_reported` | call `new` twice as `an_approved_spec_is_not_reviewed_twice` does | one reviewer call; `last_spec_review()` is `Some` |
@@ -239,7 +240,7 @@ Expected: compile errors `cannot find function 'incomplete_reason'`, `no variant
 
 - [ ] **Step 5: Implement**
 
-In `review_spec_with`, in this order: read the file; when it is empty and `last_review` holds the same key, use that record's text; apply today's reuse rule to that text; otherwise run the agent and log the usage as today. Then call `incomplete_reason(&run, driver.config().spec_review_budget_weighted)`: on `Some(reason)` return `ReviewFailed { reason }` before any save, any record and any verdict parsing. Otherwise write the file; on a write error print `unsaved_warning(&file, &err)` to stderr with `eprintln!` and set `saved = false`. Store the `ReviewRecord` after every finished run and every reuse (also when the saved text is read from disk). `last_spec_review` maps the record to `SpecReviewInfo`, with the verdict from `last_line`: `VERDICT: APPROVE` is `approved`, `VERDICT: CHANGES` is `asked for changes`, anything else is `gave no verdict`. Add the `ReviewFailed` display arm. In `validate_series`, when the refusal is `SpecRefusal::NoUserDecision(_)` and a reason is accepted, store `format!("{reason} (no agent review ran)")` in `accepted`. Update the spec review paragraph of `software-factory.md` (line 31) with the failure behaviour, the cap and the note.
+In `review_spec_with`, in this order: read the file; when it is empty and `last_review` holds the same key, use that record's text; apply today's reuse rule to that text; otherwise run the agent and log the usage as today. At the top, once the key is known, return `ReviewFailed` with the stored reason when the record has the same key and a `failure`, before reading the file or running the agent. Then call `incomplete_reason(&run, driver.config().spec_review_budget_weighted)`: on `Some(reason)` store a record with `failure: Some(reason.clone())` and `saved = false`, and return `ReviewFailed { reason }` before any save and any verdict parsing. `last_spec_review` returns `None` for a record with a `failure`. Otherwise write the file; on a write error print `unsaved_warning(&file, &err)` to stderr with `eprintln!` and set `saved = false`. Store the `ReviewRecord` after every finished run and every reuse (also when the saved text is read from disk). `last_spec_review` maps the record to `SpecReviewInfo`, with the verdict from `last_line`: `VERDICT: APPROVE` is `approved`, `VERDICT: CHANGES` is `asked for changes`, anything else is `gave no verdict`. Add the `ReviewFailed` display arm. In `validate_series`, when the refusal is `SpecRefusal::NoUserDecision(_)` and a reason is accepted, store `format!("{reason} (no agent review ran)")` in `accepted`. Update the spec review paragraph of `software-factory.md` (line 31) with the failure behaviour, the cap and the note.
 
 - [ ] **Step 6: Run the tests to see them pass**
 
