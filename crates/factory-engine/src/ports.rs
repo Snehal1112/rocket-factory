@@ -173,12 +173,11 @@ impl Engine<'_> {
         self.ledger_file().ruling(&one_line).map_err(core_err)
     }
 
-    /// Parks the job for the human with a reason, and tells the caller.
-    pub(crate) fn park(&self, reason: String) -> Result<crate::StageOutcome, EngineError> {
-        self.set_stage(Stage::NeedsHuman, Some(&reason), false)?;
-        log_park(&self.job_id, &reason);
-        self.ruling(&format!("needs-human, {reason}"))?;
-        Ok(crate::StageOutcome::NeedsHuman(reason))
+    /// Moves the job to needs-human with a reason and logs the park. The ledger ruling is left to the caller.
+    pub(crate) fn move_to_needs_human(&self, reason: &str) -> Result<(), EngineError> {
+        self.set_stage(Stage::NeedsHuman, Some(reason), false)?;
+        log_park(&self.job_id, reason);
+        Ok(())
     }
 
     /// The job's own model from `factory new --model`, when set and not blank. It replaces every role's model.

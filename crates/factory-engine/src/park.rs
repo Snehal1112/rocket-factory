@@ -72,7 +72,81 @@ pub(crate) fn write_record(dir: &Path, record: &ParkRecord) {
     let _ = record.write(dir);
 }
 
+/// Runs the park writes in order: board update, stage move, record, ruling.
+/// It stops at the first error. The record is written only after the first two succeed, and stays when the ruling fails.
+pub(crate) fn in_park_order(
+    update: impl FnOnce() -> Result<(), EngineError>,
+    stage: impl FnOnce() -> Result<(), EngineError>,
+    record: impl FnOnce(),
+    ruling: impl FnOnce() -> Result<(), EngineError>,
+) -> Result<(), EngineError> {
+    update()?;
+    stage()?;
+    record();
+    ruling()
+}
+
+/// The Risk part for a job diff that could not be read.
+fn risk_unknown_part(err: &EngineError) -> ParkPart {
+    ParkPart::new(
+        "Risk",
+        "driver",
+        &format!("unknown: the job diff could not be read ({err})"),
+    )
+}
+
+/// The review part, then the risk part: from `risk` when the paths were read, else the unknown part.
+fn lead_parts_from(
+    paths: Result<Vec<String>, EngineError>,
+    review: Option<ParkPart>,
+    risk: impl FnOnce(&[String]) -> Option<ParkPart>,
+) -> Vec<ParkPart> {
+    let mut parts: Vec<ParkPart> = review.into_iter().collect();
+    match paths {
+        Ok(paths) => parts.extend(risk(&paths)),
+        Err(err) => parts.push(risk_unknown_part(&err)),
+    }
+    parts
+}
+
+/// The kind, reason and Checks note of a risky park after a sync, from the final checks.
+/// Passing checks keep the risky kind. A failing run parks as checks-failed. Checks that could not run
+/// keep the risky kind and give a note for the Checks part.
+fn sync_park_choice(
+    checks: &Result<factory_checks::ChecksReport, EngineError>,
+    reason: &str,
+) -> (ParkKind, String, Option<String>) {
+    match checks {
+        Ok(report) if report.all_passed() => (ParkKind::RiskyDiff, reason.to_string(), None),
+        Ok(_) => (
+            ParkKind::ChecksFailed,
+            "final checks failed after sync".to_string(),
+            None,
+        ),
+        Err(err) => (
+            ParkKind::RiskyDiff,
+            reason.to_string(),
+            Some(format!("final checks could not run: {err}")),
+        ),
+    }
+}
+
 impl Engine<'_> {
+    /// Parks a job after a sync that needs a human. It runs the final checks again, so the card carries
+    /// Review, Risk, Rounds, Changed files and Checks. A failing check parks as checks-failed with no fix round.
+    pub(crate) fn park_after_sync(&self, reason: &str) -> Result<StageOutcome, EngineError> {
+        let checks = self.final_checks();
+        let (kind, reason, note) = sync_park_choice(&checks, reason);
+        let mut parts = self.lead_parts_for_card();
+        parts.extend(self.rounds_part());
+        parts.extend(self.stat_part());
+        match note {
+            Some(note) => parts.push(ParkPart::new("Checks", "driver", &note)),
+            None => parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks")),
+        }
+        self.park_with(kind, reason, parts)
+    }
+
     /// Records why the job parks, then parks it. Writing `park.json` is best effort.
     pub(crate) fn park_with(
         &self,
@@ -97,20 +171,26 @@ impl Engine<'_> {
             record.risky = Some(true);
         }
         let summary = park_summary(&reason, &record.parts);
-        write_record(&self.job_dir, &record);
-        self.update(|j| {
-            j.park_kind = Some(kind.as_str().to_string());
-            j.park_at = Some(at);
-            j.park_summary = Some(summary);
-            Ok(())
-        })?;
-        self.park(reason)
+        in_park_order(
+            || {
+                self.update(|j| {
+                    j.park_kind = Some(kind.as_str().to_string());
+                    j.park_at = Some(at);
+                    j.park_summary = Some(summary);
+                    Ok(())
+                })
+            },
+            || self.move_to_needs_human(&reason),
+            || write_record(&self.job_dir, &record),
+            || self.ruling(&format!("needs-human, {reason}")),
+        )?;
+        Ok(StageOutcome::NeedsHuman(reason))
     }
 
     /// Evidence for a park the decision step chose. Anything that cannot be read is left out.
     pub(crate) fn decision_parts(&self, kind: ParkKind, reason: &str) -> Vec<ParkPart> {
         // The changed paths are read only by the kinds that lead with Review and Risk.
-        let lead = || self.lead_parts(&self.job_changed_paths().unwrap_or_default());
+        let lead = || self.lead_parts_for_card();
         match kind {
             ParkKind::ChecksFailed => part_from_file(&self.job_dir, "checks.md", "Checks")
                 .into_iter()
@@ -164,6 +244,13 @@ impl Engine<'_> {
         let mut parts: Vec<ParkPart> = self.review_part().into_iter().collect();
         parts.extend(self.risk_part(paths));
         parts
+    }
+
+    /// The lead parts of a card. A diff that cannot be read gives a `Risk` part that says so.
+    pub(crate) fn lead_parts_for_card(&self) -> Vec<ParkPart> {
+        lead_parts_from(self.job_changed_paths(), self.review_part(), |paths| {
+            self.risk_part(paths)
+        })
     }
 
     /// The last review: its verdict line first, then the open blockers.
@@ -274,6 +361,140 @@ pub(crate) fn builder_blocked_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type Order = std::cell::RefCell<Vec<&'static str>>;
+
+    fn step(order: &Order, name: &'static str) -> Result<(), EngineError> {
+        order.borrow_mut().push(name);
+        Ok(())
+    }
+
+    #[test]
+    fn park_steps_run_update_then_stage_then_record_then_ruling() {
+        let order = Order::default();
+        in_park_order(
+            || step(&order, "update"),
+            || step(&order, "stage"),
+            || order.borrow_mut().push("record"),
+            || step(&order, "ruling"),
+        )
+        .expect("parked");
+        assert_eq!(*order.borrow(), vec!["update", "stage", "record", "ruling"]);
+    }
+
+    #[test]
+    fn a_failed_board_update_leaves_no_park_record() {
+        let order = Order::default();
+        let err = in_park_order(
+            || Err(EngineError::Msg("board locked".into())),
+            || step(&order, "stage"),
+            || order.borrow_mut().push("record"),
+            || step(&order, "ruling"),
+        )
+        .expect_err("update failed");
+        assert_eq!(err.to_string(), "board locked");
+        assert!(order.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_failed_stage_move_leaves_no_park_record() {
+        let order = Order::default();
+        let err = in_park_order(
+            || step(&order, "update"),
+            || Err(EngineError::Msg("stage failed".into())),
+            || order.borrow_mut().push("record"),
+            || step(&order, "ruling"),
+        )
+        .expect_err("stage failed");
+        assert_eq!(err.to_string(), "stage failed");
+        assert_eq!(*order.borrow(), vec!["update"]);
+    }
+
+    #[test]
+    fn a_failed_ruling_leaves_the_park_record() {
+        let order = Order::default();
+        let err = in_park_order(
+            || step(&order, "update"),
+            || step(&order, "stage"),
+            || order.borrow_mut().push("record"),
+            || Err(EngineError::Msg("ledger locked".into())),
+        )
+        .expect_err("ruling failed");
+        assert_eq!(err.to_string(), "ledger locked");
+        assert_eq!(*order.borrow(), vec!["update", "stage", "record"]);
+    }
+
+    #[test]
+    fn an_unreadable_diff_gets_a_risk_unknown_part() {
+        let review = Some(ParkPart::new(
+            "Review",
+            "review-code-r1.md",
+            "verdict approve, round 1",
+        ));
+        let err = EngineError::Msg("job has no head".into());
+        let parts = lead_parts_from(Err(err), review, |_| None);
+        let titles: Vec<&str> = parts.iter().map(|p| p.title.as_str()).collect();
+        assert_eq!(titles, vec!["Review", "Risk"]);
+        assert_eq!(parts[1].source, "driver");
+        assert_eq!(
+            parts[1].text,
+            "unknown: the job diff could not be read (job has no head)"
+        );
+    }
+
+    fn report(passed: bool) -> factory_checks::ChecksReport {
+        factory_checks::ChecksReport {
+            results: vec![factory_checks::CheckResult {
+                command: "cargo check".into(),
+                passed,
+                summary: if passed { "ok".into() } else { "exit 1".into() },
+                tail: String::new(),
+            }],
+        }
+    }
+
+    #[test]
+    fn passing_final_checks_keep_the_risky_kind() {
+        let (kind, reason, note) =
+            sync_park_choice(&Ok(report(true)), "after sync: risky diff: a.rs");
+        assert_eq!(kind, ParkKind::RiskyDiff);
+        assert_eq!(reason, "after sync: risky diff: a.rs");
+        assert_eq!(note, None);
+    }
+
+    #[test]
+    fn failing_final_checks_park_as_checks_failed() {
+        let (kind, reason, note) =
+            sync_park_choice(&Ok(report(false)), "after sync: risky diff: a.rs");
+        assert_eq!(kind, ParkKind::ChecksFailed);
+        assert_eq!(reason, "final checks failed after sync");
+        assert_eq!(note, None);
+    }
+
+    #[test]
+    fn final_checks_that_cannot_run_keep_the_risky_kind_and_say_why() {
+        let err: Result<factory_checks::ChecksReport, EngineError> =
+            Err(EngineError::Check("no worktree".into()));
+        let (kind, reason, note) = sync_park_choice(&err, "after sync: risky diff: a.rs");
+        assert_eq!(kind, ParkKind::RiskyDiff);
+        assert_eq!(reason, "after sync: risky diff: a.rs");
+        assert_eq!(
+            note.as_deref(),
+            Some("final checks could not run: checks: no worktree")
+        );
+    }
+
+    #[test]
+    fn a_readable_diff_keeps_the_lead_parts() {
+        let review = Some(ParkPart::new("Review", "r.md", "verdict approve, round 1"));
+        let parts = lead_parts_from(Ok(vec!["a.rs".to_string()]), review, |paths| {
+            assert_eq!(paths, ["a.rs"]);
+            Some(ParkPart::new("Risk", "driver", "risky: a.rs"))
+        });
+        let titles: Vec<&str> = parts.iter().map(|p| p.title.as_str()).collect();
+        assert_eq!(titles, vec!["Review", "Risk"]);
+        assert_eq!(parts[1].text, "risky: a.rs");
+    }
 
     #[test]
     fn round_line_renders_round_sync_and_old_lines() {

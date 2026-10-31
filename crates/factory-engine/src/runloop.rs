@@ -569,7 +569,12 @@ fn park_unsettled(driver: &Driver, id: &str) -> Result<(), EngineError> {
         .unwrap_or_default();
     let lines: Vec<&str> = ledger.lines().collect();
     let tail = lines[lines.len().saturating_sub(20)..].join("\n");
-    let parts = vec![ParkPart::new("Ledger", "progress.md", &tail)];
+    // A blank tail adds no part, so the card shows why the run stopped instead.
+    let parts = if tail.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![ParkPart::new("Ledger", "progress.md", &tail)]
+    };
     park_with_parts(
         driver,
         id,
@@ -756,6 +761,37 @@ mod tests {
         assert_eq!(lines.len(), 20);
         assert_eq!(lines[0], "line 6");
         assert_eq!(lines[19], "line 25");
+    }
+
+    #[test]
+    fn a_blank_ledger_leaves_out_the_ledger_part() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let job = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
+        std::fs::write(d.job_dir(&job).join("progress.md"), "\n  \n\n").expect("ledger");
+        park_unsettled(&d, &job.id).expect("park");
+        let job = d.job(&job.id).expect("job");
+        let rec = factory_core::ParkRecord::read(&d.job_dir(&job)).expect("park.json");
+        assert_eq!(rec.parts.len(), 1);
+        assert_eq!(rec.parts[0].title, "Why it stopped");
+        assert_eq!(rec.parts[0].text, "run loop did not settle, see the ledger");
+    }
+
+    #[test]
+    fn an_unreadable_ledger_leaves_out_the_ledger_part() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let job = add_job(&d, "demo", "f", &[], None, Stage::Build, None).expect("job");
+        let ledger = d.job_dir(&job).join("progress.md");
+        std::fs::remove_file(&ledger).expect("remove ledger");
+        std::fs::create_dir_all(&ledger).expect("ledger dir");
+        // The ruling write fails on the directory, but the record is already written.
+        let _ = park_unsettled(&d, &job.id);
+        let job = d.job(&job.id).expect("job");
+        let rec = factory_core::ParkRecord::read(&d.job_dir(&job)).expect("park.json");
+        assert_eq!(rec.parts.len(), 1);
+        assert_eq!(rec.parts[0].title, "Why it stopped");
+        assert_eq!(rec.parts[0].text, "run loop did not settle, see the ledger");
     }
 
     #[test]
