@@ -15,15 +15,15 @@
 - No new `Config` field: use `unchecked_paths` and `[[checks]]`, which exist (`crates/factory-core/src/config.rs:67`).
 - The preset must still parse with `Config::parse` and must not mention Rocket (`preset.rs` test banning the word).
 - Root rule: `paths = ["Cargo.toml", "Cargo.lock"]`, `commands = ["cargo check -j4"]`.
-- `unchecked_paths = ["**/LICENSE*", "**/COPYING*", "**/.gitignore", "**/.gitattributes", "**/.editorconfig"]`.
-- Not exempt and not covered by the preset: `dashboard/Cargo.toml`, `rustfmt.toml`, `rust-toolchain.toml`, `scripts/release.sh`, `cliff.toml`.
+- `unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*", ".gitignore", ".gitattributes", ".editorconfig"]`.
+- Not exempt and not covered by the preset: `dashboard/Cargo.toml`, `rustfmt.toml`, `rust-toolchain.toml`, `scripts/release.sh`, `cliff.toml`, and code files named like a license such as `xtask/src/license.rs` and `tools/licenses.rs`. The exempt names have no `**/` prefix and no trailing `*` after `LICENSE` or `COPYING`, so they match only at the repo root.
 - No edit of any file under `~/.factory`, no change to `cliff.toml`, no change to the other presets.
 
 ## Review Focus
 
 1. `Cargo.toml` and `build.rs` in one diff: the same `cargo check -j4` must come out once. Pinned by `rust_preset_root_command_equals_the_src_rule_command` (Task 1), because the planner drops duplicate commands only when the strings are identical.
 2. A nested manifest such as `crates/factory-core/Cargo.toml`: must stay under the per-crate rule and not be reported. Pinned by `rust_preset_nested_crate_manifest_is_covered` (Task 1).
-3. A lowercase `license` and a `LICENSE-MIT`: exempt, because `unchecked_paths` matching ignores case. Pinned by `rust_preset_exempts_license_and_dotfiles` (Task 1).
+3. A lowercase `license` and a `LICENSE-MIT` at the root: exempt, because `unchecked_paths` matching ignores case. A code file named like a license, such as `xtask/src/license.rs`: must stay uncovered, so the gate still parks it. Pinned by `rust_preset_exempts_license_and_dotfiles` and `rust_preset_does_not_exempt_tooling_files` (Task 1).
 4. `dashboard/Cargo.toml` and tooling files: stay uncovered, so a reviewer sees a park instead of a silent pass. Pinned by `rust_preset_root_rule_does_not_cover_other_manifests` and `rust_preset_does_not_exempt_tooling_files` (Task 1).
 5. A project override: the docs must say it replaces the preset lists, with the exact sentence the test looks for. Pinned by `reference_documents_the_override_rule` (Task 2).
 
@@ -76,8 +76,8 @@ Four more, each using `rust_uncovered`:
 | Test | Input | Assertion |
 |---|---|---|
 | `rust_preset_root_rule_does_not_cover_other_manifests` | `["dashboard/Cargo.toml"]` | result equals `["dashboard/Cargo.toml"]` |
-| `rust_preset_exempts_license_and_dotfiles` | `LICENSE`, `LICENSE-MIT`, `license`, `COPYING`, `.gitignore`, `sub/.gitattributes`, `.editorconfig` | result is empty |
-| `rust_preset_does_not_exempt_tooling_files` | `rustfmt.toml`, `rust-toolchain.toml`, `scripts/release.sh`, `cliff.toml` | result has all four, in input order |
+| `rust_preset_exempts_license_and_dotfiles` | `LICENSE`, `LICENSE-MIT`, `license`, `LICENSE.txt`, `COPYING`, `COPYING.txt`, `.gitignore`, `.gitattributes`, `.editorconfig` | result is empty |
+| `rust_preset_does_not_exempt_tooling_files` | `rustfmt.toml`, `rust-toolchain.toml`, `scripts/release.sh`, `cliff.toml`, `xtask/src/license.rs`, `tools/licenses.rs`, `vendor/x/LICENSE`, `sub/.gitattributes` | result has all eight, in input order |
 | `rust_preset_nested_crate_manifest_is_covered` | `crates/factory-core/Cargo.toml` | result is empty |
 
 Add `rust_preset_root_command_equals_the_src_rule_command`: find the rule that matches `src/main.rs` and the rule that matches `Cargo.toml`, and assert the first command of each is the same string `cargo check -j4`.
@@ -151,7 +151,7 @@ Expected: 2 failed on the missing text.
 
 - [ ] **Step 4: Edit the docs.**
 
-Each exact sentence the tests look for must sit on one single line of the file, never wrapped. In `project-toml-reference.md`: add, after the checks "How it works" list, the override sentence from the test (verbatim) and a TOML snippet holding the root rule from Global Constraints plus an `unchecked_paths` line with the five globs; add to the `unchecked_paths` row that the rust preset sets the generic list. In `software-factory.md`: add the root rule sentence from the test (verbatim) to the `no-checks` bullet.
+Each exact sentence the tests look for must sit on one single line of the file, never wrapped. In `project-toml-reference.md`: add, after the checks "How it works" list, the override sentence from the test (verbatim) and a TOML snippet holding the root rule from Global Constraints plus an `unchecked_paths` line with the eight names; add to the `unchecked_paths` row that the rust preset sets the generic list. In `software-factory.md`: add the root rule sentence from the test (verbatim) to the `no-checks` bullet.
 
 - [ ] **Step 5: Run the tests and expect a pass.**
 

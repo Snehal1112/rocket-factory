@@ -55,10 +55,10 @@ commands = ["cargo check -j4"]
 A top-level key in the same file:
 
 ```toml
-unchecked_paths = ["**/LICENSE*", "**/COPYING*", "**/.gitignore", "**/.gitattributes", "**/.editorconfig"]
+unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*", ".gitignore", ".gitattributes", ".editorconfig"]
 ```
 
-- The `**/` form also matches the root file, and a nested copy such as `vendor/x/LICENSE`.
+- The names are exact and have no `**/` prefix, so they match only at the repo root. Matching ignores case and `*` matches any characters inside one path segment, so a pattern such as `**/LICENSE*` would also exempt code files like `xtask/src/license.rs` or `tools/licenses.rs` from the `no-checks` gate. These patterns do not.
 - `rustfmt.toml`, `clippy.toml` and `rust-toolchain.toml` are not listed, because they change what the checks do.
 - `scripts/**`, `cliff.toml` and `*.pub` are not listed, because they are repo-specific.
 
@@ -81,7 +81,9 @@ The comment above the single-crate rule keeps its text, with the sentence "A vir
 | Diff touches `Cargo.toml` and `build.rs` | `cargo check -j4` runs once |
 | Project overrides `[[settings.checks]]` | preset rules are not applied; project must add the root rule itself |
 | Project overrides `unchecked_paths` | the preset list is replaced; project must copy the entries it wants |
-| `LICENSE-MIT`, `LICENSE.md` | exempt through `**/LICENSE*` (a `.md` file is already a doc path) |
+| `LICENSE-MIT`, `LICENSE.txt`, `COPYING.txt` | exempt at the repo root through `LICENSE-*`, `LICENSE.txt` and `COPYING.*` (`LICENSE.md` is already a doc path) |
+| `xtask/src/license.rs`, `tools/licenses.rs` | stay uncovered, so they park as `no-checks` |
+| `vendor/x/LICENSE`, `sub/.gitattributes` | stay uncovered, the exemptions match the repo root only |
 | `license` in lower case | exempt, matching ignores case |
 | Root `Cargo.toml` in a large workspace | the bare `cargo check -j4` builds every member; the known cost of option "check only" |
 | `Cargo.toml` inside `dashboard/` | still uncovered by the preset |
@@ -93,8 +95,8 @@ In `crates/factory-core/src/preset.rs` (module `tests`), parsing the embedded ru
 
 - `rust_preset_covers_the_root_manifest_and_lockfile`: `uncovered_code_paths(["Cargo.toml", "Cargo.lock"], &config)` is empty; the rule's command is `cargo check -j4`.
 - `rust_preset_root_rule_does_not_cover_other_manifests`: `dashboard/Cargo.toml` is still uncovered.
-- `rust_preset_exempts_license_and_dotfiles`: `LICENSE`, `LICENSE-MIT`, `license`, `COPYING`, `.gitignore`, `sub/.gitattributes` and `.editorconfig` are not uncovered.
-- `rust_preset_does_not_exempt_tooling_files`: `rustfmt.toml`, `rust-toolchain.toml`, `scripts/release.sh` and `cliff.toml` are uncovered.
+- `rust_preset_exempts_license_and_dotfiles`: `LICENSE`, `LICENSE-MIT`, `license`, `LICENSE.txt`, `COPYING`, `COPYING.txt`, `.gitignore`, `.gitattributes` and `.editorconfig` at the root are not uncovered.
+- `rust_preset_does_not_exempt_tooling_files`: `rustfmt.toml`, `rust-toolchain.toml`, `scripts/release.sh`, `cliff.toml`, `xtask/src/license.rs`, `tools/licenses.rs`, `vendor/x/LICENSE` and `sub/.gitattributes` are uncovered.
 - The existing `rust_checks_use_cargo_with_j4_and_go_checks_use_go` keeps passing and covers the new command.
 
 Commands: `cargo test -j4 -p factory-core rust_preset`, then `cargo test -j4 -p factory-core`, then `cargo clippy -j4 -p factory-core --all-targets -- -D warnings`.
@@ -119,7 +121,7 @@ Commands: `cargo test -j4 -p factory-core rust_preset`, then `cargo test -j4 -p 
 
 - The embedded rust preset has a rule for `Cargo.toml` and `Cargo.lock` that runs `cargo check -j4`.
 - A diff of only the root `Cargo.toml` and `Cargo.lock` has no uncovered code paths under the rust preset.
-- The embedded rust preset sets `unchecked_paths` to the five generic globs, and `LICENSE`, `.gitignore` and the other listed files are not uncovered.
+- The embedded rust preset sets `unchecked_paths` to the eight root-only names, and `LICENSE`, `.gitignore` and the other listed files are not uncovered.
 - `dashboard/Cargo.toml`, `rustfmt.toml`, `rust-toolchain.toml`, `scripts/release.sh` and `cliff.toml` stay uncovered under the preset.
 - The reference doc says a project override replaces the preset's checks and `unchecked_paths`, with a snippet.
 - `README.md` and `getting-started.md` carry a "Check coverage" note after the upgrade steps.
@@ -142,4 +144,4 @@ None.
 - Which command covers the root manifest? Options: `cargo check -j4` only, check and test, `cargo metadata --no-deps`. Chosen: `cargo check -j4` only. Decided by: user
 - Which paths does the preset exempt? Options: generic list in the preset with repo-specific paths in the registry, everything in the preset, none. Chosen: generic list in the preset. Decided by: user
 - Where do the upgrade steps go? Options: docs plus a release checklist step, docs plus a cliff footer, docs only. Chosen: docs plus a release checklist step. Decided by: user
-- Should the globs use the `**/` form so nested files match? Chosen: yes, because `**/x` also matches the root file (`risk.rs:22`). Decided by: call
+- How narrow is the exempt list, given that `**/LICENSE*` would also exempt `xtask/src/license.rs`? Options: exact names at the repo root, exact names in any folder, only the dotfiles. Chosen: exact names at the repo root, no `**/` prefix and no trailing `*` after the name. Decided by: user
