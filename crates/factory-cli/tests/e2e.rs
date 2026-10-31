@@ -268,6 +268,57 @@ fn factory_costs_lists_jobs_writes_costs_json_and_new_prints_estimates() -> Test
     Ok(())
 }
 
+const MARKER_CONFIG: &str = "[[cost_markers]]\nname = \"m\"\njob = \"001\"\n";
+
+#[test]
+fn factory_costs_trend_prints_the_report_and_writes_trend_to_costs_json() -> TestResult {
+    let sc = Scenario::new(
+        MARKER_CONFIG,
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
+    let plan = sc.plan_a.to_string_lossy().to_string();
+    sc.run(&["new", "hello", "say hello", "--plans", &plan])?;
+    assert_eq!(sc.run(&["run", "1"])?, "merged");
+    let out = sc.run(&["costs", "--trend"])?;
+    assert!(out.contains("MARKER m (job 001, cut at 001)"), "{out}");
+    assert!(out.contains("not enough data (0 before, 1 after)"), "{out}");
+    let json = std::fs::read_to_string(sc.root.join(".superpowers/factory/costs.json"))?;
+    assert!(json.contains("\"trend\""), "{json}");
+    Ok(())
+}
+
+#[test]
+fn factory_costs_without_the_flag_is_unchanged_with_markers_set() -> TestResult {
+    let sc = Scenario::new(
+        MARKER_CONFIG,
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
+    let plan = sc.plan_a.to_string_lossy().to_string();
+    sc.run(&["new", "hello", "say hello", "--plans", &plan])?;
+    assert_eq!(sc.run(&["run", "1"])?, "merged");
+    let out = sc.run(&["costs"])?;
+    assert!(out.contains("ROLES") && !out.contains("MARKER"), "{out}");
+    Ok(())
+}
+
+#[test]
+fn trend_still_prints_the_costs_json_write_warning() -> TestResult {
+    let sc = Scenario::new(
+        MARKER_CONFIG,
+        vec![build(vec![("a.txt", "a\n")], 1_000), review(APPROVE)],
+    )?;
+    let plan = sc.plan_a.to_string_lossy().to_string();
+    sc.run(&["new", "hello", "say hello", "--plans", &plan])?;
+    assert_eq!(sc.run(&["run", "1"])?, "merged");
+    let path = sc.root.join(".superpowers/factory/costs.json");
+    std::fs::remove_file(&path)?;
+    std::fs::create_dir(&path)?;
+    let out = sc.run(&["costs", "--trend"])?;
+    assert!(out.contains("warning: could not write costs.json"), "{out}");
+    assert!(out.contains("MARKER"), "{out}");
+    Ok(())
+}
+
 /// Runs `f` with a thread-local log writer on the scenario's log file, as `main` installs one.
 fn with_log<R>(sc: &Scenario, f: impl FnOnce() -> R) -> R {
     use tracing_subscriber::layer::SubscriberExt;

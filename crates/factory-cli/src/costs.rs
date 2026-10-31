@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use factory_core::{Board, Estimate, GroupStats, Job, JobCost, SizeGroup};
+use factory_core::{Board, Estimate, GroupStats, GroupTrend, Job, JobCost, SizeGroup, TrendReport};
 
 use crate::status::human;
 
@@ -117,6 +117,83 @@ pub fn render_costs(jobs: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> 
     out
 }
 
+const NO_MARKERS: &str = "no cost_markers in project.toml. Add one with [[settings.cost_markers]], name = \"...\", job = \"NNN\".\n";
+
+/// A `before -> after` pair of optional figures, with a unit after each number.
+fn pair<T: std::fmt::Display>(before: Option<T>, after: Option<T>, unit: &str) -> String {
+    let show = |v: Option<T>| v.map_or("-".to_string(), |v| format!("{v}{unit}"));
+    format!("{} -> {}", show(before), show(after))
+}
+
+fn trend_row(group: &str, t: &GroupTrend) -> String {
+    let jobs = format!("{}/{}", t.before.n, t.after.n);
+    let (b, a) = (&t.before, &t.after);
+    let (Some(bl), Some(al), Some(change)) = (&b.per_line, &a.per_line, t.change_pct) else {
+        return format!(
+            "{:<8} {:<6} not enough data ({} before, {} after)\n",
+            group, jobs, b.n, a.n
+        );
+    };
+    let mut notes = Vec::new();
+    if b.n_approx > 0 {
+        notes.push(format!("{} approx before", b.n_approx));
+    }
+    if a.n_approx > 0 {
+        notes.push(format!("{} approx after", a.n_approx));
+    }
+    format!(
+        "{:<8} {:<6} {:<19} {:<7} {:<8} {:<10} {:<11} {:<11} {:<11} {}\n",
+        group,
+        jobs,
+        pair(Some(bl.median), Some(al.median), ""),
+        format!("{change:+}%"),
+        t.verdict.replace("not-enough-data", "not enough data"),
+        pair(b.median_turns, a.median_turns, ""),
+        pair(b.resumed_pct, a.resumed_pct, "%"),
+        pair(b.rework_pct, a.rework_pct, "%"),
+        pair(b.park_pct, a.park_pct, "%"),
+        notes.join(", ")
+    )
+}
+
+/// The cost trend per marker, or a hint when no marker is set.
+pub fn render_trend(report: Option<&TrendReport>) -> String {
+    let Some(report) = report else {
+        return NO_MARKERS.to_string();
+    };
+    let mut out = String::new();
+    for m in &report.markers {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "MARKER {} (job {}, cut at {})\n",
+            m.names.join(", "),
+            m.from.join(", "),
+            m.cut
+        ));
+        if m.groups.is_empty() {
+            out.push_str("  no jobs with data around this cut\n");
+            continue;
+        }
+        out.push_str("GROUP    JOBS   TOK/LINE            CHANGE  VERDICT  TURNS      RESUMED     REWORK      PARKED      NOTES\n");
+        for group in SizeGroup::ALL {
+            if let Some(t) = m.groups.get(group.as_str()) {
+                out.push_str(&trend_row(group.as_str(), t));
+            }
+        }
+    }
+    if !report.warnings.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        for w in &report.warnings {
+            out.push_str(&format!("warning: {w}\n"));
+        }
+    }
+    out
+}
+
 /// One line for an estimate.
 pub fn format_estimate(e: &Estimate) -> String {
     let group = if e.group == "all" {
@@ -169,7 +246,7 @@ pub fn estimate_lines(board: &Board, first: &Job) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use factory_core::{stats, JobCost, SizeGroup};
+    use factory_core::{build_trend, stats, CostMarker, JobCost, SizeGroup};
     fn cost(
         id: &str,
         group: Option<SizeGroup>,
@@ -200,7 +277,127 @@ mod tests {
                 ("claude:builder".to_string(), weighted * 6 / 10),
                 ("claude:reviewer".to_string(), weighted - weighted * 6 / 10),
             ]),
+            turns: 0,
+            resumed_runs: 0,
+            round: 0,
+            parked: false,
         }
+    }
+
+    fn tjob(id: &str, group: SizeGroup, weighted: u64) -> JobCost {
+        JobCost {
+            id: id.into(),
+            stage: "merged".into(),
+            group: Some(group),
+            lines: Some(100),
+            weighted,
+            runs: 2,
+            turns: 10,
+            resumed_runs: 1,
+            ..JobCost::default()
+        }
+    }
+
+    fn marker(name: &str, job: &str) -> CostMarker {
+        CostMarker {
+            name: name.into(),
+            job: job.into(),
+        }
+    }
+
+    fn six(group: SizeGroup) -> Vec<JobCost> {
+        (1..=6)
+            .map(|i| {
+                let w = if i <= 3 { 122_300 } else { 76_000 };
+                tjob(&format!("{i:03}"), group, w)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn render_trend_prints_a_block_per_marker() {
+        let jobs = six(SizeGroup::Small);
+        let report = build_trend(&jobs, &[marker("carry-cap-45k", "004")]).expect("report");
+        let text = render_trend(Some(&report));
+        assert!(
+            text.contains("MARKER carry-cap-45k (job 004, cut at 004)"),
+            "{text}"
+        );
+        let row = text
+            .lines()
+            .find(|l| l.starts_with("small"))
+            .expect("small row");
+        assert!(row.contains("3/3") && row.contains("1223 -> 760"), "{row}");
+        assert!(row.contains("-38%") && row.contains("fell"), "{row}");
+    }
+
+    #[test]
+    fn render_trend_labels_a_group_without_enough_data() {
+        let mut jobs: Vec<JobCost> = (1..=2)
+            .map(|i| tjob(&format!("{i:03}"), SizeGroup::Medium, 100_000))
+            .collect();
+        jobs.extend((3..=5).map(|i| tjob(&format!("{i:03}"), SizeGroup::Medium, 100_000)));
+        let report = build_trend(&jobs, &[marker("m", "003")]).expect("report");
+        let text = render_trend(Some(&report));
+        let row = text
+            .lines()
+            .find(|l| l.starts_with("medium"))
+            .expect("medium row");
+        assert!(row.contains("not enough data (2 before, 3 after)"), "{row}");
+        assert!(!row.contains("->"), "{row}");
+    }
+
+    #[test]
+    fn render_trend_without_markers_prints_the_hint() {
+        assert_eq!(
+            render_trend(None),
+            "no cost_markers in project.toml. Add one with [[settings.cost_markers]], name = \"...\", job = \"NNN\".\n"
+        );
+    }
+
+    #[test]
+    fn render_trend_prints_warnings_and_approx_notes() {
+        let mut jobs = six(SizeGroup::Small);
+        jobs[4].approx = true;
+        let report =
+            build_trend(&jobs, &[marker("m", "004"), marker("late", "999")]).expect("report");
+        let text = render_trend(Some(&report));
+        let row = text
+            .lines()
+            .find(|l| l.starts_with("small"))
+            .expect("small row");
+        assert!(row.contains("1 approx after"), "{row}");
+        assert!(
+            text.lines()
+                .any(|l| l.starts_with("warning: ") && l.contains("late")),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn render_trend_joins_the_names_of_collapsed_markers() {
+        let jobs = six(SizeGroup::Small);
+        let report = build_trend(&jobs, &[marker("a", "004"), marker("b", "004")]).expect("report");
+        let text = render_trend(Some(&report));
+        assert!(
+            text.contains("MARKER a, b (job 004, 004, cut at 004)"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn render_trend_says_so_when_a_block_has_no_groups() {
+        let jobs = vec![JobCost {
+            id: "001".into(),
+            stage: "build".into(),
+            ..JobCost::default()
+        }];
+        let report = build_trend(&jobs, &[marker("m", "001")]).expect("report");
+        let text = render_trend(Some(&report));
+        assert!(
+            text.contains("cut at 001)\n  no jobs with data around this cut\n"),
+            "{text}"
+        );
     }
 
     #[test]

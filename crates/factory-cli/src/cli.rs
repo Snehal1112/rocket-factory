@@ -115,7 +115,11 @@ pub enum Command {
         days: Option<u32>,
     },
     /// Print the cost of every job and the figures per size group, and write costs.json.
-    Costs,
+    Costs {
+        /// Print the cost trend per marker instead of the job tables.
+        #[arg(long)]
+        trend: bool,
+    },
     /// Ask each role's agent what reaches its context, using a marker, and report a pass or fail per channel.
     Probe {
         /// The agent CLI to probe. Defaults to the project's agent_cli.
