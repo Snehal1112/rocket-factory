@@ -40,6 +40,43 @@ impl CheckRule {
     }
 }
 
+/// A named change point for the cost trend report: the first job that ran with the change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CostMarker {
+    pub name: String,
+    pub job: String,
+}
+
+/// Refuses a blank, long or duplicate marker name and a job that is not a number.
+fn validate_cost_markers(markers: &[CostMarker]) -> Result<(), CoreError> {
+    let mut seen: Vec<&str> = Vec::new();
+    for (i, m) in markers.iter().enumerate() {
+        let reason = if m.name.trim().is_empty() {
+            return Err(CoreError::Config(format!(
+                "cost marker #{}: name must not be empty",
+                i + 1
+            )));
+        } else if m.name.chars().count() > 40 {
+            "name must be at most 40 characters"
+        } else if m.name.chars().any(char::is_control) {
+            "name must not contain a control character"
+        } else if m.job.is_empty() || !m.job.chars().all(|c| c.is_ascii_digit()) {
+            "job must be a job id of digits"
+        } else if seen.contains(&m.name.as_str()) {
+            "name is used twice"
+        } else {
+            seen.push(&m.name);
+            continue;
+        };
+        return Err(CoreError::Config(format!(
+            "cost marker \"{}\": {reason}",
+            m.name
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -92,6 +129,8 @@ pub struct Config {
     pub size_small_max_bytes: u64,
     /// A plan up to this many bytes is a medium job, a bigger one is complex.
     pub size_medium_max_bytes: u64,
+    /// Named change points for `factory costs --trend`.
+    pub cost_markers: Vec<CostMarker>,
     /// The branch jobs start from and merge into.
     pub base_branch: String,
     /// Files or folders the builder reads before it starts, such as `CLAUDE.md`.
@@ -180,6 +219,7 @@ impl Default for Config {
             kb_auto_commit: false,
             size_small_max_bytes: 12_288,
             size_medium_max_bytes: 25_600,
+            cost_markers: Vec::new(),
             base_branch: "main".to_string(),
             read_first: Vec::new(),
             builder_rules: Vec::new(),
@@ -349,6 +389,7 @@ impl Config {
                 "size_small_max_bytes must be above zero and below size_medium_max_bytes".into(),
             ));
         }
+        validate_cost_markers(&cfg.cost_markers)?;
         if cfg.kb_path.as_deref().is_some_and(|p| p.trim().is_empty()) {
             return Err(CoreError::Config(
                 "kb_path must not be empty when it is set".into(),
@@ -1491,5 +1532,59 @@ mod tests {
         assert!(!cfg.commit_subagents);
         assert_eq!(cfg.commit_budget_weighted, 60_000);
         assert_eq!(cfg.kb_path, None);
+    }
+
+    fn marker_text(name: &str, job: &str) -> String {
+        format!("[[cost_markers]]\nname = \"{name}\"\njob = \"{job}\"\n")
+    }
+
+    #[test]
+    fn cost_markers_parse_name_and_job() {
+        let cfg = Config::parse(&marker_text("carry-cap-45k", "022")).expect("parses");
+        assert_eq!(
+            cfg.cost_markers,
+            vec![CostMarker {
+                name: "carry-cap-45k".into(),
+                job: "022".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn cost_markers_default_to_empty() {
+        assert!(Config::default().cost_markers.is_empty());
+    }
+
+    #[test]
+    fn a_bad_marker_is_refused_with_its_name() {
+        let err = Config::parse(&marker_text("m1", "2x")).expect_err("bad job");
+        assert!(err.to_string().contains("m1"), "{err}");
+    }
+
+    #[test]
+    fn a_marker_with_a_bad_job_or_empty_name_is_refused() {
+        let err = Config::parse(&marker_text("", "001")).expect_err("empty name");
+        assert!(err.to_string().contains("cost marker #1"), "{err}");
+        Config::parse(&marker_text("m", "")).expect_err("empty job");
+        Config::parse(&marker_text("m", "-1")).expect_err("negative job");
+    }
+
+    #[test]
+    fn a_marker_name_over_40_characters_or_with_a_control_character_is_refused() {
+        Config::parse(&marker_text(&"a".repeat(41), "001")).expect_err("too long");
+        Config::parse(&marker_text("a\\u0007b", "001")).expect_err("control character");
+    }
+
+    #[test]
+    fn duplicate_marker_names_are_refused() {
+        let text = format!("{}{}", marker_text("m", "001"), marker_text("m", "002"));
+        let err = Config::parse(&text).expect_err("duplicate");
+        assert!(err.to_string().contains('m'), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_marker_key_is_refused() {
+        let text = format!("{}extra = 1\n", marker_text("m", "001"));
+        Config::parse(&text).expect_err("unknown key");
     }
 }

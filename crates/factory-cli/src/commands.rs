@@ -14,7 +14,7 @@ use factory_engine::{
 };
 
 use crate::cli::{Cli, Command, SpecCmd};
-use crate::costs::{estimate_lines, render_costs};
+use crate::costs::{estimate_lines, render_costs, render_trend};
 use crate::status::{render_parked, render_project_line, render_status};
 
 #[derive(Debug, thiserror::Error)]
@@ -410,7 +410,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         } => cleanup(ctx, &norm(&id)?, discard_commits),
         Command::Tokens { id: Some(id), .. } => tokens(ctx, &norm(&id)?),
         Command::Tokens { days, .. } => cache_tokens(ctx, days),
-        Command::Costs => costs(ctx),
+        Command::Costs { trend } => costs(ctx, trend),
         Command::Probe {
             harness,
             role,
@@ -585,11 +585,15 @@ fn cancel_draft(ctx: &CliCtx, name: &str) -> Result<String, CliError> {
     ))
 }
 
-fn costs(ctx: &CliCtx) -> Result<String, CliError> {
+fn costs(ctx: &CliCtx, trend: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let jobs = gather_costs(&d)?;
     let file = CostsFile::build(&jobs, d.config(), now_secs());
-    let mut out = render_costs(&jobs, &file.groups);
+    let mut out = if trend {
+        render_trend(file.trend.as_ref())
+    } else {
+        render_costs(&jobs, &file.groups)
+    };
     if let Err(e) = file.write(&costs_path(d.layout())) {
         out.push_str(&format!("\nwarning: could not write costs.json: {e}\n"));
     }

@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use factory_core::{
-    count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, JobCost, Layout,
+    count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, JobCost,
+    Layout, Stage,
 };
 
 use crate::clock::now_secs;
@@ -44,6 +45,13 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
             roles: usage.roles,
             providers: usage.providers,
             provider_roles: usage.provider_roles,
+            turns: usage.turns,
+            resumed_runs: usage.resumed_runs,
+            round: job.round,
+            parked: job
+                .stage_history
+                .iter()
+                .any(|e| e.stage == Stage::NeedsHuman),
         });
     }
     // The spec reviews belong to no job, so their log gets a record of its own. It is not merged,
@@ -67,6 +75,10 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
                 roles: usage.roles,
                 providers: usage.providers,
                 provider_roles: usage.provider_roles,
+                turns: usage.turns,
+                resumed_runs: usage.resumed_runs,
+                round: 0,
+                parked: false,
             });
         }
     }

@@ -1,6 +1,6 @@
 mod common;
 
-use factory_core::{Job, SizeGroup, Stage};
+use factory_core::{Job, SizeGroup, Stage, StageEntry};
 use factory_engine::{
     costs_path, create_job, estimate_for_plan, gather_costs, refresh_costs, run_job, RunEnd,
 };
@@ -11,6 +11,16 @@ fn add_finished_job(
     plan_text: &str,
     usage: Option<&str>,
 ) -> Job {
+    add_finished_job_with(fx, id, plan_text, usage, |_| {})
+}
+
+fn add_finished_job_with(
+    fx: &common::SeriesFixture,
+    id: &str,
+    plan_text: &str,
+    usage: Option<&str>,
+    tweak: impl FnOnce(&mut Job),
+) -> Job {
     let mut job = Job::new(
         id,
         &format!("2026-10-16-{id}-x"),
@@ -19,6 +29,7 @@ fn add_finished_job(
         "feature",
         1.0,
     );
+    tweak(&mut job);
     job.set_stage(Stage::Build, None, false, 2.0)
         .expect("build");
     let dir = fx.driver.job_dir(&job);
@@ -66,6 +77,54 @@ fn gather_costs_carries_the_providers_of_each_job() {
     let j = jobs.iter().find(|j| j.id == "105").expect("job 105");
     assert_eq!(j.providers.get("codex"), Some(&50));
     assert_eq!(j.providers.get("claude"), Some(&100));
+}
+
+const TURN_USAGE: &str = concat!(
+    "{\"job\":\"110\",\"role\":\"builder\",\"turns\":7,\"resumed\":true,\"usage_v\":2}\n",
+    "{\"job\":\"110\",\"role\":\"builder\",\"turns\":5,\"resumed\":false,\"usage_v\":2}\n",
+);
+
+#[test]
+fn gather_costs_fills_turns_resumed_round_and_parked() {
+    let fx = common::SeriesFixture::new("x");
+    add_finished_job_with(&fx, "110", "# P\n", Some(TURN_USAGE), |j| {
+        j.round = 2;
+        j.stage_history.push(StageEntry {
+            stage: Stage::NeedsHuman,
+            at: 3.0,
+        });
+    });
+    let jobs = gather_costs(&fx.driver).expect("gather");
+    let j = jobs.iter().find(|j| j.id == "110").expect("job 110");
+    assert_eq!(
+        (j.turns, j.resumed_runs, j.round, j.parked),
+        (12, 1, 2, true)
+    );
+}
+
+#[test]
+fn a_merged_job_that_never_parked_has_parked_false() {
+    let fx = common::SeriesFixture::new("x");
+    let usage = TURN_USAGE.replace("110", "111");
+    add_finished_job(&fx, "111", "# P\n", Some(&usage));
+    let jobs = gather_costs(&fx.driver).expect("gather");
+    let j = jobs.iter().find(|j| j.id == "111").expect("job 111");
+    assert!(!j.parked);
+}
+
+#[test]
+fn the_spec_review_record_has_zero_round_and_is_not_parked() {
+    let fx = common::SeriesFixture::new("x");
+    let path = fx.driver.layout().spec_review_usage_file();
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+    std::fs::write(
+        &path,
+        "{\"job\":\"spec-review\",\"role\":\"spec-reviewer\",\"turns\":4,\"usage_v\":2}\n",
+    )
+    .expect("usage");
+    let jobs = gather_costs(&fx.driver).expect("gather");
+    let j = jobs.iter().find(|j| j.id == "spec-review").expect("record");
+    assert_eq!((j.round, j.parked, j.turns), (0, false, 4));
 }
 
 #[test]

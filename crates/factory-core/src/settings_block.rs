@@ -117,6 +117,7 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("size_medium_max_bytes", None),
         ],
     ),
+    ("Cost markers.", &[("cost_markers", None)]),
     (
         "Prompt cache.",
         &[("cache_ttl", Some("\"1h\"  # Unset lets claude choose."))],
@@ -164,6 +165,10 @@ pub fn render(
                 ));
                 continue;
             }
+            if *key == "cost_markers" {
+                lines.push_str("# cost_markers: add [[settings.cost_markers]] tables with a name and the first job id that ran with a change. See docs/reference/project-toml-reference.md.\n");
+                continue;
+            }
             let value = match (example, preset.get(*key).or(defaults.get(*key))) {
                 (Some(example), _) => example.to_string(),
                 (None, Some(value)) => value.to_string(),
@@ -208,6 +213,9 @@ pub fn effective_lines(
         let shown = match values.get(*key) {
             None => "unset".to_string(),
             Some(toml::Value::Array(items)) if *key == "checks" => format!("{} rules", items.len()),
+            Some(toml::Value::Array(items)) if *key == "cost_markers" => {
+                format!("{} markers", items.len())
+            }
             // A long list shows its size, the reference doc and the file show its entries.
             Some(toml::Value::Array(items))
                 if toml::Value::Array(items.clone()).to_string().len() > 60 =>
@@ -321,10 +329,29 @@ mod tests {
                 let rest = l.strip_prefix("# ")?;
                 let key = rest.split([' ', '=']).next()?;
                 let shown = keys().any(|(k, ex)| k == key && ex.is_none());
-                (shown && key != "checks").then(|| rest.to_string())
+                (shown && key != "checks" && key != "cost_markers").then(|| rest.to_string())
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn cost_markers_gets_a_hint_line_and_a_count_like_checks() {
+        let block = render(&|_| false, true, "rust", rust()).expect("render");
+        assert!(
+            block.contains("cost_markers: add [[settings.cost_markers]]"),
+            "{block}"
+        );
+        assert!(
+            !block.lines().any(|l| l.starts_with("# cost_markers =")),
+            "{block}"
+        );
+        let cfg = Config::parse("[[cost_markers]]\nname = \"a\"\njob = \"001\"\n").expect("parse");
+        let lines = effective_lines(&cfg, &toml::Table::new(), rust()).expect("lines");
+        assert!(
+            lines.contains(&"cost_markers = 1 markers (default)".to_string()),
+            "{lines:?}"
+        );
     }
 
     #[test]
