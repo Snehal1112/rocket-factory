@@ -21,6 +21,8 @@ pub enum CheckError {
     MissingJobs(String),
     #[error("cargo command must not use {flag}: {cmd}")]
     Forbidden { flag: &'static str, cmd: String },
+    #[error("a check command must not use both {{crate}} and {{dependents}}: {0}")]
+    CrossProduct(String),
     #[error("could not write checks file: {0}")]
     Write(String),
     #[error("workspace map: {0}")]

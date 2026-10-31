@@ -267,6 +267,7 @@ mod tests {
             commands: cmds.iter().map(|s| s.to_string()).collect(),
             timeout: Duration::from_secs(secs),
             notes: Vec::new(),
+            unplanned: Vec::new(),
         }
     }
 
