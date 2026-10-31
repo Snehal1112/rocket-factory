@@ -56,7 +56,7 @@ Defaults come from `Config::default()` in `factory-core/src/config.rs`. A value 
 | `fix_rounds` | integer | 2 | Fix rounds allowed after a failure. When used up, failing checks park as `checks-failed` and review changes park as `changes-remain`. `0` parks on the first failure. |
 | `risky_fix_rounds` | integer | same as `fix_rounds` | Fix rounds a risky diff may use, for failing checks and for review findings, before it parks. 0 parks a risky diff at its first failing check or CHANGES verdict. |
 | `dependents_cap` | integer | 6 | Most direct dependents a `{dependents}` check command expands to. The rest are skipped, and `checks.md` names them. |
-| `unchecked_paths` | list of globs | `[]` | Paths that no check covers on purpose. They are never reported as uncovered. Doc paths are never reported either. Matching ignores case. |
+| `unchecked_paths` | list of globs | `[]` | Paths that no check covers on purpose. They are never reported as uncovered. Doc paths are never reported either. Matching ignores case. The rust preset sets `LICENSE`, `LICENSE-*`, `LICENSE.txt`, `COPYING`, `COPYING.*`, `.gitignore`, `.gitattributes` and `.editorconfig`, which match at the repo root only. |
 | `stall_minutes` | integer | 10 | Minutes without any stream event before the driver kills the agent. Applies to builder, reviewer, committer, KB and message agents. The check is approximate. |
 
 Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factory-core/src/budget.rs`). When a builder is killed on budget it parks as `builder-stopped`. `budget-stopped` is only used when a reviewed round finds the budget gone.
@@ -216,6 +216,17 @@ How it works (`factory-checks/src/plan.rs`):
 - Every command runs, even after a failure. The default timeout is 900 seconds.
 - A failure sends the job back to the builder for a fix round, or parks it when `fix_rounds` is used up.
 - Matching is case-sensitive here, unlike `risk_paths`.
+
+The rust preset covers the root `Cargo.toml` and `Cargo.lock` and exempts generic non-code files. A project that sets `[[settings.checks]]` or `unchecked_paths` replaces the preset value, so copy the preset entries it still wants.
+
+```toml
+[[settings.checks]]
+paths = ["Cargo.toml", "Cargo.lock"]
+commands = ["cargo check -j4"]
+
+[settings]
+unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*", ".gitignore", ".gitattributes", ".editorconfig"]
+```
 
 Command validation (checked when the engine starts and by `factory project show`):
 

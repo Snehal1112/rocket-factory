@@ -566,6 +566,89 @@ mod tests {
         }
     }
 
+    fn rust_config() -> Config {
+        Config::parse(embedded("rust").expect("rust").config).expect("parse")
+    }
+
+    fn rust_uncovered(paths: &[&str]) -> Vec<String> {
+        let owned: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+        crate::gate::uncovered_code_paths(&owned, &rust_config())
+    }
+
+    #[test]
+    fn rust_preset_covers_the_root_manifest_and_lockfile() {
+        assert!(rust_uncovered(&["Cargo.toml", "Cargo.lock"]).is_empty());
+        let config = rust_config();
+        let rule = config
+            .checks
+            .iter()
+            .find(|r| r.matches("Cargo.toml"))
+            .expect("rule for Cargo.toml");
+        assert_eq!(rule.commands, vec!["cargo check -j4".to_string()]);
+    }
+
+    #[test]
+    fn rust_preset_root_rule_does_not_cover_other_manifests() {
+        assert_eq!(
+            rust_uncovered(&["dashboard/Cargo.toml"]),
+            vec!["dashboard/Cargo.toml".to_string()]
+        );
+    }
+
+    #[test]
+    fn rust_preset_exempts_license_and_dotfiles() {
+        let paths = [
+            "LICENSE",
+            "LICENSE-MIT",
+            "license",
+            "LICENSE.txt",
+            "COPYING",
+            "COPYING.txt",
+            ".gitignore",
+            ".gitattributes",
+            ".editorconfig",
+        ];
+        assert!(rust_uncovered(&paths).is_empty());
+    }
+
+    #[test]
+    fn rust_preset_does_not_exempt_tooling_files() {
+        let paths = [
+            "rustfmt.toml",
+            "rust-toolchain.toml",
+            "scripts/release.sh",
+            "cliff.toml",
+            "xtask/src/license.rs",
+            "tools/licenses.rs",
+            "vendor/x/LICENSE",
+            "sub/.gitattributes",
+        ];
+        let expected: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+        assert_eq!(rust_uncovered(&paths), expected);
+    }
+
+    #[test]
+    fn rust_preset_nested_crate_manifest_is_covered() {
+        assert!(rust_uncovered(&["crates/factory-core/Cargo.toml"]).is_empty());
+    }
+
+    #[test]
+    fn rust_preset_root_command_equals_the_src_rule_command() {
+        let config = rust_config();
+        let src = config
+            .checks
+            .iter()
+            .find(|r| r.matches("src/main.rs"))
+            .expect("src rule");
+        let root = config
+            .checks
+            .iter()
+            .find(|r| r.matches("Cargo.toml"))
+            .expect("root rule");
+        assert_eq!(src.commands[0], "cargo check -j4");
+        assert_eq!(root.commands[0], src.commands[0]);
+    }
+
     #[test]
     fn rust_checks_use_cargo_with_j4_and_go_checks_use_go() {
         let rust = Config::parse(embedded("rust").expect("rust").config).expect("parse");

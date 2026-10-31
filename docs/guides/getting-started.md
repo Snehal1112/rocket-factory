@@ -447,6 +447,23 @@ nohup factoryd run >> ~/.factory/factoryd.log 2>&1 &
 
 `factory upgrade` never touches your project settings or your repo. A preset file you edited by hand is listed as `refused` and left alone, and `factory presets refresh --force` overwrites it.
 
+### Check coverage
+
+The rust preset now covers the root `Cargo.toml` and `Cargo.lock` with `cargo check -j4` and exempts generic non-code files such as `LICENSE` and `.gitignore`. Run `factory upgrade`: it refreshes an unedited rust preset.
+
+A project that sets `[[settings.checks]]` or `unchecked_paths` in `project.toml` keeps its own values. It must add the root rule and the exempt paths itself:
+
+```toml
+[[settings.checks]]
+paths = ["Cargo.toml", "Cargo.lock"]
+commands = ["cargo check -j4"]
+
+[settings]
+unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*", ".gitignore", ".gitattributes", ".editorconfig"]
+```
+
+A job that parks as `no-checks` shows in `factory --project <name> status`.
+
 ## 16. Platform notes
 
 - Linux and macOS are supported.

@@ -55,6 +55,9 @@ factory probe --harness codex
 
 A failing channel blocks the release unless the release notes say why. Paste the CLI versions and the tables into the release notes. The probe uses real credentials and costs one short turn per role, so `release.sh` does not run it.
 
+Paste the "Check coverage" note from `README.md` (Upgrading) into the draft release.
+The changelog skips `chore:` commits, so this note is not generated.
+
 ```bash
 ./scripts/release.sh --dry-run patch   # every check, nothing changed
 ./scripts/release.sh patch             # or minor, major, or an explicit v1.2.3

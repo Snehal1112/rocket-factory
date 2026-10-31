@@ -8,6 +8,7 @@ risk_paths = [
   "**/*credential*",
   ".github/**",
 ]
+unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*", ".gitignore", ".gitattributes", ".editorconfig"]
 read_first = ["CLAUDE.md"]
 builder_rules = [
   "Run `cargo check -j4` and `cargo test -j4 -p <crate> <test_name>`; never use --workspace or --all; never set CARGO_TARGET_DIR.",
@@ -24,7 +25,12 @@ paths = ["crates/*/**"]
 commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
 
 # A single-crate repo: the crate sits at the root. These paths never match a workspace member's own files.
-# A virtual workspace (a root Cargo.toml without a [package]) relies on the crates/*/** rule above.
+# A virtual workspace's root manifest is covered by the root rule below.
 [[checks]]
 paths = ["src/**", "tests/**", "benches/**", "examples/**", "build.rs"]
 commands = ["cargo check -j4", "cargo test -j4"]
+
+# Root manifest and lockfile. A change here can break any member, so check the whole workspace.
+[[checks]]
+paths = ["Cargo.toml", "Cargo.lock"]
+commands = ["cargo check -j4"]
