@@ -43,17 +43,17 @@ Gaps: no per-line figure, no way to name a change point, no before/after compari
 Flow:
 
 ```
-project.toml [[cost_markers]] ──┐
+project.toml [[settings.cost_markers]] ──┐
 board jobs ─ gather_costs ──────┼─> build_trend ─> TrendReport ─┬─> factory costs --trend (text)
 usage.jsonl, stage_history ─────┘                               └─> costs.json "trend" ─> dashboard
 ```
 
 ### 1. Markers in `project.toml`
 
-New `Config` field `cost_markers: Vec<CostMarker>`, default empty.
+New `Config` field `cost_markers: Vec<CostMarker>`, default empty. In a registered project the tables sit under `[settings]` of `project.toml`, so they are written `[[settings.cost_markers]]`, as `[[settings.checks]]` is.
 
 ```toml
-[[cost_markers]]
+[[settings.cost_markers]]
 name = "carry-cap-45k"
 job = "022"
 ```
@@ -127,7 +127,7 @@ small    6/5    1223 -> 760         -38%    fell     21 -> 14  40% -> 55% 17% ->
 medium   2/4    not enough data (2 before, 4 after)
 ```
 
-JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK and PARKED print `before -> after`. NOTES lists approximate counts per side (`2 approx before, 1 approx after`), empty when none. Names show joined by `, ` when several markers share a cut. Each warning prints as its own line after the blocks. With no `cost_markers` the text is `no cost_markers in project.toml. Add one with [[cost_markers]], name = "...", job = "NNN".` followed by a newline.
+JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK and PARKED print `before -> after`. NOTES lists approximate counts per side (`2 approx before, 1 approx after`), empty when none. Names show joined by `, ` when several markers share a cut. Each warning prints as its own line after the blocks. With no `cost_markers` the text is `no cost_markers in project.toml. Add one with [[settings.cost_markers]], name = "...", job = "NNN".` followed by a newline.
 
 ### 6. Dashboard
 
@@ -140,7 +140,7 @@ JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK
 ### 7. Docs
 
 - `docs/reference/project-toml-reference.md`: a "Cost markers" section with the table of `name` and `job`, the resolve rule and an example.
-- `crates/factory-core/src/settings_block.rs`: list `cost_markers` once, in a "Cost markers." group, so the settings-block test passes.
+- `crates/factory-core/src/settings_block.rs`: list `cost_markers` once, in a "Cost markers." group, and treat it like `checks` (an array of tables): `render` writes a hint comment instead of a `# cost_markers = []` line, so nobody ends up with the key and the tables together, and `effective_lines` shows `N markers`.
 - `README.md` and `dashboard/README.md`: one short paragraph each on `factory costs --trend` and the dashboard block.
 - `docs/operations/releasing.md`: under "Cutting a release", a step: run `factory costs --trend` and paste the table into the release notes.
 
@@ -168,7 +168,7 @@ JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK
 - `config.rs`: `cost_markers_default_to_empty`, `cost_markers_parse_name_and_job`, `a_marker_with_a_bad_job_or_empty_name_is_refused`, `a_marker_name_over_40_characters_or_with_a_control_character_is_refused`, `duplicate_marker_names_are_refused`, `an_unknown_marker_key_is_refused`.
 - `cost.rs`: `usage_summary_counts_turns_and_resumed_runs`, `usage_summary_treats_missing_turns_as_zero`, `an_old_costs_file_without_trend_still_loads`, `the_costs_file_carries_the_trend_and_omits_it_without_markers`.
 - `trend.rs`: `no_markers_gives_no_report`, `before_is_everything_below_the_cut_and_after_stops_at_the_next_cut`, `a_marker_on_a_missing_job_cuts_at_the_next_board_job`, `a_marker_past_the_latest_job_warns_and_is_skipped`, `two_markers_on_one_job_share_a_block`, `markers_are_sorted_by_resolved_id`, `per_line_is_the_median_of_job_ratios` (an odd and an even count), `the_job_ratio_rounds_half_up` (for example 3 weighted over 2 lines is 2), `a_side_with_two_jobs_is_not_enough_data`, `a_group_with_no_eligible_job_on_either_side_is_left_out`, `a_group_with_jobs_on_one_side_only_is_not_enough_data`, `jobs_without_lines_or_data_are_left_out`, `change_pct_and_verdict_use_the_ten_percent_band` (cases -10, -9, 9, 10), `a_zero_before_median_is_not_enough_data`, `turns_resumed_rework_and_park_shares` (including 1 of 8 jobs rounding to 13%, half up), `a_side_with_no_runs_has_a_zero_resumed_share`, `approximate_jobs_are_counted_per_side`.
-- `settings_block.rs`: the existing `every_config_key_is_listed_once` covers `cost_markers`.
+- `settings_block.rs`: the existing `every_config_key_is_listed_once` covers `cost_markers`; new `cost_markers_gets_a_hint_line_and_a_count_like_checks`.
 
 `factory-engine`, `cargo test -j4 -p factory-engine --test costs`:
 - `gather_costs_fills_turns_resumed_round_and_parked` (a merged job with a `needs-human` history entry and a usage file with `turns` and `resumed`).
@@ -199,6 +199,8 @@ JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK
 - `costs.json` stays compatible with the dashboard: `trend` is optional and the dashboard types use `#[serde(default)]`.
 - Paths go through `Layout`. Never shell out to `git`.
 - Tests use `.expect("...")`, never the unwrap call.
+- Rust code follows the CI gate: `cargo fmt -p <crate> -- --check` and `cargo clippy -j4 -p <crate> --all-targets -- -D warnings` pass for every changed crate. The dashboard uses `--manifest-path dashboard/Cargo.toml` for both.
+- New JavaScript follows the style of `board.js` (two spaces, double quotes, semicolons) and passes `node --test dashboard/tests/*.test.js`.
 
 ## Acceptance criteria
 
@@ -209,7 +211,7 @@ JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK
 - A marker past the latest job is skipped with a `warning:` line.
 - The report shows median turns, resumed-run share, rework rate (`round >= 2`) and park rate (`needs-human` in `stage_history`) per side.
 - The verdict uses a 10% dead band: `fell` at -10% or lower, `rose` at +10% or higher.
-- Markers come from `[[cost_markers]]` in `project.toml`, and a bad or duplicate marker is refused with the marker named.
+- Markers come from `[[settings.cost_markers]]` in `project.toml`, and a bad or duplicate marker is refused with the marker named.
 - `costs.json` gets an optional `trend` field, absent without markers, and old files still load.
 - Plain `factory costs` prints exactly what it printed before.
 - The dashboard shows a table and an SVG chart per marker, shows `not enough data` for thin groups, and shows nothing when `trend` is missing.
@@ -217,13 +219,16 @@ JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK
 
 ## Out of scope
 
-- Filling in the real markers for rocket-factory's own history (a `project.toml` edit by the maintainer).
 - Settings for the minimum job count or the verdict band.
 - Comparing projects with each other.
 
+## Follow-ups
+
+- Add rocket-factory's own `[[settings.cost_markers]]` for the 45k carry cap, the quality levers and the rust preset check coverage, using the job ids where each change first ran, and note the first `factory costs --trend` result in the release notes.
+
 ## Decisions
 
-- Where do the change-point markers come from? Options: a `[[cost_markers]]` list in `project.toml` (name plus first job id); a `markers.toml` in the state dir; markers by timestamp. Chosen: a `[[cost_markers]]` list in `project.toml`. Decided by: user
+- Where do the change-point markers come from? Options: a `[[settings.cost_markers]]` list in `project.toml` (name plus first job id); a `markers.toml` in the state dir; markers by timestamp. Chosen: a `[[settings.cost_markers]]` list in `project.toml`. Decided by: user
 - How are before and after cut with several markers? Options: segments between consecutive markers; everything before versus everything after; a fixed window of N jobs; everything before versus the span up to the next marker. Chosen: everything before the marker versus the span from the marker to the next marker (or the latest job for the last one). Decided by: user
 - How many jobs does a side need before a number shows? Options: 3 per side per group fixed in code; 5 per side; a `project.toml` setting defaulting to 3. Chosen: at least 3 jobs on each side per size group, fixed in code, else "not enough data". Jobs without a line count or with zero lines are left out of the figures. Decided by: user
 - How is tokens per line computed for a side? Options: median of each job's own ratio; total weighted over total lines; both. Chosen: the median of each job's own `weighted / lines`, with the low and high of the ratios. Decided by: user
@@ -234,4 +239,4 @@ JOBS is before/after counts. TOK/LINE is the two medians. TURNS, RESUMED, REWORK
 - How does the dashboard show the trend? Options: a table under the cost panel; a small chart per marker; only a verdict column. Chosen: the table (one block per marker, a row per size group) plus a small chart per marker. Decided by: user
 - What form does the chart take? Chosen: inline SVG without a library, per marker a pair of bars (before median, after median) per size group on one shared scale, with the verdict as text beside them; a group with too few jobs draws no bars. Decided by: call
 - What if a marker's job id is not on the board? Options: first board job at or above the id, skipped with a warning when none; exact match only; fail the report. Chosen: first board job whose id is at or above the marker id, resolved id printed, markers sorted by resolved id; past the latest job the marker is skipped with a warning; two markers on one job collapse into one cut and show both names. Decided by: user
-- What does `--trend` print when no markers exist? Chosen: one hint line with a `[[cost_markers]]` example, exit 0. Decided by: call
+- What does `--trend` print when no markers exist? Chosen: one hint line with a `[[settings.cost_markers]]` example, exit 0. Decided by: call
