@@ -59,7 +59,9 @@ pub use cost::{
 };
 pub use error::CoreError;
 pub use fsutil::write_atomic;
-pub use gate::{code_paths_of, has_test_marker, has_test_path, uncovered_code_paths};
+pub use gate::{
+    code_paths_of, has_test_marker, has_test_path, uncovered_code_paths, uncovered_paths, Uncovered,
+};
 pub use home::Home;
 pub use homeconfig::HomeConfig;
 pub use ids::{job_dir_name, next_job_id, next_series_id, normalize_id, slugify};

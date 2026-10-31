@@ -49,12 +49,33 @@ pub fn code_paths_of<S: AsRef<str>>(paths: &[S], config: &Config) -> Vec<String>
         .collect()
 }
 
-/// The code paths that no `[[checks]]` rule maps and that `unchecked_paths` does not exempt.
-pub fn uncovered_code_paths(paths: &[String], config: &Config) -> Vec<String> {
+/// A code path that no check command covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Uncovered {
+    pub path: String,
+    /// True when a rule matches the path but planned no command for it.
+    pub unplanned: bool,
+}
+
+/// The code paths that no `[[checks]]` rule maps or that a matching rule planned no command for.
+/// Paths that `unchecked_paths` exempts are left out.
+pub fn uncovered_paths(paths: &[String], config: &Config, unplanned: &[String]) -> Vec<Uncovered> {
     code_paths_of(paths, config)
         .into_iter()
-        .filter(|p| !config.checks.iter().any(|r| r.matches(p)))
         .filter(|p| !matches_any(&config.unchecked_paths, &[], p))
+        .filter_map(|path| {
+            let unplanned = unplanned.contains(&path);
+            (unplanned || !config.checks.iter().any(|r| r.matches(&path)))
+                .then_some(Uncovered { path, unplanned })
+        })
+        .collect()
+}
+
+/// The code paths that no `[[checks]]` rule maps and that `unchecked_paths` does not exempt.
+pub fn uncovered_code_paths(paths: &[String], config: &Config) -> Vec<String> {
+    uncovered_paths(paths, config, &[])
+        .into_iter()
+        .map(|u| u.path)
         .collect()
 }
 
@@ -221,6 +242,69 @@ mod tests {
         c.unchecked_paths = vec!["LICENSE".into(), ".gitignore".into()];
         let got = uncovered_code_paths(&strings(&["LICENSE", ".gitignore", "a.rs"]), &c);
         assert_eq!(got, strings(&["a.rs"]));
+    }
+
+    #[test]
+    fn an_unplanned_path_is_uncovered_and_flagged() {
+        let mut c = cfg();
+        c.checks = vec![rule("**")];
+        let got = uncovered_paths(
+            &strings(&["Cargo.toml", "src/a.rs"]),
+            &c,
+            &strings(&["Cargo.toml"]),
+        );
+        assert_eq!(
+            got,
+            vec![Uncovered {
+                path: "Cargo.toml".into(),
+                unplanned: true
+            }]
+        );
+    }
+
+    #[test]
+    fn an_exempt_unplanned_path_is_not_uncovered() {
+        let mut c = cfg();
+        c.checks = vec![rule("**")];
+        c.unchecked_paths = vec!["Cargo.toml".into()];
+        let got = uncovered_paths(&strings(&["Cargo.toml"]), &c, &strings(&["Cargo.toml"]));
+        assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test]
+    fn an_unplanned_doc_path_is_not_code() {
+        let got = uncovered_paths(&strings(&["README.md"]), &cfg(), &strings(&["README.md"]));
+        assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test]
+    fn uncovered_paths_keep_input_order_and_both_kinds() {
+        let got = uncovered_paths(
+            &strings(&["a.rs", "Cargo.toml"]),
+            &cfg(),
+            &strings(&["Cargo.toml"]),
+        );
+        assert_eq!(
+            got,
+            vec![
+                Uncovered {
+                    path: "a.rs".into(),
+                    unplanned: false
+                },
+                Uncovered {
+                    path: "Cargo.toml".into(),
+                    unplanned: true
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn uncovered_code_paths_is_unchanged_without_a_plan() {
+        let mut c = cfg();
+        c.checks = vec![rule("src/**")];
+        let got = uncovered_code_paths(&strings(&["src/a.rs", "Cargo.lock"]), &c);
+        assert_eq!(got, strings(&["Cargo.lock"]));
     }
 
     #[test]
