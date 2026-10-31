@@ -175,6 +175,23 @@ Turn the KB on only after one manual `factory kb-refresh --job <id>` went well.
 
 These only group jobs in `factory costs` and in the estimate that `factory new` prints.
 
+### Cost markers
+
+Markers name the jobs where a change started, so `factory costs --trend` can compare the cost per changed line before and after. Write each one as a table `[[settings.cost_markers]]`.
+
+| Key | Type | Effect |
+|---|---|---|
+| `name` | string | At most 40 characters, one line, unique among the markers. |
+| `job` | string of digits | The first job id that ran with the change. |
+
+A job id missing from the board cuts at the first board job at or above it, and the report prints the resolved id. A marker past the latest job is skipped with a warning.
+
+```toml
+[[settings.cost_markers]]
+name = "carry-cap-45k"
+job = "022"
+```
+
 ### Prompt cache
 
 | Key | Type | Default | Effect |
