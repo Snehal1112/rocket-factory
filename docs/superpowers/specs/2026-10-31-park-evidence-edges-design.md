@@ -88,15 +88,13 @@ Example card text: `Risk: unknown: the job diff could not be read (job has no he
 
 ## Testing
 
-`factory-engine`, in `tests/park_evidence.rs` (reuse `merge_record`, `committing_fixture` and the merge fixtures):
+`factory-engine`, in `tests/park_evidence.rs` (reuse `merge_record` and the merge fixtures):
 - `a_risky_park_after_a_sync_keeps_the_review_and_risk_evidence`
 - `a_risky_park_after_a_sync_runs_the_final_checks`
 - `failing_final_checks_after_a_sync_park_as_checks_failed_without_a_fix_round`
-- `final_checks_that_cannot_run_after_a_sync_still_park`
 - `other_sync_parks_stay_kind_other`
-- `an_unreadable_diff_gets_a_risk_unknown_part`
 
-`factory-engine` unit tests: in `park.rs`, `a_failed_board_update_leaves_no_park_record` and `park_json_is_written_after_the_stage_moves`; in `runloop.rs`, `an_unreadable_ledger_leaves_out_the_ledger_part` and `a_blank_ledger_leaves_out_the_ledger_part`, built like `unsettled_park_keeps_the_last_twenty_ledger_lines`.
+`factory-engine` unit tests in `park.rs`, on small pure helpers (`in_park_order`, `lead_parts_from`, `sync_park_choice`): `park_steps_run_update_then_stage_then_record`, `a_failed_board_update_leaves_no_park_record`, `a_failed_stage_move_leaves_no_park_record`, `an_unreadable_diff_gets_a_risk_unknown_part`, `a_readable_diff_keeps_the_lead_parts`, `passing_final_checks_keep_the_risky_kind`, `failing_final_checks_park_as_checks_failed`, `final_checks_that_cannot_run_keep_the_risky_kind_and_say_why`. In `runloop.rs`: `an_unreadable_ledger_leaves_out_the_ledger_part` and `a_blank_ledger_leaves_out_the_ledger_part`, built like `unsettled_park_keeps_the_last_twenty_ledger_lines`.
 
 Commands: `cargo test -j4 -p factory-engine`, then `cargo fmt -p factory-engine -- --check` and `cargo clippy -j4 -p factory-engine --all-targets -- -D warnings`.
 
