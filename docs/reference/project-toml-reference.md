@@ -237,7 +237,7 @@ How it works (`factory-checks/src/plan.rs`):
 - A failure sends the job back to the builder for a fix round, or parks it when `fix_rounds` is used up.
 - Matching is case-sensitive here, unlike `risk_paths`.
 
-The rust preset's `crates/*/**` rule runs `cargo check -j4 -p {crate}`, `cargo test -j4 -p {crate}`, `cargo fmt -p {crate} -- --check` and `cargo test -j4 -p {dependents}`. Its root `src/**` rule adds `cargo fmt -- --check` after `cargo check -j4` and `cargo test -j4`. The rust preset covers the root `Cargo.toml` and `Cargo.lock` and exempts generic non-code files. A project that sets `[[settings.checks]]` or `unchecked_paths` replaces the preset value, so copy the preset entries it still wants.
+The rust preset's `crates/*/**` rule runs `cargo check -j4 -p {crate}`, `cargo test -j4 -p {crate}`, `cargo fmt -p {crate} -- --check`, `cargo clippy -j4 -p {crate} --all-targets -- -D warnings` and `cargo test -j4 -p {dependents}`. Its root `src/**` rule adds `cargo fmt -- --check` and `cargo clippy -j4 --all-targets -- -D warnings` after `cargo check -j4` and `cargo test -j4`. The rust preset covers the root `Cargo.toml` and `Cargo.lock` and exempts generic non-code files. A project that sets `[[settings.checks]]` or `unchecked_paths` replaces the preset value, so copy the preset entries it still wants.
 
 ```toml
 [[settings.checks]]
