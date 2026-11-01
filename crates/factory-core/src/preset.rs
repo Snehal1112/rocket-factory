@@ -588,6 +588,39 @@ mod tests {
     }
 
     #[test]
+    fn rust_preset_marks_cargo_build_scripts_risky() {
+        let config = rust_config();
+        for path in ["build.rs", "dashboard/build.rs", "crates/x/build.rs"] {
+            assert_eq!(
+                crate::classify_paths(&[path], &config),
+                crate::DiffClass::Risky,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn rust_preset_leaves_a_deep_source_file_named_build_rs_alone() {
+        assert_eq!(
+            crate::classify_paths(&["crates/factory-engine/src/build.rs"], &rust_config()),
+            crate::DiffClass::Normal
+        );
+    }
+
+    #[test]
+    fn rust_preset_keeps_two_shallow_source_files_risky() {
+        // A `*` matches a whole segment, so `src` counts as a crate folder.
+        let config = rust_config();
+        for path in ["src/build.rs", "dashboard/src/build.rs"] {
+            assert_eq!(
+                crate::classify_paths(&[path], &config),
+                crate::DiffClass::Risky,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
     fn rust_preset_root_rule_does_not_cover_other_manifests() {
         assert_eq!(
             rust_uncovered(&["dashboard/Cargo.toml"]),

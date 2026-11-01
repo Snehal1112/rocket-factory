@@ -11,7 +11,7 @@ Input: your prompt names a diff file, the plan, the plan's Review Focus, the bui
 
 ## Stack
 
-This is a Rust project. When you judge a diff, look at error handling (no unwrap in production paths, errors carried to the caller with context), ownership and lifetime clarity, needless clones, and tests that would fail without the change. Blocking file, network or CPU-heavy work on an async runtime path is a `[blocker]`. You cannot run commands, so judge from the diff and the source.
+This is a Rust project. When you judge a diff, look at error handling (no unwrap in production paths, errors carried to the caller with context), serde attributes on stored or sent types, git CLI shell-outs from Rust code, ownership and lifetime clarity, needless clones, and tests that would fail without the change. Blocking file, network or CPU-heavy work on an async runtime path is a `[blocker]`. You cannot run commands, so judge from the diff and the source.
 
 ## How to read
 

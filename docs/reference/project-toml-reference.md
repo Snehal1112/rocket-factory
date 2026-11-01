@@ -346,14 +346,16 @@ reviewer_model_large = "claude-sonnet-5-5"
 
 ### Replace a list and keep the preset entries
 
-The rust preset's `risk_paths` are `**/Cargo.toml`, `**/Cargo.lock`, `**/build.rs`, `**/*auth*`, `**/*secret*`, `**/*credential*` and `.github/**`. Setting the key replaces them, so list them again.
+The rust preset's `risk_paths` are `**/Cargo.toml`, `**/Cargo.lock`, `build.rs`, `*/build.rs`, `*/*/build.rs`, `**/*auth*`, `**/*secret*`, `**/*credential*` and `.github/**`. Setting the key replaces them, so list them again. A build script nested deeper than two folders is not matched, and its `Cargo.toml` stays risky. `src/build.rs` and `dashboard/src/build.rs` are matched although they are source files, because `*` matches any one whole folder name.
 
 ```toml
 [settings]
 risk_paths = [
   "**/Cargo.toml",
   "**/Cargo.lock",
-  "**/build.rs",
+  "build.rs",
+  "*/build.rs",
+  "*/*/build.rs",
   "**/*auth*",
   "**/*secret*",
   "**/*credential*",
