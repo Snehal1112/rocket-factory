@@ -1010,6 +1010,39 @@ fn builder_files_carry_the_quality_bar() -> TestResult {
     Ok(())
 }
 
+const MATCH_CONVENTIONS: &str = "Match the conventions of the neighbouring code and of the project's CLAUDE.md: naming, error handling, comment style, test layout and formatting.";
+
+#[test]
+fn builder_files_tell_the_builder_to_match_conventions() -> TestResult {
+    for path in PRESET_BUILDERS {
+        require_all(&read(path)?, path, &[MATCH_CONVENTIONS])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn preset_agent_files_name_no_rocket_only_term() -> TestResult {
+    for preset in PRESETS {
+        let dir = repo_root()?
+            .join("crates/factory-core/presets")
+            .join(preset)
+            .join("agents");
+        for name in factory_file_names(&dir)? {
+            let path = preset_agent(preset, &name);
+            let text = read(&path)?;
+            forbid_all(
+                &text,
+                &path,
+                &["shadcn", "lucide", "Zustand", "rocket-infra", "Rocket"],
+            )?;
+            if preset != "node" {
+                forbid_all(&text.to_lowercase(), &path, &["yarn"])?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn reviewer_files_check_edge_cases_reuse_and_efficiency() -> TestResult {
     for path in REVIEWER_FILES {

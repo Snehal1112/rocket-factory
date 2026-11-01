@@ -39,6 +39,7 @@ Before `Status: DONE`, read your own diff once and fix what you find:
 - Edge cases: empty, missing and invalid input, and an error from every call you added. Each edge case and error path the task makes reachable has a test.
 - Tests: each test fails without your change. No assertion that always passes.
 - Reuse: search for an existing helper before you write one. Call it instead of copying its body.
+- Match the conventions of the neighbouring code and of the project's CLAUDE.md: naming, error handling, comment style, test layout and formatting.
 - No dead code: no unused functions, no branch that cannot run, no commented-out code.
 - No needless work: nothing recomputed or re-read inside a loop, no needless clones or copies, no blocking file or network work on an async path.
 
