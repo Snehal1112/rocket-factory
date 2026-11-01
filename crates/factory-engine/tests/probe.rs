@@ -74,16 +74,21 @@ fn probe_spec_cannot_write() {
 }
 
 #[test]
-fn prompt_is_replaced_and_marker_is_in_agent_text() {
+fn the_agent_delivery_probe_uses_the_agents_file() {
     let (spec, fx) = spec_of(ProbeRole::Builder, Harness::Claude, Delivery::Agent);
     assert!(spec.prompt.starts_with("PROBE"), "{}", spec.prompt);
     assert_eq!(spec.agent.as_deref(), Some("factory-builder"));
     assert_eq!(spec.cwd, fx.tmp.path().join("work"));
-    let file = spec.cwd.join(".claude/agents/factory-builder.md");
-    let text = std::fs::read_to_string(file).expect("agent file");
-    assert!(text.starts_with("---\nname: factory-builder"), "{text}");
-    assert!(text.contains("BODY builder"), "{text}");
-    assert!(text.contains(&format!("Probe marker: {MARKER}")), "{text}");
+    let path = spec.agents_file.clone().expect("agents file");
+    let text = std::fs::read_to_string(path).expect("agents file text");
+    let json: serde_json::Value = serde_json::from_str(&text).expect("agents json");
+    let prompt = json["factory-builder"]["prompt"].as_str().expect("prompt");
+    assert!(prompt.contains("BODY builder"), "{prompt}");
+    assert!(
+        prompt.contains(&format!("Probe marker: {MARKER}")),
+        "{prompt}"
+    );
+    assert!(!spec.cwd.join(".claude/agents").exists());
     assert!(!spec.prompt.contains(MARKER));
 }
 

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use factory_agent::{SessionHook, StopReason};
 use factory_core::{
-    agent_files_rel_dir, builder_rulings, builder_status, is_agent_file_name, parse_builder_status,
-    BuilderStatus, ParkKind, ParkPart, Stage, TaskSession, TaskState, AGENT_EXCLUDE_PATTERN,
+    builder_rulings, builder_status, is_agent_file_name, parse_builder_status, BuilderStatus,
+    ParkKind, ParkPart, Stage, TaskSession, TaskState,
 };
 use factory_git::{CommitInfo, Worktree};
 
@@ -110,7 +110,6 @@ impl Engine<'_> {
             let (cwd, base) = self.existing_worktree(&job)?;
             (cwd, base, job.head.clone(), job.branch.clone())
         };
-        self.write_agent_files(&cwd)?;
         if let Some(text) = &cold {
             self.ruling(text)?;
         }
@@ -309,7 +308,7 @@ impl Engine<'_> {
 
     /// Creates the job worktree and records the branch and base. The git layer picks all three.
     fn start_worktree(&self, job: &JobView) -> Result<(PathBuf, String, String), EngineError> {
-        // Refuse bad names before the worktree is created. The writer checks them again.
+        // Refuse bad names before the worktree is created. `write_agents_json` checks them again.
         self.check_agent_names()?;
         let wt = self
             .repo
@@ -338,104 +337,6 @@ impl Engine<'_> {
                 )));
             }
         }
-        Ok(())
-    }
-
-    /// Writes the agent files into the job worktree, and restores any that changed. It runs before every build
-    /// step and every agent run in the worktree, so a crash or an edit by an earlier agent is repaired. The files
-    /// are git-excluded, and a file that is tracked on the base branch is left alone. A symlinked folder is never
-    /// written through.
-    pub(crate) fn write_agent_files(&self, wt: &Path) -> Result<(), EngineError> {
-        if self.agent_files.is_empty() {
-            return Ok(());
-        }
-        // All or nothing: no path is joined and nothing is created before every name is checked.
-        self.check_agent_names()?;
-        // A folder that is not a git checkout would be created or filled with debris, so refuse it.
-        if !wt.join(".git").exists() {
-            return Err(EngineError::Msg(format!(
-                "{} is not a git checkout, agent files are not written",
-                wt.display()
-            )));
-        }
-        let rel_dir = agent_files_rel_dir();
-        self.repo
-            .exclude_paths(&[AGENT_EXCLUDE_PATTERN])
-            .map_err(git_err)?;
-        let dir = wt.join(&rel_dir);
-        for p in [
-            wt.join(
-                rel_dir
-                    .components()
-                    .next()
-                    .map(|c| c.as_os_str())
-                    .unwrap_or_default(),
-            ),
-            dir.clone(),
-        ] {
-            if std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
-                return Err(EngineError::Msg(format!(
-                    "{} is a symlink, agent files are not written",
-                    p.display()
-                )));
-            }
-        }
-        std::fs::create_dir_all(&dir)?;
-        let mut shadowed = Vec::new();
-        for f in &self.agent_files {
-            let rel = rel_dir.join(&f.name);
-            let rel_text = rel.to_string_lossy().replace('\\', "/");
-            if self
-                .repo
-                .is_tracked_at_branch(self.repo.base_branch(), &rel_text)
-                .map_err(git_err)?
-            {
-                shadowed.push(f.name.as_str());
-                continue;
-            }
-            self.restore_agent_file(&wt.join(&rel), &f.content)?;
-        }
-        if !shadowed.is_empty() {
-            // Noted once per job, because this runs on every build step.
-            let note = format!(
-                "repo agent files shadow the resolved ones: {}",
-                shadowed.join(", ")
-            );
-            let seen =
-                std::fs::read_to_string(self.job_dir.join("progress.md")).unwrap_or_default();
-            if !seen.contains(&note) {
-                self.ruling(&note)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Makes the file at `path` hold `content`. A missing file is created, a symlink is removed (never followed)
-    /// and replaced, and a file that differs is removed and created anew (a new inode), so an agent cannot weaken a later agent's file.
-    fn restore_agent_file(&self, path: &Path, content: &str) -> Result<(), EngineError> {
-        match std::fs::symlink_metadata(path) {
-            Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(path)?,
-            Ok(m) if m.is_file() => {
-                if std::fs::read_to_string(path).is_ok_and(|t| t == content) {
-                    return Ok(());
-                }
-                // Remove first, so a hard link to a file outside is never written through.
-                std::fs::remove_file(path)?;
-            }
-            Ok(_) => {
-                return Err(EngineError::Msg(format!(
-                    "{} is not a regular file",
-                    path.display()
-                )))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
-        std::io::Write::write_all(&mut file, content.as_bytes())?;
         Ok(())
     }
 
@@ -615,7 +516,6 @@ impl Engine<'_> {
             let (cwd, base) = self.existing_worktree(job)?;
             (cwd, base, job.branch.clone())
         };
-        self.write_agent_files(&cwd)?;
         if fresh {
             self.ruling(&format!("per-task builders, {} tasks", tasks.len()))?;
         }

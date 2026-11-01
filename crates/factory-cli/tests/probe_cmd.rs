@@ -7,7 +7,7 @@ use clap::Parser;
 use common::Fixture;
 use factory_agent::{AgentRun, AgentRunner, AgentSpec, Caps, ClaudeRunner, EventSink, FakeRunner};
 use factory_cli::{dispatch, Cli, CliCtx, CliError};
-use factory_core::{agent_files_rel_dir, AgentFile, Layout, ProbeReport};
+use factory_core::{AgentFile, Layout, ProbeReport};
 
 /// Answers every probe. `marker_line` decides what the MARKER line says, given the real marker.
 struct ProbeRunner {
@@ -20,11 +20,11 @@ fn marker_of(spec: &AgentSpec) -> String {
         Some(t) => t.clone(),
         None => {
             let name = spec.agent.as_deref().expect("agent name");
-            let file = spec
-                .cwd
-                .join(agent_files_rel_dir())
-                .join(format!("{name}.md"));
-            std::fs::read_to_string(file).expect("agent file")
+            let file = spec.agents_file.as_ref().expect("agents file");
+            let json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(file).expect("agents file text"))
+                    .expect("agents json");
+            json[name]["prompt"].as_str().expect("prompt").to_string()
         }
     };
     text.split("Probe marker: ")

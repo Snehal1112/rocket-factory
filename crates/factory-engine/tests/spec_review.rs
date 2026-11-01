@@ -462,37 +462,81 @@ fn with_agent_file(fx: Fx) -> Fx {
     }
 }
 
-#[test]
-fn the_agent_file_is_written_into_the_main_checkout() {
-    let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
-    new(&fx, None).expect("created");
-    let path = fx
-        .driver
-        .root()
-        .join(".claude/agents/factory-spec-reviewer.md");
-    assert!(path.is_file());
+const REVIEWER_REL: &str = ".claude/agents/factory-spec-reviewer.md";
+
+/// The prompt of `factory-spec-reviewer` in the agents file of the last reviewer run.
+fn reviewer_prompt(fx: &Fx) -> String {
+    let spec = fx
+        .runner
+        .last_spec_for("spec-reviewer")
+        .expect("reviewer ran");
+    let path = spec.agents_file.expect("agents file");
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("read")).expect("json");
+    json["factory-spec-reviewer"]["prompt"]
+        .as_str()
+        .expect("prompt")
+        .to_string()
 }
 
 #[test]
-fn a_symlinked_claude_folder_is_not_written_through() {
+fn the_spec_reviewer_runs_through_the_agents_file() {
     let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
-    let outside = fx._tmp.path().join("outside");
-    std::fs::create_dir_all(&outside).expect("outside");
-    std::fs::create_dir_all(fx.driver.root().join(".claude")).expect("claude");
-    std::os::unix::fs::symlink(&outside, fx.driver.root().join(".claude/agents")).expect("link");
     new(&fx, None).expect("created");
-    assert!(!outside.join("factory-spec-reviewer.md").exists());
+    assert!(reviewer_prompt(&fx).contains("body"));
+    assert!(!fx.driver.root().join(".claude/agents").exists());
 }
 
 #[test]
-fn an_untracked_file_without_the_marker_is_left_alone() {
+fn an_untracked_marker_less_reviewer_file_is_the_users_own() {
     let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
-    let dir = fx.driver.root().join(".claude/agents");
-    std::fs::create_dir_all(&dir).expect("dir");
-    std::fs::write(dir.join("factory-spec-reviewer.md"), "my own text\n").expect("mine");
+    let path = fx.driver.root().join(REVIEWER_REL);
+    std::fs::create_dir_all(path.parent().expect("dir")).expect("dir");
+    std::fs::write(&path, "USERS-OWN\n").expect("mine");
     new(&fx, None).expect("created");
-    assert_eq!(
-        std::fs::read_to_string(dir.join("factory-spec-reviewer.md")).expect("read"),
-        "my own text\n"
+    assert!(reviewer_prompt(&fx).contains("USERS-OWN"));
+
+    let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
+    let path = fx.driver.root().join(REVIEWER_REL);
+    std::fs::create_dir_all(path.parent().expect("dir")).expect("dir");
+    std::fs::write(&path, "<!-- factory-rules: 1 -->\nUSERS-OWN\n").expect("old copy");
+    new(&fx, None).expect("created");
+    let prompt = reviewer_prompt(&fx);
+    assert!(!prompt.contains("USERS-OWN"), "{prompt}");
+    assert!(prompt.contains("body"));
+}
+
+#[test]
+fn an_unreadable_tracked_reviewer_file_refuses_the_review() {
+    let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
+    let root = fx.driver.root();
+    std::fs::create_dir_all(root.join(".claude/agents")).expect("dir");
+    std::os::unix::fs::symlink("/etc/hostname", root.join(REVIEWER_REL)).expect("link");
+    let repo = git2::Repository::open(root).expect("open");
+    let mut index = repo.index().expect("index");
+    index
+        .add_path(std::path::Path::new(REVIEWER_REL))
+        .expect("add");
+    index.write().expect("write index");
+    let tree = repo
+        .find_tree(index.write_tree().expect("tree"))
+        .expect("find tree");
+    let sig = git2::Signature::now("t", "t@example.com").expect("sig");
+    let parent = repo.head().expect("head").peel_to_commit().expect("commit");
+    repo.commit(Some("HEAD"), &sig, &sig, "link", &tree, &[&parent])
+        .expect("commit");
+    let err = new(&fx, None).expect_err("refused");
+    assert!(
+        err.to_string().contains("factory-spec-reviewer.md"),
+        "{err}"
     );
+    assert!(fx.runner.specs_for("spec-reviewer").is_empty());
+}
+
+#[test]
+fn a_tracked_spec_reviewer_text_wins() {
+    let fx = with_agent_file(fixture(vec![reviewer(APPROVE)], Config::default()));
+    common::commit_file(fx.driver.root(), REVIEWER_REL, "TRACKED-REVIEWER\n");
+    new(&fx, None).expect("created");
+    assert!(reviewer_prompt(&fx).contains("TRACKED-REVIEWER"));
 }

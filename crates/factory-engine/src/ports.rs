@@ -239,13 +239,6 @@ impl Engine<'_> {
         if let Err(e) = self.shape_spec(&mut spec) {
             return Ok(AgentRun::failed(&e));
         }
-        // Every agent that runs in a job worktree finds the resolved agent files as resolved.
-        if !self.agent_files.is_empty() {
-            // The agent may start in a project folder, but the files live at the worktree root.
-            if let Some(root) = self.repo.worktree_root_of(&spec.cwd) {
-                self.write_agent_files(&root)?;
-            }
-        }
         // Claude takes its agents from the file in the job folder, outside the repo.
         if self.config.agent_cli() != "codex" && !self.agent_files.is_empty() {
             spec.agents_file = Some(self.write_agents_json()?);

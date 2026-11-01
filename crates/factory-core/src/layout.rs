@@ -3,9 +3,6 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-/// The git exclude line that covers every agent file the driver writes into a job worktree.
-pub const AGENT_EXCLUDE_PATTERN: &str = "/.claude/agents/factory-*.md";
-
 /// The folder, relative to a worktree root, where Claude Code looks for agent files.
 pub fn agent_files_rel_dir() -> PathBuf {
     Path::new(".claude").join("agents")

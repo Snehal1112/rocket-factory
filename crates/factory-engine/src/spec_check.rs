@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use factory_agent::{AgentRun, AgentSpec, StopReason};
-use factory_core::{classify_paths, Config, DiffClass, AGENT_EXCLUDE_PATTERN};
+use factory_core::{classify_paths, Config, DiffClass};
 use sha2::{Digest, Sha256};
 
 use crate::compat::ReviewRecord;
@@ -104,71 +104,44 @@ fn reviewer_file_text(driver: &Driver) -> &str {
         .map_or("", |f| f.content.as_str())
 }
 
-/// Puts the spec reviewer's agent file in the main checkout, with the guards `write_agent_files` applies.
-/// It stays out when the repo tracks its own file, when `.claude` or `.claude/agents` is a symlink, when
-/// the folder is not a git checkout, and when an untracked file there carries no rules marker (the
-/// user's own). A failure is ignored: the run then gives no verdict, and a missing verdict refuses.
-fn write_reviewer_file(driver: &Driver) {
+/// Writes the agents file for the spec reviewer in the spec reviews folder and returns its path.
+/// The base branch's tracked text wins, then an untracked file without a rules marker in the main
+/// checkout (the user's own). Nothing is written into the repo. A tracked file that cannot be read, or
+/// a write error, is an error that names the file, so the reviewer never runs without `--agents`.
+fn reviewer_agents_file(driver: &Driver) -> Result<PathBuf, String> {
+    let mut files = driver.effective_agent_files().map_err(|e| e.to_string())?;
+    // Every name becomes a key in the file.
+    if let Some(bad) = files
+        .iter()
+        .find(|f| !factory_core::is_agent_file_name(&f.name))
+    {
+        return Err(format!(
+            "agent file name {:?} is not allowed, use factory-<name>.md",
+            bad.name
+        ));
+    }
     let name = format!("{SPEC_REVIEWER_AGENT}.md");
-    let content = reviewer_file_text(driver);
-    if content.is_empty() || !factory_core::is_agent_file_name(&name) {
-        return;
-    }
-    let root = driver.root();
-    if !root.join(".git").exists() {
-        return;
-    }
-    let rel_dir = factory_core::agent_files_rel_dir();
-    let dir = root.join(&rel_dir);
-    let top = root.join(
-        rel_dir
-            .components()
-            .next()
-            .map(|c| c.as_os_str())
-            .unwrap_or_default(),
-    );
-    for p in [&top, &dir] {
-        if std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()) {
-            return;
-        }
-    }
-    let rel = rel_dir.join(&name);
+    let rel = factory_core::agent_files_rel_dir().join(&name);
     let tracked = driver
         .repo()
-        .is_tracked_at_branch(driver.repo().base_branch(), &rel.to_string_lossy())
-        .unwrap_or(true);
-    if tracked
-        || driver
-            .repo()
-            .exclude_paths(&[AGENT_EXCLUDE_PATTERN])
-            .is_err()
-        || std::fs::create_dir_all(&dir).is_err()
-    {
-        return;
-    }
-    let path = dir.join(&name);
-    match std::fs::symlink_metadata(&path) {
-        Ok(m) if m.file_type().is_symlink() => {
-            let _ = std::fs::remove_file(&path);
+        .is_tracked_at_branch(
+            driver.repo().base_branch(),
+            &rel.to_string_lossy().replace('\\', "/"),
+        )
+        .map_err(|e| format!("cannot read tracked agent file {}: {e}", rel.display()))?;
+    if !tracked {
+        // A file without a marker is the user's own. A read error counts as no file.
+        let own = std::fs::read_to_string(driver.root().join(&rel))
+            .ok()
+            .filter(|text| factory_core::rules_marker(text).is_none());
+        if let (Some(text), Some(file)) = (own, files.iter_mut().find(|f| f.name == name)) {
+            file.content = text;
         }
-        Ok(m) if m.is_file() => {
-            let old = std::fs::read_to_string(&path).unwrap_or_default();
-            if old == content {
-                return;
-            }
-            // A file without the marker is the user's own, so it stays.
-            if factory_core::rules_marker(&old).is_none() {
-                return;
-            }
-            // Remove first, so a hard link to a file outside is never written through.
-            if std::fs::remove_file(&path).is_err() {
-                return;
-            }
-        }
-        Ok(_) => return,
-        Err(_) => {}
     }
-    let _ = std::fs::write(&path, content);
+    let path = factory_core::agents_file(&driver.layout().spec_reviews_dir());
+    crate::agents_file::write_agents_json_at(&path, &files)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(path)
 }
 
 /// Appends one usage line for the review run to `usage.jsonl` in the spec reviews folder.
@@ -316,8 +289,14 @@ pub(crate) fn review_spec_with(
         );
         return verdict_of(&saved, file);
     }
-    write_reviewer_file(driver);
-    let agent = driver.spec_reviewer_spec(driver.root(), spec, plans);
+    let mut agent = driver.spec_reviewer_spec(driver.root(), spec, plans);
+    // Claude takes its agents from the file. Without resolved files the checkout's own folder is used.
+    if driver.config().agent_cli() != "codex" && !driver.agent_files().is_empty() {
+        match reviewer_agents_file(driver) {
+            Ok(path) => agent.agents_file = Some(path),
+            Err(reason) => return Err(SpecRefusal::ReviewFailed { reason }),
+        }
+    }
     let started = std::time::Instant::now();
     let run = driver.run_agent_for(SPEC_REVIEW_JOB, &agent);
     log_review_usage(driver, &agent, &run, started.elapsed().as_secs());
