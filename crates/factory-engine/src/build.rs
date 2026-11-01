@@ -204,17 +204,7 @@ impl Engine<'_> {
                 } else {
                     "builder made no changes on resume"
                 };
-                let mut parts = if matches!(job.fix_source.as_deref(), Some("review" | "rework")) {
-                    self.lead_parts(&self.job_changed_paths().unwrap_or_default())
-                } else {
-                    Vec::new()
-                };
-                parts.push(match reply {
-                    Some(text) => ParkPart::new("Builder reply", "builder", &text),
-                    None => {
-                        ParkPart::new("Builder reply", "builder", "The builder wrote no reply.")
-                    }
-                });
+                let parts = self.nothing_changed_parts(job.fix_source.as_deref(), reply);
                 return self.park_with(ParkKind::NothingChanged, why.to_string(), parts);
             }
             CommitOutcome::Park(reason) => {
@@ -223,6 +213,22 @@ impl Engine<'_> {
         };
         self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
+    }
+
+    /// Evidence for a builder that changed nothing. A fix round for a review or a rework leads with the review and the risk.
+    pub(crate) fn nothing_changed_parts(
+        &self,
+        fix_source: Option<&str>,
+        reply: Option<String>,
+    ) -> Vec<ParkPart> {
+        let mut parts = if matches!(fix_source, Some("review" | "rework")) {
+            self.lead_parts_for_card()
+        } else {
+            Vec::new()
+        };
+        let text = reply.as_deref().unwrap_or("The builder wrote no reply.");
+        parts.push(ParkPart::new("Builder reply", "builder", text));
+        parts
     }
 
     /// The findings file of a fix round. A rework note from the user wins over the round findings file.
