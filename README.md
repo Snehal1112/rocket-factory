@@ -551,8 +551,10 @@ Errors show as a banner with the API's error code (`token_rejected` when factory
 ### Rust preset checks
 
 The rust preset has two check rules. `crates/*/**` runs `cargo check -j4 -p {crate}` and `cargo test -j4 -p {crate}`
-for each changed workspace member. A second rule covers a single-crate repo: `src/**`, `tests/**`, `benches/**`,
-`examples/**` and `build.rs` at the repo root run `cargo check -j4` and `cargo test -j4`. These paths are anchored
+for each changed workspace member, then `cargo fmt -p {crate} -- --check` and `cargo test -j4 -p {dependents}` for
+the crates that directly depend on it (limited by `dependents_cap`). A second rule covers a single-crate repo:
+`src/**`, `tests/**`, `benches/**`, `examples/**` and `build.rs` at the repo root run `cargo check -j4`,
+`cargo test -j4` and `cargo fmt -- --check`. These paths are anchored
 at the root, so a member's `crates/x/src/lib.rs` matches only the first rule. A virtual workspace (a root
 `Cargo.toml` without a `[package]`) relies on the `crates/*/**` rule, because a bare `cargo check -j4` there would
 check the whole workspace.

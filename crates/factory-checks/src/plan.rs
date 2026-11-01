@@ -21,6 +21,7 @@ pub struct CheckPlan {
 }
 
 /// Rejects a cargo command that lacks `-j4` or uses `--workspace` or `--all`.
+/// `cargo fmt` takes no job count, so it needs no `-j4`.
 pub fn validate_command(cmd: &str) -> Result<(), CheckError> {
     let tokens: Vec<&str> = cmd.split_whitespace().collect();
     let Some(first) = tokens.first() else {
@@ -36,6 +37,9 @@ pub fn validate_command(cmd: &str) -> Result<(), CheckError> {
                 cmd: cmd.to_string(),
             });
         }
+    }
+    if tokens.get(1) == Some(&"fmt") {
+        return Ok(());
     }
     let has_j4 = tokens.contains(&"-j4") || tokens.windows(2).any(|w| w[0] == "-j" && w[1] == "4");
     if has_j4 {
@@ -197,6 +201,39 @@ mod tests {
         ));
         assert!(matches!(
             validate_command("cargo test -j 3 -p a"),
+            Err(crate::CheckError::MissingJobs(_))
+        ));
+    }
+
+    #[test]
+    fn cargo_fmt_needs_no_job_count() {
+        assert!(validate_command("cargo fmt -p core -- --check").is_ok());
+        assert!(validate_command("cargo fmt -- --check").is_ok());
+    }
+
+    #[test]
+    fn cargo_fmt_still_refuses_all_and_workspace() {
+        assert!(matches!(
+            validate_command("cargo fmt --all -- --check"),
+            Err(crate::CheckError::Forbidden { flag: "--all", .. })
+        ));
+        assert!(matches!(
+            validate_command("cargo fmt --workspace"),
+            Err(crate::CheckError::Forbidden {
+                flag: "--workspace",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn other_cargo_commands_still_need_j4() {
+        assert!(matches!(
+            validate_command("cargo check -p core"),
+            Err(crate::CheckError::MissingJobs(_))
+        ));
+        assert!(matches!(
+            validate_command("cargo clippy -p core"),
             Err(crate::CheckError::MissingJobs(_))
         ));
     }
@@ -462,7 +499,7 @@ mod tests {
             let plan = plan_checks(&paths(&[changed]), &c);
             assert_eq!(
                 plan.commands,
-                ["cargo check -j4", "cargo test -j4"],
+                ["cargo check -j4", "cargo test -j4", "cargo fmt -- --check"],
                 "{changed}"
             );
         }
@@ -478,7 +515,9 @@ mod tests {
                 "cargo check -j4 -p x",
                 "cargo check -j4 -p y",
                 "cargo test -j4 -p x",
-                "cargo test -j4 -p y"
+                "cargo test -j4 -p y",
+                "cargo fmt -p x -- --check",
+                "cargo fmt -p y -- --check"
             ]
         );
         // The root rule must not match a member's own src folder.
@@ -499,6 +538,55 @@ mod tests {
     }
 
     #[test]
+    fn the_rust_preset_plans_no_dependents_test_without_dependents() {
+        let json = r#"{"packages":[
+          {"name":"core","manifest_path":"/r/crates/core/Cargo.toml","dependencies":[]},
+          {"name":"app","manifest_path":"/r/crates/app/Cargo.toml","dependencies":[
+            {"name":"core","path":"/r/crates/core"}]}]}"#;
+        let w = Workspace::from_metadata(json, std::path::Path::new("/r")).expect("parse");
+        let plan = plan_checks_in(&paths(&["crates/app/src/a.rs"]), &rust_preset(), Some(&w));
+        assert!(plan
+            .commands
+            .contains(&"cargo fmt -p app -- --check".to_string()));
+        assert!(plan
+            .commands
+            .iter()
+            .all(|c| !c.contains("-p ") || c.contains("-p app")));
+    }
+
+    #[test]
+    fn the_rust_preset_dependents_test_respects_the_cap() {
+        let mut c = rust_preset();
+        c.dependents_cap = 0;
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, Some(&ws()));
+        assert!(plan.commands.iter().all(|c| !c.contains("-p app")));
+        assert!(
+            plan.notes
+                .iter()
+                .any(|n| n.starts_with("SKIP dependents over the cap: app")),
+            "{:?}",
+            plan.notes
+        );
+    }
+
+    #[test]
+    fn a_preset_file_change_plans_the_cli_tests() {
+        let json = r#"{"packages":[
+          {"name":"factory-core","manifest_path":"/r/crates/factory-core/Cargo.toml","dependencies":[]},
+          {"name":"factory-cli","manifest_path":"/r/crates/factory-cli/Cargo.toml","dependencies":[
+            {"name":"factory-core","path":"/r/crates/factory-core"}]}]}"#;
+        let w = Workspace::from_metadata(json, std::path::Path::new("/r")).expect("parse");
+        let plan = plan_checks_in(
+            &paths(&["crates/factory-core/presets/rust/agents/factory-builder.md"]),
+            &rust_preset(),
+            Some(&w),
+        );
+        assert!(plan
+            .commands
+            .contains(&"cargo test -j4 -p factory-cli".to_string()));
+    }
+
+    #[test]
     fn a_mixed_diff_runs_the_crate_and_root_commands_once_each() {
         let c = rust_preset();
         let plan = plan_checks(&paths(&["crates/x/src/lib.rs", "src/main.rs"]), &c);
@@ -507,8 +595,10 @@ mod tests {
             [
                 "cargo check -j4 -p x",
                 "cargo test -j4 -p x",
+                "cargo fmt -p x -- --check",
                 "cargo check -j4",
-                "cargo test -j4"
+                "cargo test -j4",
+                "cargo fmt -- --check"
             ]
         );
     }
