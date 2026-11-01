@@ -33,3 +33,14 @@ After a risky sync park, the board reason, the ledger and `park.json` agree with
 ## Decision for review
 
 Defect 3 keeps kind `other` for the fallback park. The alternative is a new `SyncOutcome` variant that carries the kind and the lead parts into `park_with_parts`. It costs a merge-path change for a case where the board is already failing, so this spec does not take it.
+
+## Acceptance criteria
+
+- A risky sync park whose final checks fail shows `final checks failed after sync` as the board reason, the `MergeResult::Parked` text and the only ledger ruling, and the record kind is `checks-failed`.
+- `park_with` removes the old `park.json` before the board update, so a stage move that fails leaves no record from an earlier park.
+- An error from `park_after_sync` leaves `sync_stage` as `Parked` with the risky text and the error named, not as `merge failed`.
+- A failed `park.json` write is logged as a warning.
+- The builder-blocked park shows a `Risk` part `unknown: the job diff could not be read (<error>)` for an unreadable diff.
+- Final checks that cannot run after a sync still park as `risky-diff` with a Checks part that says why.
+- `park_with` has a test that fails when its steps are called in the wrong order.
+- fmt and clippy `-D warnings` pass for `factory-engine`.
