@@ -241,7 +241,7 @@ impl Engine<'_> {
         let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
         let spec_part = spec_excerpt(&spec);
         let mut out = String::from(
-            "Task excerpt: the plan header, your task, and the spec goal and acceptance criteria follow. \
+            "Task excerpt: the plan header, your task, and the spec goal, design, edge cases, decisions, scope and acceptance criteria follow. \
              They replace reading the plan and the spec in full. Open those files only for something this excerpt refers to outside itself. \
              If a skill such as superpowers:subagent-driven-development tells you to read or load the plan file, use this excerpt instead and do not read the plan file in full.\n\
              --- plan header ---\n",

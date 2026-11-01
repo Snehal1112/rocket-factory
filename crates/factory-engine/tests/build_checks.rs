@@ -1417,6 +1417,7 @@ fn a_task_builder_gets_its_own_task_the_header_and_the_spec_excerpt() {
     fx.engine(&runner).build_stage().expect("task 1");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     for want in [
+        "Task excerpt: the plan header, your task, and the spec goal, design, edge cases, decisions, scope and acceptance criteria follow.",
         "Use -j4.",
         "BODY-ONE-MARKER",
         "Goal: ship the thing quickly.",
