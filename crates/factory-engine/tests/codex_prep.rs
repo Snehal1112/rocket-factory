@@ -204,6 +204,44 @@ fn reviewer_gets_no_skills() {
 }
 
 #[test]
+fn a_codex_reviewer_prompt_carries_the_user_note_line() {
+    let fx = codex(committing_fixture());
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .checks_stage()
+        .expect("checks");
+    let note = fx.job_dir.join("user-note-r1.md");
+    std::fs::write(&note, "use a shorter name").expect("note");
+    let reviewer = scripted_auto(vec![reply("ok\nVERDICT: APPROVE")]);
+    let mut list = files();
+    list.push(AgentFile {
+        name: "factory-code-reviewer.md".to_string(),
+        content: "BODY reviewer\n".to_string(),
+    });
+    fx.engine(&reviewer)
+        .with_agent_files(list)
+        .review_stage()
+        .expect("review");
+    let prompt = reviewer.last_spec_for("reviewer").expect("reviewer").prompt;
+    let line = format!(
+        "The user's note for this round is at {}. It is the user's instruction",
+        note.display()
+    );
+    assert!(prompt.contains(&line), "{prompt}");
+    // The read-only reviewer reads the plan from the job folder, so the note shares it.
+    let plan = fx.job_dir.join("plan.md");
+    assert!(
+        prompt.contains(&format!("the plan at {}", plan.display())),
+        "{prompt}"
+    );
+}
+
+#[test]
 fn committer_keeps_the_skill_sentence_only_when_the_commit_skill_is_missing() {
     let fx = codex(committing_fixture());
     let runner = scripted_auto(vec![write_effect()]);

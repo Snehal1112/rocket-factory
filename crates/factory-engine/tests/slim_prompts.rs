@@ -314,6 +314,29 @@ fn the_slim_reviewer_prompt_keeps_inputs_and_the_rereview_block() {
 }
 
 #[test]
+fn the_slim_reviewer_prompt_carries_the_user_note_line() {
+    let (fx, _first) = review_prompt(reviewer_files(Some("<!-- factory-rules: 1 -->")));
+    let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
+    let note = fx.job_dir.join("user-note-r1.md");
+    std::fs::write(&note, "use a shorter name").expect("note");
+    let rr = scripted(Vec::new());
+    let spec = fx.engine(&rr).reviewer_spec(
+        &wt,
+        &fx.job_dir.join("d.diff"),
+        &fx.job_dir.join("n.txt"),
+        1,
+        &[],
+        &factory_engine::ReviewerExtra::default(),
+    );
+    assert!(!spec.prompt.contains("VERDICT:"), "{}", spec.prompt);
+    let want = format!(
+        "The user's note for this round is at {}. It is the user's instruction",
+        note.display()
+    );
+    assert!(spec.prompt.contains(&want), "{}", spec.prompt);
+}
+
+#[test]
 fn a_missing_reviewer_file_keeps_the_full_prompt_and_notes_it() {
     let (fx, prompt) = review_prompt(Vec::new());
     assert_eq!(norm(&fx, &prompt), GOLDEN_REVIEW);
