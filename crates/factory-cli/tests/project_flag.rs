@@ -21,14 +21,19 @@ struct Roles {
     also: Mutex<Option<&'static str>>,
 }
 
+/// The agent text `name` has in the agents file of `spec`, `None` without an agents file.
+fn agent_text(spec: &AgentSpec, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(spec.agents_file.as_ref()?).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    json[name]["prompt"].as_str().map(str::to_string)
+}
+
 impl AgentRunner for Roles {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let text = match spec.role.as_str() {
             "builder" => {
-                *self.builder_agent.lock().expect("lock") =
-                    std::fs::read_to_string(spec.cwd.join(".claude/agents/factory-builder.md"))
-                        .ok();
+                *self.builder_agent.lock().expect("lock") = agent_text(spec, "factory-builder");
                 let path = spec.cwd.join("docs/x.txt");
                 std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
                 std::fs::write(path, "built\n").expect("write");
@@ -59,10 +64,8 @@ impl AgentRunner for Roles {
                 "done".to_string()
             }
             "reviewer" => {
-                *self.reviewer_agent.lock().expect("lock") = std::fs::read_to_string(
-                    spec.cwd.join(".claude/agents/factory-code-reviewer.md"),
-                )
-                .ok();
+                *self.reviewer_agent.lock().expect("lock") =
+                    agent_text(spec, "factory-code-reviewer");
                 "fine\nVERDICT: APPROVE".to_string()
             }
             _ => "fine\nVERDICT: APPROVE".to_string(),
