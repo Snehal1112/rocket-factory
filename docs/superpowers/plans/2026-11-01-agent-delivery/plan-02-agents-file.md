@@ -28,6 +28,7 @@
 3. A read-only role must keep its tool limit through the JSON. Pinned by `tools_line_becomes_a_tools_list` and `a_frontmatter_without_tools_gives_no_tools_key`.
 4. The rules marker check must read the effective text, not the worktree, so a deleted worktree file cannot make the prompt fall back to the long form. Pinned by `the_rules_marker_is_read_from_the_effective_text`.
 5. A Codex run must carry no `agents_file`. Pinned by `a_codex_run_sends_no_agents_file`.
+6. A tracked agent file that cannot be read must stop the run and name the file, not fall back to the preset text. Pinned by `an_unreadable_tracked_agent_file_stops_the_run`.
 
 ## File Structure
 
@@ -134,6 +135,7 @@ In `agent_files.rs`:
 - `a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents`: the same fixture, the builder effect deletes the file in the worktree and the committer, reviewer and message runs that follow still carry an `agents_file` whose JSON holds `TRACKED-TEXT` for `factory-builder` and the resolved text for the other four agents.
 - `the_rules_marker_is_read_from_the_effective_text`: with the worktree copy removed, a builder prompt for a file list whose builder text carries `<!-- factory-rules: 1 -->` is the short form.
 - `a_codex_run_sends_no_agents_file`: with the project on Codex, every recorded spec has `agents_file == None`.
+- `an_unreadable_tracked_agent_file_stops_the_run`: the base branch tracks `.claude/agents/factory-builder.md` as a symlink, and `effective_agent_files` returns an error whose text contains `factory-builder.md`.
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
@@ -142,7 +144,7 @@ Expected: FAIL.
 
 - [ ] **Step 4: Implement the three pieces and wire them in**
 
-Put `effective_agent_files` and `write_agents_json` in the new module. A read error from `file_at_branch` for one file falls back to the resolved text and is noted once with `ruling`.
+Put `effective_agent_files` and `write_agents_json` in the new module. A read error from `file_at_branch` stops the run: `effective_agent_files` returns an `EngineError::Msg` that names the file, and nothing falls back to the resolved text.
 
 - [ ] **Step 5: Run the tests, fmt and clippy**
 

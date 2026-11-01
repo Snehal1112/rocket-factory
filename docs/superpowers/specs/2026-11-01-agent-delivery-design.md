@@ -30,6 +30,8 @@ A factory job never depends on agent files inside its worktree, so a job may cha
 
 - `--agents` beats a repo file, so the old rule "a file tracked in `.claude/agents` is never overwritten" is kept in the driver. When the base branch tracks `.claude/agents/<name>.md`, the driver reads that file from the base branch (`Repo::file_at_branch`) and uses its text for `agents.json`, in place of the resolved text.
 - Because the text comes from the branch and not from the worktree, a job that edits or deletes the tracked file does not change what its agents run on. That fixes #53 and keeps the rule.
+- A failed read of a tracked file (a symlink, text that is not UTF-8, a broken object) stops the run with an error that names the file. It never falls back to the resolved text, because that would swap the repo's text for the factory's without anyone deciding it. This matches today's behaviour, where a branch read error stops the agent-file write.
+- The spec reviewer runs in the main checkout, outside a job. Besides the tracked rule it keeps its second old rule: when the base branch tracks no `.claude/agents/factory-spec-reviewer.md` and the main checkout holds an untracked one that carries no rules marker, that file is the user's own and its text goes into `agents.json`. A file with a rules marker is an old copy of the factory's own and is ignored. A read error on it is treated as no file.
 - The resolved layers (preset, the project `agents` folder, the repo `.factory/agents` on the base branch) are unchanged and decide the text when no file is tracked.
 
 ### What goes away
@@ -67,7 +69,9 @@ A factory job never depends on agent files inside its worktree, so a job may cha
 ## Decisions
 
 - Pass agents with `--agents` and stop writing files into the repo, not park such jobs and not write files back. Decided by: user
-- Keep the tracked-file rule by reading the base branch text. Decided by: call
+- Keep the tracked-file rule by reading the base branch text, so a repo's own tracked agent text and tool limits still decide what its agents run on, and a job cannot change them. Decided by: user
+- Keep honouring an untracked, marker-less spec reviewer file in the main checkout as the user's own. Decided by: user
+- A failed read of a tracked agent file stops the run and never falls back to the resolved text. Decided by: call
 - No fallback to file writing for a `claude` without `--agents`. Decided by: call
 - Add clippy to the rust preset rules. Decided by: user
 
@@ -77,6 +81,7 @@ A factory job never depends on agent files inside its worktree, so a job may cha
 - `agents.json` holds all five factory agents with description, prompt and, for read-only roles, tools.
 - A job that deletes a tracked `.claude/agents/factory-*.md` still runs its committer and reviewer.
 - A repo-tracked agent text still wins over the preset text in `agents.json`, and an edit of that file inside the worktree does not change it.
+- A tracked agent file that cannot be read stops the run with an error that names the file. An untracked, marker-less spec reviewer file in the main checkout is used as the reviewer text, and one with a rules marker is ignored.
 - The driver writes no factory agent file into a worktree or the main checkout, and the shadow ruling is gone.
 - `fake-claude` and `factory probe` work through `--agents`.
 - The rust preset plans a clippy command for a changed crate path and for a root path, and the validator accepts both.
