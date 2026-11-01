@@ -84,6 +84,11 @@ pub fn is_agent_file_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// The `--agents` file of a job, inside its folder.
+pub fn agents_file(dir: &Path) -> PathBuf {
+    dir.join("agents.json")
+}
+
 /// The file name of the project lease, inside the state folder.
 pub const PROJECT_LEASE_FILE: &str = "project.lease";
 
@@ -187,6 +192,14 @@ impl Layout {
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn the_agents_file_is_agents_json_in_the_job_folder() {
+        assert_eq!(
+            agents_file(Path::new("/j")),
+            PathBuf::from("/j/agents.json")
+        );
+    }
 
     #[test]
     fn codex_home_defaults_to_dot_codex() {

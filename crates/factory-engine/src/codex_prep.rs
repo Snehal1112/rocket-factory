@@ -2,6 +2,7 @@
 //! and the sandbox, network and writable roots chosen by role.
 
 use factory_agent::AgentSpec;
+use factory_core::agents::strip_frontmatter;
 use factory_core::{codex_worktree_skills_dir, Config, TOOL_MAP_CODEX};
 use factory_git::Repo;
 
@@ -11,21 +12,6 @@ use crate::{Engine, EngineError};
 const PREFACE: &str = "You run under Codex. Do not load or invoke skills and do not start subagents. Where this text names a skill, follow the rules written in short in this text instead.";
 const SKILLS_PREFACE: &str = "You run under Codex. Use the skills in your skill catalog when your instructions call for them. Do not start subagents. Where this text names a skill that is not in your catalog, follow the rules written in short in this text instead.";
 const SKILL_SENTENCE: &str = "The skill your instructions name is not available; the analysis in this prompt replaces its first steps, and the agent text gives the rules.";
-
-/// Removes a leading `---` block, such as the frontmatter of an agent file.
-pub(crate) fn strip_frontmatter(text: &str) -> &str {
-    let Some(rest) = text.strip_prefix("---\n") else {
-        return text;
-    };
-    let mut offset = 0;
-    for line in rest.split_inclusive('\n') {
-        offset += line.len();
-        if line.trim_end() == "---" {
-            return rest[offset..].trim_start_matches('\n');
-        }
-    }
-    text
-}
 
 fn has_role(role: &str, prefix: &str) -> bool {
     role.starts_with(prefix)
@@ -147,19 +133,6 @@ mod tests {
         let text = codex_agent_text("P", stripped);
         assert!(!text.lines().any(|l| l == "name: x"), "{text}");
         assert!(text.ends_with("\n\nBody"), "{text}");
-    }
-
-    #[test]
-    fn strip_frontmatter_removes_only_a_leading_block() {
-        assert_eq!(
-            strip_frontmatter("---\nname: x\n---\nBody\n---\nmore"),
-            "Body\n---\nmore"
-        );
-        assert_eq!(
-            strip_frontmatter("Body\n---\nx\n---\n"),
-            "Body\n---\nx\n---\n"
-        );
-        assert_eq!(strip_frontmatter("---\nno end"), "---\nno end");
     }
 
     fn found(group: &str, name: &str) -> FoundSkill {
