@@ -762,6 +762,9 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
         factory_engine::ReworkKind::MidTask => {
             // The note is stored verbatim. The builder gets exactly this text.
             std::fs::write(d.job_dir(&job).join("rework-note.md"), note)?;
+            // The reviewer of this round reads the note alone from its own file.
+            let user_note = format!("user-note-r{}.md", job.round.max(1));
+            std::fs::write(d.job_dir(&job).join(user_note), note)?;
             d.ledger(&job).ruling(&format!("rework note: {note}"))?;
             d.store().update_job(id, |j| {
                 // Needs-human back to build is allowed by the stage guard, so no force.
@@ -779,6 +782,9 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
             let text = d.rework_findings(id, note)?;
             let file = format!("changes-r{new_round}.md");
             std::fs::write(d.job_dir(&job).join(file), text)?;
+            // The reviewer of the new round reads the note alone from its own file.
+            let user_note = format!("user-note-r{new_round}.md");
+            std::fs::write(d.job_dir(&job).join(user_note), note)?;
             // A stale mid-task note must never shadow the findings of the new round.
             let _ = std::fs::remove_file(d.job_dir(&job).join("rework-note.md"));
             d.ledger(&job).ruling(&format!("rework note: {note}"))?;

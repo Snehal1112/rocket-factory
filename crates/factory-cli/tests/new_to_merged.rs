@@ -1156,3 +1156,45 @@ fn rework_mid_task_keeps_the_note_path() -> TestResult {
     assert_eq!((job.round, job.rework_base), (round, 0));
     Ok(())
 }
+
+#[test]
+fn rework_writes_the_user_note_for_the_next_round() -> TestResult {
+    let sc = reworkable(
+        0,
+        vec![
+            build(vec![("secrets/token.txt", "x\n")], 1_000),
+            review(CHANGES),
+        ],
+    )?;
+    sc.start(&sc.plan_b, false)?;
+    sc.run(&["rework", "1", "use a shorter name"])?;
+    assert_eq!(
+        std::fs::read_to_string(job_file(&sc, "user-note-r2.md"))?,
+        "use a shorter name"
+    );
+    let want = format!("use a shorter name\n\n{NOTE_WINS}\n\n{CHANGES}");
+    assert_eq!(
+        std::fs::read_to_string(job_file(&sc, "changes-r2.md"))?,
+        want
+    );
+    Ok(())
+}
+
+#[test]
+fn rework_writes_the_user_note_for_a_mid_task_rework() -> TestResult {
+    let sc = reworkable(1, vec![])?;
+    let plan = sc.tmp.path().join("plans/plan-03-two.md");
+    std::fs::write(
+        &plan,
+        "# Two\n\n### Task 1: a\n\n### Task 2: b\n\nNext plan: none\n",
+    )?;
+    let end = sc.start(&plan, false)?;
+    assert!(end.starts_with("needs-human"), "{end}");
+    sc.run(&["rework", "1", "use the small helper"])?;
+    assert_eq!(
+        std::fs::read_to_string(job_file(&sc, "user-note-r1.md"))?,
+        "use the small helper"
+    );
+    assert!(job_file(&sc, "rework-note.md").exists());
+    Ok(())
+}
