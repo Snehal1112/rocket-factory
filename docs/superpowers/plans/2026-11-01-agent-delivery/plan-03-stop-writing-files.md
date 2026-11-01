@@ -23,11 +23,12 @@
 
 ## Review Focus
 
-1. The spec reviewer must still find its agent when the repo tracks no agent file, when it tracks its own, and when the user keeps an untracked marker-less one. Pinned by `the_spec_reviewer_runs_through_the_agents_file`, `a_tracked_spec_reviewer_text_wins` and `an_untracked_marker_less_reviewer_file_is_the_users_own`.
-2. No `.claude/agents` folder may appear in a worktree or the main checkout after a full job. Pinned by `no_agent_file_is_written_into_the_worktree`.
-3. The "repo agent files shadow the resolved ones" ruling must be gone from the ledger. Pinned by `no_shadow_ruling_is_written`.
-4. A job on a repo whose tracked agent files are deleted by the job must reach merge-ready review with the committer and reviewer having run. Pinned by `a_job_that_deletes_the_tracked_agent_files_reaches_review`.
-5. `factory probe` with delivery `agent` must still show the marker through `--agents`. Pinned by `the_agent_delivery_probe_uses_the_agents_file`.
+1. The spec reviewer must never run without `--agents`: a tracked reviewer file that is a symlink ends the review as `ReviewFailed` naming the file. Pinned by `an_unreadable_tracked_reviewer_file_refuses_the_review`.
+2. The spec reviewer must still find its agent when the repo tracks no agent file, when it tracks its own, and when the user keeps an untracked marker-less one. Pinned by `the_spec_reviewer_runs_through_the_agents_file`, `a_tracked_spec_reviewer_text_wins` and `an_untracked_marker_less_reviewer_file_is_the_users_own`.
+3. No `.claude/agents` folder may appear in a worktree or the main checkout after a full job. Pinned by `no_agent_file_is_written_into_the_worktree`.
+4. The "repo agent files shadow the resolved ones" ruling must be gone from the ledger. Pinned by `no_shadow_ruling_is_written`.
+5. A job on a repo whose tracked agent files are deleted by the job must reach merge-ready review with the committer and reviewer having run. Pinned by `a_job_that_deletes_the_tracked_agent_files_reaches_review`.
+6. `factory probe` with delivery `agent` must still show the marker through `--agents`. Pinned by `the_agent_delivery_probe_uses_the_agents_file`.
 
 ## File Structure
 
@@ -48,7 +49,7 @@
 
 **Interfaces:**
 - Consumes: `agents_json`, `agents_file(dir)`, and the effective text rule of `Engine::effective_agent_files`, which this task copies onto `Driver` as `pub(crate) fn effective_agent_files(&self) -> Result<Vec<AgentFile>, EngineError>` (the same base branch precedence, using `Driver::repo()` and `Driver::agent_files()`).
-- Changes: `write_reviewer_file(driver)` in `spec_check.rs` is replaced by `fn reviewer_agents_file(driver: &Driver) -> Option<PathBuf>` that writes `agents_file(&layout.spec_reviews_dir())` and returns its path, or `None` on any error. The spec reviewer's `AgentSpec` gets `agents_file` set to it when the project is not on Codex. The guards for symlinks and the git exclude are removed with the writer, because nothing is written into the repo. The "no marker means the user's own file" rule stays, as a read: when the base branch tracks no spec reviewer file and the main checkout holds an untracked `.claude/agents/factory-spec-reviewer.md` without a rules marker (`rules_marker(text).is_none()`), its text replaces the resolved text in the JSON. A file with a marker is ignored, and a read error on it counts as no file.
+- Changes: `write_reviewer_file(driver)` in `spec_check.rs` is replaced by `fn reviewer_agents_file(driver: &Driver) -> Result<PathBuf, String>` that writes `agents_file(&layout.spec_reviews_dir())` and returns its path. A tracked-read error or a write error is an `Err` whose text names the file, and the caller turns it into `SpecRefusal::ReviewFailed { reason }` before any agent runs, so the reviewer never runs without `--agents`. Only the read of the untracked marker-less file counts as no file. The spec reviewer's `AgentSpec` gets `agents_file` set to it when the project is not on Codex. The guards for symlinks and the git exclude are removed with the writer, because nothing is written into the repo. The "no marker means the user's own file" rule stays, as a read: when the base branch tracks no spec reviewer file and the main checkout holds an untracked `.claude/agents/factory-spec-reviewer.md` without a rules marker (`rules_marker(text).is_none()`), its text replaces the resolved text in the JSON. A file with a marker is ignored, and a read error on it counts as no file.
 
 - [ ] **Step 1: Read the code this task touches**
 
@@ -59,6 +60,7 @@ Read `write_reviewer_file`, `reviewer_file_text` and the call at the review run 
 In `spec_review.rs`:
 - `the_spec_reviewer_runs_through_the_agents_file`: with no tracked agent file, the recorded reviewer spec has an `agents_file` that parses to JSON holding `factory-spec-reviewer`, and no `.claude/agents` folder exists in the main checkout afterwards.
 - `an_untracked_marker_less_reviewer_file_is_the_users_own`: an untracked reviewer file with the text `USERS-OWN` in the main checkout gives a JSON prompt that contains it, and the same file with a `<!-- factory-rules: 1 -->` line gives the resolved text.
+- `an_unreadable_tracked_reviewer_file_refuses_the_review`: the base branch tracks `.claude/agents/factory-spec-reviewer.md` as a symlink, and the review ends as `ReviewFailed` with a reason that contains `factory-spec-reviewer.md`, with no reviewer run recorded.
 - `a_tracked_spec_reviewer_text_wins`: with the repo tracking `.claude/agents/factory-spec-reviewer.md` with the text `TRACKED-REVIEWER`, the JSON prompt for `factory-spec-reviewer` contains it.
 Remove the tests that assert the old writer's guards for a symlinked `.claude/agents` and for the git exclude, rewrite the one about the user's own file to the new test above, and say which ones in your final reply.
 
