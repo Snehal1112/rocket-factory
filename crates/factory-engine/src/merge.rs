@@ -55,18 +55,20 @@ pub fn park_with_parts(
         crate::ports::set_stage_logged(job, Stage::NeedsHuman, Some(reason), false, now)?;
         Ok((job.clone(), already))
     })?;
-    crate::ports::log_park(id, reason);
     let (job, already) = job;
-    if !already {
-        // Writing the record is best effort, the park already happened.
-        let mut record = ParkRecord::new(kind, reason, id, job.round, at, parts);
-        record.next = kind.next_for(
-            id,
-            job.review_missing(),
-            job.last_review.as_ref().map(|r| r.verdict.as_str()),
-        );
-        write_record(&driver.job_dir(&job), &record);
+    // An earlier park already logged, wrote its record and ruled.
+    if already {
+        return Ok(());
     }
+    crate::ports::log_park(id, reason);
+    // Writing the record is best effort, the park already happened.
+    let mut record = ParkRecord::new(kind, reason, id, job.round, at, parts);
+    record.next = kind.next_for(
+        id,
+        job.review_missing(),
+        job.last_review.as_ref().map(|r| r.verdict.as_str()),
+    );
+    write_record(&driver.job_dir(&job), &record);
     // The ledger takes one line, so the reason is folded into a single line.
     let one_line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
     driver

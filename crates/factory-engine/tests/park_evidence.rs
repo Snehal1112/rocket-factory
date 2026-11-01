@@ -117,10 +117,18 @@ fn a_risky_park_after_a_sync_keeps_the_review_and_risk_evidence() {
     let rec = merge_record(&fx);
     assert_eq!(rec.kind, ParkKind::RiskyDiff);
     assert_eq!(rec.risky, Some(true));
+    assert_eq!(
+        titles(&rec),
+        vec!["Review", "Risk", "Rounds", "Changed files", "Checks"]
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, Stage::NeedsHuman);
     assert!(
-        titles(&rec).starts_with(&["Review", "Risk"]),
+        job.reason
+            .as_deref()
+            .is_some_and(|r| r.starts_with("after sync: ")),
         "{:?}",
-        titles(&rec)
+        job.reason
     );
 }
 
@@ -136,7 +144,52 @@ fn a_risky_park_after_a_sync_runs_the_final_checks() {
         checks.lines().any(|l| l.starts_with("PASS true")),
         "{checks}"
     );
-    assert!(titles(&merge_record(&fx)).contains(&"Checks"));
+    let rec = merge_record(&fx);
+    let part = rec
+        .parts
+        .iter()
+        .find(|p| p.title == "Checks")
+        .expect("Checks part");
+    assert!(part.text.contains("true"), "{}", part.text);
+}
+
+#[test]
+fn final_checks_that_cannot_run_after_a_sync_park_risky_and_say_why() {
+    // The first run passes. The second run is the final check: it turns checks.md into a folder, so
+    // the driver cannot write its report and the run fails with an error instead of a result.
+    let scripts = tempfile::tempdir().expect("scripts dir");
+    let script = scripts.path().join("block-report.sh");
+    let marker = scripts.path().join("ran");
+    let fx = risky_sync_fixture(vec![docs_rule(&script.to_string_lossy())]);
+    let job = fx.driver.job(&fx.id).expect("job");
+    let report = fx.driver.job_dir(&job).join("checks.md");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nif [ -e {m} ]; then rm -rf {r}; mkdir {r}; exit 0; fi\ntouch {m}\n",
+            m = marker.display(),
+            r = report.display()
+        ),
+    )
+    .expect("write script");
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .expect("chmod");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Parked(_)), "{r:?}");
+    let rec = merge_record(&fx);
+    assert_eq!(rec.kind, ParkKind::RiskyDiff, "{rec:?}");
+    let part = rec
+        .parts
+        .iter()
+        .find(|p| p.title == "Checks")
+        .expect("Checks part");
+    assert!(
+        part.text.starts_with("final checks could not run:"),
+        "{}",
+        part.text
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, Stage::NeedsHuman);
 }
 
 #[test]
@@ -171,6 +224,34 @@ fn failing_final_checks_after_a_sync_park_as_checks_failed_without_a_fix_round()
     for want in ["Review", "Risk", "Checks"] {
         assert!(titles.contains(&want), "{titles:?}");
     }
+}
+
+#[test]
+fn a_checks_failed_sync_park_keeps_one_reason_and_one_ruling() {
+    let scripts = tempfile::tempdir().expect("scripts dir");
+    let script = scripts.path().join("pass-once.sh");
+    let marker = scripts.path().join("ran");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nif [ -e {m} ]; then exit 1; fi\ntouch {m}\n",
+            m = marker.display()
+        ),
+    )
+    .expect("write script");
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .expect("chmod");
+    let fx = risky_sync_fixture(vec![docs_rule(&script.to_string_lossy())]);
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    let want = "final checks failed after sync";
+    assert_eq!(r, MergeResult::Parked(want.to_string()));
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.reason.as_deref(), Some(want));
+    assert_eq!(merge_record(&fx).kind, ParkKind::ChecksFailed);
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    let lines: Vec<&str> = ledger.lines().filter(|l| l.contains(want)).collect();
+    assert_eq!(lines.len(), 1, "{ledger}");
 }
 
 #[test]
