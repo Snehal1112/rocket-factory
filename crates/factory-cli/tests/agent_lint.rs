@@ -1066,6 +1066,18 @@ fn reviewer_files_check_edge_cases_reuse_and_efficiency() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn reviewer_files_walk_the_acceptance_criteria() -> TestResult {
+    for path in REVIEWER_FILES {
+        require_all(
+            &read(path)?,
+            path,
+            &["Acceptance criteria: for each acceptance criterion in the spec, name the test that reaches the real call site and not only a helper. A criterion with no such test is a [blocker]."],
+        )?;
+    }
+    Ok(())
+}
+
 const MARKED: [&str; 10] = [
     "crates/factory-core/presets/rust/agents/factory-builder.md",
     "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
