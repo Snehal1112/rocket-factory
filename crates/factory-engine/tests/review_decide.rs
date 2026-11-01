@@ -309,6 +309,47 @@ fn reviewer_prompt_names_the_spec_and_the_earlier_findings_when_they_exist() {
     assert!(spec.prompt.contains("review-code-r1.md"), "{}", spec.prompt);
 }
 
+/// The round 1 reviewer prompt with the given user note files in the job folder.
+fn prompt_with_user_notes(note_files: &[&str]) -> (Fixture, String) {
+    let fx = Fixture::new();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    for name in note_files {
+        std::fs::write(fx.job_dir.join(name), "use a shorter name").expect("note");
+    }
+    let rr = reviewer("ok\nVERDICT: APPROVE");
+    let spec = fx.engine(&rr).reviewer_spec(
+        &fx.main,
+        &fx.job_dir.join("d.diff"),
+        &fx.job_dir.join("n.txt"),
+        1,
+        &[],
+        &ReviewerExtra::default(),
+    );
+    (fx, spec.prompt)
+}
+
+#[test]
+fn reviewer_prompt_names_the_user_note_when_it_exists() {
+    let (fx, prompt) = prompt_with_user_notes(&["user-note-r1.md"]);
+    let want = format!(
+        "The user's note for this round is at {}. It is the user's instruction: do not raise a finding only because the diff follows it. If following it leaves the code wrong or a rule broken, report that as a finding and name the note.\n",
+        fx.job_dir.join("user-note-r1.md").display()
+    );
+    assert!(prompt.contains(&want), "{prompt}");
+}
+
+#[test]
+fn reviewer_prompt_ignores_the_note_of_another_round() {
+    let (_fx, prompt) = prompt_with_user_notes(&["user-note-r2.md"]);
+    assert!(!prompt.contains("user's note"), "{prompt}");
+}
+
+#[test]
+fn reviewer_prompt_has_no_note_line_without_the_file() {
+    let (_fx, prompt) = prompt_with_user_notes(&[]);
+    assert!(!prompt.contains("user's note"), "{prompt}");
+}
+
 #[test]
 fn reviewer_rules_come_from_the_config_and_are_absent_by_default() {
     let mut fx = committing_fixture();

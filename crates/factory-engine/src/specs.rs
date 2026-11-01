@@ -596,6 +596,15 @@ impl Engine<'_> {
             format!("{}\n", rules.join(" "))
         };
         let mut context = String::new();
+        // The user's rework note for this round sits in the job folder, so a read-only reviewer can open it.
+        let user_note = self.job_dir.join(format!("user-note-r{round}.md"));
+        if user_note.exists() {
+            context.push_str(&format!(
+                "The user's note for this round is at {}. It is the user's instruction: do not raise a finding only because the diff follows it. \
+                 If following it leaves the code wrong or a rule broken, report that as a finding and name the note.\n",
+                user_note.display()
+            ));
+        }
         if let Some(focus) = &extra.focus {
             context.push_str(&format!("Review focus from the plan:\n{focus}\n"));
         }

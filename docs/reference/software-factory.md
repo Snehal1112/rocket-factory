@@ -224,6 +224,7 @@ The driver merges the reviewed sha only: it checks the branch tip equals the rec
 ## Rework
 
 - A rework of a job that parked at a task boundary is the next round. It bumps `round`, sets `rework_base` to the new round minus one (a full new set of fix rounds) and writes `changes-r<N>.md` with the note first and then the open findings of the latest review. Earlier files (`review-code-r*.md`, `builder-r*.md`, `changes-r*.md`) are kept. It prints `job <id> back to build, round <N>`.
+- `factory rework` also saves the note alone as `user-note-r<N>.md` in the job folder (the new round for a next-round rework, the current round for a mid-task one), and the reviewer of that round is told where it is.
 - A job parked mid-task keeps the old path: `rework-note.md` is used, `round` and `rework_base` stay, and it prints `job <id> back to build, same task`.
 - The next review reads `last_review.file` as the previous findings, which can be a sync review file.
 
