@@ -45,7 +45,7 @@ The work is four plans, in this order. The first plan comes first so that later 
 
 ### Plan 4: Reviewer input
 
-- When the job folder holds a rework note (`rework-note.md`, the file the builder already reads), the reviewer prompt names it and says it is the user's instruction for this round. Both harnesses get the same line. The path is inside the job folder, which the read-only Codex reviewer already reads for the spec and plan.
+- `factory rework` also writes the user's note, alone and verbatim, to `user-note-r{N}.md` in the job folder, where N is the new round for a next-round rework and the current round for a mid-task rework. The builder's own copies stay as they are: `rework-note.md` is deleted once the builder has read it, and `changes-r{N}.md` mixes the note with the findings. When `user-note-r{round}.md` exists, the reviewer prompt names it and says it is the user's instruction for this round. Both harnesses get the same line. The path is inside the job folder, which the read-only Codex reviewer already reads for the spec and plan.
 - Add an acceptance step to the reviewer file of every preset: for each acceptance criterion, name the test that reaches the real call site and not only a helper, and grade a criterion with no such test as a blocker.
 
 ## Compatibility
@@ -93,6 +93,6 @@ A factory job cannot edit `~/.factory/projects/rocket-factory/project.toml`. Aft
 - The rust preset plans a `cargo fmt --check` command and a `{dependents}` test command for a changed crate path, and the validator accepts both.
 - A diff under `crates/factory-core/presets/` plans tests for `factory-cli`.
 - The builder excerpt of a spec holds its Design, edge-case, Decisions and Out of scope sections, is never over 8192 bytes, and says so when it cuts.
-- The reviewer prompt names the rework note when one exists, for Claude and for Codex, and every preset reviewer file carries the acceptance step.
+- `factory rework` writes `user-note-r{N}.md` in both rework kinds, the reviewer prompt names it for that round when it exists, for Claude and for Codex, and every preset reviewer file carries the acceptance step.
 - The go, ruby, csharp and node preset configs are unchanged, and all five presets still load.
 - fmt and clippy `-D warnings` pass for every crate a plan touches, and `cargo test -j4 -p factory-cli --test agent_lint` passes.
