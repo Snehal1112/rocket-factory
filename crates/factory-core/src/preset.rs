@@ -691,6 +691,14 @@ mod tests {
     }
 
     #[test]
+    fn only_the_rust_preset_plans_clippy() {
+        for name in ["go", "ruby", "csharp", "node"] {
+            let text = embedded(name).expect("preset").config;
+            assert!(!text.contains("clippy"), "{name}");
+        }
+    }
+
+    #[test]
     fn rust_checks_use_cargo_with_j4_and_go_checks_use_go() {
         let rust = Config::parse(embedded("rust").expect("rust").config).expect("parse");
         let all: Vec<&String> = rust.checks.iter().flat_map(|c| &c.commands).collect();

@@ -499,7 +499,12 @@ mod tests {
             let plan = plan_checks(&paths(&[changed]), &c);
             assert_eq!(
                 plan.commands,
-                ["cargo check -j4", "cargo test -j4", "cargo fmt -- --check"],
+                [
+                    "cargo check -j4",
+                    "cargo test -j4",
+                    "cargo fmt -- --check",
+                    "cargo clippy -j4 --all-targets -- -D warnings"
+                ],
                 "{changed}"
             );
         }
@@ -517,7 +522,9 @@ mod tests {
                 "cargo test -j4 -p x",
                 "cargo test -j4 -p y",
                 "cargo fmt -p x -- --check",
-                "cargo fmt -p y -- --check"
+                "cargo fmt -p y -- --check",
+                "cargo clippy -j4 -p x --all-targets -- -D warnings",
+                "cargo clippy -j4 -p y --all-targets -- -D warnings"
             ]
         );
         // The root rule must not match a member's own src folder.
@@ -552,6 +559,29 @@ mod tests {
             .commands
             .iter()
             .all(|c| !c.contains("-p ") || c.contains("-p app")));
+    }
+
+    #[test]
+    fn the_rust_preset_plans_clippy_for_the_changed_crate_only() {
+        let plan = plan_checks_in(
+            &paths(&["crates/app/src/a.rs"]),
+            &rust_preset(),
+            Some(&ws()),
+        );
+        let clippy: Vec<&String> = plan
+            .commands
+            .iter()
+            .filter(|c| c.starts_with("cargo clippy"))
+            .collect();
+        assert_eq!(
+            clippy,
+            ["cargo clippy -j4 -p app --all-targets -- -D warnings"]
+        );
+    }
+
+    #[test]
+    fn the_rust_preset_commands_all_validate() {
+        assert!(validate_config(&rust_preset()).is_ok());
     }
 
     #[test]
@@ -596,9 +626,11 @@ mod tests {
                 "cargo check -j4 -p x",
                 "cargo test -j4 -p x",
                 "cargo fmt -p x -- --check",
+                "cargo clippy -j4 -p x --all-targets -- -D warnings",
                 "cargo check -j4",
                 "cargo test -j4",
-                "cargo fmt -- --check"
+                "cargo fmt -- --check",
+                "cargo clippy -j4 --all-targets -- -D warnings"
             ]
         );
     }
