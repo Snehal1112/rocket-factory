@@ -22,7 +22,7 @@
 
 ## Review Focus
 
-1. A source file called `build.rs` inside a `src` folder must not be risky, while a Cargo build script at the root, at `dashboard/build.rs` or at `crates/x/build.rs` must be. Pinned by `rust_preset_marks_cargo_build_scripts_risky` and `rust_preset_leaves_a_source_file_named_build_rs_alone`.
+1. A source file called `build.rs` four segments deep, such as `crates/x/src/build.rs`, must not be risky, while a Cargo build script at the root, at `dashboard/build.rs` or at `crates/x/build.rs` must be. The two shallower source files `src/build.rs` and `dashboard/src/build.rs` stay risky, a limit of the glob matcher that the spec accepts. Pinned by `rust_preset_marks_cargo_build_scripts_risky`, `rust_preset_leaves_a_deep_source_file_named_build_rs_alone` and `rust_preset_keeps_two_shallow_source_files_risky`.
 2. A preset that loses its agent file must fail the lint, not pass quietly. Pinned by `every_preset_ships_the_five_factory_agents`.
 3. The neutrality lint must keep covering the agent files after the move, for every preset. Pinned by `agent_files_name_no_harness_tool` reading all five preset folders.
 4. A tracked factory agent file that comes back must fail a test. Pinned by `no_factory_agent_file_is_tracked_in_the_repo`.
@@ -56,16 +56,16 @@ Read the rust preset tests in `preset.rs` (`rust_config()` helper, `rust_preset_
 
 - [ ] **Step 2: Write the failing tests**
 
-In `preset.rs` tests: `rust_preset_marks_cargo_build_scripts_risky` asserts `classify_paths` on `["build.rs"]`, `["dashboard/build.rs"]` and `["crates/x/build.rs"]` is `DiffClass::Risky` for the config of `rust_config()`. `rust_preset_leaves_a_source_file_named_build_rs_alone` asserts `["crates/factory-engine/src/build.rs"]` and `["src/build.rs"]` are `DiffClass::Normal`.
+In `preset.rs` tests: `rust_preset_marks_cargo_build_scripts_risky` asserts `classify_paths` on `["build.rs"]`, `["dashboard/build.rs"]` and `["crates/x/build.rs"]` is `DiffClass::Risky` for the config of `rust_config()`. `rust_preset_leaves_a_deep_source_file_named_build_rs_alone` asserts `["crates/factory-engine/src/build.rs"]` is `DiffClass::Normal`. `rust_preset_keeps_two_shallow_source_files_risky` asserts `["src/build.rs"]` and `["dashboard/src/build.rs"]` are `DiffClass::Risky`, with a comment that `*` matches a whole segment.
 
 - [ ] **Step 3: Run the tests to verify the second fails**
 
-Run: `cargo test -j4 -p factory-core -- rust_preset_leaves_a_source_file_named_build_rs_alone`.
+Run: `cargo test -j4 -p factory-core -- rust_preset_leaves_a_deep_source_file_named_build_rs_alone`.
 Expected: FAIL (`**/build.rs` matches).
 
 - [ ] **Step 4: Change the preset and the docs**
 
-Replace the glob in `risk_paths` of the rust preset. In `project-toml-reference.md` change the sentence at the line that lists the preset's risk paths and the example list below it, so both show the three globs. Add one sentence: a Cargo build script sits next to its package manifest, so a build script nested deeper than two folders is not matched, and its `Cargo.toml` stays risky.
+Replace the glob in `risk_paths` of the rust preset. In `project-toml-reference.md` change the sentence at the line that lists the preset's risk paths and the example list below it, so both show the three globs. Add two sentences: a build script nested deeper than two folders is not matched, and its `Cargo.toml` stays risky; `src/build.rs` and `dashboard/src/build.rs` are matched although they are source files, because `*` matches any one whole folder name.
 
 - [ ] **Step 5: Run the tests, fmt and clippy**
 

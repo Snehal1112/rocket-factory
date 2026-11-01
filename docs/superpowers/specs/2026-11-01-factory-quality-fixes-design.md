@@ -29,7 +29,7 @@ The work is four plans, in this order. The first plan comes first so that later 
 - Add an `agent_lint` test that no preset agent file names a Rocket-only term (`shadcn`, `lucide`, `zustand`, `rocket-infra`, `yarn`).
 - Add one line to the builder file of every preset: match the conventions of the neighbouring code and of `CLAUDE.md`, and search for an existing helper before writing one.
 - Bring the "Carried over from Rocket" paragraph of `CLAUDE.md` up to date.
-- In the rust preset, replace `**/build.rs` in `risk_paths` with the three globs `build.rs`, `*/build.rs` and `*/*/build.rs`. Tests pin `build.rs`, `dashboard/build.rs` and `crates/x/build.rs` as risky and `crates/x/src/build.rs` as not risky, and the plan checks how `*` treats `/` in the glob matcher before relying on it. Residual risk, accepted: a build script nested deeper than two folders no longer forces review on its own. Its package's `Cargo.toml` stays risky, and the other two risk globs for Cargo files are unchanged.
+- In the rust preset, replace `**/build.rs` in `risk_paths` with the three globs `build.rs`, `*/build.rs` and `*/*/build.rs`. Tests pin `build.rs`, `dashboard/build.rs`, `crates/x/build.rs`, `src/build.rs` and `dashboard/src/build.rs` as risky and `crates/x/src/build.rs` as not risky. The glob matcher lets `*` match any one whole segment, so `*/build.rs` also matches `src/build.rs` and `*/*/build.rs` also matches `dashboard/src/build.rs`. Two limits, accepted: those two source files stay risky (they park for review, the safe side), and a build script nested deeper than two folders no longer forces review on its own. Its package's `Cargo.toml` stays risky, and the other risk globs for Cargo files are unchanged.
 
 ### Plan 2: Check gates
 
@@ -81,7 +81,7 @@ A factory job cannot edit `~/.factory/projects/rocket-factory/project.toml`. Aft
 - Stop the shadowing by deleting the tracked agent copies, and not by keeping identical copies or writing repo-specific agents. Side effect: the factory agents leave interactive Claude sessions in this repo. Decided by: user
 - Fix the `**/build.rs` false positive in the rust preset, not by an override in one project. Decided by: user
 - The design as a whole, including the Compatibility section: no breakage for Codex or the other presets. Decided by: user
-- Three-glob form for the build script risk paths. The accepted residual risk is that a Cargo build script nested deeper than two folders no longer forces human review on its own, while its package's `Cargo.toml` stays risky. Decided by: user
+- Three-glob form for the build script risk paths. The accepted limits are that a Cargo build script nested deeper than two folders no longer forces human review on its own, while its package's `Cargo.toml` stays risky, and that `src/build.rs` and `dashboard/src/build.rs` stay risky. Decided by: user
 - `{dependents}` runs direct dependents only, under the existing cap. Decided by: call
 - The excerpt byte cap is 8192. Decided by: call
 
@@ -89,7 +89,7 @@ A factory job cannot edit `~/.factory/projects/rocket-factory/project.toml`. Aft
 
 - The repo tracks no `.claude/agents/factory-*.md`, and `agent_lint` reads the agent files of all five presets and fails when one is missing.
 - No preset agent file names a Rocket-only term, and every preset builder file carries the match-conventions line.
-- `crates/factory-engine/src/build.rs` is not risky under the rust preset, and `build.rs`, `dashboard/build.rs` and `crates/x/build.rs` are.
+- `crates/factory-engine/src/build.rs` is not risky under the rust preset, and `build.rs`, `dashboard/build.rs`, `crates/x/build.rs`, `src/build.rs` and `dashboard/src/build.rs` are.
 - The rust preset plans a `cargo fmt --check` command and a `{dependents}` test command for a changed crate path, and the validator accepts both.
 - A diff under `crates/factory-core/presets/` plans tests for `factory-cli`.
 - The builder excerpt of a spec always holds its goal and its whole acceptance criteria section, and adds its Design, edge-case, Decisions and Out of scope sections while they fit under 8192 bytes, and says so when it leaves one out.
