@@ -34,6 +34,7 @@ pub struct Caps {
     pub agent: bool,
     pub max_turns: bool,
     pub append_system_prompt: bool,
+    pub agents_file: bool,
 }
 
 impl Default for Caps {
@@ -43,6 +44,7 @@ impl Default for Caps {
             agent: true,
             max_turns: true,
             append_system_prompt: true,
+            agents_file: true,
         }
     }
 }
@@ -57,6 +59,8 @@ pub struct AgentSpec {
     pub prompt: String,
     /// Agent name for `--agent`.
     pub agent: Option<String>,
+    /// JSON file for `--agents`, sent next to `--agent`. Codex ignores it.
+    pub agents_file: Option<PathBuf>,
     /// Agent file body, used when `--agent` is not available.
     pub agent_prompt: Option<String>,
     pub model: Option<String>,
@@ -106,6 +110,7 @@ impl AgentSpec {
             cwd: cwd.into(),
             prompt: prompt.to_string(),
             agent: None,
+            agents_file: None,
             agent_prompt: None,
             model: None,
             resume: None,
@@ -173,7 +178,12 @@ impl AgentSpec {
             push("--add-dir", &dir.to_string_lossy());
         }
         match (&self.agent, &self.agent_prompt) {
-            (Some(name), _) if caps.agent => push("--agent", name),
+            (Some(name), _) if caps.agent => {
+                push("--agent", name);
+                if let (Some(file), true) = (&self.agents_file, caps.agents_file) {
+                    push("--agents", &file.to_string_lossy());
+                }
+            }
             (_, Some(text)) if caps.append_system_prompt => push("--append-system-prompt", text),
             _ => {}
         }
@@ -241,5 +251,36 @@ mod tests {
         s.disable_slash_commands = true;
         let args = s.args(&Caps::default());
         assert!(args.contains(&"--disable-slash-commands".to_string()));
+    }
+
+    #[test]
+    fn agents_flag_follows_the_agent_flag() {
+        let mut s = AgentSpec::new("001", "builder", "/w", "p");
+        s.agent = Some("factory-builder".to_string());
+        s.agents_file = Some(PathBuf::from("/j/agents.json"));
+        let args = s.args(&Caps::default());
+        let at = args
+            .iter()
+            .position(|a| a == "--agent")
+            .expect("--agent is present");
+        assert_eq!(
+            args[at..at + 4],
+            ["--agent", "factory-builder", "--agents", "/j/agents.json"]
+        );
+    }
+
+    #[test]
+    fn no_agents_flag_without_a_file_or_without_the_capability() {
+        let mut s = AgentSpec::new("001", "builder", "/w", "p");
+        s.agent = Some("factory-builder".to_string());
+        let args = s.args(&Caps::default());
+        assert!(!args.contains(&"--agents".to_string()));
+
+        s.agents_file = Some(PathBuf::from("/j/agents.json"));
+        let caps = Caps {
+            agents_file: false,
+            ..Caps::default()
+        };
+        assert!(!s.args(&caps).contains(&"--agents".to_string()));
     }
 }

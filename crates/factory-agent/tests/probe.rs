@@ -46,6 +46,7 @@ fn fake_claude_probe_reads_the_marker_from_each_delivery_path() {
         agent: false,
         max_turns: true,
         append_system_prompt: false,
+        agents_file: false,
     };
     let run = runner(no_flags).run(&by_flag);
     assert_eq!(marker_line(&run.result_text), "MARKER: FPROBE-t1");

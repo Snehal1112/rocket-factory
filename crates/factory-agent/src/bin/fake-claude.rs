@@ -46,11 +46,17 @@ fn probe_marker(args: &[String], stdin: &str) -> Option<String> {
             .position(|a| a == flag)
             .and_then(|i| args.get(i + 1))
     };
+    let from_agents_file = |name: &String| {
+        let json = std::fs::read_to_string(value_of("--agents")?).ok()?;
+        let agents: serde_json::Value = serde_json::from_str(&json).ok()?;
+        find_marker(agents.get(name)?.get("prompt")?.as_str()?)
+    };
+    let from_agent_dir = |name: &String| {
+        let path = std::path::Path::new(".claude/agents").join(format!("{name}.md"));
+        find_marker(&std::fs::read_to_string(path).ok()?)
+    };
     value_of("--agent")
-        .and_then(|name| {
-            let path = std::path::Path::new(".claude/agents").join(format!("{name}.md"));
-            find_marker(&std::fs::read_to_string(path).ok()?)
-        })
+        .and_then(|name| from_agents_file(name).or_else(|| from_agent_dir(name)))
         .or_else(|| value_of("--append-system-prompt").and_then(|t| find_marker(t)))
         .or_else(|| find_marker(stdin))
 }
