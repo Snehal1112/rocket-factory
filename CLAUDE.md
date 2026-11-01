@@ -38,7 +38,7 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 - `tick.rs` and `runloop.rs` drive one job through the stages. `decide.rs` holds the merge/fix/needs-human choice, `tasks.rs` the per-task builder loop, `series.rs` and `specs.rs` the multi-plan series.
 - Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`dashboard/`, separate workspace), so add fields as optional. The dashboard has a `--home` mode that holds the API token server-side (`dashboard/README.md`); keep the token out of every reply.
 - The repo-level config is `.claude/factory/config.toml`. A missing or broken config must make every diff risky, so never default it to permissive.
-- `factory-cli/tests/agent_lint.rs` lints the preset agent files in `crates/factory-core/presets/<preset>/agents/`. Run it after editing an agent file.
+- `factory-cli/tests/agent_lint.rs` lints the preset agent files in `crates/factory-core/presets/<preset>/agents/`. Run it after editing an agent file. On Claude the agents reach the CLI through `--agents <job folder>/agents.json`; the driver writes no agent file into a worktree (`factory-engine/src/agents_file.rs`).
 
 ## Ticket hygiene
 

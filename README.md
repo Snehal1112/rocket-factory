@@ -582,9 +582,9 @@ plan. A repo override cannot set them.
 ### Agent files
 
 Agent files are merged by name from the preset `agents/` folder, the project `agents/` folder and the repo's
-`.factory/agents/` folder on the base branch (later wins). The engine writes them to `.claude/agents/` in each new
-job worktree. Only names like `factory-<name>.md` are written, they are git-excluded, and a file that is tracked
-on the base branch is never overwritten.
+`.factory/agents/` folder on the base branch (later wins). On Claude the agents reach the CLI through
+`--agents <job folder>/agents.json`, so nothing is written into a worktree or the main checkout. Only names like
+`factory-<name>.md` are used, and the text of a `.claude/agents/<name>.md` tracked on the base branch still wins.
 
 ## Agent file rules marker
 

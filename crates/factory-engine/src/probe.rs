@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 
 use factory_agent::AgentSpec;
 use factory_core::{
-    agent_files_rel_dir, evaluate, expected_channels, parse_probe_answer, probe_prompt,
-    write_atomic, Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe,
+    agents_file, evaluate, expected_channels, parse_probe_answer, probe_prompt, write_atomic,
+    AgentFile, Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe,
 };
 
+use crate::agents_file::write_agents_json_at;
 use crate::ports::{core_err, io_err, JobView};
 use crate::specs::spec_reviewer_agent;
 use crate::{committer_spec, kb_spec, Engine, EngineError, ReviewerExtra};
@@ -204,9 +205,13 @@ impl Engine<'_> {
         let text = format!("{}\n\nProbe marker: {marker}\n", file.content);
         match delivery {
             Delivery::Agent => {
-                let dir = work_dir.join(agent_files_rel_dir());
-                std::fs::create_dir_all(&dir).map_err(io_err)?;
-                write_atomic(&dir.join(format!("{name}.md")), text.as_bytes()).map_err(core_err)?;
+                let path = agents_file(work_dir);
+                let probe_file = AgentFile {
+                    name: file.name.clone(),
+                    content: text,
+                };
+                write_agents_json_at(&path, &[probe_file]).map_err(core_err)?;
+                spec.agents_file = Some(path);
             }
             Delivery::AppendSystemPrompt | Delivery::Stdin => {
                 spec.agent = None;
