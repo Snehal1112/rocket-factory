@@ -329,7 +329,7 @@ impl Engine<'_> {
         Ok((wt.path, base, branch))
     }
 
-    fn check_agent_names(&self) -> Result<(), EngineError> {
+    pub(crate) fn check_agent_names(&self) -> Result<(), EngineError> {
         for f in &self.agent_files {
             if !is_agent_file_name(&f.name) {
                 return Err(EngineError::Msg(format!(

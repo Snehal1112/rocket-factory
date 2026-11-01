@@ -296,14 +296,17 @@ fn the_slim_reviewer_prompt_keeps_inputs_and_the_rereview_block() {
     });
     board.save(&fx.board_path).expect("save");
     let rr = scripted(Vec::new());
-    let spec = fx.engine(&rr).reviewer_spec(
-        &wt,
-        &fx.job_dir.join("d.diff"),
-        &fx.job_dir.join("n.txt"),
-        2,
-        &[],
-        &factory_engine::ReviewerExtra::default(),
-    );
+    let spec = fx
+        .engine(&rr)
+        .with_agent_files(reviewer_files(Some("<!-- factory-rules: 1 -->")))
+        .reviewer_spec(
+            &wt,
+            &fx.job_dir.join("d.diff"),
+            &fx.job_dir.join("n.txt"),
+            2,
+            &[],
+            &factory_engine::ReviewerExtra::default(),
+        );
     assert!(
         spec.prompt.contains("findings of round 1"),
         "{}",
@@ -320,14 +323,17 @@ fn the_slim_reviewer_prompt_carries_the_user_note_line() {
     let note = fx.job_dir.join("user-note-r1.md");
     std::fs::write(&note, "use a shorter name").expect("note");
     let rr = scripted(Vec::new());
-    let spec = fx.engine(&rr).reviewer_spec(
-        &wt,
-        &fx.job_dir.join("d.diff"),
-        &fx.job_dir.join("n.txt"),
-        1,
-        &[],
-        &factory_engine::ReviewerExtra::default(),
-    );
+    let spec = fx
+        .engine(&rr)
+        .with_agent_files(reviewer_files(Some("<!-- factory-rules: 1 -->")))
+        .reviewer_spec(
+            &wt,
+            &fx.job_dir.join("d.diff"),
+            &fx.job_dir.join("n.txt"),
+            1,
+            &[],
+            &factory_engine::ReviewerExtra::default(),
+        );
     assert!(!spec.prompt.contains("VERDICT:"), "{}", spec.prompt);
     let want = format!(
         "The user's note for this round is at {}. It is the user's instruction",

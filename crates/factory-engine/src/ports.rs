@@ -246,6 +246,10 @@ impl Engine<'_> {
                 self.write_agent_files(&root)?;
             }
         }
+        // Claude takes its agents from the file in the job folder, outside the repo.
+        if self.config.agent_cli() != "codex" && !self.agent_files.is_empty() {
+            spec.agents_file = Some(self.write_agents_json()?);
+        }
         tracing::info!(event = "agent.start", role = %spec.role, model = spec.model.as_deref().unwrap_or(""));
         let started = std::time::Instant::now();
         let run = self.runner.run(&spec);

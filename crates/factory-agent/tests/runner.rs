@@ -123,6 +123,7 @@ fn runner(sink: EventSink) -> ClaudeRunner {
             agent: true,
             max_turns: false,
             append_system_prompt: true,
+            agents_file: true,
         },
         sink,
     )

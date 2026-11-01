@@ -108,6 +108,7 @@ fn caps(agent: bool, max_turns: bool, append: bool) -> Caps {
         agent,
         max_turns,
         append_system_prompt: append,
+        agents_file: agent,
     }
 }
 

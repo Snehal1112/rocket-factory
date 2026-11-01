@@ -42,20 +42,21 @@ const NOT_CONTROLLER: &str =
 pub const RULES_VERSION: u32 = 1;
 
 impl Engine<'_> {
-    /// True when the worktree's agent file carries a rules marker at or above `RULES_VERSION`.
-    fn agent_rules_current(&self, cwd: &Path, agent: &str) -> bool {
-        let path = cwd
-            .join(factory_core::agent_files_rel_dir())
-            .join(format!("{agent}.md"));
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| rules_marker(&text))
-            .is_some_and(|n| n >= RULES_VERSION)
+    /// True when the effective agent text carries a rules marker at or above `RULES_VERSION`.
+    fn agent_rules_current(&self, agent: &str) -> bool {
+        let name = format!("{agent}.md");
+        self.effective_agent_files().is_ok_and(|files| {
+            files
+                .iter()
+                .find(|f| f.name == name)
+                .and_then(|f| rules_marker(&f.content))
+                .is_some_and(|n| n >= RULES_VERSION)
+        })
     }
 
     /// True when the prompt for `agent` may drop the rules its file carries. A fallback is noted once per job and agent.
-    pub(crate) fn slim_prompt(&self, cwd: &Path, agent: &str) -> bool {
-        if self.agent_rules_current(cwd, agent) {
+    pub(crate) fn slim_prompt(&self, agent: &str) -> bool {
+        if self.agent_rules_current(agent) {
             return true;
         }
         let note = format!(
@@ -187,7 +188,7 @@ impl Engine<'_> {
     /// The headless builder for the first run of a job.
     pub(crate) fn builder_first_spec(&self, job: &JobView, cwd: &Path) -> AgentSpec {
         let spec_line = self.spec_line();
-        let prompt = if self.slim_prompt(cwd, BUILDER_AGENT) {
+        let prompt = if self.slim_prompt(BUILDER_AGENT) {
             format!(
                 "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
                  {read} Never edit the plan.\n{spec_line}\
@@ -291,7 +292,7 @@ impl Engine<'_> {
                 earlier.join("\n")
             )
         };
-        let prompt = if self.slim_prompt(cwd, BUILDER_AGENT) {
+        let prompt = if self.slim_prompt(BUILDER_AGENT) {
             format!(
                 "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
                  {read} Never edit the plan.\n{spec_line}{excerpt}\
@@ -409,7 +410,7 @@ impl Engine<'_> {
         session: &str,
     ) -> AgentSpec {
         let hints = self.check_hints_text();
-        let prompt = if self.slim_prompt(cwd, BUILDER_AGENT) {
+        let prompt = if self.slim_prompt(BUILDER_AGENT) {
             format!(
                 "{kb}Fix only the problems listed in {findings}. You are on branch `{branch}`. \
                  Follow `superpowers:receiving-code-review` for the findings. \
@@ -623,7 +624,7 @@ impl Engine<'_> {
         if extra.no_tests {
             context.push_str("No test was added in this job. Judge whether the new behavior is covered, and treat missing tests as a blocker.\n");
         }
-        let prompt = if self.slim_prompt(cwd, REVIEWER_AGENT) {
+        let prompt = if self.slim_prompt(REVIEWER_AGENT) {
             // The agent file carries the paging, check, grading and verdict rules.
             format!(
                 "Review this round's diff for the job.\n\
