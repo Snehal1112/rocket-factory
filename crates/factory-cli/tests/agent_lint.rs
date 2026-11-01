@@ -143,12 +143,19 @@ fn every_preset_ships_the_five_factory_agents() -> TestResult {
 
 #[test]
 fn no_factory_agent_file_is_tracked_in_the_repo() -> TestResult {
-    let names = factory_file_names(&repo_root()?.join(".claude/agents"))?;
-    if names.is_empty() {
+    // Job worktrees hold git-excluded copies of the preset files, so the index is asked and not the disk.
+    let repo = git2::Repository::discover(repo_root()?).map_err(|e| e.to_string())?;
+    let index = repo.index().map_err(|e| e.to_string())?;
+    let tracked: Vec<String> = index
+        .iter()
+        .map(|entry| String::from_utf8_lossy(&entry.path).to_string())
+        .filter(|path| path.starts_with(".claude/agents/factory-") && path.ends_with(".md"))
+        .collect();
+    if tracked.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            ".claude/agents must hold no factory agent file, found {names:?}"
+            "the repo must track no factory agent file, found {tracked:?}"
         ))
     }
 }
@@ -199,7 +206,6 @@ fn builder_body_pins_the_rules() -> TestResult {
             "board",
             "job directory",
             "BLOCKED:",
-            "clippy",
             "release build",
             "-j4",
             "CARGO_TARGET_DIR",

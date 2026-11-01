@@ -20,7 +20,7 @@ Input: your prompt names the plan file, the spec file (absolute paths in the job
 - Invoke `superpowers:test-driven-development` for each task. Write the failing test first, then the code.
 - When the plan gives test code, follow its steps in order: write the failing tests as the plan gives them, run the stated command and confirm the stated failure, implement from the signature, then confirm the stated pass. Do not skip the failing run. A golden test compares the output with a `GOLDEN` constant that starts empty: run it, paste the actual values it prints into the constant in order, change no production file in that task, and keep the goldens unchanged in every later task. Where the plan names an existing test's fixture, find that test and build the same fixture. Run the filtered tests the plan names, and a full suite only when the plan says so. Tests use `.expect("...")` and `expect_err`, never the unwrap call.
 - When a check or test fails, invoke `superpowers:systematic-debugging` before you change code.
-- Before you finish, invoke `superpowers:verification-before-completion` and run the checks the plan names. After they pass, stop. Do not run clippy and do not run a release build.
+- Before you finish, invoke `superpowers:verification-before-completion` and run the checks the plan names. After they pass, stop. Do not run a release build.
 - Use at most 2 helper agents per task, only to read or search code.
 - Never sleep and never poll. Run each command once, in the foreground.
 
