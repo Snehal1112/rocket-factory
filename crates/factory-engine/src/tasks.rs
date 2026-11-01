@@ -256,9 +256,47 @@ fn goal_section(spec: &str) -> Option<String> {
     (!body.is_empty()).then(|| format!("## Goal\n\n{body}"))
 }
 
+/// The most bytes a spec excerpt takes, unless the goal and the acceptance criteria alone are more.
+pub const SPEC_EXCERPT_CAP: usize = 8192;
+
+/// The line that ends an excerpt when a kept section was cut or left out.
+const SPEC_EXCERPT_MARKER: &str = "[excerpt cut at 8192 bytes, the rest is in spec.md]";
+
+/// Lowercase words that make a `## ` heading an extra kept section of the excerpt.
+const EXTRA_TOPICS: [&str; 5] = ["design", "edge case", "decision", "decided", "out of scope"];
+
+/// The kept extra sections of a spec in spec order: each `## ` heading outside a fenced block whose
+/// lowercase text contains an extra topic, up to the next `## ` heading outside a fenced block.
+fn extra_sections(lines: &[(&str, bool)]) -> Vec<String> {
+    let mut sections: Vec<Vec<&str>> = Vec::new();
+    let mut keeping = false;
+    for (line, fenced) in lines {
+        if !fenced && line.starts_with("## ") {
+            let lower = line.to_ascii_lowercase();
+            keeping = !lower.contains("acceptance criteria")
+                && EXTRA_TOPICS.iter().any(|topic| lower.contains(topic));
+            if keeping {
+                sections.push(Vec::new());
+            }
+        }
+        if keeping {
+            if let Some(section) = sections.last_mut() {
+                section.push(line);
+            }
+        }
+    }
+    sections
+        .into_iter()
+        .map(|section| section.join("\n").trim().to_string())
+        .collect()
+}
+
 /// The goal of a spec plus its `Acceptance criteria` section (a `## ` heading containing those words,
-/// up to the next `## ` heading outside a fenced block). The goal is a `Goal:` line, else a `## Goal`
-/// section, else the first plain line. Empty for an empty spec.
+/// up to the next `## ` heading outside a fenced block), then its design, edge-case, decision and
+/// out-of-scope sections in spec order while they fit under `SPEC_EXCERPT_CAP`. The goal and the
+/// acceptance section are never cut. A section that overflows is cut at a line break, later ones are
+/// left out, and a marker line says so. The goal is a `Goal:` line, else a `## Goal` section, else
+/// the first plain line. Empty for an empty spec.
 pub fn spec_excerpt(spec: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
     let goal_line = spec
@@ -288,6 +326,29 @@ pub fn spec_excerpt(spec: &str) -> String {
             section.push(line);
         }
         parts.push(section.join("\n").trim().to_string());
+    }
+    let used: usize = parts.iter().map(|p| p.len() + 2).sum::<usize>() + SPEC_EXCERPT_MARKER.len();
+    let mut room = SPEC_EXCERPT_CAP.saturating_sub(used);
+    let mut cut = false;
+    for section in extra_sections(&lines) {
+        let needed = section.len() + 2;
+        if needed <= room {
+            room -= needed;
+            parts.push(section);
+            continue;
+        }
+        cut = true;
+        let mut end = room.saturating_sub(2).min(section.len());
+        while !section.is_char_boundary(end) {
+            end -= 1;
+        }
+        if let Some(line_end) = section[..end].rfind('\n') {
+            parts.push(section[..line_end].trim_end().to_string());
+        }
+        break;
+    }
+    if cut {
+        parts.push(SPEC_EXCERPT_MARKER.to_string());
     }
     parts.join("\n\n")
 }
@@ -563,6 +624,89 @@ mod tests {
             "Goal: only this goal here."
         );
         assert_eq!(spec_excerpt(""), "");
+    }
+
+    #[test]
+    fn the_excerpt_keeps_design_edge_cases_decisions_and_scope() {
+        let spec = "Goal: ship it.\n\n## Background\n\nbg text\n\n## Design\n\ndesign text\n\n\
+## Error handling and edge cases\n\nedge text\n\n## Decisions\n\ndecision text\n\n\
+## Out of scope\n\nscope text\n\n## Testing\n\ntesting text\n\n## Acceptance criteria\n\n- accept text\n";
+        let ex = spec_excerpt(spec);
+        for kept in [
+            "design text",
+            "edge text",
+            "decision text",
+            "scope text",
+            "accept text",
+        ] {
+            assert!(ex.contains(kept), "{kept}: {ex}");
+        }
+        assert!(
+            !ex.contains("bg text") && !ex.contains("testing text"),
+            "{ex}"
+        );
+        assert!(!ex.contains(SPEC_EXCERPT_MARKER), "{ex}");
+    }
+
+    #[test]
+    fn kept_sections_keep_the_spec_order() {
+        let spec =
+            "Goal: ship it.\n\n## Decisions\n\ndecision text\n\n## Design\n\ndesign text\n\n\
+## Acceptance criteria\n\n- accept text\n";
+        let ex = spec_excerpt(spec);
+        let at = |needle: &str| ex.find(needle).expect(needle);
+        assert!(at("Goal: ship it.") < at("accept text"), "{ex}");
+        assert!(at("accept text") < at("decision text"), "{ex}");
+        assert!(at("decision text") < at("design text"), "{ex}");
+    }
+
+    #[test]
+    fn a_fenced_heading_neither_starts_nor_ends_a_kept_section() {
+        let spec =
+            "Goal: ship it.\n\n## Background\n\n```md\n## Design notes\nfake design\n```\n\n\
+## Design\n\nbefore fence\n\n```sh\n## comment\n```\n\nafter fence\n\n## Testing\n\ntesting text\n";
+        let ex = spec_excerpt(spec);
+        assert!(!ex.contains("fake design"), "{ex}");
+        assert!(
+            ex.contains("before fence") && ex.contains("## comment") && ex.contains("after fence"),
+            "{ex}"
+        );
+        assert!(!ex.contains("testing text"), "{ex}");
+    }
+
+    #[test]
+    fn a_spec_without_kept_sections_still_gives_the_goal() {
+        assert_eq!(
+            spec_excerpt("Goal: only this goal here.\n\n## Background\n\nlong text\n"),
+            "Goal: only this goal here."
+        );
+    }
+
+    #[test]
+    fn acceptance_criteria_survive_a_design_section_over_the_cap() {
+        let spec = format!(
+            "Goal: ship it.\n\n## Design\n\n{}\n\n## Acceptance criteria\n\n- accept one\n- accept two\n",
+            "d".repeat(20000)
+        );
+        let ex = spec_excerpt(&spec);
+        assert!(ex.starts_with("Goal: ship it."), "{ex}");
+        assert!(ex.contains("- accept one\n- accept two"), "{ex}");
+        assert!(ex.ends_with(SPEC_EXCERPT_MARKER), "{ex}");
+        assert!(!ex.contains("ddd"), "{ex}");
+    }
+
+    #[test]
+    fn an_extra_section_over_the_room_is_cut_at_a_line_with_a_marker() {
+        let body = "line é é é\n".repeat(20000 / 11);
+        let spec =
+            format!("Goal: ship it.\n\n## Design\n\n{body}\n## Acceptance criteria\n\n- accept\n");
+        let ex = spec_excerpt(&spec);
+        assert!(ex.len() <= SPEC_EXCERPT_CAP, "{}", ex.len());
+        let before = ex
+            .strip_suffix(&format!("\n\n{SPEC_EXCERPT_MARKER}"))
+            .expect("marker at the end");
+        assert!(before.ends_with("line é é é"), "{before:?}");
+        assert!(before.contains("## Design"), "{before:?}");
     }
 
     #[test]

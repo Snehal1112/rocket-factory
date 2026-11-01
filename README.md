@@ -43,7 +43,7 @@ The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/
 Rocket's factory gained these after the extraction. They are part of this driver now:
 
 - Batch committer: one committer run per job writes all the commits (`commit_batch`, default on), with recovery after a stop.
-- Task excerpts: each task builder sees only its own task from the plan and spec (`builder_excerpt`, default on). A stale rework note stays out of fix rounds.
+- Task excerpts: each task builder sees only its own task from the plan, and the spec goal, design, edge cases, decisions, scope and acceptance criteria within 8192 bytes (`builder_excerpt`, default on). A stale rework note stays out of fix rounds.
 - Ticket hygiene: the `factory tickets` command and the `tickets_on_merge` key, see below.
 - Live token bar: the dashboard card bar follows the running agent, so it moves while an agent works.
 

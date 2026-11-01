@@ -565,6 +565,35 @@ fn codex_builders_get_no_simplify_line() {
 }
 
 #[test]
+fn a_codex_builder_prompt_carries_the_wider_excerpt() {
+    let fx = codex(committing_fixture());
+    std::fs::write(&fx.plan_file, "# P\n\n### Task 1: first thing\n\nx\n").expect("plan");
+    std::fs::write(
+        fx.job_dir.join("spec.md"),
+        "Goal: ship it.\n\n## Design\n\nDESIGN-MARKER\n\n## Testing\n\nTESTING-MARKER\n\n## Acceptance criteria\n\n- ACCEPT-MARKER\n",
+    )
+    .expect("spec");
+    let runner = scripted_auto(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let prompt = runner
+        .last_spec_for("builder")
+        .expect("builder spec")
+        .prompt;
+    assert!(
+        prompt.contains("Task excerpt: the plan header, your task, and the spec goal, design, edge cases, decisions, scope and acceptance criteria follow."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("DESIGN-MARKER") && prompt.contains("ACCEPT-MARKER"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("TESTING-MARKER"), "{prompt}");
+}
+
+#[test]
 fn a_claude_run_pins_helper_agents_to_its_own_model() {
     let fx = committing_fixture();
     let runner = scripted_auto(vec![write_effect()]);
