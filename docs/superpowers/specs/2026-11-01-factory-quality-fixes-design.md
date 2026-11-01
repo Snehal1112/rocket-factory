@@ -40,7 +40,7 @@ The work is four plans, in this order. The first plan comes first so that later 
 
 ### Plan 3: Builder context
 
-- `spec_excerpt` keeps, in spec order, the goal line, `## Design`, the edge-case section (a heading that contains `edge case`, ignoring case), `## Decisions`, `## Out of scope` and the acceptance criteria. A total byte cap of 8192 applies. An excerpt over the cap is cut at a line boundary and ends with one line that names the spec file and says the rest was left out.
+- `spec_excerpt` always keeps the goal line and the whole acceptance criteria section, as today. With the room left under a total cap of 8192 bytes it adds, in spec order, `## Design`, the edge-case section (a heading that contains `edge case`, ignoring case), `## Decisions` and `## Out of scope`. A section that does not fit whole is cut at a line boundary, and the later ones are left out. When anything was left out or cut, the excerpt ends with one line that names the spec file and says the rest was left out. The goal and acceptance criteria are never cut, even when they alone pass the cap.
 - The excerpt preamble says the excerpt covers the goal, design, edge cases, decisions, scope and acceptance criteria, and that the full spec is for anything the excerpt refers to. The text is shared by both harnesses and names no harness tool.
 
 ### Plan 4: Reviewer input
@@ -81,7 +81,7 @@ A factory job cannot edit `~/.factory/projects/rocket-factory/project.toml`. Aft
 - Stop the shadowing by deleting the tracked agent copies, and not by keeping identical copies or writing repo-specific agents. Side effect: the factory agents leave interactive Claude sessions in this repo. Decided by: user
 - Fix the `**/build.rs` false positive in the rust preset, not by an override in one project. Decided by: user
 - The design as a whole, including the Compatibility section: no breakage for Codex or the other presets. Decided by: user
-- Three-glob form for the build script risk paths, with the accepted residual risk. Decided by: call
+- Three-glob form for the build script risk paths. The accepted residual risk is that a Cargo build script nested deeper than two folders no longer forces human review on its own, while its package's `Cargo.toml` stays risky. Decided by: user
 - `{dependents}` runs direct dependents only, under the existing cap. Decided by: call
 - The excerpt byte cap is 8192. Decided by: call
 
@@ -92,7 +92,7 @@ A factory job cannot edit `~/.factory/projects/rocket-factory/project.toml`. Aft
 - `crates/factory-engine/src/build.rs` is not risky under the rust preset, and `build.rs`, `dashboard/build.rs` and `crates/x/build.rs` are.
 - The rust preset plans a `cargo fmt --check` command and a `{dependents}` test command for a changed crate path, and the validator accepts both.
 - A diff under `crates/factory-core/presets/` plans tests for `factory-cli`.
-- The builder excerpt of a spec holds its Design, edge-case, Decisions and Out of scope sections, is never over 8192 bytes, and says so when it cuts.
+- The builder excerpt of a spec always holds its goal and its whole acceptance criteria section, and adds its Design, edge-case, Decisions and Out of scope sections while they fit under 8192 bytes, and says so when it leaves one out.
 - `factory rework` writes `user-note-r{N}.md` in both rework kinds, the reviewer prompt names it for that round when it exists, for Claude and for Codex, and every preset reviewer file carries the acceptance step.
 - The go, ruby, csharp and node preset configs are unchanged, and all five presets still load.
 - fmt and clippy `-D warnings` pass for every crate a plan touches, and `cargo test -j4 -p factory-cli --test agent_lint` passes.

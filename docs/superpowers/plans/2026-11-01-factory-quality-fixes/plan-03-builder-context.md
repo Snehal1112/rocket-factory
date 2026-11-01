@@ -6,7 +6,7 @@
 
 **Goal:** A task builder sees the spec's Design, edge-case, Decisions and Out of scope sections as well as its goal and acceptance criteria, within a fixed size, on both harnesses.
 
-**Architecture:** `spec_excerpt` keeps the goal as it does today, then every `## ` section whose heading names a kept topic, in spec order, with fenced blocks respected. A byte cap cuts the result at a line and says where the rest is. The excerpt preamble in `task_excerpt` names the wider content.
+**Architecture:** `spec_excerpt` always keeps the goal and the whole acceptance criteria section, as it does today. It then spends the room left under a byte cap on the other kept `## ` sections in spec order, with fenced blocks respected, and says where anything left out is. The excerpt preamble in `task_excerpt` names the wider content.
 
 **Tech Stack:** Rust, `cargo test -j4 -p factory-engine`.
 
@@ -18,12 +18,12 @@
 - Code comments are short full sentences that end with a period.
 - The excerpt text is shared by Claude and Codex builders and names no harness tool.
 - No new setting. The cap is a constant `SPEC_EXCERPT_CAP: usize = 8192` in `tasks.rs`.
-- Kept headings are the `## ` headings whose lowercase text contains one of `design`, `edge case`, `decision`, `decided`, `out of scope`, `acceptance criteria`.
+- Extra kept headings are the `## ` headings whose lowercase text contains one of `design`, `edge case`, `decision`, `decided`, `out of scope`. The goal and the `acceptance criteria` section are always kept whole and never count against the room.
 - Texts are exact: the cut marker is `[excerpt cut at 8192 bytes, the rest is in spec.md]`. The preamble starts `Task excerpt: the plan header, your task, and the spec goal, design, edge cases, decisions, scope and acceptance criteria follow.`
 
 ## Review Focus
 
-1. A spec longer than the cap must never produce an excerpt over the cap, and must never cut inside a line or a multi-byte character. Pinned by `an_excerpt_over_the_cap_is_cut_at_a_line_with_a_marker`.
+1. A long Design section must never push the acceptance criteria out: the goal and the whole acceptance criteria section stay, whatever the size of the other sections. Pinned by `acceptance_criteria_survive_a_design_section_over_the_cap`. A cut elsewhere must fall on a line break, never inside a multi-byte character. Pinned by `an_extra_section_over_the_room_is_cut_at_a_line_with_a_marker`.
 2. A `## ` line inside a fenced block must not end a kept section or start one. Pinned by `a_fenced_heading_neither_starts_nor_ends_a_kept_section`.
 3. A spec with none of the kept sections must still give its goal, as today. Pinned by `a_spec_without_kept_sections_still_gives_the_goal`.
 4. Sections must come out in spec order, not in a fixed order. Pinned by `kept_sections_keep_the_spec_order`.
@@ -46,7 +46,7 @@
 - Test: `crates/factory-engine/src/tasks.rs` (tests module)
 
 **Interfaces:**
-- Produces: `pub const SPEC_EXCERPT_CAP: usize = 8192;` and the unchanged signature `pub fn spec_excerpt(spec: &str) -> String`. The result is the goal part, then each kept section in spec order, joined by a blank line. A result longer than `SPEC_EXCERPT_CAP` is cut at the last line break that leaves room for the marker, and the marker line is appended.
+- Produces: `pub const SPEC_EXCERPT_CAP: usize = 8192;` and the unchanged signature `pub fn spec_excerpt(spec: &str) -> String`. The result is the goal part, then the whole acceptance criteria section, then each extra kept section in spec order, joined by a blank line. The room for the extra sections is `SPEC_EXCERPT_CAP` minus the length of the goal part, the acceptance section and the marker line. An extra section that does not fit is cut at the last line break inside the room, later extra sections are left out, and the marker line is appended. The goal and the acceptance section are never cut.
 
 - [ ] **Step 1: Read the code this task touches**
 
@@ -56,10 +56,11 @@ Read `spec_excerpt`, `goal_section`, `spec_goal` and `lines_with_fence` in `task
 
 In the `tasks.rs` tests module:
 - `the_excerpt_keeps_design_edge_cases_decisions_and_scope`: a spec with the sections Background, Design, Error handling and edge cases, Decisions, Out of scope, Testing and Acceptance criteria keeps the text of the Design, edge-case, Decisions, Out of scope and Acceptance criteria sections, and leaves out Background and Testing.
-- `kept_sections_keep_the_spec_order`: with Decisions written before Design in the spec, the excerpt shows Decisions before Design.
+- `kept_sections_keep_the_spec_order`: with Decisions written before Design in the spec, the excerpt shows Decisions before Design, and the acceptance criteria come after the goal and before them.
 - `a_fenced_heading_neither_starts_nor_ends_a_kept_section`: a `## Design notes` line inside a fenced block does not start a section, and a `## comment` line inside a fence in the Design section does not end it.
 - `a_spec_without_kept_sections_still_gives_the_goal`: a spec with only a goal line and a Background section gives exactly the goal line.
-- `an_excerpt_over_the_cap_is_cut_at_a_line_with_a_marker`: a spec whose Design section is 20000 bytes of short lines, with a multi-byte character near the cut, gives an excerpt of at most 8192 bytes that ends with the marker and whose text before the marker ends at a line break.
+- `acceptance_criteria_survive_a_design_section_over_the_cap`: a spec whose Design section alone is 20000 bytes, with Acceptance criteria written after it, gives an excerpt that holds the goal and the whole acceptance criteria section and ends with the marker.
+- `an_extra_section_over_the_room_is_cut_at_a_line_with_a_marker`: a spec whose Design section is 20000 bytes of short lines, with a multi-byte character near the cut, gives an excerpt of at most 8192 bytes that ends with the marker and whose Design text before the marker ends at a line break.
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
@@ -68,7 +69,7 @@ Expected: FAIL.
 
 - [ ] **Step 4: Implement the wider excerpt and the cap**
 
-Keep the goal code as it is. Replace the acceptance-section search with one pass over `lines_with_fence`: an unfenced `## ` line starts a kept section when its lowercase text contains a kept topic and ends the current one otherwise. Collect the sections in order, join, then apply the cap. Update the doc comment of `spec_excerpt`.
+Keep the goal and acceptance-section code as it is. Add one pass over `lines_with_fence`: an unfenced `## ` line starts an extra kept section when its lowercase text contains an extra topic and ends the current one otherwise. Fill the room with those sections in order, cutting the one that overflows. Update the doc comment of `spec_excerpt`.
 
 - [ ] **Step 5: Run the tests, fmt and clippy**
 
