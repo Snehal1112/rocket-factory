@@ -30,9 +30,10 @@ After a risky sync park, the board reason, the ledger and `park.json` agree with
 - Checks that ran but whose `checks.md` write failed still report "could not run". That is a separate issue.
 - No reader change in `factory status` or the dashboard.
 
-## Decision for review
+## Decisions
 
-Defect 3 keeps kind `other` for the fallback park. The alternative is a new `SyncOutcome` variant that carries the kind and the lead parts into `park_with_parts`. It costs a merge-path change for a case where the board is already failing, so this spec does not take it.
+- Should an unreadable job diff on a builder-blocked park show a `Risk` part saying so, which changes `crates/factory-engine/src/build.rs`? Options: change it; leave the gap open. Chosen: change it. Decided by: user
+- Should the fallback park of defect 3 keep kind `other`? Options: keep `other`; add a `SyncOutcome` variant that carries the kind and the lead parts into `park_with_parts`. Chosen: keep `other`, because the variant costs a merge-path change for a case where the board is already failing. Decided by: user
 
 ## Acceptance criteria
 
