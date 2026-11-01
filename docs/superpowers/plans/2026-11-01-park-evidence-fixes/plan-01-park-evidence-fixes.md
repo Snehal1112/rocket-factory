@@ -22,7 +22,7 @@
 ## Review Focus
 
 1. A checks-failed sync park must show the same reason on the board, in `factory status` and in the ledger, with one ruling line and not two. Pinned by `a_checks_failed_sync_park_keeps_one_reason_and_one_ruling`.
-2. A second park whose stage move fails must not leave the record of the first park. Pinned by `a_failed_stage_move_removes_the_record_of_an_earlier_park`.
+2. A second park whose stage move fails must not leave the record of the first park. Pinned by `a_failed_park_write_removes_the_record_of_an_earlier_park`.
 3. A failing board or ledger write inside the sync park must not turn into `merge failed`. Pinned by `a_failed_sync_park_keeps_the_risky_text_and_names_the_error`.
 4. A job diff that cannot be read must show a Risk part saying so on a builder-blocked park, not an empty list. Pinned by `a_builder_stop_with_an_unreadable_diff_gets_a_risk_unknown_part`.
 5. Final checks that cannot run after a sync must still park as risky with a Checks part that says why. Pinned by `final_checks_that_cannot_run_after_a_sync_park_risky_and_say_why`.
@@ -87,11 +87,11 @@ Expected: all pass, no warnings.
 
 In the `park.rs` tests module, update the four existing order tests for the new `clear` argument and extend `park_steps_run_update_then_stage_then_record_then_ruling` to `clear_then_update_then_stage_then_record_then_ruling`, which asserts the order `["clear", "update", "stage", "record", "ruling"]`.
 
-Add `a_failed_stage_move_removes_the_record_of_an_earlier_park`. It calls the real `Engine::park_with` against an engine whose stage move fails (use the failure injection the runloop tests use for an unreadable ledger: a directory where the file must go, or a job missing from the board), after writing a first record with `write_record` in the job folder. It asserts that `park.json` does not exist afterwards and that `park_with` returned the error. This test exercises `park_with` itself, so swapping the closures in `park_with` fails it.
+Add `a_failed_park_write_removes_the_record_of_an_earlier_park`. It calls the real `Engine::park_with` against an engine whose stage move fails (use the failure injection the runloop tests use for an unreadable ledger: a directory where the file must go, or a job missing from the board), after writing a first record with `write_record` in the job folder. It asserts that `park.json` does not exist afterwards and that `park_with` returned the error. This test exercises `park_with` itself, so swapping the closures in `park_with` fails it.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -j4 -p factory-engine -- a_failed_stage_move_removes_the_record_of_an_earlier_park clear_then_update`.
+Run: `cargo test -j4 -p factory-engine -- a_failed_park_write_removes_the_record_of_an_earlier_park clear_then_update`.
 Expected: FAIL (`in_park_order` has no `clear` step, the old record survives).
 
 - [ ] **Step 3: Implement `remove_record` and the `clear` step**
