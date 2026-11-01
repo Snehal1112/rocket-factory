@@ -2,7 +2,9 @@
 risk_paths = [
   "**/Cargo.toml",
   "**/Cargo.lock",
-  "**/build.rs",
+  "build.rs",
+  "*/build.rs",
+  "*/*/build.rs",
   "**/*auth*",
   "**/*secret*",
   "**/*credential*",
