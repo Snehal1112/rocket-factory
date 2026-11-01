@@ -24,13 +24,18 @@ reviewer_rules = [
 
 [[checks]]
 paths = ["crates/*/**"]
-commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
+commands = [
+  "cargo check -j4 -p {crate}",
+  "cargo test -j4 -p {crate}",
+  "cargo fmt -p {crate} -- --check",
+  "cargo test -j4 -p {dependents}",
+]
 
 # A single-crate repo: the crate sits at the root. These paths never match a workspace member's own files.
 # A virtual workspace's root manifest is covered by the root rule below.
 [[checks]]
 paths = ["src/**", "tests/**", "benches/**", "examples/**", "build.rs"]
-commands = ["cargo check -j4", "cargo test -j4"]
+commands = ["cargo check -j4", "cargo test -j4", "cargo fmt -- --check"]
 
 # Root manifest and lockfile. A change here can break any member, so check the whole workspace.
 [[checks]]
