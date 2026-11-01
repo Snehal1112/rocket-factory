@@ -65,21 +65,36 @@ pub(crate) fn evidence_or_reason(parts: Vec<ParkPart>, reason: &str) -> Vec<Park
     }
 }
 
-/// Replaces `park.json` in `dir`. The old record goes first, so a failed write leaves none behind.
-pub(crate) fn write_record(dir: &Path, record: &ParkRecord) {
-    let _ = std::fs::remove_file(dir.join(factory_core::PARK_FILE));
-    // A job folder that cannot be written must not stop the park.
-    let _ = record.write(dir);
+/// Removes `park.json` from `dir`. A missing file is fine, any other error is logged.
+fn remove_record(dir: &Path) {
+    let path = dir.join(factory_core::PARK_FILE);
+    if let Err(err) = std::fs::remove_file(&path) {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(event = "park.record_error", path = %path.display(), msg = %format!("park record could not be removed: {err}"));
+        }
+    }
 }
 
-/// Runs the park writes in order: board update, stage move, record, ruling.
-/// It stops at the first error. The record is written only after the first two succeed, and stays when the ruling fails.
+/// Replaces `park.json` in `dir`. The old record goes first, so a failed write leaves none behind.
+pub(crate) fn write_record(dir: &Path, record: &ParkRecord) {
+    remove_record(dir);
+    // A job folder that cannot be written must not stop the park, so a failure is only logged.
+    if let Err(err) = record.write(dir) {
+        tracing::warn!(event = "park.record_error", dir = %dir.display(), msg = %format!("park record could not be written: {err}"));
+    }
+}
+
+/// Runs the park writes in order: clear, board update, stage move, record, ruling.
+/// The clear step removes the record of an earlier park first. It stops at the first error.
+/// The record is written only after the update and the stage move succeed, and stays when the ruling fails.
 pub(crate) fn in_park_order(
+    clear: impl FnOnce(),
     update: impl FnOnce() -> Result<(), EngineError>,
     stage: impl FnOnce() -> Result<(), EngineError>,
     record: impl FnOnce(),
     ruling: impl FnOnce() -> Result<(), EngineError>,
 ) -> Result<(), EngineError> {
+    clear();
     update()?;
     stage()?;
     record();
@@ -131,6 +146,16 @@ fn sync_park_choice(
     }
 }
 
+/// The reason a sync park reports. A park that was written gives its own reason, because the final
+/// checks can change it. A park that failed keeps `text` and names the error.
+pub(crate) fn sync_park_text(parked: Result<StageOutcome, EngineError>, text: &str) -> String {
+    match parked {
+        Ok(StageOutcome::NeedsHuman(reason)) => reason,
+        Ok(_) => text.to_string(),
+        Err(e) => format!("{text} (the park card could not be written: {e})"),
+    }
+}
+
 impl Engine<'_> {
     /// Parks a job after a sync that needs a human. It runs the final checks again, so the card carries
     /// Review, Risk, Rounds, Changed files and Checks. A failing check parks as checks-failed with no fix round.
@@ -172,6 +197,7 @@ impl Engine<'_> {
         }
         let summary = park_summary(&reason, &record.parts);
         in_park_order(
+            || remove_record(&self.job_dir),
             || {
                 self.update(|j| {
                     j.park_kind = Some(kind.as_str().to_string());
@@ -370,22 +396,27 @@ mod tests {
     }
 
     #[test]
-    fn park_steps_run_update_then_stage_then_record_then_ruling() {
+    fn park_steps_run_clear_then_update_then_stage_then_record_then_ruling() {
         let order = Order::default();
         in_park_order(
+            || order.borrow_mut().push("clear"),
             || step(&order, "update"),
             || step(&order, "stage"),
             || order.borrow_mut().push("record"),
             || step(&order, "ruling"),
         )
         .expect("parked");
-        assert_eq!(*order.borrow(), vec!["update", "stage", "record", "ruling"]);
+        assert_eq!(
+            *order.borrow(),
+            vec!["clear", "update", "stage", "record", "ruling"]
+        );
     }
 
     #[test]
     fn a_failed_board_update_leaves_no_park_record() {
         let order = Order::default();
         let err = in_park_order(
+            || {},
             || Err(EngineError::Msg("board locked".into())),
             || step(&order, "stage"),
             || order.borrow_mut().push("record"),
@@ -400,6 +431,7 @@ mod tests {
     fn a_failed_stage_move_leaves_no_park_record() {
         let order = Order::default();
         let err = in_park_order(
+            || {},
             || step(&order, "update"),
             || Err(EngineError::Msg("stage failed".into())),
             || order.borrow_mut().push("record"),
@@ -414,6 +446,7 @@ mod tests {
     fn a_failed_ruling_leaves_the_park_record() {
         let order = Order::default();
         let err = in_park_order(
+            || {},
             || step(&order, "update"),
             || step(&order, "stage"),
             || order.borrow_mut().push("record"),
@@ -439,6 +472,35 @@ mod tests {
         assert_eq!(
             parts[1].text,
             "unknown: the job diff could not be read (job has no head)"
+        );
+    }
+
+    #[test]
+    fn sync_park_text_uses_the_park_reason() {
+        let parked = Ok(StageOutcome::NeedsHuman(
+            "final checks failed after sync".into(),
+        ));
+        assert_eq!(
+            sync_park_text(parked, "after sync: risky diff"),
+            "final checks failed after sync"
+        );
+    }
+
+    #[test]
+    fn sync_park_text_keeps_the_text_for_other_outcomes() {
+        let parked = Ok(StageOutcome::Advanced(factory_core::Stage::Review));
+        assert_eq!(
+            sync_park_text(parked, "after sync: risky diff"),
+            "after sync: risky diff"
+        );
+    }
+
+    #[test]
+    fn a_failed_sync_park_keeps_the_risky_text_and_names_the_error() {
+        let parked = Err(EngineError::Msg("board locked".into()));
+        assert_eq!(
+            sync_park_text(parked, "after sync: risky diff"),
+            "after sync: risky diff (the park card could not be written: board locked)"
         );
     }
 
@@ -494,6 +556,56 @@ mod tests {
         let titles: Vec<&str> = parts.iter().map(|p| p.title.as_str()).collect();
         assert_eq!(titles, vec!["Review", "Risk"]);
         assert_eq!(parts[1].text, "risky: a.rs");
+    }
+
+    /// Runs `body` with an engine whose board file does not exist, so every board read and write fails.
+    fn with_unreadable_board(body: impl FnOnce(&Engine, &Path)) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        git2::Repository::init(dir.path()).expect("init repo");
+        let repo = factory_git::Repo::open(dir.path()).expect("open repo");
+        let runner = factory_agent::FakeRunner::new(Vec::new());
+        let events = factory_agent::EventSink::new(dir.path().join("events.jsonl"), "001");
+        let job_dir = dir.path().join("job");
+        std::fs::create_dir(&job_dir).expect("job dir");
+        let engine = Engine::new(
+            dir.path().join("board.json"),
+            job_dir.clone(),
+            "001".to_string(),
+            job_dir.join("plan.md"),
+            &repo,
+            &runner,
+            factory_core::Config::default(),
+            &events,
+        )
+        .expect("engine");
+        body(&engine, &job_dir);
+    }
+
+    #[test]
+    fn a_builder_stop_with_an_unreadable_diff_gets_a_risk_unknown_part() {
+        with_unreadable_board(|engine, _| {
+            let parts = engine.nothing_changed_parts(Some("review"), None);
+            let risk = parts.iter().find(|p| p.title == "Risk").expect("Risk part");
+            assert!(
+                risk.text
+                    .starts_with("unknown: the job diff could not be read"),
+                "{}",
+                risk.text
+            );
+        });
+    }
+
+    #[test]
+    fn a_failed_stage_move_removes_the_record_of_an_earlier_park() {
+        with_unreadable_board(|engine, job_dir| {
+            let first = ParkRecord::new(ParkKind::ChecksFailed, "first", "001", 1, 7, Vec::new());
+            write_record(job_dir, &first);
+            assert!(job_dir.join(factory_core::PARK_FILE).exists());
+            engine
+                .park_with(ParkKind::Other, "second".to_string(), Vec::new())
+                .expect_err("the park fails");
+            assert!(!job_dir.join(factory_core::PARK_FILE).exists());
+        });
     }
 
     #[test]

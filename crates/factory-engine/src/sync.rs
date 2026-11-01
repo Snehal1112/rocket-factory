@@ -83,10 +83,16 @@ pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>
         Decision::FixRound => Ok(SyncOutcome::Parked("sync review asked for changes".into())),
         Decision::NeedsHuman { kind, reason: why } => {
             let text = format!("after sync: {why}");
-            if *kind == ParkKind::RiskyDiff {
-                driver.park_after_sync(id, &text)?;
+            if *kind != ParkKind::RiskyDiff {
+                return Ok(SyncOutcome::Parked(text));
             }
-            Ok(SyncOutcome::Parked(text))
+            let parked = driver.park_after_sync(id, &text);
+            if let Err(err) = &parked {
+                tracing::error!(event = "park.error", msg = %format!("park after sync failed for job {id}: {err}"));
+            }
+            Ok(SyncOutcome::Parked(crate::park::sync_park_text(
+                parked, &text,
+            )))
         }
     }
 }
