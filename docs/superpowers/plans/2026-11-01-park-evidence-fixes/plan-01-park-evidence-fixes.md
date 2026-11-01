@@ -137,3 +137,5 @@ Approach: replace the one expression, keep the surrounding branch as it is.
 
 Run: `cargo test -j4 -p factory-engine`, then the fmt and clippy commands.
 Expected: all pass, no warnings.
+
+Next plan: none
