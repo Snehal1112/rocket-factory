@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::{commit_file, committing_fixture, scripted_auto, Effect, Fixture};
+use common::{commit_file, committing_fixture, scripted, scripted_auto, Effect, Fixture};
 use factory_core::{AgentFile, Stage};
 use factory_engine::{EngineError, StageOutcome};
 use git2::{Repository, StatusOptions};
@@ -417,4 +417,150 @@ fn agent_files_are_not_written_into_a_folder_that_is_not_a_git_checkout() {
         !wt.join(".claude").exists(),
         "nothing is created in the folder"
     );
+}
+
+/// The agent file list of a full factory: five agents with marker-less text.
+fn five_files() -> Vec<AgentFile> {
+    [
+        "builder",
+        "code-reviewer",
+        "committer",
+        "kb-refresher",
+        "spec-reviewer",
+    ]
+    .iter()
+    .map(|n| AgentFile {
+        name: format!("factory-{n}.md"),
+        content: format!("---\nname: factory-{n}\ndescription: d {n}\n---\nRESOLVED {n}\n"),
+    })
+    .collect()
+}
+
+/// The parsed `--agents` file a recorded spec points at.
+fn agents_of(spec: &factory_agent::AgentSpec) -> serde_json::Value {
+    let path = spec.agents_file.as_ref().expect("agents_file");
+    let text = std::fs::read_to_string(path).expect("read agents.json");
+    serde_json::from_str(&text).expect("agents.json is JSON")
+}
+
+fn prompt_of(json: &serde_json::Value, name: &str) -> String {
+    json[name]["prompt"]
+        .as_str()
+        .expect("prompt is a string")
+        .to_string()
+}
+
+fn delete_builder_file() -> Effect {
+    Box::new(|spec| {
+        std::fs::remove_file(spec.cwd.join(BUILDER)).expect("delete");
+        std::fs::write(spec.cwd.join("a.txt"), "a\n").expect("write");
+        "done".to_string()
+    })
+}
+
+#[test]
+fn a_tracked_agent_text_wins_in_the_agents_file() {
+    let fx = committing_fixture();
+    commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
+    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    fx.engine(&runner)
+        .with_agent_files(five_files())
+        .build_stage()
+        .expect("build");
+    let json = agents_of(&runner.last_spec_for("builder").expect("builder"));
+    assert!(prompt_of(&json, "factory-builder").contains("TRACKED-TEXT"));
+    assert!(prompt_of(&json, "factory-committer").contains("RESOLVED committer"));
+    assert_eq!(json.as_object().expect("object").len(), 5);
+}
+
+#[test]
+fn a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents() {
+    let fx = committing_fixture();
+    commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
+    let runner = scripted_auto(vec![delete_builder_file()]);
+    fx.engine(&runner)
+        .with_agent_files(five_files())
+        .build_stage()
+        .expect("build");
+    fx.engine(&runner)
+        .with_agent_files(five_files())
+        .checks_stage()
+        .expect("checks");
+    let reviewer = scripted(vec![Box::new(|_| "ok\nVERDICT: APPROVE".to_string())]);
+    fx.engine(&reviewer)
+        .with_agent_files(five_files())
+        .review_stage()
+        .expect("review");
+    let specs = [
+        runner.last_spec_for("committer").expect("committer"),
+        reviewer.last_spec_for("reviewer").expect("reviewer"),
+    ];
+    for spec in specs {
+        let json = agents_of(&spec);
+        assert!(
+            prompt_of(&json, "factory-builder").contains("TRACKED-TEXT"),
+            "{json}"
+        );
+        for name in [
+            "code-reviewer",
+            "committer",
+            "kb-refresher",
+            "spec-reviewer",
+        ] {
+            let key = format!("factory-{name}");
+            assert_eq!(prompt_of(&json, &key), format!("RESOLVED {name}\n"));
+        }
+    }
+}
+
+#[test]
+fn the_rules_marker_is_read_from_the_effective_text() {
+    let fx = committing_fixture();
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    commit_file(&fx.main, BUILDER, "<!-- factory-rules: 1 -->\nTRACKED\n");
+    let runner = scripted_auto(vec![delete_builder_file(), write_effect("b.txt")]);
+    let e = fx.engine(&runner).with_agent_files(five_files());
+    e.build_stage().expect("first");
+    e.build_stage().expect("second");
+    assert!(!worktree(&fx).join(BUILDER).exists());
+    let prompt = runner.last_spec_for("builder").expect("builder").prompt;
+    assert!(prompt.contains("Do only Task 2"), "{prompt}");
+    assert!(
+        !prompt.contains("Status: DONE"),
+        "short form expected: {prompt}"
+    );
+}
+
+#[test]
+fn a_codex_run_sends_no_agents_file() {
+    let mut fx = committing_fixture();
+    fx.config.agent_cli = Some("codex".to_string());
+    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    fx.engine(&runner)
+        .with_agent_files(five_files())
+        .build_stage()
+        .expect("build");
+    let spec = runner.last_spec_for("builder").expect("builder");
+    assert_eq!(spec.agents_file, None);
+    assert!(!fx.job_dir.join("agents.json").exists());
+}
+
+#[test]
+fn an_unreadable_tracked_agent_file_stops_the_run() {
+    let fx = committing_fixture();
+    std::fs::create_dir_all(fx.main.join(".claude/agents")).expect("mkdir");
+    std::os::unix::fs::symlink("/etc/hostname", fx.main.join(BUILDER)).expect("symlink");
+    let repo = Repository::open(&fx.main).expect("open");
+    let mut index = repo.index().expect("index");
+    index.add_path(std::path::Path::new(BUILDER)).expect("add");
+    index.write().expect("write index");
+    common::commit_index(&fx.main, "track a symlink");
+    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let err = fx
+        .engine(&runner)
+        .with_agent_files(five_files())
+        .build_stage()
+        .expect_err("unreadable file");
+    assert!(err.to_string().contains("factory-builder.md"), "{err}");
+    assert!(runner.last_spec_for("builder").is_none());
 }

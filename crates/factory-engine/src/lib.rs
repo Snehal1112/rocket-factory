@@ -1,5 +1,6 @@
 //! The factory run loop stages: build, checks, review and decide.
 
+mod agents_file;
 mod build;
 mod carry;
 mod checks_stage;
