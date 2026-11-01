@@ -83,21 +83,24 @@ fn assert_no_harness_word(name: &str, text: &str) {
 
 #[test]
 fn agent_files_name_no_harness_tool() {
-    let agents = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.claude/agents");
+    let presets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../factory-core/presets");
     let mut seen = 0;
-    for entry in std::fs::read_dir(&agents).expect("read agents folder") {
-        let path = entry.expect("dir entry").path();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        if name.starts_with("factory-") && name.ends_with(".md") {
-            let text = std::fs::read_to_string(&path).expect("read agent file");
-            assert_no_harness_word(&path.display().to_string(), &text);
-            seen += 1;
+    for preset in factory_core::preset::PRESET_NAMES {
+        let agents = presets.join(preset).join("agents");
+        for entry in std::fs::read_dir(&agents).expect("read agents folder") {
+            let path = entry.expect("dir entry").path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if name.starts_with("factory-") && name.ends_with(".md") {
+                let text = std::fs::read_to_string(&path).expect("read agent file");
+                assert_no_harness_word(&path.display().to_string(), &text);
+                seen += 1;
+            }
         }
     }
-    assert!(seen > 0, "no agent files found");
+    assert_eq!(seen, 25, "five agent files in each of five presets");
     for preset in factory_core::preset::PRESET_NAMES {
         let preset = factory_core::preset::embedded(preset).expect("embedded preset");
         for (file, text) in preset.agents {

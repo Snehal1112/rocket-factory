@@ -2,19 +2,26 @@
 //! They read the repo files and pin the rules the driver relies on.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), String>;
 
-/// Walks up from the crate until a folder with `.claude/agents` is found.
+const PRESETS: [&str; 5] = ["rust", "go", "ruby", "csharp", "node"];
+
+/// The repo-relative path of one agent file of a preset.
+fn preset_agent(preset: &str, name: &str) -> String {
+    format!("crates/factory-core/presets/{preset}/agents/{name}")
+}
+
+/// Walks up from the crate until a folder with `crates/factory-core/presets` is found.
 fn repo_root() -> Result<PathBuf, String> {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
-        if dir.join(".claude").join("agents").is_dir() {
+        if dir.join("crates/factory-core/presets").is_dir() {
             return Ok(dir);
         }
         if !dir.pop() {
-            return Err("repo root with .claude/agents not found".to_string());
+            return Err("repo root with crates/factory-core/presets not found".to_string());
         }
     }
 }
@@ -90,12 +97,13 @@ fn check_description(fm: &[(String, String)], label: &str) -> TestResult {
     Ok(())
 }
 
-#[test]
-fn only_the_known_factory_agents_remain() -> TestResult {
-    let dir = repo_root()?.join(".claude").join("agents");
-    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+/// The sorted names of the files that start with `factory-` in a folder. A missing folder is empty.
+fn factory_file_names(dir: &Path) -> Result<Vec<String>, String> {
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
     let mut names: Vec<String> = Vec::new();
-    for entry in entries {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
         let name = entry
             .map_err(|e| e.to_string())?
             .file_name()
@@ -106,6 +114,11 @@ fn only_the_known_factory_agents_remain() -> TestResult {
         }
     }
     names.sort();
+    Ok(names)
+}
+
+#[test]
+fn every_preset_ships_the_five_factory_agents() -> TestResult {
     let want = vec![
         "factory-builder.md".to_string(),
         "factory-code-reviewer.md".to_string(),
@@ -113,16 +126,36 @@ fn only_the_known_factory_agents_remain() -> TestResult {
         "factory-kb-refresher.md".to_string(),
         "factory-spec-reviewer.md".to_string(),
     ];
-    if names == want {
+    for preset in PRESETS {
+        let dir = repo_root()?
+            .join("crates/factory-core/presets")
+            .join(preset)
+            .join("agents");
+        let names = factory_file_names(&dir)?;
+        if names != want {
+            return Err(format!(
+                "preset {preset} factory agents are {names:?}, want {want:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn no_factory_agent_file_is_tracked_in_the_repo() -> TestResult {
+    let names = factory_file_names(&repo_root()?.join(".claude/agents"))?;
+    if names.is_empty() {
         Ok(())
     } else {
-        Err(format!("factory agents are {names:?}, want {want:?}"))
+        Err(format!(
+            ".claude/agents must hold no factory agent file, found {names:?}"
+        ))
     }
 }
 
 #[test]
 fn builder_frontmatter_is_headless() -> TestResult {
-    let text = read(".claude/agents/factory-builder.md")?;
+    let text = read(&preset_agent("rust", "factory-builder.md"))?;
     let fm = frontmatter(&text)?;
     if fm_get(&fm, "name") != Some("factory-builder") {
         return Err("builder name is wrong".to_string());
@@ -138,7 +171,7 @@ fn builder_frontmatter_is_headless() -> TestResult {
 
 #[test]
 fn builder_body_pins_the_rules() -> TestResult {
-    let text = read(".claude/agents/factory-builder.md")?;
+    let text = read(&preset_agent("rust", "factory-builder.md"))?;
     require_all(
         &text,
         "builder",
@@ -165,18 +198,11 @@ fn builder_body_pins_the_rules() -> TestResult {
             "Never write the ledger",
             "board",
             "job directory",
-            "Do not re-read `CLAUDE.md`",
-            "crate `CLAUDE.md`",
             "BLOCKED:",
             "clippy",
             "release build",
             "-j4",
             "CARGO_TARGET_DIR",
-            "shadcn",
-            "lucide-react",
-            "SingleLineEditor",
-            "Monaco",
-            "Zustand",
             "unwrap",
         ],
     )?;
@@ -202,7 +228,7 @@ fn builder_body_pins_the_rules() -> TestResult {
 
 #[test]
 fn reviewer_frontmatter_is_read_only() -> TestResult {
-    let text = read(".claude/agents/factory-code-reviewer.md")?;
+    let text = read(&preset_agent("rust", "factory-code-reviewer.md"))?;
     let fm = frontmatter(&text)?;
     if fm_get(&fm, "name") != Some("factory-code-reviewer") {
         return Err("reviewer name is wrong".to_string());
@@ -221,13 +247,7 @@ fn reviewer_frontmatter_is_read_only() -> TestResult {
 
 #[test]
 fn spec_reviewer_is_read_only_and_pins_its_rules() -> TestResult {
-    let mut paths = vec![".claude/agents/factory-spec-reviewer.md".to_string()];
-    for preset in ["rust", "ruby", "node", "csharp", "go"] {
-        paths.push(format!(
-            "crates/factory-core/presets/{preset}/agents/factory-spec-reviewer.md"
-        ));
-    }
-    for path in &paths {
+    for path in &PRESETS.map(|preset| preset_agent(preset, "factory-spec-reviewer.md")) {
         let text = read(path)?;
         let fm = frontmatter(&text)?;
         if fm_get(&fm, "name") != Some("factory-spec-reviewer") {
@@ -259,22 +279,16 @@ fn spec_reviewer_is_read_only_and_pins_its_rules() -> TestResult {
 
 #[test]
 fn reviewer_body_pins_the_rules() -> TestResult {
-    let text = read(".claude/agents/factory-code-reviewer.md")?;
+    let text = read(&preset_agent("rust", "factory-code-reviewer.md"))?;
     require_all(
         &text,
         "reviewer",
         &[
             "correctness",
-            "DDD placement",
             "serde",
             "error handling",
             "persistence",
             "tests",
-            "shadcn",
-            "lucide",
-            "SingleLineEditor",
-            "Monaco",
-            "Zustand",
             "unwrap",
             "git CLI",
             "1500 lines per call",
@@ -282,8 +296,6 @@ fn reviewer_body_pins_the_rules() -> TestResult {
             "at most 60 lines",
             "[blocker]",
             "[minor]",
-            "Do not re-read `CLAUDE.md`",
-            "crate `CLAUDE.md`",
         ],
     )?;
     if !has_line(&text, "VERDICT: APPROVE") || !has_line(&text, "VERDICT: CHANGES") {
@@ -296,7 +308,7 @@ fn reviewer_body_pins_the_rules() -> TestResult {
 
 #[test]
 fn committer_frontmatter_is_headless() -> TestResult {
-    let text = read(".claude/agents/factory-committer.md")?;
+    let text = read(&preset_agent("rust", "factory-committer.md"))?;
     let fm = frontmatter(&text)?;
     if fm_get(&fm, "name") != Some("factory-committer") {
         return Err("committer name is wrong".to_string());
@@ -312,7 +324,7 @@ fn committer_frontmatter_is_headless() -> TestResult {
 
 #[test]
 fn committer_body_pins_the_rules() -> TestResult {
-    let text = read(".claude/agents/factory-committer.md")?;
+    let text = read(&preset_agent("rust", "factory-committer.md"))?;
     require_all(
         &text,
         "committer",
@@ -339,7 +351,7 @@ fn committer_body_pins_the_rules() -> TestResult {
 
 #[test]
 fn kb_refresher_frontmatter_is_headless() -> TestResult {
-    let text = read(".claude/agents/factory-kb-refresher.md")?;
+    let text = read(&preset_agent("rust", "factory-kb-refresher.md"))?;
     let fm = frontmatter(&text)?;
     if fm_get(&fm, "name") != Some("factory-kb-refresher") {
         return Err("kb refresher name is wrong".to_string());
@@ -355,7 +367,7 @@ fn kb_refresher_frontmatter_is_headless() -> TestResult {
 
 #[test]
 fn kb_refresher_body_pins_the_rules() -> TestResult {
-    let text = read(".claude/agents/factory-kb-refresher.md")?;
+    let text = read(&preset_agent("rust", "factory-kb-refresher.md"))?;
     require_all(
         &text,
         "kb refresher",
@@ -760,10 +772,6 @@ fn readme_documents_the_rules_marker() -> TestResult {
 fn agent_max_turns_match_the_driver_constants() -> TestResult {
     let files = [
         (
-            ".claude/agents/factory-builder.md",
-            factory_engine::BUILDER_MAX_TURNS,
-        ),
-        (
             "crates/factory-core/presets/rust/agents/factory-builder.md",
             factory_engine::BUILDER_MAX_TURNS,
         ),
@@ -782,10 +790,6 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
         (
             "crates/factory-core/presets/node/agents/factory-builder.md",
             factory_engine::BUILDER_MAX_TURNS,
-        ),
-        (
-            ".claude/agents/factory-code-reviewer.md",
-            factory_engine::REVIEWER_MAX_TURNS,
         ),
         (
             "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
@@ -823,9 +827,8 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
     Ok(())
 }
 
-/// Every reviewer agent file: the repo copy and the five presets.
-const REVIEWER_FILES: [&str; 6] = [
-    ".claude/agents/factory-code-reviewer.md",
+/// Every reviewer agent file of the five presets.
+const REVIEWER_FILES: [&str; 5] = [
     "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
     "crates/factory-core/presets/go/agents/factory-code-reviewer.md",
     "crates/factory-core/presets/ruby/agents/factory-code-reviewer.md",
@@ -968,14 +971,7 @@ const NOT_CONTROLLER: &str =
 
 #[test]
 fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> TestResult {
-    for path in [
-        ".claude/agents/factory-builder.md",
-        PRESET_BUILDERS[0],
-        PRESET_BUILDERS[1],
-        PRESET_BUILDERS[2],
-        PRESET_BUILDERS[3],
-        PRESET_BUILDERS[4],
-    ] {
+    for path in PRESET_BUILDERS {
         require_all(
             &read(path)?,
             path,
@@ -996,10 +992,7 @@ fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> Test
 
 #[test]
 fn builder_files_carry_the_quality_bar() -> TestResult {
-    for path in [".claude/agents/factory-builder.md"]
-        .into_iter()
-        .chain(PRESET_BUILDERS)
-    {
+    for path in PRESET_BUILDERS {
         require_all(
             &read(path)?,
             path,
@@ -1034,7 +1027,6 @@ fn reviewer_files_check_edge_cases_reuse_and_efficiency() -> TestResult {
     Ok(())
 }
 
-// The `.claude/agents` copies are marked by the maintainer, so they are not listed here.
 const MARKED: [&str; 10] = [
     "crates/factory-core/presets/rust/agents/factory-builder.md",
     "crates/factory-core/presets/rust/agents/factory-code-reviewer.md",
@@ -1090,12 +1082,12 @@ fn docs_describe_the_builder_carry() -> TestResult {
 
 #[test]
 fn the_committer_and_kb_files_have_no_rules_marker() -> TestResult {
-    for path in [
-        ".claude/agents/factory-committer.md",
-        ".claude/agents/factory-kb-refresher.md",
-    ] {
-        if read(path)?.contains("factory-rules") {
-            return Err(format!("{path} must not carry a rules marker"));
+    for preset in PRESETS {
+        for name in ["factory-committer.md", "factory-kb-refresher.md"] {
+            let path = preset_agent(preset, name);
+            if read(&path)?.contains("factory-rules") {
+                return Err(format!("{path} must not carry a rules marker"));
+            }
         }
     }
     Ok(())
@@ -1103,14 +1095,7 @@ fn the_committer_and_kb_files_have_no_rules_marker() -> TestResult {
 
 #[test]
 fn builder_files_carry_the_rules_digest() -> TestResult {
-    for path in [
-        ".claude/agents/factory-builder.md",
-        PRESET_BUILDERS[0],
-        PRESET_BUILDERS[1],
-        PRESET_BUILDERS[2],
-        PRESET_BUILDERS[3],
-        PRESET_BUILDERS[4],
-    ] {
+    for path in PRESET_BUILDERS {
         require_all(
             &read(path)?,
             path,

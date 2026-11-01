@@ -38,7 +38,7 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 - `tick.rs` and `runloop.rs` drive one job through the stages. `decide.rs` holds the merge/fix/needs-human choice, `tasks.rs` the per-task builder loop, `series.rs` and `specs.rs` the multi-plan series.
 - Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`dashboard/`, separate workspace), so add fields as optional. The dashboard has a `--home` mode that holds the API token server-side (`dashboard/README.md`); keep the token out of every reply.
 - The repo-level config is `.claude/factory/config.toml`. A missing or broken config must make every diff risky, so never default it to permissive.
-- `factory-cli/tests/agent_lint.rs` lints `.claude/agents/factory-*.md`. Run it after editing an agent file.
+- `factory-cli/tests/agent_lint.rs` lints the preset agent files in `crates/factory-core/presets/<preset>/agents/`. Run it after editing an agent file.
 
 ## Ticket hygiene
 
@@ -55,4 +55,4 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 ## Carried over from Rocket
 
-These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `agents/factory-*.md` and `factory/config.toml` become presets (plan 3), the Rocket copy `commands/factory.md` was removed, so the only command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7), and `factory-cli/tests/agent_lint.rs` pins its text. The prose docs `software-factory.md` and `getting-started.md` live in `docs/reference/` and `docs/guides/`.
+These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `factory/config.toml` becomes a preset (plan 3), the Rocket copy `commands/factory.md` was removed, so the only command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7), and `factory-cli/tests/agent_lint.rs` pins its text. The prose docs `software-factory.md` and `getting-started.md` live in `docs/reference/` and `docs/guides/`.
