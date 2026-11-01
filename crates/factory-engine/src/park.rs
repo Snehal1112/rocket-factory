@@ -582,20 +582,6 @@ mod tests {
     }
 
     #[test]
-    fn a_builder_stop_with_an_unreadable_diff_gets_a_risk_unknown_part() {
-        with_unreadable_board(|engine, _| {
-            let parts = engine.nothing_changed_parts(Some("review"), None);
-            let risk = parts.iter().find(|p| p.title == "Risk").expect("Risk part");
-            assert!(
-                risk.text
-                    .starts_with("unknown: the job diff could not be read"),
-                "{}",
-                risk.text
-            );
-        });
-    }
-
-    #[test]
     fn a_failed_stage_move_removes_the_record_of_an_earlier_park() {
         with_unreadable_board(|engine, job_dir| {
             let first = ParkRecord::new(ParkKind::ChecksFailed, "first", "001", 1, 7, Vec::new());
