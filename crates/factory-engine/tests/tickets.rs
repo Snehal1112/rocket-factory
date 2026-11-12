@@ -406,3 +406,293 @@ fn a_rerun_after_the_merge_hook_creates_no_second_ticket() {
     assert_eq!(s.comments.len(), 1);
     assert_eq!(s.closes, vec![76]);
 }
+
+fn marker_path(fx: &MergeFixture) -> std::path::PathBuf {
+    fx.driver
+        .job_dir(&fx.driver.job(&fx.id).expect("job"))
+        .join("tickets.json")
+}
+
+fn seed_marker(fx: &MergeFixture, json: &str) {
+    std::fs::write(marker_path(fx), json).expect("marker");
+}
+
+fn marker_json(fx: &MergeFixture) -> serde_json::Value {
+    let text = std::fs::read_to_string(marker_path(fx)).expect("marker");
+    serde_json::from_str(&text).expect("marker json")
+}
+
+/// The strings of a marker list, or the `key` field of each entry.
+fn titles(list: &serde_json::Value, key: Option<&str>) -> Vec<String> {
+    list.as_array()
+        .expect("array")
+        .iter()
+        .map(|v| match key {
+            Some(k) => v[k].as_str().expect("title").to_string(),
+            None => v.as_str().expect("title").to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn a_pending_entry_adopts_the_existing_issue() {
+    let t = tracker().with_found("Shared name helpers", 210);
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    seed_marker(&fx, r#"{"created":[],"pending":["Shared name helpers"]}"#);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(!report.failed, "{report:?}");
+    assert!(
+        report
+            .lines
+            .iter()
+            .any(|l| l == "adopted #210: Shared name helpers"),
+        "{report:?}"
+    );
+    assert_eq!(t.count("create Shared name helpers"), 0);
+    assert_eq!(t.count("create Merge QueryParam and Header"), 1);
+}
+
+#[test]
+fn a_pending_entry_with_no_match_creates_once() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    seed_marker(&fx, r#"{"created":[],"pending":["Shared name helpers"]}"#);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(!report.failed, "{report:?}");
+    assert_eq!(t.count("find_created Shared name helpers"), 1);
+    assert_eq!(t.count("create Shared name helpers"), 1);
+    let m = marker_json(&fx);
+    assert!(titles(&m["created"], Some("title")).contains(&"Shared name helpers".to_string()));
+    assert!(titles(&m["pending"], None).is_empty(), "{m}");
+}
+
+#[test]
+fn a_failed_find_stops_without_creating() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    seed_marker(&fx, r#"{"created":[],"pending":["Shared name helpers"]}"#);
+    t.fail_on("find_created");
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.failed, "{report:?}");
+    assert_eq!(t.count("create"), 0);
+    let m = marker_json(&fx);
+    assert_eq!(titles(&m["pending"], None), vec!["Shared name helpers"]);
+}
+
+#[test]
+fn a_failed_create_leaves_a_pending_entry() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    t.fail_on("create");
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.failed, "{report:?}");
+    let m = marker_json(&fx);
+    assert_eq!(titles(&m["pending"], None), vec!["Shared name helpers"]);
+}
+
+#[test]
+fn a_marker_save_failure_reports_the_created_number() {
+    // The job folder is known only after the fixture exists, so the hook reads its path from a cell.
+    let cell = std::sync::Arc::new(std::sync::Mutex::new(std::path::PathBuf::new()));
+    let hook_cell = cell.clone();
+    let t = tracker().with_on_create(move || {
+        let p = hook_cell.lock().expect("lock").clone();
+        std::fs::remove_file(&p).expect("remove marker");
+        std::fs::create_dir(&p).expect("block marker path");
+    });
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    *cell.lock().expect("lock") = marker_path(&fx);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.failed, "{report:?}");
+    assert!(
+        report
+            .lines
+            .iter()
+            .any(|l| l.starts_with("failed: created #") && l.contains("could not record it")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn an_old_marker_without_pending_is_honoured() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    seed_marker(
+        &fx,
+        r#"{"created":[{"title":"Shared name helpers","number":205}],"commented":[],"closed":[]}"#,
+    );
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(!report.failed, "{report:?}");
+    assert_eq!(t.count("create Shared name helpers"), 0);
+}
+
+#[test]
+fn a_marker_with_a_bad_pending_value_loads_as_empty() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    seed_marker(&fx, r#"{"created":[],"pending":"nope"}"#);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(!report.failed, "{report:?}");
+    assert_eq!(t.count("create"), 2);
+    assert_eq!(t.count("find_created"), 0);
+}
+
+#[test]
+fn a_dry_run_with_a_pending_entry_makes_no_find_call() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    let seed = r#"{"created":[],"pending":["Shared name helpers"]}"#;
+    seed_marker(&fx, seed);
+    let report = tickets_step(&fx.driver, &fx.id, true).expect("step");
+    assert!(
+        report
+            .lines
+            .iter()
+            .any(|l| l == "would look for an existing issue, then create: Shared name helpers"),
+        "{report:?}"
+    );
+    assert_eq!(t.count("find_created"), 0);
+    assert_eq!(
+        std::fs::read_to_string(marker_path(&fx)).expect("marker"),
+        seed
+    );
+}
+
+#[test]
+fn skips_a_shorthand_ref_to_another_repository() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    set_feature(&fx, "dedup cleanups other/repo#5", None);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.skipped, "{report:?}");
+    assert!(
+        report.lines.join(" ").contains("belongs to other/repo"),
+        "{report:?}"
+    );
+    for call in t.calls() {
+        assert!(
+            !call.starts_with("create")
+                && !call.starts_with("comment")
+                && !call.starts_with("close"),
+            "write call {call}"
+        );
+    }
+}
+
+#[test]
+fn a_mixed_feature_skips_and_closes_nothing() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    set_feature(&fx, "cleanups #7 and other/repo#5", None);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.skipped, "{report:?}");
+    assert!(t.state.lock().expect("lock").closes.is_empty());
+}
+
+/// An approved job whose driver has a lease owner.
+fn owned(owner: &str) -> MergeFixture {
+    let mut fx = common::approved_job();
+    let driver = fx.driver;
+    fx.driver = driver.with_lease_owner(owner);
+    fx
+}
+
+#[test]
+fn hold_job_refuses_another_owner_and_releases_on_drop() {
+    let fx = owned("owner-a");
+    {
+        let _guard = fx.driver.hold_job(&fx.id).expect("hold");
+        let lease = fx
+            .driver
+            .job(&fx.id)
+            .expect("job")
+            .lease
+            .expect("lease held");
+        assert_eq!(lease.owner, "owner-a");
+        let err = factory_engine::acquire_lease(
+            fx.driver.store(),
+            &fx.id,
+            "owner-b",
+            600.0,
+            factory_engine::now_secs(),
+        )
+        .expect_err("held");
+        assert!(err.to_string().contains("owner-a"), "{err}");
+    }
+    assert!(fx.driver.job(&fx.id).expect("job").lease.is_none());
+}
+
+#[test]
+fn hold_job_takes_no_project_lease() {
+    let fx = owned("owner-a");
+    let _guard = fx.driver.hold_job(&fx.id).expect("hold");
+    let state = factory_core::Layout::in_repo(&fx.main).state_dir;
+    assert!(matches!(
+        factory_engine::project_lease_status(&state, factory_engine::now_secs()),
+        factory_engine::ProjectLeaseStatus::Free
+    ));
+}
+
+#[test]
+fn hold_job_refusal_leaves_the_other_lease_intact() {
+    let fx = owned("owner-a");
+    factory_engine::acquire_lease(
+        fx.driver.store(),
+        &fx.id,
+        "owner-b",
+        600.0,
+        factory_engine::now_secs(),
+    )
+    .expect("b holds");
+    fx.driver.hold_job(&fx.id).expect_err("refused");
+    let lease = fx
+        .driver
+        .job(&fx.id)
+        .expect("job")
+        .lease
+        .expect("still held");
+    assert_eq!(lease.owner, "owner-b");
+}
+
+#[test]
+fn hold_job_without_a_lease_owner_does_nothing() {
+    let fx = common::approved_job();
+    let _guard = fx.driver.hold_job(&fx.id).expect("hold");
+    assert!(fx.driver.job(&fx.id).expect("job").lease.is_none());
+}
+
+#[test]
+fn an_over_long_body_is_cut_and_the_parent_closes() {
+    let t = tracker();
+    let spec = format!(
+        "## Goal\nsomething with enough words to pass the check here\n\n## Follow-ups\n\n- {}\n\n## Acceptance criteria\n- a\n",
+        "x".repeat(70_000)
+    );
+    let fx = merged(Some(&spec), &t);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(!report.failed, "{report:?}");
+    let s = t.state.lock().expect("lock");
+    assert_eq!(s.created.len(), 1);
+    assert!(s.created[0].1.chars().count() <= 60_000);
+    assert!(s.created[0]
+        .1
+        .contains("This text was cut to fit GitHub's limit."));
+    assert_eq!(s.closes, vec![76]);
+}
+
+#[test]
+fn two_follow_ups_with_the_same_title_file_two_tickets() {
+    let t = tracker();
+    let spec = "## Goal\nsomething with enough words to pass the check here\n\n## Follow-ups\n\n- Same name. First detail.\n- Same name. Second detail.\n\n## Acceptance criteria\n- a\n";
+    let fx = merged(Some(spec), &t);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(!report.failed, "{report:?}");
+    assert_eq!(t.count("create Same name (2)"), 1);
+    assert_eq!(t.count("create Same name"), 2);
+    let s = t.state.lock().expect("lock");
+    assert!(
+        s.comments[0].1.contains("#201") && s.comments[0].1.contains("#202"),
+        "{}",
+        s.comments[0].1
+    );
+}

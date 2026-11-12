@@ -687,6 +687,7 @@ pub struct FakeState {
     pub closes: Vec<u32>,
     pub fail: HashSet<String>,
     pub found: HashMap<String, u32>,
+    pub on_create: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// A tracker that records its calls. Clones share one state, so a test keeps a handle after the driver owns the box.
@@ -720,6 +721,11 @@ impl FakeTracker {
             .expect("lock")
             .found
             .insert(title.to_string(), number);
+        self
+    }
+    /// Runs `hook` just before a successful `create` returns.
+    pub fn with_on_create(self, hook: impl Fn() + Send + Sync + 'static) -> FakeTracker {
+        self.state.lock().expect("lock").on_create = Some(Arc::new(hook));
         self
     }
     pub fn fail_on(&self, method: &str) {
@@ -779,6 +785,11 @@ impl factory_engine::Tracker for FakeTracker {
         let number = s.next;
         s.created
             .push((title.to_string(), body.to_string(), labels.to_vec()));
+        let hook = s.on_create.clone();
+        drop(s);
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(number)
     }
     fn find_created(&self, title: &str, _footer: &str) -> Result<Option<u32>, String> {

@@ -38,6 +38,8 @@ impl TicketsReport {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Marker {
     created: Vec<(String, u32)>,
+    /// Titles whose create was started and not yet recorded.
+    pending: Vec<String>,
     commented: Vec<u32>,
     closed: Vec<u32>,
 }
@@ -78,8 +80,17 @@ impl Marker {
                     .collect()
             })
             .unwrap_or_default();
+        let pending = v["pending"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok(Marker {
             created,
+            pending,
             commented: numbers("commented"),
             closed: numbers("closed"),
         })
@@ -91,11 +102,32 @@ impl Marker {
             .iter()
             .map(|(t, n)| json!({ "title": t, "number": n }))
             .collect();
-        let v = json!({ "created": created, "commented": self.commented, "closed": self.closed });
+        let v = json!({
+            "created": created,
+            "pending": self.pending,
+            "commented": self.commented,
+            "closed": self.closed,
+        });
         let text = serde_json::to_string_pretty(&v).map_err(|e| EngineError::Msg(e.to_string()))?;
         write_atomic(path, text.as_bytes())?;
         Ok(())
     }
+}
+
+/// The most chars GitHub takes in an issue body, with some room to spare.
+const MAX_BODY_CHARS: usize = 60_000;
+
+const CUT_LINE: &str = "\n\nThis text was cut to fit GitHub's limit.";
+
+/// Joins the body and the footer text, cutting the body on a char boundary when the total is too long.
+pub(crate) fn fit_body(item_body: &str, footer_text: &str) -> String {
+    let footer_chars = footer_text.chars().count();
+    if item_body.chars().count() + footer_chars <= MAX_BODY_CHARS {
+        return format!("{item_body}{footer_text}");
+    }
+    let keep = MAX_BODY_CHARS.saturating_sub(footer_chars + CUT_LINE.chars().count());
+    let cut: String = item_body.chars().take(keep).collect();
+    format!("{cut}{CUT_LINE}{footer_text}")
 }
 
 fn list(numbers: &[u32]) -> String {
@@ -175,29 +207,70 @@ pub fn tickets_step(
         }
     }
 
+    let footer = format!("Filed by factory job {} ({})", job.id, job.slug);
+    let footer_text = format!("\n\n{footer} from the follow-ups of {}.", list(&parents));
     for item in &items {
         if marker.created.iter().any(|(title, _)| *title == item.title) {
             continue;
         }
+        let was_pending = marker.pending.contains(&item.title);
         if dry_run {
-            report.lines.push(format!(
-                "would create: {} [{}]",
-                item.title,
-                labels.join(", ")
-            ));
+            if was_pending {
+                report.lines.push(format!(
+                    "would look for an existing issue, then create: {}",
+                    item.title
+                ));
+            } else {
+                report.lines.push(format!(
+                    "would create: {} [{}]",
+                    item.title,
+                    labels.join(", ")
+                ));
+            }
             continue;
         }
-        let body = format!(
-            "{}\n\nFiled by factory job {} ({}) from the follow-ups of {}.",
-            item.body,
-            job.id,
-            job.slug,
-            list(&parents)
-        );
+        if was_pending {
+            match tracker.find_created(&item.title, &footer) {
+                Ok(Some(number)) => {
+                    marker.pending.retain(|t| *t != item.title);
+                    marker.created.push((item.title.clone(), number));
+                    if let Err(e) = marker.save(&marker_path) {
+                        report.fail(format!(
+                            "adopted #{number} `{}` but could not record it: {e}",
+                            item.title
+                        ));
+                        return Ok(finish(driver, &job, dry_run, report));
+                    }
+                    report
+                        .lines
+                        .push(format!("adopted #{number}: {}", item.title));
+                    continue;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    report.fail(format!("find `{}`: {e}", item.title));
+                    return Ok(finish(driver, &job, dry_run, report));
+                }
+            }
+        } else {
+            marker.pending.push(item.title.clone());
+            if let Err(e) = marker.save(&marker_path) {
+                report.fail(format!("record pending `{}`: {e}", item.title));
+                return Ok(finish(driver, &job, dry_run, report));
+            }
+        }
+        let body = fit_body(&item.body, &footer_text);
         match tracker.create(&item.title, &body, &labels) {
             Ok(number) => {
+                marker.pending.retain(|t| *t != item.title);
                 marker.created.push((item.title.clone(), number));
-                marker.save(&marker_path)?;
+                if let Err(e) = marker.save(&marker_path) {
+                    report.fail(format!(
+                        "created #{number} `{}` but could not record it: {e}",
+                        item.title
+                    ));
+                    return Ok(finish(driver, &job, dry_run, report));
+                }
                 report
                     .lines
                     .push(format!("created #{number}: {}", item.title));
@@ -328,4 +401,36 @@ pub(crate) fn notify_failure(driver: &Driver, id: &str, text: &str) {
         last_message: Some(format!("tickets step: {text}")),
         tokens: 0,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_body;
+
+    const FOOT: &str = "\n\nFiled by factory job 001 (s) from the follow-ups of #1.";
+
+    #[test]
+    fn fit_body_keeps_a_body_at_the_limit() {
+        let body = "a".repeat(60_000 - FOOT.chars().count());
+        let out = fit_body(&body, FOOT);
+        assert_eq!(out.chars().count(), 60_000);
+        assert!(!out.contains("cut to fit"));
+    }
+
+    #[test]
+    fn fit_body_cuts_one_char_over_the_limit() {
+        let body = "a".repeat(60_000 - FOOT.chars().count() + 1);
+        let out = fit_body(&body, FOOT);
+        assert!(out.chars().count() <= 60_000, "{}", out.chars().count());
+        assert!(out.contains("This text was cut to fit GitHub's limit."));
+        assert!(out.ends_with(FOOT));
+    }
+
+    #[test]
+    fn fit_body_cuts_on_a_char_boundary() {
+        let body = "é".repeat(70_000);
+        let out = fit_body(&body, FOOT);
+        assert!(out.chars().count() <= 60_000);
+        assert!(out.ends_with(FOOT));
+    }
 }

@@ -159,6 +159,31 @@ impl Drop for ProjectGuard<'_> {
     }
 }
 
+/// Holds the job lease of one job. Dropping it drops that lease and leaves the project lease alone.
+#[must_use = "the job lease is released when the guard is dropped"]
+pub struct JobGuard<'a> {
+    held: Option<(&'a Driver, String)>,
+}
+
+impl std::fmt::Debug for JobGuard<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobGuard")
+            .field("job", &self.held.as_ref().map(|(_, id)| id))
+            .finish()
+    }
+}
+
+impl Drop for JobGuard<'_> {
+    fn drop(&mut self) {
+        if let Some((driver, id)) = &self.held {
+            if let Some(owner) = &driver.lease_owner {
+                // A failed release is not fatal, because the lease expires by itself.
+                let _ = crate::release_lease(&driver.store, id, owner, crate::now_secs());
+            }
+        }
+    }
+}
+
 /// How long a lease lasts without a renewal.
 pub const LEASE_TTL_SECS: f64 = 1800.0;
 
@@ -374,6 +399,18 @@ impl Driver {
             }
         }
         Ok(ProjectGuard { driver: Some(self) })
+    }
+
+    /// Takes the job lease for `id` and keeps it until the guard is dropped. It takes no project lease.
+    /// Without a lease owner it takes nothing and returns a guard that does nothing.
+    pub fn hold_job(&self, id: &str) -> Result<JobGuard<'_>, EngineError> {
+        let Some(owner) = &self.lease_owner else {
+            return Ok(JobGuard { held: None });
+        };
+        crate::acquire_lease(&self.store, id, owner, self.lease_ttl, crate::now_secs())?;
+        Ok(JobGuard {
+            held: Some((self, id.to_string())),
+        })
     }
 
     fn start_heartbeat(&self, owner: &str) -> Result<(), EngineError> {
