@@ -163,7 +163,7 @@ Built-in values when the lists are empty (`factory-core/src/gate.rs`, `risk.rs`)
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `kb_path` | string | unset | The KB folder, absolute or starting with `~/`. Unset turns the KB off. When set, builder and reviewer prompts get a KB line and the folder is added as readable, and a refresh runs after each merge. The folder is not checked at load. Not blank when set. |
+| `kb_path` | string | unset | The KB folder, absolute or starting with `~/`. Unset turns the KB off. When set, builder and reviewer prompts get a KB line and the folder is added as readable, and a refresh runs after each merge. Not blank when set. A relative path, a `..` component and any character other than ASCII letters, digits and `/ . _ - ~` (so no spaces, commas, parentheses, backslashes or glob characters) fail the config load. A `~/` path needs `HOME` when the refresh runs, not at load. The folder is not checked at load. A symlinked folder is resolved to its real path, which must follow the same character rule, and the KB run's Edit and Write grants name that real path. |
 | `kb_budget_weighted` | integer | 150000 | Cap on one refresh run. Above 0. |
 | `kb_auto_commit` | bool | false | Parsed only. Nothing reads it, and the refresher is told not to commit. |
 

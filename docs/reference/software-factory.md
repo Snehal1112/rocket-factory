@@ -91,7 +91,7 @@ The agent files are the preset files in `crates/factory-core/presets/<preset>/ag
 
 ### Knowledge base (read side)
 
-- `kb_path` in `config.toml` is the Rocket KB folder, an absolute path or one that starts with `~/` (expanded with `HOME`). Unset turns the KB off. Builders and the reviewer get the folder as `--add-dir`, because it is outside the job worktree.
+- `kb_path` in `config.toml` is the Rocket KB folder, an absolute path or one that starts with `~/` (expanded with `HOME` when the refresh runs). A relative path, a `..` component and any character other than ASCII letters, digits and `/ . _ - ~` (so no spaces, commas, parentheses, backslashes or glob characters) fail the config load. A symlinked folder is resolved to its real path, which must follow the same rule. Unset turns the KB off. Builders and the reviewer get the folder as `--add-dir`, because it is outside the job worktree.
 - With it set, the builder (first, per-task, resume and fresh fix) and reviewer prompts get a line: read `README.md` in that folder first, then only the topic pages that apply, treat the KB as read-only, let the source and the spec win on a conflict, say in the reply when a page is stale, and skip it if the folder does not exist. The reviewer keeps `Read,Grep,Glob`. The committer prompt has no KB line.
 
 Whether headless agents can read the KB through `--add-dir` is not proven yet. The first real run verifies it.
