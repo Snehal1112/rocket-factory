@@ -180,6 +180,19 @@ fn tokens_for_one_job_still_errors_on_an_unreadable_usage_file() {
 }
 
 #[test]
+fn tokens_for_one_job_prints_the_skipped_line_count() {
+    let fx = Fixture::new();
+    new_job(&fx, "a");
+    let usage = job_folder(&fx, "001").join("usage.jsonl");
+    std::fs::write(&usage, USAGE).expect("write usage");
+    let clean = fx.run(&["tokens", "1"]).expect("tokens");
+    assert!(!clean.contains("lines skipped"), "{clean}");
+    std::fs::write(&usage, format!("garbage\n{USAGE}")).expect("write usage");
+    let out = fx.run(&["tokens", "1"]).expect("tokens");
+    assert!(out.contains("  1 lines skipped"), "{out}");
+}
+
+#[test]
 fn tokens_for_one_job_is_unchanged() {
     let fx = Fixture::new();
     new_job(&fx, "a");
