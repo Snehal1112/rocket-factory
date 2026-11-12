@@ -936,6 +936,9 @@ impl factory_engine::Tracker for CountCreates {
     fn create(&self, _: &str, _: &str, _: &[String]) -> Result<u32, String> {
         Ok(300 + self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
     }
+    fn find_created(&self, _: &str, _: &str) -> Result<Option<u32>, String> {
+        Ok(None)
+    }
     fn comment(&self, _: u32, _: &str) -> Result<(), String> {
         Ok(())
     }

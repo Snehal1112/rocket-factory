@@ -20,6 +20,9 @@ impl Tracker for NoCalls {
     fn create(&self, _: &str, _: &str, _: &[String]) -> Result<u32, String> {
         panic!("create was called")
     }
+    fn find_created(&self, _: &str, _: &str) -> Result<Option<u32>, String> {
+        panic!("find_created was called")
+    }
     fn comment(&self, _: u32, _: &str) -> Result<(), String> {
         panic!("comment was called")
     }
