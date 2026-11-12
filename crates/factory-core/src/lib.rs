@@ -52,8 +52,8 @@ pub use commitmsg::{
     MAX_SUBJECT_CHARS, MESSAGE_BEGIN, MESSAGE_END,
 };
 pub use config::{
-    builder_program_ok, is_env_assignment, CheckRule, Config, CostMarker, NEVER_ALLOWED_PROGRAMS,
-    READ_ONLY_GIT,
+    builder_program_ok, check_kb_path, is_env_assignment, resolve_kb_path, CheckRule, Config,
+    CostMarker, KbPathError, NEVER_ALLOWED_PROGRAMS, READ_ONLY_GIT,
 };
 pub use cost::{
     count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, GroupStats,
