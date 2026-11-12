@@ -52,13 +52,14 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
                 .stage_history
                 .iter()
                 .any(|e| e.stage == Stage::NeedsHuman),
+            skipped: usage.skipped,
         });
     }
     // The spec reviews belong to no job, so their log gets a record of its own. It is not merged,
     // so it never feeds the group figures.
     if let Ok(text) = std::fs::read_to_string(driver.layout().spec_review_usage_file()) {
         let usage = usage_summary(&text, SPEC_REVIEW_JOB);
-        if usage.runs > 0 {
+        if usage.runs > 0 || usage.skipped > 0 {
             out.push(JobCost {
                 id: SPEC_REVIEW_JOB.to_string(),
                 slug: SPEC_REVIEW_JOB.to_string(),
@@ -79,6 +80,7 @@ pub fn gather_costs(driver: &Driver) -> Result<Vec<JobCost>, EngineError> {
                 resumed_runs: usage.resumed_runs,
                 round: 0,
                 parked: false,
+                skipped: usage.skipped,
             });
         }
     }

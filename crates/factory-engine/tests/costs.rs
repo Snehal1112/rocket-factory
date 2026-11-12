@@ -113,6 +113,35 @@ fn a_merged_job_that_never_parked_has_parked_false() {
 }
 
 #[test]
+fn gather_costs_carries_the_skipped_count() {
+    let fx = common::SeriesFixture::new("x");
+    let usage = concat!(
+        "{\"job\":\"106\",\"role\":\"builder\",\"input\":100,\"usage_v\":2}\n",
+        "{\"job\":\"106\",\"input\":\"12\"}\n",
+    );
+    add_finished_job(&fx, "106", "# P\n", Some(usage));
+    let jobs = gather_costs(&fx.driver).expect("gather");
+    let j = jobs.iter().find(|j| j.id == "106").expect("job 106");
+    assert_eq!(j.skipped, 1);
+    assert_eq!(j.runs, 1);
+}
+
+#[test]
+fn gather_costs_builds_the_spec_review_record_for_skipped_lines_only() {
+    let fx = common::SeriesFixture::new("x");
+    let path = fx.driver.layout().spec_review_usage_file();
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+    std::fs::write(&path, "garbage\n").expect("usage");
+    let jobs = gather_costs(&fx.driver).expect("gather");
+    let r = jobs
+        .iter()
+        .find(|j| j.id == "spec-review")
+        .expect("spec-review record");
+    assert_eq!(r.skipped, 1);
+    assert_eq!(r.runs, 0);
+}
+
+#[test]
 fn the_spec_review_record_has_zero_round_and_is_not_parked() {
     let fx = common::SeriesFixture::new("x");
     let path = fx.driver.layout().spec_review_usage_file();
