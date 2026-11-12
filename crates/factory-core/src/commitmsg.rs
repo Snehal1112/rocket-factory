@@ -76,13 +76,34 @@ const GITHUB_PREFIX: &str = "https://github.com/";
 
 /// True for a GitHub owner or repository name: letters, digits, `-`, `_` and `.`.
 fn is_repo_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    !s.is_empty() && s.chars().all(is_repo_char)
+}
+
+/// True for a character that may be part of a GitHub owner or repository name.
+fn is_repo_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'
+}
+
+/// The issue number after the `#` at `hash`. N must be at least 1, fit `u32` and be followed by the
+/// end of the text or a character that is not alphanumeric or `_`.
+fn number_after_hash(chars: &[char], hash: usize) -> Option<u32> {
+    let start = hash + 1;
+    let len = chars[start..]
+        .iter()
+        .take_while(|d| d.is_ascii_digit())
+        .count();
+    if chars
+        .get(start + len)
+        .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+    {
+        return None;
+    }
+    let digits: String = chars[start..start + len].iter().collect();
+    digits.parse::<u32>().ok().filter(|n| *n >= 1)
 }
 
 /// The `#N` references. The `#` must start the text or follow a character that is not alphanumeric
-/// or `_`, and N must be at least 1 and fit `u32`.
+/// or `_`, and N must pass `number_after_hash`.
 fn hash_refs(text: &str) -> Vec<IssueRef> {
     let chars: Vec<char> = text.chars().collect();
     let mut found = Vec::new();
@@ -93,14 +114,47 @@ fn hash_refs(text: &str) -> Vec<IssueRef> {
         if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
             continue;
         }
-        let digits: String = chars[i + 1..]
+        if let Some(number) = number_after_hash(&chars, i) {
+            found.push(IssueRef { number, repo: None });
+        }
+    }
+    found
+}
+
+/// The `owner/repo#N` references. The char before the owner must be absent or neither a repository
+/// name char nor `/`.
+fn shorthand_refs(text: &str) -> Vec<IssueRef> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut found = Vec::new();
+    for (i, c) in chars.iter().enumerate() {
+        if *c != '#' {
+            continue;
+        }
+        let repo_start = chars[..i]
             .iter()
-            .take_while(|d| d.is_ascii_digit())
-            .collect();
-        if let Ok(number) = digits.parse::<u32>() {
-            if number >= 1 {
-                found.push(IssueRef { number, repo: None });
-            }
+            .rposition(|c| !is_repo_char(*c))
+            .map_or(0, |p| p + 1);
+        if repo_start == 0 || chars[repo_start - 1] != '/' {
+            continue;
+        }
+        let owner_end = repo_start - 1;
+        let owner_start = chars[..owner_end]
+            .iter()
+            .rposition(|c| !is_repo_char(*c))
+            .map_or(0, |p| p + 1);
+        if owner_start > 0 && chars[owner_start - 1] == '/' {
+            continue;
+        }
+        let owner: String = chars[owner_start..owner_end].iter().collect();
+        let repo: String = chars[repo_start..i].iter().collect();
+        if !is_repo_name(&owner) || !is_repo_name(&repo) {
+            continue;
+        }
+        if let Some(number) = number_after_hash(&chars, i) {
+            found.push(IssueRef {
+                number,
+                repo: Some(format!("{owner}/{repo}")),
+            });
         }
     }
     found
@@ -130,8 +184,8 @@ fn url_refs(text: &str) -> Vec<IssueRef> {
     found
 }
 
-/// Every issue reference in the text, `#N` and GitHub issue URLs, sorted and de-duplicated.
-pub fn parse_issue_refs(text: &str) -> Vec<IssueRef> {
+/// The `#N` and GitHub issue URL references, sorted and de-duplicated.
+fn plain_refs(text: &str) -> Vec<IssueRef> {
     let mut refs = hash_refs(text);
     refs.extend(url_refs(text));
     refs.sort();
@@ -139,12 +193,20 @@ pub fn parse_issue_refs(text: &str) -> Vec<IssueRef> {
     refs
 }
 
-/// Every issue number in the text, sorted and de-duplicated. `#N` and GitHub issue URLs both count.
+/// Every issue reference in the text, `#N`, GitHub issue URLs and `owner/repo#N`, sorted and
+/// de-duplicated.
+pub fn parse_issue_refs(text: &str) -> Vec<IssueRef> {
+    let mut refs = plain_refs(text);
+    refs.extend(shorthand_refs(text));
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+/// Every issue number in the text, sorted and de-duplicated. `#N` and GitHub issue URLs both count,
+/// `owner/repo#N` does not.
 pub fn parse_issues(text: &str) -> Vec<u32> {
-    let mut numbers: Vec<u32> = parse_issue_refs(text)
-        .into_iter()
-        .map(|r| r.number)
-        .collect();
+    let mut numbers: Vec<u32> = plain_refs(text).into_iter().map(|r| r.number).collect();
     numbers.sort_unstable();
     numbers.dedup();
     numbers
@@ -632,6 +694,68 @@ mod tests {
                 repo: Some("o/r".to_string())
             }]
         );
+    }
+
+    #[test]
+    fn hash_ref_needs_a_boundary_after_the_digits() {
+        assert!(parse_issue_refs("fix #1a2b3c now").is_empty());
+        assert!(parse_issue_refs("see #123abc").is_empty());
+        assert!(parse_issue_refs("see #12_x").is_empty());
+    }
+
+    #[test]
+    fn hash_ref_may_end_at_punctuation() {
+        for text in ["#12.", "(#12)", "#12,", "[#12]", "done #12", "#12"] {
+            let refs = parse_issue_refs(text);
+            assert_eq!(
+                refs,
+                vec![IssueRef {
+                    number: 12,
+                    repo: None
+                }],
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn hash_ref_alone_or_zero_is_not_a_ref() {
+        for text in ["#", "#0", "x #", "# 12"] {
+            assert!(parse_issue_refs(text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn owner_repo_shorthand_carries_the_repo() {
+        let refs = parse_issue_refs("fix other/repo#5 later");
+        assert_eq!(
+            refs,
+            vec![IssueRef {
+                number: 5,
+                repo: Some("other/repo".to_string())
+            }]
+        );
+        let refs = parse_issue_refs("Closes o/r#7.");
+        assert_eq!(
+            refs,
+            vec![IssueRef {
+                number: 7,
+                repo: Some("o/r".to_string())
+            }]
+        );
+    }
+
+    #[test]
+    fn shorthand_inside_a_longer_path_is_not_a_ref() {
+        assert!(parse_issue_refs("x.com/a/b#12").is_empty());
+        assert!(parse_issue_refs("/a/b#12").is_empty());
+    }
+
+    #[test]
+    fn parse_issues_ignores_a_shorthand_ref_to_another_repository() {
+        assert!(parse_issues("fix other/repo#5 later").is_empty());
+        assert_eq!(parse_issues("fix other/repo#5 and #7"), vec![7]);
+        assert_eq!(parse_issues("see https://github.com/o/r/issues/9"), vec![9]);
     }
 
     #[test]

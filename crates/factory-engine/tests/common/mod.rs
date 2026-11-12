@@ -686,6 +686,7 @@ pub struct FakeState {
     pub comments: Vec<(u32, String)>,
     pub closes: Vec<u32>,
     pub fail: HashSet<String>,
+    pub found: HashMap<String, u32>,
 }
 
 /// A tracker that records its calls. Clones share one state, so a test keeps a handle after the driver owns the box.
@@ -711,6 +712,14 @@ impl FakeTracker {
             .expect("lock")
             .labels
             .insert(issue, labels.iter().map(|s| s.to_string()).collect());
+        self
+    }
+    pub fn with_found(self, title: &str, number: u32) -> FakeTracker {
+        self.state
+            .lock()
+            .expect("lock")
+            .found
+            .insert(title.to_string(), number);
         self
     }
     pub fn fail_on(&self, method: &str) {
@@ -771,6 +780,13 @@ impl factory_engine::Tracker for FakeTracker {
         s.created
             .push((title.to_string(), body.to_string(), labels.to_vec()));
         Ok(number)
+    }
+    fn find_created(&self, title: &str, _footer: &str) -> Result<Option<u32>, String> {
+        Ok(self
+            .enter(format!("find_created {title}"), "find_created")?
+            .found
+            .get(title)
+            .copied())
     }
     fn comment(&self, issue: u32, body: &str) -> Result<(), String> {
         let mut s = self.enter(format!("comment {issue}"), "comment")?;
