@@ -287,7 +287,7 @@ impl Config {
     pub fn plugins_for(&self, role: &str) -> &[String] {
         match role {
             "builder" => &self.builder_plugins,
-            "reviewer" => &self.reviewer_plugins,
+            "reviewer" | "security-review" => &self.reviewer_plugins,
             "committer" | "message" => &self.commit_plugins,
             "kb" => &self.kb_plugins,
             _ => &[],

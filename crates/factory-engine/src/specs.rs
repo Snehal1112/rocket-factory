@@ -13,6 +13,7 @@ use crate::{Driver, Engine};
 const BUILDER_AGENT: &str = "factory-builder";
 /// The reviewer agent file the driver passes with `--agent`. It sets the read-only tools and the checks.
 const REVIEWER_AGENT: &str = "factory-code-reviewer";
+pub(crate) const SECURITY_AGENT: &str = "factory-security-reviewer";
 /// The agent file of the spec reviewer.
 pub(crate) const SPEC_REVIEWER_AGENT: &str = "factory-spec-reviewer";
 /// The turn cap of a builder run. The builder agent files carry the same number, and a test pins it.
@@ -558,6 +559,56 @@ impl Engine<'_> {
         extra: &ReviewerExtra,
         model: &str,
     ) -> AgentSpec {
+        self.review_spec(
+            "reviewer",
+            REVIEWER_AGENT,
+            cwd,
+            diff,
+            names,
+            round,
+            rules,
+            extra,
+            model,
+        )
+    }
+
+    /// The security reviewer: the same inputs as the code reviewer, its own agent, role and rules.
+    pub fn security_spec_with_model(
+        &self,
+        cwd: &Path,
+        diff: &Path,
+        names: &Path,
+        round: u32,
+        extra: &ReviewerExtra,
+        model: &str,
+    ) -> AgentSpec {
+        self.review_spec(
+            "security-review",
+            SECURITY_AGENT,
+            cwd,
+            diff,
+            names,
+            round,
+            &self.config.security_rules,
+            extra,
+            model,
+        )
+    }
+
+    /// One read-only review run of `agent` under `role`.
+    #[allow(clippy::too_many_arguments)]
+    fn review_spec(
+        &self,
+        role: &str,
+        agent: &str,
+        cwd: &Path,
+        diff: &Path,
+        names: &Path,
+        round: u32,
+        rules: &[String],
+        extra: &ReviewerExtra,
+        model: &str,
+    ) -> AgentSpec {
         let spec_line = self.spec_line();
         // A later round also gets the latest review's findings, so the reviewer can check they were fixed.
         let earlier = self
@@ -624,7 +675,7 @@ impl Engine<'_> {
         if extra.no_tests {
             context.push_str("No test was added in this job. Judge whether the new behavior is covered, and treat missing tests as a blocker.\n");
         }
-        let prompt = if self.slim_prompt(REVIEWER_AGENT) {
+        let prompt = if self.slim_prompt(agent) {
             // The agent file carries the paging, check, grading and verdict rules.
             format!(
                 "Review this round's diff for the job.\n\
@@ -660,8 +711,8 @@ impl Engine<'_> {
                 kb = self.kb_line(),
             )
         };
-        let mut spec = AgentSpec::new(&self.job_id, "reviewer", self.repo.workdir_in(cwd), &prompt);
-        spec.agent = Some(REVIEWER_AGENT.to_string());
+        let mut spec = AgentSpec::new(&self.job_id, role, self.repo.workdir_in(cwd), &prompt);
+        spec.agent = Some(agent.to_string());
         spec.max_turns = Some(REVIEWER_MAX_TURNS);
         spec.strict_mcp = true;
         // The reviewer has no Skill tool, so it needs no skill list.
