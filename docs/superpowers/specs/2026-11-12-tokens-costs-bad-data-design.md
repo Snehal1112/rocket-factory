@@ -44,7 +44,7 @@ tokens --cache   -> warnings first, then the report, with the skipped notes
 
 `pub struct Usage { pub records: Vec<UsageRecord>, pub skipped: u64, pub no_ts: u64 }` with `Default`. `load_usage` returns `Result<Usage, std::io::Error>`; a missing file gives `Usage::default()`.
 
-A line is skipped, and counted in `skipped`, when it is not valid JSON, is not a JSON object, or holds a known number field whose value is present, not null and not a non-negative integer. The known number fields are the ones `load_usage` reads as numbers today: `input`, `cache_creation`, `output`, `cache_read`, `usage_v`, `turns`, `round`, `start_ctx`, `ts`, `tasks_done`, `cache_creation_1h`, `secs`, `start_cc`, `start_cr`, `end_ctx`. An absent or null field stays 0 or `None` as today. A skipped line adds nothing to `records`. A line for another job is not counted at all. A line that is garbage cannot name its job, so it counts for the file being read.
+A line is skipped, and counted in `skipped`, when it is not valid JSON, is not a JSON object, or holds a known number field whose value is present, not null and not a non-negative integer. The checked fields are the ones `load_usage` reads with `unwrap_or(0)`: `input`, `cache_creation`, `output`, `cache_read`, `usage_v`, `turns`, `round`, `start_ctx`, `ts`. The optional fields `tasks_done`, `cache_creation_1h`, `secs`, `start_cc`, `start_cr` and `end_ctx` keep today's behaviour: a wrong type reads as `None` and the line is kept (pinned by `a_non_numeric_start_field_is_absent` and `a_non_numeric_end_ctx_is_absent`). An absent or null field stays 0 or `None` as today. A skipped line adds nothing to `records`. A line for another job is not counted at all. A line that is garbage cannot name its job, so it counts for the file being read.
 
 A record whose `ts` is absent or null is kept and counted in `no_ts`.
 
@@ -81,6 +81,7 @@ In `cache_tokens`, when `load_usage` fails with an error other than NotFound for
 |---|---|
 | `"input":"12"`, `"input":1.5e3`, `"input":-1` | Line skipped and counted |
 | `"input":null` or no `input` | 0, line kept |
+| `"end_ctx":"big"` or another wrong-type optional field | Field is `None`, line kept, not counted |
 | Line is `[]`, `3` or truncated JSON | Skipped and counted |
 | Row without `ts`, no `--days` | Kept, not shown |
 | Row without `ts`, `--days 7` | Not counted in the report, counted in the `no_ts` note |
@@ -132,4 +133,4 @@ In `cache_tokens`, when `load_usage` fails with an error other than NotFound for
 - What happens to a line with a wrong-type number field? Options: skip the whole line and count it, keep it with the field as 0 and count it, parse the value. Chosen: skip the whole line and count it. Decided by: user
 - Should `usage_summary` follow the new skip rule? Options: leave it and say so, share one parser, warn in costs only. Chosen: leave it and say so. Decided by: user
 - Where do the skipped and no-ts notes print, and in what words? Options: one combined line, two lines. Chosen: two lines, the second only with `--days`. Decided by: call
-- Does a wrong type in an optional number field (`secs`, `end_ctx` and the like) also skip the line? Options: yes, all known number fields; no, required fields only. Chosen: yes, all known number fields. Decided by: call
+- Does a wrong type in an optional number field (`secs`, `end_ctx` and the like) also skip the line? Options: skip only the count fields, skip on any number field. Chosen: skip only the count fields, so the optional fields keep the behaviour two existing tests pin. Decided by: user
