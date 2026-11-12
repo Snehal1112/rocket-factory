@@ -1,6 +1,8 @@
 //! Prepares an agent spec for a Codex run: the agent text and preface in front of the prompt,
 //! and the sandbox, network and writable roots chosen by role.
 
+use std::path::{Path, PathBuf};
+
 use factory_agent::AgentSpec;
 use factory_core::agents::strip_frontmatter;
 use factory_core::{codex_worktree_skills_dir, Config, TOOL_MAP_CODEX};
@@ -72,6 +74,11 @@ pub(crate) fn sandbox_for(role: &str) -> SandboxPlan {
     }
 }
 
+/// The real KB folder of a KB spec: the first extra folder, which `kb_spec` fills from the checked path.
+fn kb_folder(add_dirs: &[PathBuf]) -> Option<&Path> {
+    add_dirs.first().map(PathBuf::as_path)
+}
+
 impl Engine<'_> {
     /// Rewrites a spec for the Codex runner. A missing agent file is an error, and the caller fails the run.
     pub(crate) fn prepare_for_codex(&self, spec: &mut AgentSpec) -> Result<(), EngineError> {
@@ -107,7 +114,7 @@ impl Engine<'_> {
             spec.writable_roots.push(self.repo.common_git_dir());
         }
         if has_role(&spec.role, "kb") {
-            if let Some(kb_dir) = self.config.kb_dir() {
+            if let Some(kb_dir) = kb_folder(&spec.add_dirs).map(Path::to_path_buf) {
                 if self.config.kb_auto_commit {
                     if let Ok(kb_repo) = Repo::open(&kb_dir) {
                         spec.writable_roots.push(kb_repo.common_git_dir());
@@ -123,6 +130,13 @@ impl Engine<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kb_folder_is_the_first_add_dir_or_none() {
+        assert_eq!(kb_folder(&[]), None);
+        let dirs = [PathBuf::from("/a"), PathBuf::from("/b")];
+        assert_eq!(kb_folder(&dirs), Some(Path::new("/a")));
+    }
 
     #[test]
     fn agent_text_orders_preface_map_and_body() {
