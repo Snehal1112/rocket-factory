@@ -587,6 +587,8 @@ factory tokens --cache --days 7
 
 `weighted = input + cache_creation + output + cache_read / 10`.
 
+The totals come from the board and may differ by a few tokens from the per-role sum. A final `N lines skipped` line counts usage lines that could not be read. With `--cache`, an unreadable usage file is named in a `warning:` line and the report goes on with the other jobs.
+
 The line comparing against a "job 001 baseline" uses a fixed figure from another project. A beginner can ignore it.
 
 **`--cache`.** Useful for tuning cost. It shows per-role cache use and a list of resumed runs where the cache had expired. You can skip it at first.
@@ -597,7 +599,7 @@ The line comparing against a "job 001 baseline" uses a fixed figure from another
 factory costs
 ```
 
-No options. Prints the weighted-token cost of every job, then statistics per size group, and writes `costs.json` into the project state folder.
+No options. Prints the weighted-token cost of every job, then statistics per size group, and writes `costs.json` into the project state folder. If the board cannot be loaded the command fails and leaves the existing costs.json untouched.
 
 Columns of the job table: `JOB`, `STAGE`, `GROUP`, `TASKS`, `LINES`, `FILES`, `WEIGHTED`, `RAW`, `RUNS`.
 

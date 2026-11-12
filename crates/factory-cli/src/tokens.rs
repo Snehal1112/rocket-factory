@@ -96,6 +96,7 @@ pub struct Totals {
 pub struct TokenReport {
     pub by_role: BTreeMap<String, Totals>,
     pub total: Totals,
+    pub skipped: u64,
 }
 
 /// Weighted tokens, using the one weighting rule of factory-core.
@@ -114,12 +115,13 @@ pub fn aggregate(records: &[UsageRecord]) -> TokenReport {
     let mut report = TokenReport::default();
     for r in records {
         let role = report.by_role.entry(r.role.clone()).or_default();
-        role.raw += raw(r);
-        role.weighted += weighted(r);
-        role.runs += 1;
-        report.total.raw += raw(r);
-        report.total.weighted += weighted(r);
-        report.total.runs += 1;
+        let (raw, weighted) = (raw(r), weighted(r));
+        role.raw = role.raw.saturating_add(raw);
+        role.weighted = role.weighted.saturating_add(weighted);
+        role.runs = role.runs.saturating_add(1);
+        report.total.raw = report.total.raw.saturating_add(raw);
+        report.total.weighted = report.total.weighted.saturating_add(weighted);
+        report.total.runs = report.total.runs.saturating_add(1);
     }
     report
 }
@@ -141,6 +143,9 @@ pub fn render(job: &str, report: &TokenReport) -> String {
         "  {percent:.1}% of job 001 baseline weighted ({} weighted, {} raw, orchestrator {}%)\n",
         BASELINE.weighted, BASELINE.raw, BASELINE.orchestrator_percent
     ));
+    if report.skipped > 0 {
+        out.push_str(&format!("  {} lines skipped\n", report.skipped));
+    }
     out
 }
 
@@ -286,6 +291,8 @@ pub struct CacheReport {
     pub cold_jobs: Vec<JobCold>,
     pub fresh_runs: u64,
     pub fresh_covered: u64,
+    pub skipped: u64,
+    pub no_ts: u64,
 }
 
 /// Builds the cache report. Gaps use all rows of a job, `days` only limits what is counted.
@@ -388,6 +395,15 @@ pub fn render_cache(r: &CacheReport) -> String {
         .days
         .map_or("all time".to_string(), |d| format!("last {d} days"));
     let mut out = format!("cache report ({} runs, {span})\n", r.runs);
+    if r.skipped > 0 {
+        out.push_str(&format!("  {} lines skipped\n", r.skipped));
+    }
+    if r.days.is_some() && r.no_ts > 0 {
+        out.push_str(&format!(
+            "  {} rows without ts not counted by --days\n",
+            r.no_ts
+        ));
+    }
     if r.runs == 0 {
         out.push_str("no runs\n");
         return out;
@@ -523,23 +539,59 @@ fn render_cold(r: &CacheReport) -> String {
     out
 }
 
-/// Reads usage lines for one job. Unreadable lines are skipped, a missing file is empty.
-pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Vec<UsageRecord>, std::io::Error> {
+/// The rows of one job, with the count of lines that could not be read.
+#[derive(Debug, Default)]
+pub struct Usage {
+    pub records: Vec<UsageRecord>,
+    pub skipped: u64,
+    pub no_ts: u64,
+}
+
+/// The count fields. A present, non-null value that is not a non-negative integer skips the line.
+const COUNT_FIELDS: [&str; 9] = [
+    "input",
+    "cache_creation",
+    "output",
+    "cache_read",
+    "usage_v",
+    "turns",
+    "round",
+    "start_ctx",
+    "ts",
+];
+
+/// Reads usage lines for one job. A missing file is empty.
+/// Garbage and wrong-type lines are counted in `skipped`, lines of other jobs are ignored.
+pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Usage, std::io::Error> {
     let text = match std::fs::read_to_string(log) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Usage::default()),
         Err(e) => return Err(e),
     };
-    let mut out = Vec::new();
+    let mut out = Usage::default();
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
+        let v = match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) if v.is_object() => v,
+            _ => {
+                out.skipped += 1;
+                continue;
+            }
         };
         if v["job"] != job {
             continue;
         }
+        if COUNT_FIELDS
+            .iter()
+            .any(|k| !v[*k].is_null() && v[*k].as_u64().is_none())
+        {
+            out.skipped += 1;
+            continue;
+        }
+        if v["ts"].is_null() {
+            out.no_ts += 1;
+        }
         let n = |k: &str| v[k].as_u64().unwrap_or(0);
-        out.push(UsageRecord {
+        out.records.push(UsageRecord {
             job: job.to_string(),
             role: v["role"].as_str().unwrap_or("unknown").to_string(),
             provider: v["provider"]
@@ -744,7 +796,7 @@ mod tests {
                 "\"ts\":5,\"model\":\"sonnet\",\"turns\":9,\"resumed\":true,\"stop\":\"done\",\"round\":2,\"tasks_done\":1,\"start_ctx\":77,\"usage_v\":2}\n"
             ),
         )?;
-        let records = load_usage(&log, "001")?;
+        let records = load_usage(&log, "001")?.records;
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].usage_v, 0);
         assert_eq!(records[0].tasks_done, None);
@@ -766,7 +818,7 @@ mod tests {
             "{\"job\":\"001\",\"role\":\"builder\",\"start_cc\":300,\"start_cr\":50,\"usage_v\":3}\n",
         )
         .expect("write usage");
-        let records = load_usage(&path, "001").expect("load");
+        let records = load_usage(&path, "001").expect("load").records;
         assert_eq!(records[0].start_cc, Some(300));
         assert_eq!(records[0].start_cr, Some(50));
     }
@@ -780,7 +832,7 @@ mod tests {
             "{\"job\":\"001\",\"role\":\"builder\",\"usage_v\":2}\n",
         )
         .expect("write usage");
-        let records = load_usage(&path, "001").expect("load");
+        let records = load_usage(&path, "001").expect("load").records;
         assert_eq!(records[0].start_cc, None);
         assert_eq!(records[0].start_cr, None);
     }
@@ -794,7 +846,7 @@ mod tests {
             "{\"job\":\"001\",\"role\":\"builder\",\"start_cc\":\"many\",\"start_cr\":null}\n",
         )
         .expect("write usage");
-        let records = load_usage(&path, "001").expect("load");
+        let records = load_usage(&path, "001").expect("load").records;
         assert_eq!(records[0].start_cc, None);
         assert_eq!(records[0].start_cr, None);
     }
@@ -808,7 +860,7 @@ mod tests {
             "{\"job\":\"001\",\"role\":\"builder\",\"end_ctx\":31000,\"usage_v\":4}\n",
         )
         .expect("write usage");
-        let records = load_usage(&path, "001").expect("load");
+        let records = load_usage(&path, "001").expect("load").records;
         assert_eq!(records[0].end_ctx, Some(31000));
     }
 
@@ -821,7 +873,7 @@ mod tests {
             "{\"job\":\"001\",\"role\":\"builder\",\"usage_v\":3}\n",
         )
         .expect("write usage");
-        let records = load_usage(&path, "001").expect("load");
+        let records = load_usage(&path, "001").expect("load").records;
         assert_eq!(records[0].end_ctx, None);
     }
 
@@ -834,7 +886,7 @@ mod tests {
             "{\"job\":\"001\",\"role\":\"builder\",\"end_ctx\":\"big\"}\n",
         )
         .expect("write usage");
-        let records = load_usage(&path, "001").expect("load");
+        let records = load_usage(&path, "001").expect("load").records;
         assert_eq!(records[0].end_ctx, None);
     }
 
@@ -981,7 +1033,8 @@ mod tests {
                 "garbage line\n"
             ),
         )?;
-        let records = load_usage(&log, "001")?;
+        let usage = load_usage(&log, "001")?;
+        let records = usage.records;
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].cache_read, 40);
         Ok(())
@@ -990,8 +1043,87 @@ mod tests {
     #[test]
     fn load_of_a_missing_log_is_empty() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        assert!(load_usage(&dir.path().join("none.jsonl"), "001")?.is_empty());
+        let usage = load_usage(&dir.path().join("none.jsonl"), "001")?;
+        assert!(usage.records.is_empty());
+        assert_eq!((usage.skipped, usage.no_ts), (0, 0));
         Ok(())
+    }
+
+    fn load_text(text: &str, job: &str) -> Usage {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("usage.jsonl");
+        std::fs::write(&path, text).expect("write usage");
+        load_usage(&path, job).expect("load")
+    }
+
+    #[test]
+    fn load_usage_counts_garbage_and_wrong_type_lines_as_skipped() {
+        let usage = load_text(
+            concat!(
+                "{\"job\":\"001\",\"input\":1,\"ts\":5\n",
+                "[]\n",
+                "{\"job\":\"001\",\"input\":\"12\"}\n",
+                "{\"job\":\"001\",\"input\":1.5e3}\n",
+                "{\"job\":\"001\",\"input\":-1}\n",
+                "{\"job\":\"001\",\"input\":7,\"ts\":5}\n",
+                "{\"job\":\"001\",\"input\":null,\"ts\":5}\n"
+            ),
+            "001",
+        );
+        assert_eq!(usage.skipped, 5);
+        assert_eq!(usage.records.len(), 2);
+    }
+
+    #[test]
+    fn load_usage_does_not_count_other_jobs_lines() {
+        let usage = load_text("{\"job\":\"002\",\"input\":3,\"ts\":5}\n", "001");
+        assert_eq!(usage.skipped, 0);
+        assert!(usage.records.is_empty());
+    }
+
+    #[test]
+    fn load_usage_counts_rows_without_ts() {
+        let usage = load_text(
+            "{\"job\":\"001\",\"input\":1,\"ts\":5}\n{\"job\":\"001\",\"input\":2}\n",
+            "001",
+        );
+        assert_eq!(usage.no_ts, 1);
+        assert_eq!(usage.records.len(), 2);
+    }
+
+    #[test]
+    fn aggregate_saturates_instead_of_overflowing() {
+        let report = aggregate(&[
+            rec("builder", u64::MAX, 0, 0, 0),
+            rec("builder", u64::MAX, 0, 0, 0),
+        ]);
+        assert_eq!(report.total.raw, u64::MAX);
+        assert_eq!(report.total.weighted, u64::MAX);
+        assert_eq!(report.by_role["builder"].raw, u64::MAX);
+    }
+
+    #[test]
+    fn render_prints_the_skipped_line_count_only_when_above_zero() {
+        let mut report = TokenReport::default();
+        assert!(!render("001", &report).contains("lines skipped"));
+        report.skipped = 3;
+        assert!(render("001", &report).ends_with("  3 lines skipped\n"));
+    }
+
+    #[test]
+    fn render_cache_prints_skipped_and_no_ts_notes() {
+        let mut report = CacheReport::default();
+        assert!(!render_cache(&report).contains("lines skipped"));
+        report.skipped = 2;
+        assert!(render_cache(&report).contains("runs, all time)\n  2 lines skipped\n"));
+        report.no_ts = 4;
+        assert!(!render_cache(&report).contains("without ts"));
+        report.days = Some(7);
+        let out = render_cache(&report);
+        assert!(
+            out.contains("  2 lines skipped\n  4 rows without ts not counted by --days\nno runs"),
+            "{out}"
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1034,7 +1166,7 @@ mod tests {
             &log,
             "{\"job\":\"001\",\"role\":\"builder\",\"cache_creation_1h\":5,\"secs\":9}\n",
         )?;
-        let records = load_usage(&log, "001")?;
+        let records = load_usage(&log, "001")?.records;
         assert_eq!(records[0].cache_creation_1h, Some(5));
         assert_eq!(records[0].secs, Some(9));
         Ok(())
@@ -1046,7 +1178,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let log = dir.path().join("usage.jsonl");
         std::fs::write(&log, "{\"job\":\"001\",\"role\":\"builder\"}\n")?;
-        let records = load_usage(&log, "001")?;
+        let records = load_usage(&log, "001")?.records;
         assert_eq!(records[0].cache_creation_1h, None);
         assert_eq!(records[0].secs, None);
         Ok(())
@@ -1262,12 +1394,12 @@ mod tests {
     fn old_lines_without_provider_read_as_claude() {
         let (_d, path) = usage_file("{\"job\":\"001\",\"role\":\"builder\"}");
         assert_eq!(
-            load_usage(&path, "001").expect("load")[0].provider,
+            load_usage(&path, "001").expect("load").records[0].provider,
             "claude"
         );
         let (_d2, path2) = usage_file("{\"job\":\"001\",\"role\":\"builder\",\"provider\":5}");
         assert_eq!(
-            load_usage(&path2, "001").expect("load")[0].provider,
+            load_usage(&path2, "001").expect("load").records[0].provider,
             "claude"
         );
     }
@@ -1276,7 +1408,10 @@ mod tests {
     fn load_usage_reads_the_provider() {
         let (_d, path) =
             usage_file("{\"job\":\"001\",\"role\":\"builder\",\"provider\":\"codex\"}");
-        assert_eq!(load_usage(&path, "001").expect("load")[0].provider, "codex");
+        assert_eq!(
+            load_usage(&path, "001").expect("load").records[0].provider,
+            "codex"
+        );
     }
 
     #[test]

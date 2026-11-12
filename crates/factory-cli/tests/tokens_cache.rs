@@ -124,6 +124,62 @@ fn cache_report_writes_no_file() {
 }
 
 #[test]
+fn tokens_cache_reports_skipped_lines() {
+    let fx = Fixture::new();
+    new_job(&fx, "a");
+    new_job(&fx, "b");
+    std::fs::write(
+        job_folder(&fx, "001").join("usage.jsonl"),
+        format!("garbage\n{USAGE}"),
+    )
+    .expect("write usage");
+    let out = fx.run(&["tokens", "--cache"]).expect("cache report");
+    assert!(out.contains("1 lines skipped"), "{out}");
+    assert!(!out.contains("warning:"), "{out}");
+}
+
+#[test]
+fn tokens_cache_states_rows_without_ts_under_days() {
+    let fx = Fixture::new();
+    new_job(&fx, "a");
+    let line = concat!(
+        r#"{"job":"001","role":"builder","input":10,"cache_creation":1000,"output":50,"cache_read":9000,"usage_v":2,"resumed":false,"round":1}"#,
+        "\n",
+    );
+    std::fs::write(job_folder(&fx, "001").join("usage.jsonl"), line).expect("write usage");
+    let out = fx
+        .run(&["tokens", "--cache", "--days", "7"])
+        .expect("cache report");
+    assert!(
+        out.contains("1 rows without ts not counted by --days"),
+        "{out}"
+    );
+    let all = fx.run(&["tokens", "--cache"]).expect("cache report");
+    assert!(!all.contains("rows without ts"), "{all}");
+}
+
+#[test]
+fn tokens_cache_warns_and_continues_when_one_usage_file_is_not_utf8() {
+    let fx = Fixture::new();
+    new_job(&fx, "a");
+    new_job(&fx, "b");
+    std::fs::write(job_folder(&fx, "001").join("usage.jsonl"), [0xFF, 0xFE]).expect("write usage");
+    let good = USAGE.replace("\"job\":\"001\"", "\"job\":\"002\"");
+    std::fs::write(job_folder(&fx, "002").join("usage.jsonl"), good).expect("write usage");
+    let out = fx.run(&["tokens", "--cache"]).expect("cache report");
+    assert!(out.starts_with("warning: could not read"), "{out}");
+    assert!(out.contains("builder"), "{out}");
+}
+
+#[test]
+fn tokens_for_one_job_still_errors_on_an_unreadable_usage_file() {
+    let fx = Fixture::new();
+    new_job(&fx, "a");
+    std::fs::write(job_folder(&fx, "001").join("usage.jsonl"), [0xFF, 0xFE]).expect("write usage");
+    fx.run(&["tokens", "1"]).expect_err("unreadable file");
+}
+
+#[test]
 fn tokens_for_one_job_is_unchanged() {
     let fx = Fixture::new();
     new_job(&fx, "a");
