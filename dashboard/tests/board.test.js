@@ -59,6 +59,28 @@ test("reviewChip shows role and state as text and whitelists the class", () => {
   assert.doesNotMatch(odd, /<script>/);
 });
 
+test("approve command waits for security when it is present", () => {
+  const job = makeJob({ stage: "needs-human", reviews: { code: "pass", security: "pending" } });
+  assert.match(board.renderCard(job), /factory approve 001 --without-review/);
+});
+
+test("approve command ignores security when it is absent", () => {
+  const job = makeJob({ stage: "needs-human", reviews: { code: "pass" } });
+  const html = board.renderCard(job);
+  assert.match(html, /factory approve 001</);
+  assert.doesNotMatch(html, /--without-review/);
+});
+
+test("gate roles render as chips", () => {
+  const job = makeJob({ stage: "review", reviews: { code: "pass", format: "pass", lint: "changes" } });
+  const html = board.renderCard(job);
+  assert.match(html, />lint changes</);
+  const at = (text) => html.indexOf(text);
+  assert.ok(at(">format pass<") >= 0 && at(">format pass<") < at(">lint changes<"), html);
+  assert.ok(at(">lint changes<") < at(">code pass<"), html);
+  assert.match(board.reviewChip("lint", "changes"), />lint changes</);
+});
+
 test("agentLine shows the live tool for a running agent", () => {
   const html = board.agentLine({
     agent_type: "factory-builder",

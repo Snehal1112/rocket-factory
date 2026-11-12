@@ -776,6 +776,18 @@ fn readme_documents_the_rules_marker() -> TestResult {
 }
 
 #[test]
+fn docs_name_the_security_reviewer_agent() -> TestResult {
+    let text = read("docs/reference/software-factory.md")?;
+    assert!(text.contains("factory-security-reviewer"), "agents table");
+    assert!(
+        !text.contains("There are no spec-writer, security, ux, ui or approver agents."),
+        "old sentence"
+    );
+    assert!(text.contains("reviewers"), "settings");
+    Ok(())
+}
+
+#[test]
 fn agent_max_turns_match_the_driver_constants() -> TestResult {
     let files = [
         (

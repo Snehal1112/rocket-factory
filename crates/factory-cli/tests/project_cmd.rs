@@ -271,6 +271,35 @@ fn show_prints_the_plan_rules_block_after_the_agent_files_line() {
     assert!(out.contains("problems: none"), "{out}");
 }
 
+/// Shows a demo project with `reviewers` set and the security agent file removed from its preset.
+fn show_without_security_agent(reviewers: &str) -> String {
+    let e = env();
+    add_demo(&e);
+    set_plan_rules(&e, &format!("reviewers = {reviewers}\n"));
+    let agent = e
+        .home
+        .presets_dir()
+        .join("rust/agents/factory-security-reviewer.md");
+    std::fs::remove_file(&agent).expect("remove the security agent");
+    run(&e, &["show", "demo"]).expect("show")
+}
+
+#[test]
+fn project_show_reports_a_missing_security_agent() {
+    let out = show_without_security_agent("[\"code\", \"security\"]");
+    assert!(out.contains("problems:"), "{out}");
+    assert!(
+        out.contains("factory-security-reviewer.md was not found"),
+        "{out}"
+    );
+}
+
+#[test]
+fn project_show_ignores_security_when_it_is_not_enabled() {
+    let out = show_without_security_agent("[\"code\"]");
+    assert!(!out.contains("factory-security-reviewer.md"), "{out}");
+}
+
 #[test]
 fn show_prints_nothing_extra_without_plan_rules() {
     let e = env();

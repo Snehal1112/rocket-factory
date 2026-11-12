@@ -403,6 +403,19 @@ mod tests {
     }
 
     #[test]
+    fn costs_keep_the_security_review_role() {
+        let text = concat!(
+            "{\"job\":\"001\",\"role\":\"reviewer\",\"input\":10,\"cache_creation\":0,\"output\":0,\"cache_read\":0,\"usage_v\":2}\n",
+            "{\"job\":\"001\",\"role\":\"security-review\",\"input\":7,\"cache_creation\":0,\"output\":0,\"cache_read\":0,\"usage_v\":2}\n",
+        );
+        let s = usage_summary(text, "001");
+        assert_eq!(s.runs, 2);
+        assert_eq!(s.weighted, 17);
+        assert_eq!(s.roles.get("reviewer"), Some(&10));
+        assert_eq!(s.roles.get("security-review"), Some(&7));
+    }
+
+    #[test]
     fn usage_summary_sums_this_jobs_lines_and_weights_cache_reads() {
         let text = concat!(
             "{\"job\":\"001\",\"role\":\"builder\",\"input\":100,\"cache_creation\":200,\"output\":300,\"cache_read\":1000,\"usage_v\":2}\n",

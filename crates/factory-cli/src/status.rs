@@ -205,6 +205,21 @@ mod tests {
     }
 
     #[test]
+    fn status_lists_every_review_and_gate() {
+        let mut board = factory_core::Board::default();
+        let mut job = factory_core::Job::new("002", "d-002-x", "gates", "2026-10-13", "f", 0.0);
+        for role in ["security", "lint", "format", "code"] {
+            job.set_review(role, ReviewState::Pass);
+        }
+        board.jobs.push(job);
+        let out = render_status(&board, &factory_core::Config::default());
+        assert!(
+            out.contains("code:pass format:pass lint:pass security:pass"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn token_counts_are_short() {
         assert_eq!(human(850), "850");
         assert_eq!(human(12_300), "12.3K");

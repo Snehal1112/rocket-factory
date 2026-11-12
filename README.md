@@ -556,11 +556,11 @@ Errors show as a banner with the API's error code (`token_rejected` when factory
 ### Rust preset checks
 
 The rust preset has two check rules. `crates/*/**` runs `cargo check -j4 -p {crate}` and `cargo test -j4 -p {crate}`
-for each changed workspace member, then `cargo fmt -p {crate} -- --check` and
-`cargo clippy -j4 -p {crate} --all-targets -- -D warnings`, then `cargo test -j4 -p {dependents}` for
+for each changed workspace member, then `cargo fmt -p {crate} -- --check` (the `format` gate) and
+`cargo clippy -j4 -p {crate} --all-targets -- -D warnings` (the `lint` gate), then `cargo test -j4 -p {dependents}` for
 the crates that directly depend on it (limited by `dependents_cap`). A second rule covers a single-crate repo:
 `src/**`, `tests/**`, `benches/**`, `examples/**` and `build.rs` at the repo root run `cargo check -j4`,
-`cargo test -j4`, `cargo fmt -- --check` and `cargo clippy -j4 --all-targets -- -D warnings`. These paths are anchored
+`cargo test -j4`, `cargo fmt -- --check` (`format`) and `cargo clippy -j4 --all-targets -- -D warnings` (`lint`). These paths are anchored
 at the root, so a member's `crates/x/src/lib.rs` matches only the first rule. A virtual workspace (a root
 `Cargo.toml` without a `[package]`) relies on the `crates/*/**` rule, because a bare `cargo check -j4` there would
 check the whole workspace.
@@ -580,6 +580,13 @@ settings without review.
 The four prompt keys are `read_first` (files the builder reads first), `builder_rules`, `check_hints` and
 `reviewer_rules`.
 
+`reviewers` (default `["code"]`) lists the review roles. Allowed values are `code` and `security`, `code` is
+required and a value may not repeat. With `"security"` the `factory-security-reviewer` agent also reviews every
+round, after the code review, and a job merges only when both approve. `security_rules` (default empty) is
+joined into one line of the security prompt and enforces nothing. A `[[checks]]` rule may also hold `format` and
+`lint` command lists, planned after `commands`. Their results show as `format` and `lint` entries in
+`factory status`.
+
 `plan_rules` (optional, default empty) are rules for the plans the `/factory` command writes. The driver puts them in no
 prompt. `factory project show <name>` prints them in a `plan rules:` block and the command applies each line to every
 plan. A repo override cannot set them.
@@ -590,6 +597,8 @@ Agent files are merged by name from the preset `agents/` folder, the project `ag
 `.factory/agents/` folder on the base branch (later wins). On Claude the agents reach the CLI through
 `--agents <job folder>/agents.json`, so nothing is written into a worktree or the main checkout. Only names like
 `factory-<name>.md` are used, and the text of a `.claude/agents/<name>.md` tracked on the base branch still wins.
+When `reviewers` lists `security`, the merged set must hold `factory-security-reviewer.md`. If it does not,
+`factory project show` reports it under `problems:` and the job parks. Run `factory presets refresh` to restore it.
 
 ## Agent file rules marker
 

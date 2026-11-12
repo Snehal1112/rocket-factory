@@ -274,6 +274,14 @@ fn visible_spec_warning(paths: &Paths, job: &Job) -> Option<String> {
     (!remaining.is_empty()).then(|| remaining.join("; "))
 }
 
+/// True once a reviewer has a verdict or is running. The `format` and `lint` gate entries do not count.
+fn reviewed(job: &Job) -> bool {
+    job.reviews
+        .iter()
+        .filter(|(role, _)| !matches!(role.as_str(), "format" | "lint"))
+        .any(|(_, v)| matches!(v.as_str(), "pass" | "changes" | "running"))
+}
+
 pub fn build_state(
     board: &Board,
     registry: &Registry,
@@ -292,14 +300,7 @@ pub fn build_state(
             },
             agents: Vec::new(),
             seconds_in_stage: (now - job.stage_since).max(0.0),
-            plan: load_plan(
-                paths,
-                &job.dir,
-                &job.stage,
-                job.reviews
-                    .values()
-                    .any(|v| matches!(v.as_str(), "pass" | "changes" | "running")),
-            ),
+            plan: load_plan(paths, &job.dir, &job.stage, reviewed(job)),
             stage_durations: stage_durations(job, now),
             token_view: token_view(job),
             has_park: has_park(paths, job),
@@ -348,6 +349,16 @@ mod tests {
     use std::collections::BTreeMap;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn reviewed_ignores_gate_entries() {
+        let mut j = job("001", "needs-human", 0.0);
+        j.reviews.clear();
+        j.reviews.insert("lint".to_string(), "changes".to_string());
+        assert!(!reviewed(&j));
+        j.reviews.insert("code".to_string(), "pass".to_string());
+        assert!(reviewed(&j));
+    }
 
     fn job(id: &str, stage: &str, stage_since: f64) -> Job {
         let mut reviews = BTreeMap::new();

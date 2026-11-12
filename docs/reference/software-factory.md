@@ -23,6 +23,8 @@ factory run (no LLM tokens):
   otherwise                                      -> needs-human (factory approve | factory rework | factory cancel)
 ```
 
+With `reviewers = ["code", "security"]` the review step runs the roles one after the other, `code` then `security`, and both run every round, so one fix round gets both sets of findings. The security role is skipped only when the round changed at least one path, the diff is not risky and every changed path is under `docs/**`. The review file `review-code-r<N>.md` then holds one `## code review` and one `## security review` section, each with a `Role verdict:` line, and ends with one combined `VERDICT:` line (`APPROVE` only when every role approves). The raw replies are kept as `review-code-r<N>.raw.md` and `review-security-r<N>.raw.md`. With only `code`, the file is the code reply as before. The security run is recorded in `usage.jsonl` under the role `security-review`, so `factory tokens` and `factory costs` show it.
+
 ## Spec check
 
 `factory new` checks the spec and its plans before it creates anything. Two checks run, and a refusal creates no job, board entry or worktree.
@@ -59,8 +61,9 @@ The agent files are the preset files in `crates/factory-core/presets/<preset>/ag
 | `factory-builder` | Bash, Read, Edit, Write, Grep, Glob, Skill, Agent (`BUILDER_TOOLS`) | Runs headless in the worktree. Follows the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), one fresh builder per task. It is the implementer, not the controller: no implementer or reviewer subagents and no per-task review (the driver does the ledger, commits and final review), with a `Rules in short` digest of TDD, systematic debugging and verification. Never commits, the driver does (see Commits). At most 2 helper agents per task, only to read or search code. The reply starts with `Status: DONE`, `DONE_WITH_CONCERNS`, `BLOCKED` or `NEEDS_CONTEXT` (a first-line `BLOCKED: <reason>` is still accepted), then at most five concern lines, then `Ruling: <what> — <why> — <cost if wrong>` lines. BLOCKED and NEEDS_CONTEXT park the job as `builder-blocked`. |
 | `factory-committer` | all | Runs headless in the worktree and makes the commits through `dev-workflow-skills:1-git-commit` (see Commits). Also runs in message-only mode (role `message`, tools `Read,Skill`) to write merge and sync messages. |
 | `factory-code-reviewer` | Read, Grep, Glob | Loaded by the driver with `--agent`. The prompt names the round diff, the plan, the spec and, from round 2, the earlier findings and the builder's reply to them. It also carries the plan's Review Focus, the builder's rulings and concerns recorded while building, and the plan outline. One combined review: correctness, DDD placement, serde, error handling, persistence compatibility, tests, and the hard rules (shadcn, lucide, SingleLineEditor vs Monaco, Zustand selectors, no unwrap, no git CLI). At most 60 lines, findings tagged `[blocker]` or `[minor]`, last line `VERDICT: APPROVE` or `VERDICT: CHANGES`. |
+| `factory-security-reviewer` | Read, Grep, Glob | Runs only when `reviewers` lists `security` (default `["code"]`, which must always hold `code`). Gets the same diff, plan, spec and notes as the code reviewer, plus the `security_rules` line, and reviews for security problems only. Same reply format, findings tagged `[blocker]` or `[minor]`, last line `VERDICT: APPROVE` or `VERDICT: CHANGES`. A missing agent file parks the job and shows under `problems:` in `factory project show`. |
 
-There are no spec-writer, security, ux, ui or approver agents. Risky diffs go to the human.
+`factory-security-reviewer` is the only extra reviewer. There are no spec-writer, ux, ui or approver agents. Risky diffs go to the human.
 
 ## Commits
 
@@ -194,6 +197,8 @@ feature that starts or ends with that token and asks the user before accepting t
 ## Checks
 
 The builder runs only per-crate cargo commands (`cargo check -j4 -p <crate>`), never a bare `cargo check -j4`: in a fresh job worktree a workspace-wide check builds the whole app and V8, takes more than ten minutes and stalls the run (seen in job 012). Plans follow the same rule. The driver runs the checks itself, chosen from the changed paths by `config.toml`: `cargo check -j4`, targeted `cargo test -j4 -p <crate>`, `yarn tsc --noEmit`, `yarn check`, `yarn test --run --maxWorkers=50%` (half the workers, so the full suite does not time out under its own load), and the factory crate checks. A failure starts a fix round with the trimmed output: the builder resumes its session, or starts fresh when the round is escalated or the session is cold (see "Builder escalation and the fresh fix builder"). The reviewer never sees a red build. Results go to `checks.md`.
+
+A `[[checks]]` rule can also list `format` and `lint` commands, planned after `commands` with the same templating. After each checks run, the job gets a `format` and a `lint` entry in its reviews: `pass` when every command of that gate passed, else `changes`. A gate with no command has no entry, and a new round clears both. `factory status` shows them next to the reviewers, for example `code:pass format:pass lint:pass security:pass`. A failed gate command is a failed check as before.
 
 ### No-check and no-test gates
 
