@@ -332,18 +332,66 @@ fn codex_builder_runs_in_the_project_folder() {
 #[test]
 fn kb_runs_in_the_kb_folder_under_codex() {
     let fx = with_kb(codex(Fixture::new()));
-    let runner = scripted(vec![reply("No relevant changes")]);
-    fx.engine(&runner)
-        .with_agent_files(files())
-        .kb_refresh_step(None)
-        .expect("kb");
-    let spec = runner.last_spec_for("kb").expect("kb spec");
-    assert_eq!(spec.cwd, fx.config.kb_dir().expect("kb dir"));
+    let spec = run_kb(&fx);
+    let target = fx
+        .config
+        .kb_dir()
+        .expect("kb dir")
+        .canonicalize()
+        .expect("canonical");
+    assert_eq!(spec.cwd, target);
     assert!(spec
         .agent_prompt
         .expect("agent text")
         .contains("BODY kb-refresher"));
     assert!(spec.writable_roots.is_empty());
+}
+
+/// A KB fixture whose `kb_path` is a symlink to a git repo. Returns the fixture and the canonical target.
+fn symlinked_kb(auto_commit: bool) -> (Fixture, std::path::PathBuf) {
+    let mut fx = with_kb(codex(Fixture::new()));
+    let target = fx
+        .config
+        .kb_dir()
+        .expect("kb dir")
+        .canonicalize()
+        .expect("canonical");
+    git2::Repository::init(&target).expect("init kb repo");
+    let link = fx.tmp.path().join("kb-link");
+    std::os::unix::fs::symlink(&target, &link).expect("symlink");
+    fx.config.kb_path = Some(link.to_string_lossy().into_owned());
+    fx.config.kb_auto_commit = auto_commit;
+    (fx, target)
+}
+
+fn run_kb(fx: &Fixture) -> AgentSpec {
+    let runner = scripted(vec![reply("No relevant changes")]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .kb_refresh_step(None)
+        .expect("kb");
+    runner.last_spec_for("kb").expect("kb spec")
+}
+
+#[test]
+fn kb_under_codex_runs_in_the_target_of_a_symlinked_kb_path() {
+    let (fx, target) = symlinked_kb(false);
+    assert_eq!(run_kb(&fx).cwd, target);
+}
+
+#[test]
+fn kb_under_codex_gets_the_kb_git_dir_when_auto_commit_is_on() {
+    let (fx, target) = symlinked_kb(true);
+    let git_dir = factory_git::Repo::open(&target)
+        .expect("open")
+        .common_git_dir();
+    assert_eq!(run_kb(&fx).writable_roots, vec![git_dir]);
+}
+
+#[test]
+fn kb_under_codex_has_no_extra_root_without_auto_commit() {
+    let (fx, _target) = symlinked_kb(false);
+    assert!(run_kb(&fx).writable_roots.is_empty());
 }
 
 #[test]
