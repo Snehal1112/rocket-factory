@@ -154,6 +154,78 @@ fn probe_saves_the_report_under_probes_dir() {
 }
 
 #[test]
+fn probe_dedupes_repeated_roles() {
+    let fx = Fixture::new();
+    let text = probe(&scripted(&fx), &["--role", "kb", "--role", "kb", "--json"]).expect("passes");
+    let report: ProbeReport = serde_json::from_str(&text).expect("report");
+    assert_eq!(report.roles.len(), 1);
+}
+
+/// Every file under `dir`, recursively.
+fn files_under(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            out.extend(files_under(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
+#[test]
+fn probe_removes_the_scratch_agents_file() {
+    let fx = Fixture::new();
+    probe(&scripted(&fx), &["--role", "builder"]).expect("passes");
+    let work = Layout::in_repo(&fx.root).probes_dir().join("work");
+    let left: Vec<PathBuf> = files_under(&work)
+        .into_iter()
+        .filter(|p| p.file_name().is_some_and(|n| n == "agents.json"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn probe_runs_in_one_second_keep_both_reports() {
+    let fx = Fixture::new();
+    let ctx = scripted(&fx);
+    probe(&ctx, &["--role", "kb"]).expect("first run");
+    probe(&ctx, &["--role", "kb"]).expect("second run");
+    let dir = Layout::in_repo(&fx.root).probes_dir();
+    let saved: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("probes dir")
+        .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .collect();
+    assert_eq!(saved.len(), 2, "{saved:?}");
+    for file in saved {
+        let report: ProbeReport =
+            serde_json::from_str(&std::fs::read_to_string(&file).expect("read")).expect("parse");
+        assert!(report.transcript_dir.join("kb.txt").is_file());
+    }
+}
+
+#[test]
+fn probe_notes_a_delivery_codex_ignores() {
+    let fx = Fixture::new();
+    let note = "Note: --delivery has no effect with codex.";
+    let ctx = scripted(&fx);
+    let with = probe(
+        &ctx,
+        &["--harness", "codex", "--delivery", "append", "--role", "kb"],
+    )
+    .expect("passes");
+    assert!(with.contains(note), "{with}");
+    let without = probe(&ctx, &["--harness", "codex", "--role", "kb"]).expect("passes");
+    assert!(!without.contains("Note:"), "{without}");
+}
+
+#[test]
 fn harness_flag_overrides_the_project_agent_cli() {
     let fx = Fixture::new();
     let runner = Arc::new(FakeRunner::new(vec![AgentRun::done("MARKER: NONE")]));

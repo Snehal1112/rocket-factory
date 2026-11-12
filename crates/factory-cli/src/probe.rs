@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, CodexRunner, EventSink};
 use factory_core::{Channel, Harness, ProbeReport, ProbeRole};
-use factory_engine::{utc_stamp, Delivery};
+use factory_engine::{unique_stamp, Delivery};
 
 use crate::commands::{api_key_source, CliCtx, CliError};
 
@@ -50,12 +50,18 @@ pub fn run_probe_command(
     ctx.runnable()?;
     let d = ctx.driver()?;
     let harness = harness.unwrap_or_else(|| Harness::from_config(d.config()));
-    let roles = if roles.is_empty() {
-        ProbeRole::ALL.to_vec()
+    let wanted = if roles.is_empty() {
+        &ProbeRole::ALL
     } else {
-        roles.to_vec()
+        roles
     };
-    let stamp = utc_stamp();
+    let mut roles: Vec<ProbeRole> = Vec::new();
+    for &role in wanted {
+        if !roles.contains(&role) {
+            roles.push(role);
+        }
+    }
+    let stamp = unique_stamp(&d.layout().probes_dir(), harness);
     let (runner, version): (Arc<dyn AgentRunner>, String) = match &ctx.runner {
         Some(r) => (r.clone(), "unknown".to_string()),
         None => {
@@ -84,7 +90,11 @@ pub fn run_probe_command(
     let text = if json {
         serde_json::to_string_pretty(&report)?
     } else {
-        render_probe(&report)
+        let mut table = render_probe(&report);
+        if harness == Harness::Codex && delivery != Delivery::Agent {
+            table.push_str("Note: --delivery has no effect with codex.\n");
+        }
+        table
     };
     if report.ok() {
         Ok(text)
