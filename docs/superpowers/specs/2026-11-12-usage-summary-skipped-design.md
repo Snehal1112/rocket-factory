@@ -48,11 +48,11 @@ In `factory-core/src/cost.rs`: `pub const USAGE_COUNT_FIELDS: [&str; 9]` with th
 
 ### 3. `JobCost` and `gather_costs`
 
-`JobCost` gets `pub skipped: u32`, default 0, not serialised anywhere. `gather_costs` copies `usage.skipped` into it for each board job and for the spec-review record.
+`JobCost` gets `pub skipped: u32`, default 0, not serialised anywhere. `gather_costs` copies `usage.skipped` into it for each board job and for the spec-review record. The spec-review record is built when `usage.runs > 0 || usage.skipped > 0` (today only `runs > 0`, `engine/costs.rs:61`), so a log with only bad lines still carries its count.
 
 ### 4. `render_costs`
 
-When the sum of `skipped` over all records (the spec-review record included) is above zero, `render_costs` prints one line `N usage lines skipped` right after the per-job rows and before the blank line that precedes the group table. With no jobs the early `no jobs` return is unchanged and prints no skipped line. With a zero sum the output is unchanged.
+When the sum of `skipped` over all records (the spec-review record included) is above zero, `render_costs` prints one line `N usage lines skipped` right after the per-job rows and before the blank line that precedes the group table. The `SPEC REVIEWS` line is printed only when the spec-review record has `runs > 0`, so a record that exists only for its skipped count adds no such line. With no jobs the early `no jobs` return is unchanged and prints no skipped line. With a zero sum the output is unchanged.
 
 ## Error handling and edge cases
 
@@ -63,7 +63,8 @@ When the sum of `skipped` over all records (the spec-review record included) is 
 | `"input":null` or no `input` | Kept, field 0 |
 | Wrong-type optional field | Not read by `usage_summary`; line kept |
 | Bad line of another job | Not counted for this job |
-| Bad lines only in the spec-review log | Counted in the summary line |
+| Bad lines in the spec-review log, with good runs | Counted in the summary line |
+| Bad lines only in the spec-review log | Record is built, counted in the summary line, no `SPEC REVIEWS` line |
 | Missing usage file | `UsageSummary::default()`, no count |
 | Count near `u32::MAX` | Saturates |
 
@@ -71,7 +72,8 @@ When the sum of `skipped` over all records (the spec-review record included) is 
 
 - `crates/factory-core/src/cost.rs` unit tests: `has_bad_count_flags_wrong_type_count_fields` (`"12"`, `1.5e3`, `-1` true; `null`, absent, `5` false), `usage_summary_counts_and_drops_bad_lines` (a garbage line, a wrong-type line and one good line give `skipped == 2`, `runs == 1`), `usage_summary_does_not_count_other_jobs_bad_lines`.
 - `crates/factory-cli/src/costs.rs` unit tests: `render_costs_prints_the_skipped_line_only_when_above_zero`.
-- `crates/factory-engine/tests/costs.rs`: `gather_costs_carries_the_skipped_count` (a job whose `usage.jsonl` holds a bad line).
+- `crates/factory-engine/tests/costs.rs`: `gather_costs_carries_the_skipped_count` (a job whose `usage.jsonl` holds a bad line) and `gather_costs_builds_the_spec_review_record_for_skipped_lines_only` (a spec-review log with one bad line and no good line gives a record with `skipped == 1` and `runs == 0`).
+- `crates/factory-cli/src/costs.rs` unit test `render_costs_hides_the_spec_review_line_when_it_has_no_runs`.
 - Existing `usage_summary_sums_this_jobs_lines_and_weights_cache_reads` and the `tokens.rs` tests must keep passing.
 - Commands: `cargo test -j4 -p factory-core`, `-p factory-engine`, `-p factory-cli`, then `cargo clippy -j4 -p factory-core -p factory-engine -p factory-cli`.
 
@@ -93,6 +95,7 @@ When the sum of `skipped` over all records (the spec-review record included) is 
 
 - `factory costs` prints `N usage lines skipped` after the job rows when a usage file holds a non-JSON line or a line with a wrong-type count field.
 - `factory costs` output is unchanged when no line is skipped.
+- A spec-review log holding only bad lines is counted in the summary line and adds no `SPEC REVIEWS` line.
 - A wrong-type line adds no tokens, runs or turns to a job in `factory costs`, as in `factory tokens`.
 - `factory tokens` and `factory costs` use one rule function, `has_bad_count`.
 - `costs.json` is unchanged.
@@ -111,3 +114,4 @@ None.
 - How should the two parsers agree on the skip rule? Options: one shared rule function, copy the rule into `usage_summary`, one shared parser. Chosen: one shared rule function. Decided by: user
 - Where does `factory costs` show the count? Options: a summary line only when above zero, a marker on each job row, a summary line plus a `costs.json` field. Chosen: a summary line only when above zero. Decided by: user
 - Does the summary line count the spec-review log? Options: yes, no. Chosen: yes, so a bad line there is not hidden. Decided by: call
+- A spec-review log with only bad lines has no record today. Options: build the record on skipped lines and hide the empty review line, drop the case, build it and show a `0 runs` review line. Chosen: build the record and hide the empty review line. Decided by: user

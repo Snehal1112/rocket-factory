@@ -20,7 +20,7 @@
 
 1. A bad line of another job does not count for this job. Pinned by `usage_summary_does_not_count_other_jobs_bad_lines`.
 2. A wrong-type optional field such as `start_cc` does not skip a line in `usage_summary`. Pinned by `usage_summary_keeps_a_line_with_a_bad_optional_field`.
-3. Bad lines only in the spec-review log still show in the summary line. Pinned by `render_costs_counts_the_spec_review_record`.
+3. Bad lines only in the spec-review log still show in the summary line, with no `SPEC REVIEWS` line. Pinned by `gather_costs_builds_the_spec_review_record_for_skipped_lines_only` and `render_costs_hides_the_spec_review_line_when_it_has_no_runs`.
 4. `factory tokens` skips exactly the lines it skipped before the rule moved. The existing `load_usage_counts_garbage_and_wrong_type_lines_as_skipped` keeps passing.
 5. A project with no jobs still prints `no jobs` and no skipped line. Pinned by `render_costs_prints_the_skipped_line_only_when_above_zero`.
 
@@ -65,9 +65,9 @@
 - Produces: `gather_costs` sets `JobCost.skipped` for every board job and for the spec-review record.
 
 - [ ] **Step 1: Read `gather_costs` in `crates/factory-engine/src/costs.rs` and the fixtures of the existing tests in `crates/factory-engine/tests/costs.rs`.**
-- [ ] **Step 2: Write the failing test** `gather_costs_carries_the_skipped_count`: build a job as the existing tests there do, write a `usage.jsonl` with one good line and one `{"job":"<id>","input":"12"}` line, call `gather_costs`, assert the job's `skipped == 1` and `runs == 1`.
+- [ ] **Step 2: Write the failing tests.** `gather_costs_carries_the_skipped_count`: build a job as the existing tests there do, write a `usage.jsonl` with one good line and one `{"job":"<id>","input":"12"}` line, call `gather_costs`, assert the job's `skipped == 1` and `runs == 1`. `gather_costs_builds_the_spec_review_record_for_skipped_lines_only`: write the spec-review usage file (`layout().spec_review_usage_file()`) with only a garbage line, call `gather_costs`, assert a record with id `spec-review` exists with `skipped == 1` and `runs == 0`.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test costs gather_costs_carries`.** Expected: the assertion fails, `skipped` is 0 (the struct literal in `gather_costs` also needs the new field).
-- [ ] **Step 4: Implement.** Set `skipped: usage.skipped` in both `JobCost` literals in `gather_costs`, and add `skipped: 0` to any other full `JobCost` literal in `factory-engine`.
+- [ ] **Step 4: Implement.** Set `skipped: usage.skipped` in both `JobCost` literals in `gather_costs`, build the spec-review record when `usage.runs > 0 || usage.skipped > 0`, and add `skipped: 0` to any other full `JobCost` literal in `factory-engine`.
 - [ ] **Step 5: Run `cargo test -j4 -p factory-engine --test costs`.** Expected: all pass.
 
 ### Task 3: The summary line and the shared rule in tokens
@@ -83,9 +83,10 @@
 - [ ] **Step 1: Read `render_costs` in `crates/factory-cli/src/costs.rs` and its existing unit tests, and the `COUNT_FIELDS` use in `load_usage` in `crates/factory-cli/src/tokens.rs`.**
 - [ ] **Step 2: Write the failing tests.**
   - `render_costs_prints_the_skipped_line_only_when_above_zero`: build `JobCost` values as the existing tests do; with `skipped` 0 the output has no `skipped`; with one job at `skipped: 2` the output contains `2 usage lines skipped` after the job row and before the group table; with an empty job list the output is still `no jobs` text without it.
-  - `render_costs_counts_the_spec_review_record`: one real job with `skipped: 0` and a record with id `spec-review` and `skipped: 3`; the output contains `3 usage lines skipped`.
-- [ ] **Step 3: Run `cargo test -j4 -p factory-cli --lib costs`.** Expected: both fail, no `usage lines skipped` text.
-- [ ] **Step 4: Implement.** In `render_costs`, after the per-job rows and before the blank line, sum `skipped` over `all` (saturating) and push `N usage lines skipped\n` when the sum is above zero. Add `skipped: 0` to the full `JobCost` literals in this file's tests. In `tokens.rs`, delete `COUNT_FIELDS` and make `load_usage` call `factory_core::has_bad_count`.
+  - `render_costs_counts_the_spec_review_record`: one real job with `skipped: 0` and a record with id `spec-review`, `runs: 2` and `skipped: 3`; the output contains `3 usage lines skipped`.
+  - `render_costs_hides_the_spec_review_line_when_it_has_no_runs`: the same with `runs: 0`; the output contains `3 usage lines skipped` and no `SPEC REVIEWS`.
+- [ ] **Step 3: Run `cargo test -j4 -p factory-cli --lib costs`.** Expected: they fail, no `usage lines skipped` text, and the second also finds a `SPEC REVIEWS` line.
+- [ ] **Step 4: Implement.** In `render_costs`, print the `SPEC REVIEWS` line only when the record has `runs > 0`. After the per-job rows and before the blank line, sum `skipped` over `all` (saturating) and push `N usage lines skipped\n` when the sum is above zero. Add `skipped: 0` to the full `JobCost` literals in this file's tests. In `tokens.rs`, delete `COUNT_FIELDS` and make `load_usage` call `factory_core::has_bad_count`.
 - [ ] **Step 5: Run `cargo test -j4 -p factory-cli`, then `cargo clippy -j4 -p factory-core -p factory-engine -p factory-cli`.** Expected: all pass, no warnings.
 
 Next plan: none
