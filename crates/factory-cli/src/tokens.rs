@@ -922,6 +922,18 @@ mod tests {
     }
 
     #[test]
+    fn tokens_name_the_security_review_role() {
+        let records = [
+            rec("reviewer", 1, 0, 0, 0),
+            rec("security-review", 2, 0, 0, 0),
+        ];
+        let report = aggregate(&records);
+        assert_eq!(report.by_role["security-review"].runs, 1);
+        assert_eq!(report.by_role["security-review"].weighted, 2);
+        assert!(render("001", &report).contains("security-review"));
+    }
+
+    #[test]
     fn aggregate_lists_kb_and_message_roles() {
         let report = aggregate(&[rec("kb", 100, 0, 50, 0), rec("message", 10, 0, 5, 0)]);
         assert_eq!(report.by_role["kb"].weighted, 150);

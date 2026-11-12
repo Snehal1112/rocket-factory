@@ -230,6 +230,9 @@ fn which(home: &Home, path: Option<&Path>) -> Result<String, CliError> {
     }
 }
 
+/// The agent file that a `security` reviewer needs.
+const SECURITY_AGENT_FILE: &str = "factory-security-reviewer.md";
+
 fn show(home: &Home, name: &str) -> Result<String, CliError> {
     let file = project::get(home, name)?;
     let base = base_of(&file);
@@ -267,6 +270,16 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         if let Err(e) = factory_agent::check_key_file(&key) {
             problems.push(e.to_string());
         }
+    }
+    if resolved.config.reviewers.iter().any(|r| r == "security")
+        && !resolved
+            .agents
+            .iter()
+            .any(|a| a.name == SECURITY_AGENT_FILE)
+    {
+        problems.push(format!(
+            "reviewers lists \"security\" but {SECURITY_AGENT_FILE} was not found; run factory presets refresh"
+        ));
     }
     let l = &resolved.layout;
     let mut out = vec![

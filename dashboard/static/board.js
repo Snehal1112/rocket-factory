@@ -9,8 +9,8 @@
     { key: "merged", title: "Merged", sub: "Landed on main" },
     { key: "needs-human", title: "Needs human", sub: "Waiting for your call" },
   ];
-  const ROLES = ["security", "ux", "ui", "code"];
-  const ROLE_LABEL = { security: "security", ux: "ux", ui: "ui", code: "code" };
+  const ROLES = ["format", "lint", "security", "ux", "ui", "code"];
+  const ROLE_LABEL = { format: "format", lint: "lint", security: "security", ux: "ux", ui: "ui", code: "code" };
 
   // The roles that review this job, in the usual order. A v3 job has only `code`, and a job with no
   // review state yet shows the one review that will run.
@@ -19,10 +19,12 @@
     const known = ROLES.filter((role) => have.includes(role));
     return known.length ? known : ["code"];
   }
-  // True when the code review has no verdict: pending, running or absent. Approve is refused for such a job.
+  // True when the code review, or the security review when the job has one, has no verdict: pending,
+  // running or absent. Approve is refused for such a job.
   function reviewMissing(job) {
-    const state = job && job.reviews ? job.reviews.code : undefined;
-    return !["pass", "changes", "skipped"].includes(state);
+    const reviews = (job && job.reviews) || {};
+    const done = (state) => ["pass", "changes", "skipped"].includes(state);
+    return !done(reviews.code) || ("security" in reviews && !done(reviews.security));
   }
 
   // True when the latest review asked for changes. Approve then needs a waiver reason.

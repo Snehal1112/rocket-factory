@@ -817,6 +817,20 @@ mod tests {
     }
 
     #[test]
+    fn approve_is_refused_until_every_reviewer_has_a_verdict() {
+        let mut j = fresh_job();
+        j.set_reviewers(&["code".to_string(), "security".to_string()]);
+        j.set_stage(Stage::NeedsHuman, Some("parked"), false, 1.0)
+            .expect("stage");
+        j.set_review("code", ReviewState::Pass);
+        let refusal = j.approve_refusal(false, false).expect("refused");
+        assert!(refusal.contains("has no security review yet"), "{refusal}");
+        assert_eq!(j.approve_refusal(true, false), None);
+        j.set_review("security", ReviewState::Pass);
+        assert_eq!(j.approve_refusal(false, false), None);
+    }
+
+    #[test]
     fn the_review_missing_message_names_the_problem_and_the_options() {
         let j = Job::new("020", "d", "s", "2026-10-17", "f", 1.0);
         let m = j.review_missing_message();
