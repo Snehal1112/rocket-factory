@@ -1,5 +1,7 @@
 //! The `## Follow-ups` section of a spec: one item per bullet, the pieces of a ticket that are not built yet.
 
+use std::collections::HashSet;
+
 use crate::runloop::{is_list_item, section_body};
 
 /// Longest ticket title, in characters.
@@ -55,14 +57,40 @@ pub fn follow_ups(spec: &str) -> Vec<FollowUp> {
             }
         }
     }
-    bodies
+    let items = bodies
         .into_iter()
         .filter(|b| !b.is_empty())
         .map(|body| FollowUp {
             title: title_of(&body),
             body,
         })
-        .collect()
+        .collect();
+    unique_titles(items)
+}
+
+/// Makes the titles pairwise different, in order. A repeated title takes the first free ` (N)` suffix
+/// from 2 up, and its base is cut so the result stays within `MAX_TITLE_CHARS` characters.
+fn unique_titles(items: Vec<FollowUp>) -> Vec<FollowUp> {
+    let mut used: HashSet<String> = HashSet::new();
+    let mut out = Vec::with_capacity(items.len());
+    for mut item in items {
+        if !used.insert(item.title.clone()) {
+            let mut n = 2;
+            loop {
+                let suffix = format!(" ({n})");
+                let keep = MAX_TITLE_CHARS.saturating_sub(suffix.chars().count());
+                let base: String = item.title.chars().take(keep).collect();
+                let candidate = format!("{}{suffix}", base.trim_end());
+                if used.insert(candidate.clone()) {
+                    item.title = candidate;
+                    break;
+                }
+                n += 1;
+            }
+        }
+        out.push(item);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -118,6 +146,51 @@ mod tests {
     fn bullets_inside_a_code_fence_are_ignored_by_the_section_reader() {
         let spec = "## Goal\n```\n## Follow-ups\n- fake\n```\n";
         assert!(follow_ups(spec).is_empty());
+    }
+
+    #[test]
+    fn repeated_titles_get_a_numbered_suffix() {
+        let spec =
+            "## Follow-ups\n- Same thing. First detail.\n- Same thing. Second detail.\n- Same thing\n";
+        let titles: Vec<String> = follow_ups(spec).into_iter().map(|f| f.title).collect();
+        assert_eq!(
+            titles,
+            vec!["Same thing", "Same thing (2)", "Same thing (3)"]
+        );
+    }
+
+    #[test]
+    fn a_suffix_never_collides_with_another_title() {
+        let spec = "## Follow-ups\n- Same\n- Same (2)\n- Same\n";
+        let titles: Vec<String> = follow_ups(spec).into_iter().map(|f| f.title).collect();
+        assert_eq!(titles, vec!["Same", "Same (2)", "Same (3)"]);
+    }
+
+    #[test]
+    fn a_suffixed_title_stays_within_100_chars() {
+        let long = "x".repeat(100);
+        let spec = format!("## Follow-ups\n- {long}\n- {long}\n");
+        let titles: Vec<String> = follow_ups(&spec).into_iter().map(|f| f.title).collect();
+        assert_eq!(titles[0], long);
+        assert_eq!(titles[1].chars().count(), 100);
+        assert!(titles[1].ends_with(" (2)"), "{}", titles[1]);
+    }
+
+    #[test]
+    fn a_multibyte_title_is_cut_on_a_char_boundary() {
+        let long = "é".repeat(100);
+        let spec = format!("## Follow-ups\n- {long}\n- {long}\n");
+        let titles: Vec<String> = follow_ups(&spec).into_iter().map(|f| f.title).collect();
+        assert_eq!(titles[1].chars().count(), 100);
+        assert!(titles[1].starts_with(&"é".repeat(96)), "{}", titles[1]);
+        assert!(titles[1].ends_with(" (2)"), "{}", titles[1]);
+    }
+
+    #[test]
+    fn the_body_of_a_suffixed_item_is_unchanged() {
+        let spec = "## Follow-ups\n- Same. One.\n- Same. Two.\n";
+        let items = follow_ups(spec);
+        assert_eq!(items[1].body, "Same. Two.");
     }
 
     #[test]
