@@ -111,7 +111,7 @@ fn derived_programs(config: &Config) -> Vec<String> {
     let commands = config
         .checks
         .iter()
-        .flat_map(|rule| rule.commands.iter())
+        .flat_map(|rule| rule.all_commands())
         .chain(config.check_hints.iter());
     let mut out: Vec<String> = Vec::new();
     for command in commands {
@@ -169,9 +169,28 @@ mod tests {
             checks: vec![CheckRule {
                 paths: vec!["**".into()],
                 commands: commands.iter().map(|s| s.to_string()).collect(),
+                ..CheckRule::default()
             }],
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn a_lint_only_program_is_allowed_for_the_builder() {
+        let cfg = Config {
+            checks: vec![CheckRule {
+                paths: vec!["**".into()],
+                commands: vec!["cargo check -j4".into()],
+                lint: vec!["golangci-lint run".into()],
+                ..CheckRule::default()
+            }],
+            ..Config::default()
+        };
+        let tools = builder_allowed_tools(&cfg);
+        assert!(
+            tools.contains(&"Bash(golangci-lint:*)".to_string()),
+            "{tools:?}"
+        );
     }
 
     fn plus(extra: &[&str]) -> Vec<String> {

@@ -488,7 +488,13 @@ mod tests {
             .iter()
             .flat_map(|c| c.commands.iter().map(String::as_str))
             .collect();
-        assert_eq!(commands, ["bun run typecheck", "bun run lint", "bun test"]);
+        assert_eq!(commands, ["bun run typecheck", "bun test"]);
+        let lint: Vec<&str> = cfg
+            .checks
+            .iter()
+            .flat_map(|c| c.lint.iter().map(String::as_str))
+            .collect();
+        assert_eq!(lint, ["bun run lint"]);
         let risky = |path: &str| {
             cfg.risk_paths
                 .iter()

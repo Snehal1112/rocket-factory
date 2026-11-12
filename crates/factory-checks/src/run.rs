@@ -268,6 +268,7 @@ mod tests {
             timeout: Duration::from_secs(secs),
             notes: Vec::new(),
             unplanned: Vec::new(),
+            gates: Default::default(),
         }
     }
 

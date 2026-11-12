@@ -134,6 +134,7 @@ fn a_no_change_fix_round_after_failed_checks_parks_as_checks_failed_when_they_st
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
     }];
     fix_round_from(&fx, &runner, Some("checks"));
     match fx.engine(&runner).build_stage().expect("resume") {
@@ -267,6 +268,7 @@ fn bad_config_is_rejected_when_the_engine_is_built() {
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["cargo test --workspace -j4".into()],
+        ..factory_core::CheckRule::default()
     }];
     let runner = scripted(vec![]);
     let res = factory_engine::Engine::new(
@@ -324,6 +326,7 @@ fn failing_checks_start_a_fix_round() {
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
     }];
     let runner = built(&fx);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -345,6 +348,7 @@ fn failing_checks_beyond_fix_rounds_need_a_human() {
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
     }];
     let runner = built(&fx);
     let e = fx.engine(&runner);
@@ -372,6 +376,7 @@ fn docs_only_diff_still_writes_a_pass_line() {
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["src/**".into()],
         commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
     }];
     let runner = scripted_auto(vec![change_effect("a.md", 3)]);
     fx.engine(&runner).build_stage().expect("build");
@@ -1665,6 +1670,7 @@ fn rule(path: &str, command: &str) -> factory_core::CheckRule {
     factory_core::CheckRule {
         paths: vec![path.into()],
         commands: vec![command.into()],
+        ..factory_core::CheckRule::default()
     }
 }
 
@@ -1765,6 +1771,41 @@ fn a_capped_away_dependents_check_still_leaves_its_note() {
     let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
     assert!(
         md.contains("SKIP dependents over the cap: app") && !md.contains("FAIL"),
+        "{md}"
+    );
+}
+
+#[test]
+fn a_crate_template_only_in_lint_expands_in_a_real_run() {
+    let mut fx = two_task_fixture();
+    fx.config.checks = vec![factory_core::CheckRule {
+        paths: vec!["crates/**".into()],
+        lint: vec!["cargo clippy -j4 -p {crate}".into()],
+        ..factory_core::CheckRule::default()
+    }];
+    // The package name differs from its folder, so only the workspace map yields `corepkg`.
+    let write_workspace: Effect = Box::new(|spec| {
+        let files = [
+            ("Cargo.toml", "[workspace]\nmembers = [\"crates/core\"]\n"),
+            (
+                "crates/core/Cargo.toml",
+                "[package]\nname = \"corepkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("crates/core/src/lib.rs", "pub fn f() {}\n"),
+        ];
+        for (name, body) in files {
+            let path = spec.cwd.join(name);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            std::fs::write(path, body).expect("write");
+        }
+        "done".to_string()
+    });
+    let runner = scripted_auto(vec![write_workspace]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
+    assert!(md.contains("cargo clippy -j4 -p corepkg"), "{md}");
+    assert!(
+        !md.contains("-p core\n") && !md.contains("-p core "),
         "{md}"
     );
 }

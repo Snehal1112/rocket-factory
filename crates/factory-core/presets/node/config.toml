@@ -28,4 +28,5 @@ reviewer_rules = [
 
 [[checks]]
 paths = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
-commands = ["bun run typecheck", "bun run lint", "bun test"]
+commands = ["bun run typecheck", "bun test"]
+lint = ["bun run lint"]
