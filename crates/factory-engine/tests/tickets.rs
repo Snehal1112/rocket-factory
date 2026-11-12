@@ -382,7 +382,7 @@ fn a_broken_marker_after_a_merge_writes_a_ledger_line() {
     ));
     let ledger =
         std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
-    assert!(ledger.contains("tickets error"), "{ledger}");
+    assert_eq!(ledger.matches("tickets error").count(), 1, "{ledger}");
     assert!(ledger.contains("not valid JSON"), "{ledger}");
     assert_eq!(
         fx.driver.job(&fx.id).expect("job").stage,

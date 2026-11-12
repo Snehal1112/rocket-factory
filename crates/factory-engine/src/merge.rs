@@ -374,3 +374,46 @@ fn finish_merge(driver: &Driver, id: &str, sha: &str) -> Result<(), EngineError>
     })?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_soft_step_turns_every_payload_kind_into_text() {
+        let a = run_soft_step::<()>(|| panic!("boom"));
+        assert!(matches!(a, Err(StepFailure::Panic(ref t)) if t == "boom"));
+        let b = run_soft_step::<()>(|| panic!("{}", String::from("owned")));
+        assert!(matches!(b, Err(StepFailure::Panic(ref t)) if t == "owned"));
+        let c = run_soft_step::<()>(|| std::panic::panic_any(7_u32));
+        assert!(matches!(c, Err(StepFailure::Panic(ref t)) if t == "unknown panic"));
+        let d = run_soft_step(|| Ok::<_, EngineError>(5));
+        assert!(matches!(d, Ok(5)));
+        let e = run_soft_step::<()>(|| Err(EngineError::Msg("bad".into())));
+        assert!(matches!(e, Err(StepFailure::Error(_))));
+    }
+
+    #[test]
+    fn a_kb_or_costs_error_gets_no_ledger_line() {
+        for step in ["kb_refresh", "costs_refresh"] {
+            let failure = StepFailure::Error(EngineError::Msg("bad".into()));
+            assert_eq!(ledger_line(step, &failure), None);
+        }
+    }
+
+    #[test]
+    fn a_kb_or_costs_panic_gets_a_ledger_line() {
+        let failure = StepFailure::Panic("boom".into());
+        assert_eq!(
+            ledger_line("kb_refresh", &failure).as_deref(),
+            Some("kb_refresh panicked: boom")
+        );
+    }
+
+    #[test]
+    fn a_ticket_step_error_gets_a_ledger_line() {
+        let failure = StepFailure::Error(EngineError::Msg("bad".into()));
+        let line = ledger_line("tickets", &failure).expect("line");
+        assert!(line.starts_with("tickets error: "), "{line}");
+    }
+}
