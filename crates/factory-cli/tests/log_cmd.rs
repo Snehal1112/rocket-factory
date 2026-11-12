@@ -28,6 +28,22 @@ fn log_prints_a_jobs_lines() {
 }
 
 #[test]
+fn log_pads_a_short_job_id() {
+    let (a, b) = (line("info", "001", 1), line("info", "002", 2));
+    let (_t, ctx) = ctx_with_log(Some(&[&a, &b]));
+    let out = run_log(&ctx, Some("1"), None, None, 100).expect("log");
+    assert_eq!(out, a);
+}
+
+#[test]
+fn log_refuses_a_non_numeric_job() {
+    let a = line("info", "001", 1);
+    let (_t, ctx) = ctx_with_log(Some(&[&a]));
+    let err = run_log(&ctx, Some("abc"), None, None, 100).expect_err("bad job");
+    assert!(matches!(err, CliError::Core(_)), "{err}");
+}
+
+#[test]
 fn log_level_filter() {
     let (a, b, c) = (
         line("info", "001", 1),

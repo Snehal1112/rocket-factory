@@ -27,6 +27,7 @@ pub fn run_log(
             )));
         }
     }
+    let job = job.map(factory_core::normalize_id).transpose()?;
     let path = ctx.layout.log_file();
     let any = ["", ".1", ".2", ".3"].iter().any(|s| {
         let mut p = path.as_os_str().to_os_string();
@@ -37,7 +38,7 @@ pub fn run_log(
         return Ok("no log yet".to_string());
     }
     let filter = LogFilter {
-        job: job.map(str::to_string),
+        job,
         min_level: level.map(str::to_string),
         event: event.map(str::to_string),
         tail,
