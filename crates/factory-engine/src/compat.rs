@@ -598,7 +598,8 @@ impl Driver {
     /// Refreshes the KB and writes the outcome to the job ledger. Returns a one-line summary.
     /// A manual run ignores the stop marker and clears it only when the run refreshed or was up to date.
     pub fn kb_refresh(&self, id: &str, manual: bool) -> Result<String, EngineError> {
-        if self.config.kb_dir().is_none() {
+        // A bad path continues, so the step reports its cause.
+        if matches!(self.config.kb_dir_checked(), Ok(None)) {
             return Ok("kb_path is not set".to_string());
         }
         let job = self.job(id)?;

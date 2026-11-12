@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use factory_agent::{AgentSpec, StopReason};
-use factory_core::{blocked_reason, Config};
+use factory_core::{blocked_reason, check_kb_path, Config};
 
 use crate::ports::git_err;
 use crate::{Engine, EngineError};
@@ -154,16 +154,35 @@ pub enum KbOutcome {
 }
 
 impl Engine<'_> {
-    /// Runs the KB refresher once. The caller checks `Config::kb_dir` first and writes the rulings.
+    /// Runs the KB refresher once. The caller writes the rulings.
+    /// The grants name the real folder, so a symlink cannot widen them.
     /// A changed main checkout fingerprint after the run is `Tampered`, whatever the reply says.
     pub fn kb_refresh_step(&self, job: Option<(&str, &str)>) -> Result<KbOutcome, EngineError> {
-        let Some(kb_dir) = self.config.kb_dir() else {
-            return Ok(KbOutcome::Failed("kb_path is not set".to_string()));
+        let kb_dir = match self.config.kb_dir_checked() {
+            Ok(Some(dir)) => dir,
+            Ok(None) => return Ok(KbOutcome::Failed("kb_path is not set".to_string())),
+            Err(e) => return Ok(KbOutcome::Failed(e.to_string())),
         };
         if !kb_dir.is_dir() {
             return Ok(KbOutcome::Failed(format!(
                 "the KB folder {} does not exist",
                 kb_dir.display()
+            )));
+        }
+        let real = match kb_dir.canonicalize() {
+            Ok(real) => real,
+            Err(e) => {
+                return Ok(KbOutcome::Failed(format!(
+                    "the KB folder {} cannot be resolved: {e}",
+                    kb_dir.display()
+                )))
+            }
+        };
+        if let Err(e) = check_kb_path(&real.to_string_lossy()) {
+            return Ok(KbOutcome::Failed(format!(
+                "the KB folder {} resolves to {}: {e}",
+                kb_dir.display(),
+                real.display()
             )));
         }
         let tip = self.repo.tip(self.repo.base_branch()).map_err(git_err)?;
@@ -173,7 +192,7 @@ impl Engine<'_> {
             &self.job_id,
             &self.config,
             self.repo.root(),
-            &kb_dir,
+            &real,
             &prompt,
         ))?;
         let after = self.repo.checkout_fingerprint().map_err(git_err)?;
