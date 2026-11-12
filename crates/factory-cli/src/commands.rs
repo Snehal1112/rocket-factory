@@ -1059,7 +1059,8 @@ fn cleanup_checkout(
     Ok(format!("removed worktree and branch of job {id}"))
 }
 
-/// Takes no lease, it only calls the tracker and writes the job folder. Refuses while another driver holds a live lease on the job.
+/// Calls the tracker and writes the job folder. Refuses while another driver holds a live lease on the job.
+/// A real run holds the job lease to the end, so two runs cannot file twice. A dry run takes no lease.
 fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
@@ -1075,6 +1076,7 @@ fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
             )));
         }
     }
+    let _job = if dry_run { None } else { Some(d.hold_job(id)?) };
     let tickets = render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run);
     let waivers = render_tickets(
         factory_engine::waiver_tickets_step(&d, id, dry_run)?,

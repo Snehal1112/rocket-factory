@@ -101,6 +101,11 @@ the `gh` CLI in the main checkout (the repo from `Layout`); tests use a fake.
 - The remaining work is the `## Follow-ups` section of the job's `spec.md`, one ticket per bullet. A spec with
   follow-ups gives the merge footer `Relates to: #N` instead of `Fixes: #N`.
 - `tickets.json` in the job folder records every call, so a rerun never files a ticket twice.
+- A follow-up that was started but not recorded is found again by its title and the `Filed by factory job` line,
+  so a rerun adopts that issue instead of filing a second one.
+- A real `factory tickets` run takes the job lease, so a second run on the same job is refused. A dry run takes none.
+- A follow-up body over 60,000 characters is cut, with a note that says so.
+- A repeated follow-up title gets a ` (2)` suffix, ` (3)` for the third, and so on.
 - A failure (no tracker, no `gh`, a failed call) never changes the merge. The job stays `merged`, and the failure
   is written to the ledger, the job output and `events.jsonl`.
 
