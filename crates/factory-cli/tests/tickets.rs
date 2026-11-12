@@ -1,5 +1,6 @@
 mod common;
 use std::sync::Arc;
+use std::time::Duration;
 
 use common::Fixture;
 use factory_engine::Tracker;
@@ -33,6 +34,16 @@ impl Tracker for NoCalls {
 
 #[test]
 fn tickets_on_an_unmerged_job_skips_without_calls() {
+    let fx = unmerged_job();
+    let out = fx.run(&["tickets", "1"]).expect("tickets");
+    assert!(
+        out.contains("skipped") && out.contains("not merged"),
+        "{out}"
+    );
+}
+
+/// A fixture with an unmerged job `001` and the `NoCalls` tracker.
+fn unmerged_job() -> Fixture {
     let mut fx = Fixture::new();
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");
     fx.run(&[
@@ -44,11 +55,62 @@ fn tickets_on_an_unmerged_job_skips_without_calls() {
     ])
     .expect("new");
     fx.ctx = fx.ctx.clone().with_tracker(Arc::new(NoCalls));
-    let out = fx.run(&["tickets", "1"]).expect("tickets");
-    assert!(
-        out.contains("skipped") && out.contains("not merged"),
-        "{out}"
+    fx
+}
+
+fn job_lease(fx: &Fixture) -> Option<factory_engine::Lease> {
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        Duration::from_secs(15),
     );
+    store
+        .load()
+        .expect("load board")
+        .jobs
+        .into_iter()
+        .find(|j| j.id == "001")
+        .expect("job 001")
+        .lease
+}
+
+#[test]
+fn tickets_dry_run_is_refused_by_another_owners_live_lease() {
+    let fx = unmerged_job();
+    fx.hold_lease("001", "someone-else");
+    let err = fx.run(&["tickets", "1", "--dry-run"]).expect_err("refused");
+    assert!(err.to_string().contains("leased by someone-else"), "{err}");
+}
+
+#[test]
+fn tickets_refuses_while_another_owner_holds_the_job_lease() {
+    let fx = unmerged_job();
+    fx.hold_lease("001", "someone-else");
+    let err = fx.run(&["tickets", "1"]).expect_err("refused");
+    assert!(err.to_string().contains("leased by someone-else"), "{err}");
+}
+
+#[test]
+fn tickets_releases_its_lease_after_a_run() {
+    let fx = unmerged_job();
+    fx.run(&["tickets", "1"]).expect("tickets");
+    assert!(job_lease(&fx).is_none());
+}
+
+#[test]
+fn tickets_runs_while_the_project_is_busy() {
+    let fx = unmerged_job();
+    let state = factory_core::Layout::in_repo(&fx.root).state_dir;
+    factory_engine::acquire_project_lease(
+        &state,
+        "003",
+        "someone-else",
+        600.0,
+        factory_engine::now_secs(),
+        Duration::from_secs(5),
+    )
+    .expect("project lease");
+    let out = fx.run(&["tickets", "1"]).expect("tickets");
+    assert!(out.contains("skipped"), "{out}");
 }
 
 #[test]
