@@ -409,7 +409,7 @@ It prints, in order:
 | `ID` | The job id. |
 | `STAGE` | spec, build, review, approve, merged or needs-human. |
 | `ROUND` | The fix round the builder is on. |
-| `REVIEWS` | For example `code:pass`. Words used: pending, running, pass, changes, skipped. |
+| `REVIEWS` | For example `code:pass`, or `code:pass format:pass lint:pass security:pass` with the security reviewer and the format and lint gates. Words used: pending, running, pass, changes, skipped. |
 | `TOKENS` | Weighted tokens used and the share of the budget, for example `12.3K (4%)`. |
 | `SERIES` | `index/total`, or `-` for a single job. |
 | `SLUG` | The job name. |
