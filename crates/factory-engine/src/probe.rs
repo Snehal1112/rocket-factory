@@ -11,6 +11,7 @@ use factory_core::{
 };
 
 use crate::agents_file::write_agents_json_at;
+use crate::clock::utc_stamp;
 use crate::ports::{core_err, io_err, JobView};
 use crate::specs::spec_reviewer_agent;
 use crate::{committer_spec, kb_spec, Engine, EngineError, ReviewerExtra};
@@ -18,7 +19,7 @@ use crate::{committer_spec, kb_spec, Engine, EngineError, ReviewerExtra};
 /// Where the probe puts the marker so the agent can see it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Delivery {
-    /// A written agent file, passed with `--agent`.
+    /// A job-folder agents file, passed with `--agents`.
     #[default]
     Agent,
     /// The `--append-system-prompt` flag.
@@ -240,6 +241,27 @@ fn transcript(spec: &AgentSpec, answer: &str) -> String {
     )
 }
 
+/// The first of `stamp`, `stamp-2`, `stamp-3` and so on with no report and no transcript folder.
+fn free_stamp(stamp: &str, probes_dir: &Path, harness: Harness) -> String {
+    let name = harness.as_str();
+    let taken = |s: &str| {
+        probes_dir.join(format!("{s}-{name}")).exists()
+            || probes_dir.join(format!("{s}-{name}.json")).exists()
+    };
+    if !taken(stamp) {
+        return stamp.to_string();
+    }
+    (2..)
+        .map(|n| format!("{stamp}-{n}"))
+        .find(|candidate| !taken(candidate))
+        .unwrap_or_else(|| stamp.to_string())
+}
+
+/// A run stamp that no earlier probe of this harness in `probes_dir` has used.
+pub fn unique_stamp(probes_dir: &Path, harness: Harness) -> String {
+    free_stamp(&utc_stamp(), probes_dir, harness)
+}
+
 /// Probes the roles one after the other and writes the report and one transcript per role.
 pub fn run_probe(
     engine: &Engine<'_>,
@@ -256,14 +278,19 @@ pub fn run_probe(
     for &role in roles {
         let work_dir = engine.probe_scratch(role);
         std::fs::create_dir_all(&work_dir).map_err(io_err)?;
-        let (probe, answer, spec) =
-            engine.probe_run(role, harness, delivery, &fresh_marker(), &work_dir)?;
-        std::fs::write(
-            transcript_dir.join(format!("{}.txt", role.as_str())),
-            transcript(&spec, &answer),
-        )
-        .map_err(io_err)?;
-        probes.push(probe);
+        let result = engine
+            .probe_run(role, harness, delivery, &fresh_marker(), &work_dir)
+            .and_then(|(probe, answer, spec)| {
+                std::fs::write(
+                    transcript_dir.join(format!("{}.txt", role.as_str())),
+                    transcript(&spec, &answer),
+                )
+                .map_err(io_err)?;
+                Ok(probe)
+            });
+        // The scratch folder only holds the agents file, so it goes on success and on error.
+        let _ = std::fs::remove_dir_all(&work_dir);
+        probes.push(result?);
     }
     let report = ProbeReport {
         harness,
@@ -276,4 +303,33 @@ pub fn run_probe(
     let file = probes_dir.join(format!("{stamp}-{}.json", harness.as_str()));
     write_atomic(&file, json.as_bytes()).map_err(core_err)?;
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_stamp_keeps_a_free_stamp() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            free_stamp("20261112-101530", dir.path(), Harness::Claude),
+            "20261112-101530"
+        );
+    }
+
+    #[test]
+    fn unique_stamp_adds_a_suffix_when_taken() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(dir.path().join("20261112-101530-claude")).expect("mkdir");
+        assert_eq!(
+            free_stamp("20261112-101530", dir.path(), Harness::Claude),
+            "20261112-101530-2"
+        );
+        std::fs::write(dir.path().join("20261112-101530-2-claude.json"), "{}").expect("write");
+        assert_eq!(
+            free_stamp("20261112-101530", dir.path(), Harness::Claude),
+            "20261112-101530-3"
+        );
+    }
 }

@@ -33,9 +33,10 @@ pub fn read_log(path: &Path, filter: &LogFilter) -> Result<Vec<String>, Telemetr
     let min = filter.min_level.as_deref().and_then(rank);
     let mut out = Vec::new();
     for suffix in [".3", ".2", ".1", ""] {
-        let Ok(text) = std::fs::read_to_string(suffixed(path, suffix)) else {
+        let Ok(bytes) = std::fs::read(suffixed(path, suffix)) else {
             continue;
         };
+        let text = String::from_utf8_lossy(&bytes);
         for line in text.lines() {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
@@ -234,6 +235,18 @@ mod tests {
         );
         let got = read_log(&dir.path().join("log.jsonl"), &LogFilter::default()).expect("read");
         assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn read_log_keeps_lines_after_a_non_utf8_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut bytes = line("info", "a", 1).into_bytes();
+        bytes.extend_from_slice(b"\n\xFF\n");
+        bytes.extend_from_slice(line("info", "a", 2).as_bytes());
+        bytes.push(b'\n');
+        std::fs::write(dir.path().join("log.jsonl.1"), bytes).expect("write");
+        let got = read_log(&dir.path().join("log.jsonl"), &LogFilter::default()).expect("read");
+        assert_eq!(got, vec![line("info", "a", 1), line("info", "a", 2)]);
     }
 
     #[test]

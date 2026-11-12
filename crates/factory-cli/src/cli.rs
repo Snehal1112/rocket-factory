@@ -131,7 +131,7 @@ pub enum Command {
         /// Print the report as JSON and nothing else.
         #[arg(long)]
         json: bool,
-        /// How the marker reaches Claude: agent (a written agent file), append or stdin.
+        /// How the marker reaches Claude: agent (a job-folder agents file, passed with --agents), append or stdin.
         #[arg(long, value_parser = delivery_parser(), default_value = "agent")]
         delivery: Delivery,
     },
