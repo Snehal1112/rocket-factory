@@ -75,7 +75,7 @@ pub fn combine_verdicts(verdicts: &[Verdict]) -> Verdict;
 ### 4. The review stage (`factory-engine`)
 
 - `review_stage_as(ReviewRun::Round)` builds one spec per role in the job's `reviews` that is in `REVIEW_ROLES`. The code spec is built as today. The security spec uses a new `const SECURITY_AGENT: &str = "factory-security-reviewer"`, the same diff, plan, spec and notes, the model chosen by `reviewer_model_for`, and `security_rules`.
-- Security is skipped (`ReviewState::Skipped`, no agent run) only when the round has at least one changed path, the diff is not risky, and every changed path is under `docs/**` or is a `*.md` file that is outside `.claude/**`, outside any folder named `agents`, and not named `CLAUDE.md` or `AGENTS.md`. This test ignores `code_paths`, so workflows, Dockerfiles, manifests, scripts, settings, agent files (including preset agent files) and instruction files always get a security review. Any other round runs it.
+- Security is skipped (`ReviewState::Skipped`, no agent run) only when the round has at least one changed path, the diff is not risky, and every changed path is under `docs/**`. Nothing else is skippable, not even a `README.md` or another markdown file, because markdown can be an agent instruction or prompt (for example `crates/factory-core/assets/global-command.md`, the legacy preset builder prompts, `commit-context.md` and the tool maps). This test ignores `code_paths`, so workflows, Dockerfiles, manifests, scripts, settings, agent files and every markdown file outside `docs/**` get a security review. Any other round runs it.
 - The roles run one after the other in the order `code`, `security`, and both always run, even when the first asks for changes, so one fix round gets both sets of findings. Each role is set to `Running` just before its run and to its result right after, and each reply is saved when its run ends. The "review model" ruling and the risky-paths file are written once, before the first role.
 - The security spec's role string is `security-review`, so `usage.jsonl` records it under its own role and `factory tokens` and `factory costs` show it. Wherever the driver matches the role `"reviewer"` (`plugins_for` in `config.rs`, `skill_allow_for` and `sandbox_for` in `codex_prep.rs`), `"security-review"` is treated the same way.
 - With more than one role that ran, the review file `review-code-r<N>.md` holds the merged text. Each role gets a level-2 heading `## code review` or `## security review`, then the reply without its own `VERDICT:` line, then a line `Role verdict: APPROVE` or `Role verdict: CHANGES`. The file ends with one blank line and the single combined line. For two roles, indented here so it is not read as a heading:
@@ -120,8 +120,8 @@ pub fn combine_verdicts(verdicts: &[Verdict]) -> Verdict;
 | `reviewers` without `code`, with an unknown value, or with a duplicate | Config error naming the allowed values; fails closed |
 | Security agent file is not among `effective_agent_files()` (a base branch copy only replaces the text of a resolved file and never adds one, so a file tracked only on the base branch does not count) | The job parks as needs-human with `ParkKind::Other` and the reason `factory-security-reviewer.md not found`, and `project show` reports it |
 | One agent crashes or times out, the other approves | Combined verdict `Missing`; a fix round while rounds remain, then needs-human, as for one reviewer |
-| Docs-only round (every path under `docs/**`, or `*.md` outside `.claude/**` and `agents/`, none named `CLAUDE.md` or `AGENTS.md`, none risky) | Security is `skipped`, counted as a pass; `code` runs as today |
-| Only a workflow, Dockerfile, manifest, script, settings file, agent file (`.claude/agents/*.md` or a preset `agents/*.md`) or `CLAUDE.md` changed, even with `code_paths` set | Security runs |
+| Docs-only round (at least one path, every path under `docs/**`, none risky) | Security is `skipped`, counted as a pass; `code` runs as today |
+| Only a workflow, Dockerfile, manifest, script, settings file, agent file (`.claude/agents/*.md` or a preset `agents/*.md`), `CLAUDE.md` or any other markdown file outside `docs/**` (a root `README.md`, `global-command.md`, a legacy builder prompt, `commit-context.md`) changed, even with `code_paths` set | Security runs |
 | `reviews` map empty or hand-edited | `code` is still required, so `approve` is refused |
 | `reviewers` changed while a job is in flight | The job keeps the roles it was created with |
 | `rework` or a new round | Roles reset to `Pending`; gate entries removed, then rewritten by the next checks run |
@@ -152,6 +152,7 @@ pub fn combine_verdicts(verdicts: &[Verdict]) -> Verdict;
 - `security_runs_for_a_claude_settings_file` (a `.claude/settings.json` change)
 - `security_runs_for_an_agent_file` (a `.claude/agents/factory-builder.md` change, and a preset `agents/` file change)
 - `security_runs_for_claude_md` (a root `CLAUDE.md` change)
+- `security_runs_for_markdown_outside_docs` (a root `README.md` change, and a `crates/factory-core/assets/global-command.md` change)
 - `a_sync_review_runs_the_code_reviewer_only`
 - `security_usage_is_logged_under_its_own_role`
 - `a_missing_security_agent_parks_with_a_clear_reason`
@@ -229,7 +230,7 @@ Run `cargo clippy -j4 -p factory-core -p factory-checks -p factory-engine -p fac
 - Does a sync review include security? Chosen: no, code only. Decided by: user
 - Model for the security review. Chosen: the same model choice as the code review. Decided by: user
 - A failed gate shows which state? Chosen: `changes`, so `ReviewState` gets no new variant. Decided by: call
-- Which rounds skip security? Options: default-deny, skip only pure docs; never skip; reuse the no-checks predicate. Chosen: default-deny. Skip only when every changed path is under `docs/**`, or is a `*.md` file outside `.claude/**` and any `agents/` folder and not named `CLAUDE.md` or `AGENTS.md`, and none is risky, ignoring `code_paths`. Decided by: user
+- Which rounds skip security? Options: default-deny, skip only pure docs; never skip; reuse the no-checks predicate. Chosen: default-deny. Skip only when the round has a changed path, every changed path is under `docs/**`, and none is risky, ignoring `code_paths`. Any markdown outside `docs/**` runs security, because instruction and prompt files are markdown. Decided by: user
 - `review_missing` and the empty `reviews` map. Chosen: `code` is always required, present or absent, as in the existing code and its test; other roles count only when their key is present. Decided by: user
 - Missing agent file. Chosen: park with `ParkKind::Other` and a clear reason, and report it under `problems:`. Decided by: user
 - Dashboard gap found by the spec review. Options: small dashboard change in this series; follow-up ticket; fix only the approve command. Chosen: a small dashboard change in this series (`reviewMissing`, gate chips, `reviewed` flag). Decided by: user
