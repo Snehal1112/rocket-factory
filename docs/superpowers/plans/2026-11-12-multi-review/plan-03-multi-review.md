@@ -77,11 +77,12 @@ fn security_reviewer_files_follow_the_reviewer_contract() {
 - [ ] **Step 5: Embed and fix the counts.** Add the sixth entry to each preset's `agents` list in `preset.rs` with `include_str!`, then update every count and name list named in Files by one file per preset.
 - [ ] **Step 6: Run the tests and see them pass.** Run `cargo test -j4 -p factory-cli --test agent_lint --test tool_map --test presets_refresh`, `cargo test -j4 -p factory-core` and `cargo test -j4 -p factory-engine --test agent_files`. Expected: all pass.
 
-### Task 2: CLI checks for the new role
+### Task 2: CLI and dashboard checks for the new roles
 
 **Files:**
 - Modify: `crates/factory-cli/src/project.rs` (`show` problems at ~254-270, tests near ~517)
-- Test: `crates/factory-cli/src/status.rs` tests, `crates/factory-cli/tests/project_cmd.rs`, `crates/factory-cli/tests/e2e.rs` (or the file that holds the approve refusal tests)
+- Modify: `dashboard/static/board.js` (`ROLES` and `ROLE_LABEL` at ~12, `reviewMissing` at ~22), `dashboard/src/state.rs` (~299), `dashboard/src/plan.rs` (~171 and its caller)
+- Test: `dashboard/tests/board.test.js`, the tests in `dashboard/src/plan.rs` and `state.rs`, `crates/factory-cli/src/status.rs` tests, `crates/factory-cli/tests/project_cmd.rs`, `crates/factory-cli/tests/e2e.rs` (or the file that holds the approve refusal tests)
 
 **Interfaces:**
 - Consumes: `Config.reviewers`, the resolved agent file names that `project show` already prints under `agent files:`, `Job::missing_reviews` and `approve_refusal`.
@@ -106,11 +107,15 @@ fn project_show_reports_a_missing_security_agent() {
 | `project_show_ignores_security_when_it_is_not_enabled` | `reviewers = ["code"]`, no security file | no `factory-security-reviewer.md` problem |
 | `status_lists_every_review_and_gate` | a job with reviews `code` pass, `format` pass, `lint` pass, `security` pass | the status line holds `code:pass format:pass lint:pass security:pass` in that order |
 | `approve_is_refused_until_every_reviewer_has_a_verdict` | a `needs-human` job with `code` pass and `security` pending | `approve` is refused with a message containing `has no security review yet` |
+| `approve_command_waits_for_security_when_it_is_present` (`board.test.js`, using `makeJob`) | `reviews` `{code: "pass", security: "pending"}` | `board.approveCommand(job)` is `factory approve 001 --without-review` |
+| `approve_command_ignores_security_when_it_is_absent` | `reviews` `{code: "pass"}` | `factory approve 001` |
+| `gate_roles_render_as_chips` | `reviews` `{code: "pass", format: "pass", lint: "changes"}` | `board.reviewRoles(job)` lists `format`, `lint` and `code`, and `reviewChip("lint", "changes")` shows `lint changes` |
+| `reviewed_ignores_gate_entries` (dashboard, near the `reviews` tests in `state.rs`) | a job in `needs-human` with `reviews` `{lint: "changes"}` only | the `reviewed` flag passed to `load_plan` is false; with `code: "pass"` added it is true |
 | `tokens_and_costs_include_the_security_review_role` | a `usage.jsonl` line with role `security-review` next to a `reviewer` line, then `tokens <id>` and `costs` | the `tokens` per-role output names `security-review`, and the cost role split does not drop or fail on it (read `cost.rs` and `tokens.rs` for any role list that must learn the new name) |
 
 - [ ] **Step 3: Run them and see them fail.** Run `cargo test -j4 -p factory-cli project_show_reports_a_missing_security_agent`. Expected: the output has no such problem.
-- [ ] **Step 4: Implement the problem.** In `show`, after the existing `validate_config` and codex checks, push the problem text above when the condition holds.
-- [ ] **Step 5: Run the tests and see them pass.** Run `cargo test -j4 -p factory-cli` and `cargo clippy -j4 -p factory-cli`. Expected: all pass.
+- [ ] **Step 4: Implement the problem and the dashboard change.** In `show`, after the existing `validate_config` and codex checks, push the problem text above when the condition holds. In `board.js` make `reviewMissing` require `code` and also `security` when that key exists, add `format` and `lint` to `ROLES` and `ROLE_LABEL`, and export nothing new. In `state.rs` and `plan.rs` compute `reviewed` from the `reviews` entries whose key is not `format` or `lint`.
+- [ ] **Step 5: Run the tests and see them pass.** Run `cargo test -j4 -p factory-cli`, `cargo clippy -j4 -p factory-cli`, `node --test dashboard/tests/board.test.js` and `cargo test -j4 --manifest-path dashboard/Cargo.toml`. Expected: all pass.
 
 ### Task 3: Documentation
 

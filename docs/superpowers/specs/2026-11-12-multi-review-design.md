@@ -8,7 +8,7 @@ Let a job record several independent review results next to `code`, namely a sec
 
 Today a job has one combined review. `factory new` creates `reviews["code"]` only (`crates/factory-core/src/board.rs:241`), the review stage runs one reviewer and sets `code` (`crates/factory-engine/src/review.rs:123`, `:172`), `review_missing` looks at `code` alone (`board.rs:354`), and `decide` takes one `Verdict` (`crates/factory-engine/src/decide.rs:13`). The docs say there is no security agent (`docs/reference/software-factory.md`, Agents). Formatting and lint already run, but as plain checks: the rust preset has `cargo fmt -- --check` and `cargo clippy ... -D warnings` in `commands` (`crates/factory-core/presets/rust/config.toml:25`), and their result is not shown on its own.
 
-The board already holds `reviews: BTreeMap<String, ReviewState>` (`board.rs:73`), and the dashboard reads it as a string map (`dashboard/src/state.rs:299`), so more keys need no schema change.
+The board already holds `reviews: BTreeMap<String, ReviewState>` (`board.rs:73`), and the dashboard reads it as a string map (`dashboard/src/state.rs:299`), so more keys need no schema change. Its code needs a small change, so that `format` and `lint` do not count as reviews and `reviewMissing` knows `security` (Design 6).
 
 ## Current state
 
@@ -31,7 +31,7 @@ The board already holds `reviews: BTreeMap<String, ReviewState>` (`board.rs:73`)
 - Auto-fixing format or lint failures without a builder round.
 - Running the security reviewer on sync reviews.
 - Running the two reviewers on two threads. That needs a thread-safety bound on the runner trait and a split of `run_agent`; see Follow-ups.
-- Any change to `decide.rs`, to the dashboard code, or to a `Cargo.toml`.
+- Any change to `decide.rs` or to a `Cargo.toml`, and any dashboard change beyond Design 6.
 
 ## Design
 
@@ -110,6 +110,7 @@ pub fn combine_verdicts(verdicts: &[Verdict]) -> Verdict;
 - `factory status` prints the new keys through the existing `reviews_text`, sorted by name, so the example reads `code:pass format:pass lint:pass security:pass`.
 - `approve` without a verdict from every required role is refused with the existing message, whose text now says "no review yet from: security".
 - `project show` lists under `problems:` a project with `"security"` in `reviewers` whose agent file resolves nowhere.
+- Dashboard (`dashboard/`, its own workspace): `reviewMissing` in `static/board.js` requires `code` and also `security` when that key is present, so the approve command it shows matches the CLI. `ROLES` and `ROLE_LABEL` gain `format` and `lint`, so the gate results show as chips. The `reviewed` flag in `src/state.rs` (~299) and `src/plan.rs` (~171) ignores the `format` and `lint` keys, so a job parked in checks with `lint:changes` is not counted as reviewed.
 - `docs/reference/software-factory.md` (Pipeline, Agents, Checks) and `README.md` describe the roles, the gates and the merged file.
 
 ## Error handling and edge cases
@@ -117,7 +118,7 @@ pub fn combine_verdicts(verdicts: &[Verdict]) -> Verdict;
 | Case | Behaviour |
 |---|---|
 | `reviewers` without `code`, with an unknown value, or with a duplicate | Config error naming the allowed values; fails closed |
-| Security agent file resolves nowhere | The job parks as needs-human with `ParkKind::Other` and the reason `factory-security-reviewer.md not found`, and `project show` reports it |
+| Security agent file is not among `effective_agent_files()` (a base branch copy only replaces the text of a resolved file and never adds one, so a file tracked only on the base branch does not count) | The job parks as needs-human with `ParkKind::Other` and the reason `factory-security-reviewer.md not found`, and `project show` reports it |
 | One agent crashes or times out, the other approves | Combined verdict `Missing`; a fix round while rounds remain, then needs-human, as for one reviewer |
 | Docs-only round (every path under `docs/**`, or `*.md` outside `.claude/**` and `agents/`, none named `CLAUDE.md` or `AGENTS.md`, none risky) | Security is `skipped`, counted as a pass; `code` runs as today |
 | Only a workflow, Dockerfile, manifest, script, settings file, agent file (`.claude/agents/*.md` or a preset `agents/*.md`) or `CLAUDE.md` changed, even with `code_paths` set | Security runs |
@@ -157,6 +158,8 @@ pub fn combine_verdicts(verdicts: &[Verdict]) -> Verdict;
 - `format_and_lint_results_land_on_the_board_after_the_checks`
 - `a_new_round_clears_the_gate_entries`
 
+Dashboard: `node --test dashboard/tests/board.test.js` with `approve_command_waits_for_security_when_it_is_present`, `approve_command_ignores_security_when_it_is_absent`, `gate_roles_render_as_chips`; `cargo test -j4 --manifest-path dashboard/Cargo.toml reviewed_ignores_gate_entries`.
+
 `cargo test -j4 -p factory-cli`: `status_lists_every_review_and_gate`, `approve_is_refused_until_every_reviewer_has_a_verdict`, `project_show_reports_a_missing_security_agent`, and `cargo test -j4 -p factory-cli --test agent_lint` for the five new files.
 
 Run `cargo clippy -j4 -p factory-core -p factory-checks -p factory-engine -p factory-cli`.
@@ -174,6 +177,7 @@ Run `cargo clippy -j4 -p factory-core -p factory-checks -p factory-engine -p fac
 | `crates/factory-engine/src/review.rs`, `specs.rs`, `checks_stage.rs`, `park.rs` | Role loop, merged file, gate entries, missing-agent park |
 | `crates/factory-cli/src/commands.rs`, `project.rs`, `status.rs` | Approve message, project problems |
 | `crates/factory-engine/tests/multi_review.rs` and the crate tests above | New tests |
+| `dashboard/static/board.js`, `dashboard/src/state.rs`, `dashboard/src/plan.rs`, `dashboard/tests/board.test.js` | Approve command, gate chips, `reviewed` flag |
 | `README.md`, `docs/reference/software-factory.md`, `docs/reference/project-toml-reference.md` | Docs |
 
 ## Constraints
@@ -197,6 +201,7 @@ Run `cargo clippy -j4 -p factory-core -p factory-checks -p factory-engine -p fac
 - `approve` is refused while a required role has no verdict.
 - An invalid `reviewers` value is a config error that names the allowed values.
 - A missing security agent file parks the job with a clear reason and shows under `problems:`.
+- The dashboard shows `factory approve <id> --without-review` for a job with `code` passed and `security` pending, shows `format` and `lint` chips, and does not count a job with only gate entries as reviewed.
 - `factory tokens` and `factory costs` include the security run.
 - `cargo test -j4` for the four crates passes, `agent_lint` passes, and clippy is clean.
 
@@ -227,3 +232,4 @@ Run `cargo clippy -j4 -p factory-core -p factory-checks -p factory-engine -p fac
 - Which rounds skip security? Options: default-deny, skip only pure docs; never skip; reuse the no-checks predicate. Chosen: default-deny. Skip only when every changed path is under `docs/**`, or is a `*.md` file outside `.claude/**` and any `agents/` folder and not named `CLAUDE.md` or `AGENTS.md`, and none is risky, ignoring `code_paths`. Decided by: user
 - `review_missing` and the empty `reviews` map. Chosen: `code` is always required, present or absent, as in the existing code and its test; other roles count only when their key is present. Decided by: user
 - Missing agent file. Chosen: park with `ParkKind::Other` and a clear reason, and report it under `problems:`. Decided by: user
+- Dashboard gap found by the spec review. Options: small dashboard change in this series; follow-up ticket; fix only the approve command. Chosen: a small dashboard change in this series (`reviewMissing`, gate chips, `reviewed` flag). Decided by: user
