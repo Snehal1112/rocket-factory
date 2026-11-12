@@ -1,6 +1,7 @@
 use crate::error::CoreError;
 use crate::fsutil::write_atomic;
 use crate::stage::Stage;
+use crate::verdict::REVIEW_ROLES;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -340,27 +341,50 @@ impl Job {
         None
     }
 
-    /// The refusal that approve gives for a needs-human job without a code review. CLI and API share it.
+    /// The refusal that approve gives for a needs-human job without a review verdict. CLI and API share it.
     pub fn review_missing_message(&self) -> String {
         format!(
-            "job {} has no code review yet (the checks never passed or the reviewer never ran): use rework, or approve --without-review to merge anyway",
-            self.id
+            "job {} has no {} review yet (the checks never passed or the reviewer never ran): use rework, or approve --without-review to merge anyway",
+            self.id,
+            self.missing_reviews().join(" and ")
         )
     }
 
-    /// True when the `code` review has no verdict yet: pending, running or absent. Such a job was never reviewed.
+    /// The roles with no verdict yet, in `REVIEW_ROLES` order. `code` is always required, so it counts
+    /// when absent. Another role counts only when the job holds it. Gate keys never count.
+    pub fn missing_reviews(&self) -> Vec<&'static str> {
+        REVIEW_ROLES
+            .into_iter()
+            .filter(|role| match self.reviews.get(*role) {
+                Some(ReviewState::Pass | ReviewState::Changes | ReviewState::Skipped) => false,
+                Some(_) => true,
+                None => *role == "code",
+            })
+            .collect()
+    }
+
+    /// True when a required role has no verdict yet: pending, running or absent. Such a job was never reviewed.
     pub fn review_missing(&self) -> bool {
-        !matches!(
-            self.reviews.get("code"),
-            Some(ReviewState::Pass | ReviewState::Changes | ReviewState::Skipped)
-        )
+        !self.missing_reviews().is_empty()
     }
 
     pub fn set_review(&mut self, role: &str, state: ReviewState) {
         self.reviews.insert(role.to_string(), state);
     }
 
+    /// Gives the job one `Pending` entry per role and leaves the other keys alone.
+    pub fn set_reviewers(&mut self, roles: &[String]) {
+        self.reviews
+            .retain(|key, _| !REVIEW_ROLES.contains(&key.as_str()));
+        for role in roles {
+            self.set_review(role, ReviewState::Pending);
+        }
+    }
+
+    /// Sets the roles back to `Pending` and removes the gate keys.
     pub fn reset_reviews(&mut self) {
+        self.reviews
+            .retain(|key, _| REVIEW_ROLES.contains(&key.as_str()));
         for state in self.reviews.values_mut() {
             *state = ReviewState::Pending;
         }
@@ -718,6 +742,78 @@ mod tests {
         assert!(j.review_missing(), "a fix round resets the verdict");
         j.reviews.clear();
         assert!(j.review_missing(), "an absent review is missing too");
+    }
+
+    fn fresh_job() -> Job {
+        Job::new("001", "d", "s", "2026-10-17", "f", 1.0)
+    }
+
+    #[test]
+    fn review_missing_needs_every_reviewer_role() {
+        let mut j = fresh_job();
+        j.set_reviewers(&["code".to_string(), "security".to_string()]);
+        j.set_review("code", ReviewState::Pass);
+        assert!(j.review_missing());
+        assert_eq!(j.missing_reviews(), vec!["security"]);
+        j.set_review("security", ReviewState::Skipped);
+        assert!(!j.review_missing());
+    }
+
+    #[test]
+    fn set_reviewers_creates_one_pending_entry_per_role() {
+        let mut j = fresh_job();
+        j.set_review("security", ReviewState::Pass);
+        j.set_review("format", ReviewState::Pass);
+        j.set_reviewers(&["code".to_string()]);
+        assert_eq!(j.reviews.get("code"), Some(&ReviewState::Pending));
+        assert!(!j.reviews.contains_key("security"));
+        assert_eq!(j.reviews.get("format"), Some(&ReviewState::Pass));
+    }
+
+    #[test]
+    fn review_missing_ignores_gate_keys() {
+        let mut j = fresh_job();
+        j.set_review("code", ReviewState::Pass);
+        j.set_review("format", ReviewState::Changes);
+        assert!(!j.review_missing());
+    }
+
+    #[test]
+    fn an_absent_code_review_is_missing() {
+        let mut j = fresh_job();
+        j.reviews.clear();
+        assert!(j.review_missing());
+        assert_eq!(j.missing_reviews(), vec!["code"]);
+        j.set_review("security", ReviewState::Pass);
+        assert!(j.review_missing());
+        assert_eq!(j.missing_reviews(), vec!["code"]);
+    }
+
+    #[test]
+    fn reset_reviews_clears_gate_keys() {
+        let mut j = fresh_job();
+        j.set_reviewers(&["code".to_string(), "security".to_string()]);
+        j.set_review("code", ReviewState::Pass);
+        j.set_review("security", ReviewState::Pass);
+        j.set_review("format", ReviewState::Pass);
+        j.set_review("lint", ReviewState::Changes);
+        j.reset_reviews();
+        assert_eq!(j.reviews.len(), 2);
+        assert_eq!(j.reviews.get("code"), Some(&ReviewState::Pending));
+        assert_eq!(j.reviews.get("security"), Some(&ReviewState::Pending));
+    }
+
+    #[test]
+    fn the_missing_message_names_the_roles() {
+        let mut j = fresh_job();
+        j.set_reviewers(&["code".to_string(), "security".to_string()]);
+        assert!(j
+            .review_missing_message()
+            .contains("has no code and security review yet"));
+        j.set_review("code", ReviewState::Pass);
+        let m = j.review_missing_message();
+        assert!(m.contains("has no security review yet"), "{m}");
+        assert!(m.contains("approve --without-review"), "{m}");
     }
 
     #[test]

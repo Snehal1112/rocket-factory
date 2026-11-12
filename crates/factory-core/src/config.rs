@@ -1,5 +1,6 @@
 use crate::error::CoreError;
 use crate::risk::glob_match;
+use crate::verdict::REVIEW_ROLES;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -27,16 +28,28 @@ const DEFAULT_RISK: &[&str] = &[
     ".claude/factory/config.toml",
 ];
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckRule {
     pub paths: Vec<String>,
+    #[serde(default)]
     pub commands: Vec<String>,
+    /// Format commands, planned after `commands`. Their results show as the `format` gate.
+    #[serde(default)]
+    pub format: Vec<String>,
+    /// Lint commands, planned after `format`. Their results show as the `lint` gate.
+    #[serde(default)]
+    pub lint: Vec<String>,
 }
 
 impl CheckRule {
     pub fn matches(&self, path: &str) -> bool {
         self.paths.iter().any(|p| glob_match(p, path))
+    }
+
+    /// Every command template of the rule: `commands`, then `format`, then `lint`.
+    pub fn all_commands(&self) -> impl Iterator<Item = &String> {
+        self.commands.iter().chain(&self.format).chain(&self.lint)
     }
 }
 
@@ -143,6 +156,10 @@ pub struct Config {
     pub check_hints: Vec<String>,
     /// Rules added to the reviewer prompt, one sentence each.
     pub reviewer_rules: Vec<String>,
+    /// The review roles a new job gets, from `code` and `security`. Must include `code`.
+    pub reviewers: Vec<String>,
+    /// Rules added to the security reviewer prompt, one sentence each.
+    pub security_rules: Vec<String>,
     /// Rules for the plans the `/factory` command writes. The driver never puts them in a prompt.
     pub plan_rules: Vec<String>,
     pub checks: Vec<CheckRule>,
@@ -228,6 +245,8 @@ impl Default for Config {
             builder_rules: Vec::new(),
             check_hints: Vec::new(),
             reviewer_rules: Vec::new(),
+            reviewers: vec!["code".to_string()],
+            security_rules: Vec::new(),
             plan_rules: Vec::new(),
             checks: Vec::new(),
             code_paths: Vec::new(),
@@ -466,6 +485,7 @@ impl Config {
             ("builder_rules", &cfg.builder_rules),
             ("check_hints", &cfg.check_hints),
             ("reviewer_rules", &cfg.reviewer_rules),
+            ("security_rules", &cfg.security_rules),
             ("plan_rules", &cfg.plan_rules),
         ] {
             if lines
@@ -476,6 +496,22 @@ impl Config {
                     "{key}: every line must be one non-empty line"
                 )));
             }
+        }
+        let roles_ok = cfg
+            .reviewers
+            .iter()
+            .all(|r| REVIEW_ROLES.contains(&r.as_str()))
+            && cfg.reviewers.iter().any(|r| r == "code")
+            && cfg
+                .reviewers
+                .iter()
+                .enumerate()
+                .all(|(i, r)| !cfg.reviewers[..i].contains(r));
+        if !roles_ok {
+            return Err(CoreError::Config(
+                "reviewers: must be a list of unique roles from code, security and must include code"
+                    .to_string(),
+            ));
         }
         for (key, names) in [
             ("builder_plugins", &cfg.builder_plugins),
@@ -1271,6 +1307,45 @@ mod tests {
     }
 
     #[test]
+    fn reviewers_default_is_code_only() {
+        assert_eq!(Config::default().reviewers, vec!["code".to_string()]);
+        assert!(Config::default().security_rules.is_empty());
+    }
+
+    #[test]
+    fn reviewers_parse_and_validate() {
+        let cfg = Config::parse("reviewers = [\"code\", \"security\"]\n").expect("parse");
+        assert_eq!(
+            cfg.reviewers,
+            vec!["code".to_string(), "security".to_string()]
+        );
+        for bad in [
+            "reviewers = []\n",
+            "reviewers = [\"security\"]\n",
+            "reviewers = [\"code\", \"ux\"]\n",
+            "reviewers = [\"code\", \"code\"]\n",
+        ] {
+            let err = Config::parse(bad).expect_err(bad).to_string();
+            assert!(
+                err.contains("code") && err.contains("security"),
+                "{bad}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn security_rules_must_be_one_line_and_not_empty() {
+        let cfg = Config::parse("security_rules = [\"a\"]\n").expect("parses");
+        assert_eq!(cfg.security_rules, vec!["a".to_string()]);
+        for body in ["security_rules = [\"\"]", "security_rules = [\"a\\nb\"]"] {
+            assert!(
+                Config::parse(&format!("{body}\n")).is_err(),
+                "{body} must be refused"
+            );
+        }
+    }
+
+    #[test]
     fn plan_rules_default_to_empty_and_parse() {
         assert!(Config::default().plan_rules.is_empty());
         assert!(Config::parse("").expect("empty").plan_rules.is_empty());
@@ -1429,6 +1504,24 @@ mod tests {
         assert_eq!(cfg.checks.len(), 1);
         assert!(cfg.checks[0].matches("src/a/b.ts"));
         assert!(!cfg.checks[0].matches("crates/a.rs"));
+    }
+
+    #[test]
+    fn check_rule_without_gate_lists_still_loads() {
+        let cfg = Config::parse("[[checks]]\npaths = [\"src/**\"]\ncommands = [\"make\"]\n")
+            .expect("valid");
+        assert_eq!(cfg.checks[0].commands, vec!["make".to_string()]);
+        assert!(cfg.checks[0].format.is_empty() && cfg.checks[0].lint.is_empty());
+    }
+
+    #[test]
+    fn check_rule_gate_lists_load() {
+        let cfg = Config::parse(
+            "[[checks]]\npaths = [\"src/**\"]\ncommands = [\"make\"]\nformat = [\"fmt\"]\nlint = [\"lint\"]\n",
+        )
+        .expect("valid");
+        assert_eq!(cfg.checks[0].format, vec!["fmt".to_string()]);
+        assert_eq!(cfg.checks[0].lint, vec!["lint".to_string()]);
     }
 
     #[test]

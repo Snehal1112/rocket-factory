@@ -85,4 +85,6 @@ pub use stage::Stage;
 pub use trend::{
     build_trend, GroupTrend, MarkerTrend, Side, TrendReport, MIN_JOBS_PER_SIDE, VERDICT_BAND_PCT,
 };
-pub use verdict::{open_blockers, open_minors, parse_verdict, Verdict};
+pub use verdict::{
+    combine_verdicts, open_blockers, open_minors, parse_verdict, Verdict, REVIEW_ROLES,
+};

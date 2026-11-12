@@ -16,6 +16,20 @@ impl Verdict {
     }
 }
 
+/// The review roles a job can hold, in the order they run.
+pub const REVIEW_ROLES: [&str; 2] = ["code", "security"];
+
+/// `Approve` for a non-empty all-approve list, `Changes` when any entry is `Changes`, else `Missing`.
+pub fn combine_verdicts(verdicts: &[Verdict]) -> Verdict {
+    if verdicts.contains(&Verdict::Changes) {
+        Verdict::Changes
+    } else if !verdicts.is_empty() && verdicts.iter().all(|v| *v == Verdict::Approve) {
+        Verdict::Approve
+    } else {
+        Verdict::Missing
+    }
+}
+
 /// The trimmed lines of a review that carry `[blocker]` and not `[fixed]`, in order.
 pub fn open_blockers(review_text: &str) -> Vec<String> {
     review_text
@@ -73,6 +87,35 @@ mod tests {
     fn fixed_lines_are_not_open_blockers() {
         let text = "- [blocker] [fixed] one\n- [fixed] two\n- [blocker] three";
         assert_eq!(open_blockers(text), vec!["- [blocker] three"]);
+    }
+
+    #[test]
+    fn combine_all_approve_is_approve() {
+        assert_eq!(
+            combine_verdicts(&[Verdict::Approve, Verdict::Approve]),
+            Verdict::Approve
+        );
+    }
+
+    #[test]
+    fn combine_any_changes_is_changes() {
+        assert_eq!(
+            combine_verdicts(&[Verdict::Approve, Verdict::Changes, Verdict::Missing]),
+            Verdict::Changes
+        );
+    }
+
+    #[test]
+    fn combine_missing_without_changes_is_missing() {
+        assert_eq!(
+            combine_verdicts(&[Verdict::Approve, Verdict::Missing]),
+            Verdict::Missing
+        );
+    }
+
+    #[test]
+    fn combine_empty_is_missing() {
+        assert_eq!(combine_verdicts(&[]), Verdict::Missing);
     }
 
     #[test]
