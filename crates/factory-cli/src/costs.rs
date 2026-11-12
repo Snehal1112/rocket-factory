@@ -19,14 +19,17 @@ fn opt(n: Option<u64>) -> String {
 pub fn render_costs(all: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> String {
     let (reviews, jobs): (Vec<&JobCost>, Vec<&JobCost>) =
         all.iter().partition(|j| j.id == SPEC_REVIEW_ID);
-    let review_line = reviews.first().map_or(String::new(), |r| {
-        let tilde = if r.approx { " ~" } else { "" };
-        format!(
-            "SPEC REVIEWS  {} runs, {}{tilde} weighted (no job)\n",
-            r.runs,
-            human(r.weighted)
-        )
-    });
+    let review_line = reviews
+        .first()
+        .filter(|r| r.runs > 0)
+        .map_or(String::new(), |r| {
+            let tilde = if r.approx { " ~" } else { "" };
+            format!(
+                "SPEC REVIEWS  {} runs, {}{tilde} weighted (no job)\n",
+                r.runs,
+                human(r.weighted)
+            )
+        });
     if jobs.is_empty() {
         return format!("no jobs\n{review_line}");
     }
@@ -54,6 +57,12 @@ pub fn render_costs(all: &[JobCost], groups: &BTreeMap<String, GroupStats>) -> S
             human(j.raw),
             j.runs
         ));
+    }
+    let skipped = all
+        .iter()
+        .fold(0u32, |sum, j| sum.saturating_add(j.skipped));
+    if skipped > 0 {
+        out.push_str(&format!("{skipped} usage lines skipped\n"));
     }
     out.push('\n');
     if groups.is_empty() {
@@ -296,6 +305,7 @@ mod tests {
             resumed_runs: 0,
             round: 0,
             parked: false,
+            skipped: 0,
         }
     }
 
@@ -498,6 +508,49 @@ mod tests {
             text,
             "no jobs\nSPEC REVIEWS  3 runs, 90.0K weighted (no job)\n"
         );
+    }
+
+    #[test]
+    fn render_costs_prints_the_skipped_line_only_when_above_zero() {
+        let clean = vec![cost("1", Some(SizeGroup::Small), "merged", 1000, false, 1)];
+        let text = render_costs(&clean, &stats(&clean));
+        assert!(!text.contains("skipped"), "{text}");
+
+        let mut dirty = clean.clone();
+        dirty[0].skipped = 2;
+        let text = render_costs(&dirty, &stats(&dirty));
+        let row = text.find("merged").expect("job row");
+        let line = text.find("2 usage lines skipped").expect("skipped line");
+        let table = text.find("GROUP    JOBS").expect("group table");
+        assert!(row < line && line < table, "{text}");
+
+        assert_eq!(render_costs(&[], &stats(&[])), "no jobs\n");
+    }
+
+    #[test]
+    fn render_costs_counts_the_spec_review_record() {
+        let mut review = review_record(false);
+        review.skipped = 3;
+        let jobs = vec![
+            cost("1", Some(SizeGroup::Small), "merged", 1000, false, 1),
+            review,
+        ];
+        let text = render_costs(&jobs, &stats(&jobs));
+        assert!(text.contains("3 usage lines skipped"), "{text}");
+    }
+
+    #[test]
+    fn render_costs_hides_the_spec_review_line_when_it_has_no_runs() {
+        let mut review = review_record(false);
+        review.runs = 0;
+        review.skipped = 3;
+        let jobs = vec![
+            cost("1", Some(SizeGroup::Small), "merged", 1000, false, 1),
+            review,
+        ];
+        let text = render_costs(&jobs, &stats(&jobs));
+        assert!(text.contains("3 usage lines skipped"), "{text}");
+        assert!(!text.contains("SPEC REVIEWS"), "{text}");
     }
 
     #[test]

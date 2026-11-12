@@ -56,8 +56,8 @@ pub use config::{
     CostMarker, KbPathError, NEVER_ALLOWED_PROGRAMS, READ_ONLY_GIT,
 };
 pub use cost::{
-    count_tasks, estimate_for, group_of, stats, usage_summary, CostsFile, Estimate, GroupStats,
-    JobCost, SizeGroup, Spread, Thresholds, UsageSummary,
+    count_tasks, estimate_for, group_of, has_bad_count, stats, usage_summary, CostsFile, Estimate,
+    GroupStats, JobCost, SizeGroup, Spread, Thresholds, UsageSummary, USAGE_COUNT_FIELDS,
 };
 pub use error::CoreError;
 pub use fsutil::write_atomic;

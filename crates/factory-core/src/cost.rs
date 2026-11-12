@@ -82,16 +82,47 @@ pub struct UsageSummary {
     pub providers: BTreeMap<String, u64>,
     /// Weighted tokens by provider and role, keyed as `provider:role`.
     pub provider_roles: BTreeMap<String, u64>,
+    /// Lines that were not JSON objects, or lines of the job with a wrong-type count field.
+    pub skipped: u32,
 }
 
-/// Sums the lines of `job`. Lines of other jobs and lines that are not JSON are skipped.
+/// The count fields of a usage line.
+pub const USAGE_COUNT_FIELDS: [&str; 9] = [
+    "input",
+    "cache_creation",
+    "output",
+    "cache_read",
+    "usage_v",
+    "turns",
+    "round",
+    "start_ctx",
+    "ts",
+];
+
+/// True when a count field is present, not null and not a non-negative integer.
+pub fn has_bad_count(line: &serde_json::Value) -> bool {
+    USAGE_COUNT_FIELDS
+        .iter()
+        .any(|k| !line[*k].is_null() && line[*k].as_u64().is_none())
+}
+
+/// Sums the lines of `job`. Lines of other jobs are ignored.
+/// Lines that are not JSON objects, and lines of the job with a bad count, are counted in `skipped`.
 pub fn usage_summary(text: &str, job: &str) -> UsageSummary {
     let mut s = UsageSummary::default();
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
+        let v = match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) if v.is_object() => v,
+            _ => {
+                s.skipped = s.skipped.saturating_add(1);
+                continue;
+            }
         };
         if v["job"] != job {
+            continue;
+        }
+        if has_bad_count(&v) {
+            s.skipped = s.skipped.saturating_add(1);
             continue;
         }
         let n = |k: &str| v[k].as_u64().unwrap_or(0);
@@ -171,6 +202,8 @@ pub struct JobCost {
     pub round: u32,
     /// True when the job ever entered `needs-human`.
     pub parked: bool,
+    /// Usage lines skipped as bad. Not serialised.
+    pub skipped: u32,
 }
 
 impl JobCost {
@@ -440,7 +473,7 @@ mod tests {
             "{\"job\":\"001\",\"role\":\"reviewer\",\"turns\":\"x\",\"usage_v\":2}\n",
         );
         let s = usage_summary(text, "001");
-        assert_eq!((s.turns, s.resumed_runs, s.runs), (12, 1, 3));
+        assert_eq!((s.turns, s.resumed_runs, s.runs, s.skipped), (12, 1, 2, 1));
     }
 
     #[test]
@@ -480,6 +513,49 @@ mod tests {
     }
 
     #[test]
+    fn has_bad_count_flags_wrong_type_count_fields() {
+        for bad in [
+            serde_json::json!({"input": "12"}),
+            serde_json::json!({"input": 1.5e3}),
+            serde_json::json!({"input": -1}),
+            serde_json::json!({"ts": "x"}),
+        ] {
+            assert!(has_bad_count(&bad), "{bad}");
+        }
+        for ok in [
+            serde_json::json!({"input": null}),
+            serde_json::json!({}),
+            serde_json::json!({"input": 5}),
+        ] {
+            assert!(!has_bad_count(&ok), "{ok}");
+        }
+    }
+
+    #[test]
+    fn usage_summary_counts_and_drops_bad_lines() {
+        let text = "garbage\n{\"job\":\"001\",\"input\":\"12\"}\n[]\n{\"job\":\"001\",\"role\":\"builder\",\"input\":5}\n";
+        let s = usage_summary(text, "001");
+        assert_eq!(s.skipped, 3);
+        assert_eq!(s.runs, 1);
+        assert_eq!(s.raw, 5);
+    }
+
+    #[test]
+    fn usage_summary_does_not_count_other_jobs_bad_lines() {
+        let s = usage_summary("{\"job\":\"002\",\"input\":\"12\"}\n", "001");
+        assert_eq!(s.skipped, 0);
+        assert_eq!(s.runs, 0);
+    }
+
+    #[test]
+    fn usage_summary_keeps_a_line_with_a_bad_optional_field() {
+        let text = "{\"job\":\"001\",\"role\":\"builder\",\"input\":5,\"start_cc\":\"many\"}\n";
+        let s = usage_summary(text, "001");
+        assert_eq!(s.runs, 1);
+        assert_eq!(s.skipped, 0);
+    }
+
+    #[test]
     fn huge_counts_do_not_overflow() {
         let text = format!(
             "{{\"job\":\"001\",\"role\":\"builder\",\"input\":{m},\"cache_creation\":{m},\"output\":{m},\"cache_read\":{m},\"usage_v\":2}}\n",
@@ -516,6 +592,7 @@ mod tests {
             ]),
             turns: 0,
             resumed_runs: 0,
+            skipped: 0,
             round: 0,
             parked: false,
         }

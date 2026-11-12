@@ -547,19 +547,6 @@ pub struct Usage {
     pub no_ts: u64,
 }
 
-/// The count fields. A present, non-null value that is not a non-negative integer skips the line.
-const COUNT_FIELDS: [&str; 9] = [
-    "input",
-    "cache_creation",
-    "output",
-    "cache_read",
-    "usage_v",
-    "turns",
-    "round",
-    "start_ctx",
-    "ts",
-];
-
 /// Reads usage lines for one job. A missing file is empty.
 /// Garbage and wrong-type lines are counted in `skipped`, lines of other jobs are ignored.
 pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Usage, std::io::Error> {
@@ -580,10 +567,7 @@ pub fn load_usage(log: &std::path::Path, job: &str) -> Result<Usage, std::io::Er
         if v["job"] != job {
             continue;
         }
-        if COUNT_FIELDS
-            .iter()
-            .any(|k| !v[*k].is_null() && v[*k].as_u64().is_none())
-        {
+        if factory_core::has_bad_count(&v) {
             out.skipped += 1;
             continue;
         }
