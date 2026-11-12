@@ -98,7 +98,7 @@ fn reviewers_parse_and_validate() {
 
 **Interfaces:**
 - Consumes: `REVIEW_ROLES` and `Config.reviewers` from the settings deliverable of this plan, and `ReviewState`.
-- Produces: `Job::set_reviewers(&mut self, roles: &[String])`, `Job::missing_reviews(&self) -> Vec<&'static str>` (the roles in `REVIEW_ROLES` that are in `reviews` and have no verdict, in `REVIEW_ROLES` order), `review_missing()` true when that list is not empty, and `reset_reviews()` that sets the roles back to `Pending` and removes every key that is not in `REVIEW_ROLES`. The logic sits behind no port; `add_job` reads `driver.config()`.
+- Produces: `Job::set_reviewers(&mut self, roles: &[String])`, `Job::missing_reviews(&self) -> Vec<&'static str>` (`"code"` when it is absent or has no verdict, then every other role in `REVIEW_ROLES` that is present in `reviews` and has no verdict, in `REVIEW_ROLES` order; an absent `code` key is always missing, as `board.rs` does today), `review_missing()` true when that list is not empty, and `reset_reviews()` that sets the roles back to `Pending` and removes every key that is not in `REVIEW_ROLES`. The logic sits behind no port; `add_job` reads `driver.config()`.
 
 - [ ] **Step 1: Read the code this task touches.** Read the `Job` methods listed above, the board tests `review_missing_is_true_until_the_code_review_has_a_verdict` and `the_review_missing_message_names_the_problem_and_the_options`, `add_job` in `runloop.rs`, and `tests/new_job.rs` for how a fixture sets a config.
 - [ ] **Step 2: Write the failing tests.** In `board.rs` tests:
@@ -122,6 +122,7 @@ fn review_missing_needs_every_reviewer_role() {
 |---|---|---|
 | `set_reviewers_creates_one_pending_entry_per_role` | `set_reviewers(&["code"])` | `reviews` has only `code`, `Pending` |
 | `review_missing_ignores_gate_keys` | `code` Pass, `format` Changes | `review_missing()` is false |
+| `an_absent_code_review_is_missing` | `reviews` cleared (the existing "an absent review is missing too" case), then `reviews` holding only `security` Pass | `review_missing()` is true and `missing_reviews()` is `["code"]` both times |
 | `reset_reviews_clears_gate_keys` | roles Pass, `format` and `lint` set | roles `Pending`, gate keys gone |
 | `the_missing_message_names_the_roles` | only `security` missing | contains `has no security review yet` and `approve --without-review` |
 
