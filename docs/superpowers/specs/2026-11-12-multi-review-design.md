@@ -52,6 +52,7 @@ security_rules = ["Treat any new use of std::process::Command as a blocker unles
 
 - `CheckRule` gains `#[serde(default)] pub format: Vec<String>` and `#[serde(default)] pub lint: Vec<String>`. They are planned after `commands` with the same `{crate}` and `{dependents}` templating, and a path counts as covered when any of the three lists plans a command for it.
 - The planner returns, next to `commands`, a map from each planned command string to its gate (`CheckPlan.gates`, only for `format` and `lint` commands). `CheckResult` and `ChecksReport` do not change; after a checks run the engine joins the results with the map by command string.
+- `derived_programs` in `crates/factory-engine/src/permissions.rs:110` takes the builder's allowed programs from `commands`, `format` and `lint`, so moving a command into a gate list does not remove its program from the allow list.
 - `validate_config` and the dependents scan in `plan.rs` cover the `format` and `lint` lists the same way as `commands`. `CheckRule` gets `Default`, and its struct literals in tests use `..CheckRule::default()`.
 - `reviewers` and `security_rules` are added to the ordered key list in `settings_block.rs`, which a test compares with the `Config` keys.
 - After every checks run (the checks stage and the final re-run), for each gate with at least one result the job gets `reviews[gate]` = `Pass` when every result of that gate passed, else `Changes`. A gate with no results has no entry. A new round clears both gate entries before the checks run.

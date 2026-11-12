@@ -137,6 +137,7 @@ fn review_missing_needs_every_reviewer_role() {
 
 **Files:**
 - Modify: `crates/factory-core/src/config.rs` (`CheckRule` at ~31)
+- Modify: `crates/factory-engine/src/permissions.rs` (`derived_programs` at ~110, which reads `rule.commands` only)
 - Modify: `crates/factory-checks/src/plan.rs` (`CheckPlan` at ~14, `validate_config` at ~53, `plan_checks_in` at ~85-150, `uses_dependents` at ~112, tests from ~178)
 - Modify: `crates/factory-engine/src/checks_stage.rs` (`plan_for` at ~191-195, which decides whether to load the workspace map by scanning `r.commands` only)
 - Modify: `crates/factory-core/presets/rust/config.toml` (lines ~25-45), `crates/factory-core/presets/ruby/config.toml` (~27), `crates/factory-core/presets/node/config.toml` (~31)
@@ -178,12 +179,15 @@ fn format_and_lint_commands_are_planned_after_commands() {
 | `an_invalid_cargo_command_in_a_gate_list_is_refused` | `format = ["cargo fmt --workspace"]` | `validate_config` returns an error |
 | `rust_preset_marks_fmt_and_clippy_as_gates` | `rust_preset()` and a changed crate file | `gate_of` is `format` for fmt and `lint` for clippy |
 
+  In `crates/factory-engine/src/permissions.rs` tests add `a_lint_only_program_is_allowed_for_the_builder`: a config whose only rule has `commands = ["cargo check -j4"]` and `lint = ["golangci-lint run"]` gives a builder allow list that contains `Bash(golangci-lint:*)`, built the way the neighbouring allow-list tests build theirs.
+
   In `config.rs` tests add `check_rule_without_gate_lists_still_loads` (a rule with only `paths` and `commands`, both new lists empty) and `check_rule_gate_lists_load`.
 
 - [ ] **Step 3: Run them and see them fail.** Run `cargo test -j4 -p factory-checks` and `cargo test -j4 -p factory-core check_rule`. Expected: `struct 'CheckRule' has no field named 'format'`.
 - [ ] **Step 4: Implement `CheckRule`.** Add the two defaulted lists and `Default`. Fix every literal named in Files with `..CheckRule::default()`. Keep `deny_unknown_fields`.
 - [ ] **Step 5: Implement the planner changes.** `validate_config` and the `{dependents}` scan include the two lists. `plan_checks_in` iterates `commands`, `format`, `lint` of each rule with the same expansion, filtering and de-duplication, and records the gate of each planned command in `CheckPlan.gates` (the first rule that plans a command decides). A path counts as covered when any of the three lists plans a command for it. In `plan_for` of `checks_stage.rs`, scan `commands`, `format` and `lint` of each rule when deciding whether to load the workspace map, so a rule that uses `{crate}` only in `lint` still expands per crate in a real run. Add the engine test `a_crate_template_only_in_lint_expands_in_a_real_run` to `crates/factory-engine/tests/build_checks.rs`: a rule with `lint = ["cargo clippy -j4 -p {crate}"]` and a changed file of a workspace crate plans `cargo clippy -j4 -p <crate>` and not the folder fallback.
-- [ ] **Step 6: Move the preset commands.** In `rust`, move both `cargo fmt` lines into `format` and both `cargo clippy` lines into `lint`, in both rules. In `ruby` move `bundle exec rubocop` into `lint`. In `node` move `bun run lint` into `lint`. Leave `go` and `csharp` as they are, since neither runs a formatter or linter today. Run `cargo test -j4 -p factory-core --test rocket_parity`; if it fails only because the preset's `commands` no longer hold the moved lines, make it compare `commands`, `format` and `lint` joined in that order.
+- [ ] **Step 5b: Keep the builder's allowed programs.** In `derived_programs` in `crates/factory-engine/src/permissions.rs` (~110), take programs from `commands`, `format` and `lint` of each rule, in that order, still without duplicates. Without this a lint or format program that no `commands` entry uses would drop out of the allow list once the presets move their commands.
+- [ ] **Step 6: Move the preset commands.** In `rust`, move both `cargo fmt` lines into `format` and both `cargo clippy` lines into `lint`, in both rules. In `ruby` move `bundle exec rubocop` into `lint`. In `node` move `bun run lint` into `lint`. Leave `go` and `csharp` as they are, since neither runs a formatter or linter today. Update the test `the_node_preset_is_bun_and_script_driven` in `factory-core/src/preset.rs` (~481) so `commands` expect `bun run typecheck` and `bun test`, and the `lint` lists expect `bun run lint`. Run `cargo test -j4 -p factory-core --test rocket_parity`; if it fails only because the preset's `commands` no longer hold the moved lines, make it compare `commands`, `format` and `lint` joined in that order.
 - [ ] **Step 7: Run the tests and see them pass.** Run `cargo test -j4 -p factory-checks`, `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine` and `cargo clippy -j4 -p factory-core -p factory-checks -p factory-engine`. Expected: all pass.
 
 Next plan: docs/superpowers/plans/2026-11-12-multi-review/plan-02-multi-review.md
