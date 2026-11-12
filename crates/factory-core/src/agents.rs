@@ -106,12 +106,12 @@ mod tests {
     }
 
     #[test]
-    fn all_five_preset_agents_become_one_json_object() {
+    fn all_six_preset_agents_become_one_json_object() {
         for name in PRESET_NAMES {
             let preset = embedded(name).expect("the preset is embedded");
             let files: Vec<AgentFile> = preset.agents.iter().map(|(n, c)| file(n, c)).collect();
             let json = parse(&files);
-            assert_eq!(json.as_object().expect("an object").len(), 5, "{name}");
+            assert_eq!(json.as_object().expect("an object").len(), 6, "{name}");
         }
     }
 

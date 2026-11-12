@@ -118,12 +118,13 @@ fn factory_file_names(dir: &Path) -> Result<Vec<String>, String> {
 }
 
 #[test]
-fn every_preset_ships_the_five_factory_agents() -> TestResult {
+fn every_preset_ships_the_six_factory_agents() -> TestResult {
     let want = vec![
         "factory-builder.md".to_string(),
         "factory-code-reviewer.md".to_string(),
         "factory-committer.md".to_string(),
         "factory-kb-refresher.md".to_string(),
+        "factory-security-reviewer.md".to_string(),
         "factory-spec-reviewer.md".to_string(),
     ];
     for preset in PRESETS {
@@ -817,6 +818,26 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
             "crates/factory-core/presets/node/agents/factory-code-reviewer.md",
             factory_engine::REVIEWER_MAX_TURNS,
         ),
+        (
+            "crates/factory-core/presets/rust/agents/factory-security-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/go/agents/factory-security-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/ruby/agents/factory-security-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/csharp/agents/factory-security-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
+        (
+            "crates/factory-core/presets/node/agents/factory-security-reviewer.md",
+            factory_engine::REVIEWER_MAX_TURNS,
+        ),
     ];
     for (path, want) in files {
         let fm = frontmatter(&read(path)?)?;
@@ -829,6 +850,46 @@ fn agent_max_turns_match_the_driver_constants() -> TestResult {
                 "{path}: maxTurns is {got}, the driver constant is {want}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn security_reviewer_files_follow_the_reviewer_contract() -> TestResult {
+    for preset in PRESETS {
+        let text = read(&preset_agent(preset, "factory-security-reviewer.md"))?;
+        require_all(
+            &text,
+            preset,
+            &[
+                "<!-- factory-rules: 1 -->",
+                "tools: Read, Grep, Glob",
+                "at most 60 lines",
+                "[blocker]",
+                "[minor]",
+                "1500 lines per call",
+                "starting at line 1",
+            ],
+        )?;
+        for verdict in ["VERDICT: APPROVE", "VERDICT: CHANGES"] {
+            if !has_line(&text, verdict) {
+                return Err(format!("{preset}: no line {verdict}"));
+            }
+        }
+        forbid_all(
+            &text,
+            preset,
+            &[
+                "Bash",
+                "Write",
+                "Edit",
+                "Rocket",
+                "rocket-",
+                "yarn",
+                "shadcn",
+                "src-tauri",
+            ],
+        )?;
     }
     Ok(())
 }

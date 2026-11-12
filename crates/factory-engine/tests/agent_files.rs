@@ -308,13 +308,14 @@ fn a_resumed_step_refuses_bad_names_and_writes_nothing() {
     }
 }
 
-/// The agent file list of a full factory: five agents with marker-less text.
-fn five_files() -> Vec<AgentFile> {
+/// The agent file list of a full factory: six agents with marker-less text.
+fn six_files() -> Vec<AgentFile> {
     [
         "builder",
         "code-reviewer",
         "committer",
         "kb-refresher",
+        "security-reviewer",
         "spec-reviewer",
     ]
     .iter()
@@ -353,13 +354,13 @@ fn a_tracked_agent_text_wins_in_the_agents_file() {
     commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
     let runner = scripted_auto(vec![write_effect("a.txt")]);
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .build_stage()
         .expect("build");
     let json = agents_of(&runner.last_spec_for("builder").expect("builder"));
     assert!(prompt_of(&json, "factory-builder").contains("TRACKED-TEXT"));
     assert!(prompt_of(&json, "factory-committer").contains("RESOLVED committer"));
-    assert_eq!(json.as_object().expect("object").len(), 5);
+    assert_eq!(json.as_object().expect("object").len(), 6);
 }
 
 #[test]
@@ -368,16 +369,16 @@ fn a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents() {
     commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
     let runner = scripted_auto(vec![delete_builder_file()]);
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .build_stage()
         .expect("build");
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .checks_stage()
         .expect("checks");
     let reviewer = scripted(vec![Box::new(|_| "ok\nVERDICT: APPROVE".to_string())]);
     fx.engine(&reviewer)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .review_stage()
         .expect("review");
     let specs = [
@@ -408,7 +409,7 @@ fn the_rules_marker_is_read_from_the_effective_text() {
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     commit_file(&fx.main, BUILDER, "<!-- factory-rules: 1 -->\nTRACKED\n");
     let runner = scripted_auto(vec![delete_builder_file(), write_effect("b.txt")]);
-    let e = fx.engine(&runner).with_agent_files(five_files());
+    let e = fx.engine(&runner).with_agent_files(six_files());
     e.build_stage().expect("first");
     e.build_stage().expect("second");
     assert!(!worktree(&fx).join(BUILDER).exists());
@@ -426,7 +427,7 @@ fn a_codex_run_sends_no_agents_file() {
     fx.config.agent_cli = Some("codex".to_string());
     let runner = scripted_auto(vec![write_effect("a.txt")]);
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .build_stage()
         .expect("build");
     let spec = runner.last_spec_for("builder").expect("builder");
@@ -447,7 +448,7 @@ fn an_unreadable_tracked_agent_file_stops_the_run() {
     let runner = scripted_auto(vec![write_effect("a.txt")]);
     let err = fx
         .engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .build_stage()
         .expect_err("unreadable file");
     assert!(err.to_string().contains("factory-builder.md"), "{err}");
@@ -459,16 +460,16 @@ fn no_agent_file_is_written_into_the_worktree() {
     let fx = committing_fixture();
     let runner = scripted_auto(vec![write_effect("a.txt")]);
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .build_stage()
         .expect("build");
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .checks_stage()
         .expect("checks");
     let reviewer = scripted(vec![Box::new(|_| "ok\nVERDICT: APPROVE".to_string())]);
     fx.engine(&reviewer)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .review_stage()
         .expect("review");
     assert!(!worktree(&fx).join(".claude/agents").exists());
@@ -484,7 +485,7 @@ fn no_shadow_ruling_is_written() {
     commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
     let runner = scripted_auto(vec![write_effect("a.txt")]);
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .build_stage()
         .expect("build");
     let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
@@ -494,7 +495,7 @@ fn no_shadow_ruling_is_written() {
 #[test]
 fn a_job_that_deletes_the_tracked_agent_files_reaches_review() {
     let fx = committing_fixture();
-    for file in five_files() {
+    for file in six_files() {
         commit_file(
             &fx.main,
             &format!(".claude/agents/{}", file.name),
@@ -508,16 +509,16 @@ fn a_job_that_deletes_the_tracked_agent_files_reaches_review() {
     });
     let runner = scripted_auto(vec![delete_all]);
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .build_stage()
         .expect("build");
     fx.engine(&runner)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .checks_stage()
         .expect("checks");
     let reviewer = scripted(vec![Box::new(|_| "ok\nVERDICT: APPROVE".to_string())]);
     fx.engine(&reviewer)
-        .with_agent_files(five_files())
+        .with_agent_files(six_files())
         .review_stage()
         .expect("review");
     let specs = [

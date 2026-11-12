@@ -41,6 +41,10 @@ static RUST: Preset = Preset {
             include_str!("../presets/rust/agents/factory-kb-refresher.md"),
         ),
         (
+            "factory-security-reviewer.md",
+            include_str!("../presets/rust/agents/factory-security-reviewer.md"),
+        ),
+        (
             "factory-spec-reviewer.md",
             include_str!("../presets/rust/agents/factory-spec-reviewer.md"),
         ),
@@ -67,6 +71,10 @@ static GO: Preset = Preset {
         (
             "factory-kb-refresher.md",
             include_str!("../presets/go/agents/factory-kb-refresher.md"),
+        ),
+        (
+            "factory-security-reviewer.md",
+            include_str!("../presets/go/agents/factory-security-reviewer.md"),
         ),
         (
             "factory-spec-reviewer.md",
@@ -97,6 +105,10 @@ static RUBY: Preset = Preset {
             include_str!("../presets/ruby/agents/factory-kb-refresher.md"),
         ),
         (
+            "factory-security-reviewer.md",
+            include_str!("../presets/ruby/agents/factory-security-reviewer.md"),
+        ),
+        (
             "factory-spec-reviewer.md",
             include_str!("../presets/ruby/agents/factory-spec-reviewer.md"),
         ),
@@ -125,6 +137,10 @@ static CSHARP: Preset = Preset {
             include_str!("../presets/csharp/agents/factory-kb-refresher.md"),
         ),
         (
+            "factory-security-reviewer.md",
+            include_str!("../presets/csharp/agents/factory-security-reviewer.md"),
+        ),
+        (
             "factory-spec-reviewer.md",
             include_str!("../presets/csharp/agents/factory-spec-reviewer.md"),
         ),
@@ -151,6 +167,10 @@ static NODE: Preset = Preset {
         (
             "factory-kb-refresher.md",
             include_str!("../presets/node/agents/factory-kb-refresher.md"),
+        ),
+        (
+            "factory-security-reviewer.md",
+            include_str!("../presets/node/agents/factory-security-reviewer.md"),
         ),
         (
             "factory-spec-reviewer.md",
@@ -533,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn presets_ship_the_five_agents_and_name_no_rocket_file() {
+    fn presets_ship_the_six_agents_and_name_no_rocket_file() {
         for name in PRESET_NAMES {
             let p = embedded(name).expect("preset");
             let mut names: Vec<&str> = p.agents.iter().map(|(n, _)| *n).collect();
@@ -545,6 +565,7 @@ mod tests {
                     "factory-code-reviewer.md",
                     "factory-committer.md",
                     "factory-kb-refresher.md",
+                    "factory-security-reviewer.md",
                     "factory-spec-reviewer.md"
                 ]
             );
@@ -743,7 +764,7 @@ mod tests {
     fn refresh_writes_absent_files() {
         let dir = tempfile::tempdir().expect("tmp");
         let r = refresh(dir.path(), false).expect("refresh");
-        assert_eq!(r.written.len(), 35);
+        assert_eq!(r.written.len(), 40);
         assert!(r.updated.is_empty() && r.skipped.is_empty() && r.refused.is_empty());
         assert!(dir.path().join("go/agents/factory-builder.md").exists());
     }
@@ -753,7 +774,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         seed(dir.path()).expect("seed");
         let r = refresh(dir.path(), false).expect("refresh");
-        assert_eq!(r.skipped.len(), 35);
+        assert_eq!(r.skipped.len(), 40);
         assert!(r.written.is_empty() && r.updated.is_empty() && r.refused.is_empty());
     }
 
@@ -816,7 +837,7 @@ mod tests {
                 r.refused.is_empty() && r.written.is_empty(),
                 "{name}/{file}"
             );
-            assert_eq!(r.skipped.len(), 34, "{name}/{file}");
+            assert_eq!(r.skipped.len(), 39, "{name}/{file}");
             assert_eq!(
                 std::fs::read_to_string(&path).expect("read"),
                 shipped(name, file),
@@ -928,7 +949,7 @@ mod tests {
         let r = refresh(dir.path(), false).expect("refresh");
         assert_eq!(r.updated, vec![path.clone()]);
         assert!(r.refused.is_empty() && r.written.is_empty());
-        assert_eq!(r.skipped.len(), 34);
+        assert_eq!(r.skipped.len(), 39);
         let shipped_text = shipped("rust", "factory-committer.md");
         assert_eq!(std::fs::read_to_string(&path).expect("read"), shipped_text);
         let after = Manifest::read(dir.path()).expect("read again");
@@ -942,14 +963,14 @@ mod tests {
     fn seed_records_a_hash_for_every_file_it_writes() {
         let dir = tempfile::tempdir().expect("tmp");
         let wrote = seed(dir.path()).expect("seed");
-        assert_eq!(wrote.len(), 35);
+        assert_eq!(wrote.len(), 40);
         assert!(wrote.iter().all(|p| !p.ends_with(MANIFEST_FILE)));
         let m = Manifest::read(dir.path()).expect("read");
         for rel in all_rels() {
             let bytes = std::fs::read(dir.path().join(&rel)).expect("file");
             assert_eq!(m.get(&rel), Some(sha256_hex(&bytes).as_str()), "{rel}");
         }
-        assert_eq!(m.render().lines().count(), 35);
+        assert_eq!(m.render().lines().count(), 40);
     }
 
     #[test]
@@ -972,7 +993,7 @@ mod tests {
         std::fs::write(dir.path().join("rust/config.toml"), "# mine\n").expect("edit");
         seed(dir.path()).expect("seed again");
         let m = Manifest::read(dir.path()).expect("read");
-        assert_eq!(m.render().lines().count(), 34);
+        assert_eq!(m.render().lines().count(), 39);
         assert!(m.get("rust/config.toml").is_none());
     }
 
@@ -1020,7 +1041,7 @@ mod tests {
         let r = refresh(dir.path(), false).expect("refresh");
         assert_eq!(r.updated, vec![path]);
         let m = Manifest::read(dir.path()).expect("read");
-        assert_eq!(m.render().lines().count(), 35);
+        assert_eq!(m.render().lines().count(), 40);
         for rel in all_rels() {
             let want = sha256_hex(embedded_text(&rel).as_bytes());
             assert_eq!(m.get(&rel), Some(want.as_str()), "{rel}");
@@ -1175,7 +1196,7 @@ mod tests {
             vec![dir.path().join("rust/agents/factory-builder.md")]
         );
         assert_eq!(plan.refused, vec![dir.path().join("rust/config.toml")]);
-        assert_eq!(plan.skipped.len(), 32);
+        assert_eq!(plan.skipped.len(), 37);
     }
 
     #[test]
@@ -1199,7 +1220,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         let presets = dir.path().join("presets");
         let plan = plan_refresh(&presets).expect("plan");
-        assert_eq!(plan.written.len(), 35);
+        assert_eq!(plan.written.len(), 40);
         assert!(plan.updated.is_empty() && plan.skipped.is_empty() && plan.refused.is_empty());
         assert!(!presets.exists());
     }
