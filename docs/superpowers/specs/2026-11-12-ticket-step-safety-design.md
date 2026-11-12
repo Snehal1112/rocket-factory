@@ -43,7 +43,7 @@ Flow of one real run, per follow-up: skip when created, else adopt a pending iss
 
 - A `#N` ref counts only when the char after the digits is not alphanumeric or `_`. The end of the text counts as a boundary. `#1a2b3c` gives no ref. `#12.`, `#12)` and `#12,` give 12.
 - Shorthand `owner/repo#N` becomes `IssueRef { number: N, repo: Some("owner/repo") }`, the same shape a URL gives. The text before the `#` must be `<owner>/<repo>` where both parts pass `is_repo_name`, and the char before the owner is the start of the text or a char that is not a repo-name char and not `/`. So `x.com/a/b#12` is not a ref.
-- `parse_issues` stays as it is. Its callers (`runloop.rs`, `one_job.rs`) share the new boundary rule.
+- `parse_issues` keeps its behaviour. It is built from the `#N` and URL parsers only and leaves shorthand refs out, so a shorthand ref to another repository never reaches `job.issues` or a commit footer. Its callers (`runloop.rs`, `one_job.rs`) share the new boundary rule.
 
 ### 2. Pending entries and recovery (`factory-engine`)
 
@@ -106,7 +106,7 @@ It calls `acquire_lease` for the job with the driver's owner and TTL, and takes 
 
 `cargo test -j4 -p factory-core`:
 
-- `commitmsg.rs`: `hash_ref_needs_a_boundary_after_the_digits`, `hash_ref_may_end_at_punctuation`, `owner_repo_shorthand_carries_the_repo`, `shorthand_inside_a_longer_path_is_not_a_ref`.
+- `commitmsg.rs`: `hash_ref_needs_a_boundary_after_the_digits`, `hash_ref_may_end_at_punctuation`, `owner_repo_shorthand_carries_the_repo`, `shorthand_inside_a_longer_path_is_not_a_ref`, `parse_issues_ignores_a_shorthand_ref_to_another_repository`.
 
 `cargo test -j4 -p factory-engine`:
 
@@ -145,7 +145,7 @@ Every `Tracker` implementor in tests gets the new method. Run `cargo clippy -j4 
 ## Acceptance criteria
 
 - A feature text with `#1a2b3c` closes no issue; `#12.` and `#12)` still cite issue 12.
-- `other/repo#5` in the feature makes the step skip with the "belongs to other/repo" line.
+- `other/repo#5` in the feature makes the step skip with the "belongs to other/repo" line, and adds no issue to `job.issues` and no commit footer.
 - After a create that failed in any of the four ways, a rerun files no second issue when the first exists.
 - A failed marker save after a create shows `#N` in the report and the ledger line.
 - Two follow-ups with the same first sentence give two tickets, and the parent comment lists two numbers.
@@ -165,7 +165,7 @@ Every `Tracker` implementor in tests gets the new method. Run `cargo clippy -j4 
 ## Follow-ups
 
 - Apply the pending-entry recovery to `waivers.rs`, which files issues with the same create-then-save order (`waivers.rs:162`).
-- Make the commit footer skip a ref that carries another repository, because `parse_issues` keeps the number of a foreign URL or shorthand ref and a footer line `Closes: #N` could then name an issue of this repository.
+- Make the commit footer skip a ref that carries another repository, because `parse_issues` keeps the number of a foreign URL ref and a footer line `Closes: #N` could then name an issue of this repository.
 
 ## Decisions
 
@@ -175,6 +175,7 @@ Every `Tracker` implementor in tests gets the new method. Run `cargo clippy -j4 
 - `factory tickets` takes no lease, so two runs can both file. Options: take the job lease on a real run; a lock file in the job folder; leave it and document it. Chosen: a real run takes the job lease with `acquire_lease` and releases it on every path, a dry run takes nothing. Decided by: user
 - A follow-up body is over GitHub's 65,536-character limit. Options: cut it and say so; fail with a message; leave it. Chosen: cut the body to 60,000 characters and add a closing line that says it was cut. Decided by: user
 - Should `factory tickets` hold only the job lease or the project lease too? Options: job lease only; project and job lease via `renew_lease`. Chosen: job lease only, through a new `Driver::hold_job`, so tickets runs while another job builds. Decided by: user
-- What counts as a ref boundary and a shorthand? Chosen: the char after the digits is not alphanumeric or `_`; the shorthand needs `<owner>/<repo>` with both parts valid and no `/` or repo-name char before the owner. Decided by: call
-- What does recovery match, and what does a dry run do for a pending title? Chosen: an exact title plus the body line `Filed by factory job {id} ({slug})`, the lowest number wins, and a dry run only reports it would look. Decided by: call
+- What counts as a ref boundary and a shorthand? Chosen: the char after the digits is not alphanumeric or `_`; the shorthand needs `<owner>/<repo>` with both parts valid and no `/` or repo-name char before the owner. Decided by: user
+- What does recovery match, and what does a dry run do for a pending title? Chosen: an exact title plus the body line `Filed by factory job {id} ({slug})`, the lowest number wins, and a dry run only reports it would look. Decided by: user
+- The spec review found that shorthand refs would reach `parse_issues` and so commit footers. Chosen: `parse_issues` is built from the `#N` and URL parsers only, so it keeps its behaviour. Decided by: user
 - Does a dry run take the job lease? Chosen: no, it writes nothing and keeps the read-only live-lease check. Decided by: call

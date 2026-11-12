@@ -24,7 +24,8 @@
 2. A ref in brackets or after punctuation, as in `(#12)` and `[#12]`, still counts. Pinned by `hash_ref_may_end_at_punctuation`.
 3. A repeated title of exactly 100 characters keeps its suffixed twin within 100 characters. Pinned by `a_suffixed_title_stays_within_100_chars`.
 4. A multi-byte title is cut on a char boundary and never panics. Pinned by `a_multibyte_title_is_cut_on_a_char_boundary`.
-5. A `gh issue list` entry with `"body": null` is read as an empty body and never panics. Pinned by `parse_found_treats_a_null_body_as_empty`.
+5. A shorthand ref to another repository never reaches `job.issues` or a commit footer. Pinned by `parse_issues_ignores_a_shorthand_ref_to_another_repository`.
+6. A `gh issue list` entry with `"body": null` is read as an empty body and never panics. Pinned by `parse_found_treats_a_null_body_as_empty`.
 
 ## File Structure
 
@@ -43,7 +44,7 @@
 
 **Interfaces:**
 - Consumes: the existing `IssueRef { number: u32, repo: Option<String> }`, `is_repo_name(&str) -> bool` and `GITHUB_PREFIX` in the same file.
-- Produces: `parse_issue_refs(text: &str) -> Vec<IssueRef>` keeps its signature and now also returns shorthand refs; a new private `fn shorthand_refs(text: &str) -> Vec<IssueRef>`. `parse_issues` keeps its signature and behaviour.
+- Produces: `parse_issue_refs(text: &str) -> Vec<IssueRef>` keeps its signature and now also returns shorthand refs; a new private `fn shorthand_refs(text: &str) -> Vec<IssueRef>`. `parse_issues` keeps its signature and behaviour: it is built from `hash_refs` and `url_refs` only, through a private `fn plain_refs(text: &str) -> Vec<IssueRef>`, and never sees shorthand refs.
 
 - [ ] **Step 1: Read the code and docs this task touches.** Read `crates/factory-core/src/commitmsg.rs` lines 68 to 151 and the existing ref tests (`refs_read_hash_numbers_and_urls`, `pull_request_url_is_not_an_issue`, `refs_are_sorted_and_deduplicated`, `parse_issues_keeps_hash_behavior_and_adds_url_numbers`, `parse_issues_reads_hash_numbers_only`). Read the "Design, 1" section of the spec. Note where `parse_issue_refs` is called: `crates/factory-engine/src/tickets.rs` and, through `parse_issues`, `runloop.rs` and `one_job.rs`.
 - [ ] **Step 2: Write the failing tests** in the `tests` module of `commitmsg.rs`. Build `IssueRef` values directly.
@@ -84,12 +85,23 @@ fn shorthand_inside_a_longer_path_is_not_a_ref() {
     assert!(parse_issue_refs("x.com/a/b#12").is_empty());
     assert!(parse_issue_refs("/a/b#12").is_empty());
 }
+
+#[test]
+fn parse_issues_ignores_a_shorthand_ref_to_another_repository() {
+    assert!(parse_issues("fix other/repo#5 later").is_empty());
+    assert_eq!(parse_issues("fix other/repo#5 and #7"), vec![7]);
+    assert_eq!(
+        parse_issues("see https://github.com/o/r/issues/9"),
+        vec![9]
+    );
+}
 ```
 
 - [ ] **Step 3: Run them and see them fail.** Run `cargo test -j4 -p factory-core commitmsg`. Expected: `hash_ref_needs_a_boundary_after_the_digits` and `owner_repo_shorthand_carries_the_repo` fail; the others may already pass.
 - [ ] **Step 4: Implement the boundary rule in `hash_refs`.** After reading the digits, the char at `i + 1 + digits.len()` must be absent, or neither alphanumeric nor `_`; otherwise skip this `#`.
 - [ ] **Step 5: Implement `fn shorthand_refs(text: &str) -> Vec<IssueRef>`** and extend the list in `parse_issue_refs` with it before the sort and dedup. For each `#` that follows a repo-name char, scan back over repo-name chars to a `/`, then back over repo-name chars to the owner start. Accept only when both parts are non-empty and pass `is_repo_name`, and the char before the owner is absent or is neither a repo-name char nor `/`. Read the digits after the `#` with the same boundary rule as step 4 and the same `number >= 1` check. Build `IssueRef { number, repo: Some(format!("{owner}/{repo}")) }`. Scan on a `Vec<char>` like `hash_refs` does.
-- [ ] **Step 6: Run the tests and see them pass.** Run `cargo test -j4 -p factory-core` and `cargo clippy -j4 -p factory-core`. Expected: all pass and clippy is clean. If an older test fails only because its input has digits followed by a letter, fix that input and keep the test's intent.
+- [ ] **Step 6: Keep `parse_issues` unchanged in behaviour.** Move the `#N` and URL parts of `parse_issue_refs` into `fn plain_refs(text: &str) -> Vec<IssueRef>` (hash refs plus URL refs, sorted and de-duplicated). `parse_issue_refs` returns `plain_refs` plus `shorthand_refs`, sorted and de-duplicated. `parse_issues` maps `plain_refs` to numbers, so a shorthand ref never reaches `job.issues` or a commit footer.
+- [ ] **Step 7: Run the tests and see them pass.** Run `cargo test -j4 -p factory-core` and `cargo clippy -j4 -p factory-core`. Expected: all pass and clippy is clean. If an older test fails only because its input has digits followed by a letter, fix that input and keep the test's intent.
 
 ### Task 2: Unique follow-up titles
 
