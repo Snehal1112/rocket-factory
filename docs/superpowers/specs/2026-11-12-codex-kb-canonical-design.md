@@ -38,7 +38,7 @@ prepare_for_codex (role kb): folder = spec.add_dirs.first() -> cwd, git dir
 
 ### 1. Take the folder from `spec.add_dirs`
 
-In `prepare_for_codex`, for a role that has `kb`, let `kb_dir = spec.add_dirs.first().cloned()`. When it is `Some`: `spec.cwd = kb_dir`, and when `config.kb_auto_commit` is true and `Repo::open(&kb_dir)` succeeds, push `kb_repo.common_git_dir()` into `writable_roots`. When it is `None`, `spec.cwd` and `writable_roots` stay as they are. The `config.kb_dir()` call is removed from this function.
+A small pure function `fn kb_folder(add_dirs: &[PathBuf]) -> Option<&Path>` in `codex_prep.rs` returns the first entry. In `prepare_for_codex`, for a role that has `kb`, let `kb_dir = kb_folder(&spec.add_dirs).map(Path::to_path_buf)`. When it is `Some`: `spec.cwd = kb_dir`, and when `config.kb_auto_commit` is true and `Repo::open(&kb_dir)` succeeds, push `kb_repo.common_git_dir()` into `writable_roots`. When it is `None`, `spec.cwd` and `writable_roots` stay as they are. The `config.kb_dir()` call is removed from this function.
 
 Example: `kb_path = "/home/u/kb-link"`, a symlink to `/data/kb/rocketapi`. Before: Codex `cwd` is `/home/u/kb-link`. After: `/data/kb/rocketapi`.
 
@@ -65,7 +65,7 @@ The probe `Kb` role passes the KB folder, or its work folder when `kb_path` is u
   - `kb_under_codex_runs_in_the_target_of_a_symlinked_kb_path` (a symlink to the KB folder as `kb_path`; `cwd` equals the target);
   - `kb_under_codex_gets_the_kb_git_dir_when_auto_commit_is_on` (the KB folder is a git repo reached through a symlink, `kb_auto_commit` true; `writable_roots` holds that repo's common git dir);
   - `kb_under_codex_has_no_extra_root_without_auto_commit`.
-- `crates/factory-engine/src/codex_prep.rs` unit test `a_kb_spec_without_add_dirs_keeps_its_cwd`.
+- `crates/factory-engine/src/codex_prep.rs` unit test `kb_folder_is_the_first_add_dir_or_none` (empty list gives `None`; two entries give the first). `prepare_for_codex` is crate-private, so the empty case is tested through this function.
 - Commands: `cargo test -j4 -p factory-engine`, then `cargo clippy -j4 -p factory-engine`.
 
 ## Files changed
