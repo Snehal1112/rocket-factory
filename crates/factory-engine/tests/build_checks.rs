@@ -2033,9 +2033,14 @@ fn a_path_with_a_rule_character_leaves_the_spec_unchanged() {
     fx.config.kb_path = Some(kb.to_string_lossy().into_owned());
     let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
+    // A bad kb_path yields no KB folder, so no rule or extra directory names it.
     let spec = runner.specs_for("builder").remove(0);
-    assert_eq!(spec.permission_mode, None);
-    assert!(spec.allowed_tools.is_empty());
+    let rules = spec.disallowed_tools.join(" ");
+    assert!(!rules.contains("kb)1"), "{rules}");
+    assert!(spec
+        .add_dirs
+        .iter()
+        .all(|d| !d.to_string_lossy().contains("kb)1")));
 }
 
 #[test]

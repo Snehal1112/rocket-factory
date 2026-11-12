@@ -421,6 +421,9 @@ impl Config {
                 "kb_path must not be empty when it is set".into(),
             ));
         }
+        if let Some(path) = cfg.kb_path.as_deref() {
+            check_kb_path(path).map_err(|e| CoreError::Config(e.to_string()))?;
+        }
         if cfg.builder_carry_max_ctx == 0 {
             return Err(CoreError::Config(
                 "builder_carry_max_ctx must be above 0".into(),
@@ -543,11 +546,18 @@ impl Config {
         expand_home(path, std::env::var("HOME").ok().as_deref())
     }
 
-    /// The KB folder with a leading `~` expanded. `None` when `kb_path` is unset, or when `~` is used and `HOME` is unset or empty.
+    /// The KB folder with a leading `~` expanded. `Ok(None)` when `kb_path` is unset.
     /// It does not check that the folder exists.
+    pub fn kb_dir_checked(&self) -> Result<Option<PathBuf>, KbPathError> {
+        match self.kb_path.as_deref() {
+            None => Ok(None),
+            Some(path) => resolve_kb_path(path, std::env::var("HOME").ok().as_deref()).map(Some),
+        }
+    }
+
+    /// The KB folder, or `None` when `kb_path` is unset or invalid. Use `kb_dir_checked` to see why.
     pub fn kb_dir(&self) -> Option<PathBuf> {
-        let path = self.kb_path.as_deref()?;
-        expand_home(path, std::env::var("HOME").ok().as_deref())
+        self.kb_dir_checked().ok().flatten()
     }
 
     /// Never fails. A missing or invalid file yields the fail-closed config.
@@ -557,6 +567,43 @@ impl Config {
             Err(_) => Config::fail_closed(),
         }
     }
+}
+
+/// Why a `kb_path` cannot be used.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum KbPathError {
+    #[error("kb_path {path} starts with ~ but HOME is unset or empty")]
+    HomeUnset { path: String },
+    #[error("kb_path {path} must be absolute or start with ~/")]
+    NotAbsolute { path: String },
+    #[error("kb_path {path} must not contain a .. component")]
+    ParentDir { path: String },
+    #[error("kb_path {path} may only contain ASCII letters, digits and / . _ - ~, not {ch:?}")]
+    InvalidChar { path: String, ch: char },
+}
+
+/// The text rules for a `kb_path`. They need no environment.
+pub fn check_kb_path(raw: &str) -> Result<(), KbPathError> {
+    let path = || raw.to_string();
+    if raw != "~" && !raw.starts_with("~/") && !raw.starts_with('/') {
+        return Err(KbPathError::NotAbsolute { path: path() });
+    }
+    if raw.split('/').any(|part| part == "..") {
+        return Err(KbPathError::ParentDir { path: path() });
+    }
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '~');
+    match raw.chars().find(|&c| !allowed(c)) {
+        Some(ch) => Err(KbPathError::InvalidChar { path: path(), ch }),
+        None => Ok(()),
+    }
+}
+
+/// The text rules, then the `~` expansion with `home`.
+pub fn resolve_kb_path(raw: &str, home: Option<&str>) -> Result<PathBuf, KbPathError> {
+    check_kb_path(raw)?;
+    expand_home(raw, home).ok_or_else(|| KbPathError::HomeUnset {
+        path: raw.to_string(),
+    })
 }
 
 /// Expands a leading `~/` or a lone `~` with `home`. Any other `~` stays as it is.
@@ -1444,6 +1491,86 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(cfg.kb_dir(), Some(PathBuf::from("/kb/rocketapi")));
+    }
+
+    #[test]
+    fn relative_kb_path_is_rejected_at_load() {
+        for raw in ["kb/x", "./x", "~user/x"] {
+            let err = Config::parse(&format!("kb_path = \"{raw}\"\n")).expect_err("relative");
+            assert!(err.to_string().contains("must be absolute"), "{raw}: {err}");
+        }
+    }
+
+    #[test]
+    fn kb_path_with_other_characters_is_rejected_at_load() {
+        for ch in [
+            "*", "?", "[", "]", "{", "}", "!", ",", "(", ")", "\\\\", " ", "\\t", "é",
+        ] {
+            let err = Config::parse(&format!("kb_path = \"/kb/a{ch}b\"\n")).expect_err("bad char");
+            assert!(err.to_string().contains("may only contain"), "{ch}: {err}");
+        }
+    }
+
+    #[test]
+    fn kb_path_injection_is_rejected_at_load() {
+        let err = Config::parse("kb_path = \"/kb),Bash(curl:x\"").expect_err("injection");
+        assert!(err.to_string().contains("may only contain"), "{err}");
+    }
+
+    #[test]
+    fn kb_path_with_tilde_and_no_home_reports_home_unset() {
+        for home in [None, Some("")] {
+            let err = resolve_kb_path("~/kb", home).expect_err("no home");
+            assert!(matches!(err, KbPathError::HomeUnset { .. }), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn check_kb_path_accepts_the_documented_forms() {
+        for raw in ["/kb/rocketapi", "~/kb", "~", "/"] {
+            assert_eq!(check_kb_path(raw), Ok(()), "{raw}");
+        }
+    }
+
+    #[test]
+    fn kb_path_with_tilde_expands_with_home() {
+        assert_eq!(
+            resolve_kb_path("~/kb", Some("/home/u")),
+            Ok(PathBuf::from("/home/u/kb"))
+        );
+    }
+
+    #[test]
+    fn kb_path_with_parent_dir_is_rejected_at_load() {
+        for raw in ["/a/../b", "~/../x"] {
+            let err = Config::parse(&format!("kb_path = \"{raw}\"\n")).expect_err("parent dir");
+            assert!(err.to_string().contains(".."), "{raw}: {err}");
+        }
+    }
+
+    #[test]
+    fn absolute_kb_path_still_loads() {
+        let cfg = Config::parse("kb_path = \"/kb/rocketapi\"").expect("loads");
+        assert_eq!(cfg.kb_path.as_deref(), Some("/kb/rocketapi"));
+    }
+
+    #[test]
+    fn tilde_kb_path_loads_without_home() {
+        assert!(Config::parse("kb_path = \"~/kb\"").is_ok());
+    }
+
+    #[test]
+    fn kb_dir_hides_an_error_and_kb_dir_checked_shows_it() {
+        let cfg = Config {
+            kb_path: Some("kb/x".into()),
+            ..Config::default()
+        };
+        assert_eq!(cfg.kb_dir(), None);
+        assert!(matches!(
+            cfg.kb_dir_checked(),
+            Err(KbPathError::NotAbsolute { .. })
+        ));
+        assert_eq!(Config::default().kb_dir_checked(), Ok(None));
     }
 
     #[test]

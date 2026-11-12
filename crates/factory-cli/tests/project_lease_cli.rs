@@ -63,6 +63,17 @@ fn run_is_refused_while_another_driver_holds_the_project() {
 }
 
 #[test]
+fn kb_refresh_for_an_unknown_job_is_not_blocked_by_the_project_lease() {
+    let fx = Fixture::new();
+    new_job(&fx);
+    hold_project(&fx, "someone-else", now_secs());
+    let e = fx
+        .run(&["kb-refresh", "--job", "999"])
+        .expect_err("unknown job");
+    assert!(!e.to_string().contains("project is busy"), "{e}");
+}
+
+#[test]
 fn approve_is_refused_while_another_driver_holds_the_project() {
     let fx = Fixture::with_risk_path("docs/**");
     new_job(&fx);

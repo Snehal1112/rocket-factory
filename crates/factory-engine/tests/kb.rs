@@ -97,9 +97,62 @@ fn a_missing_kb_folder_fails_without_a_run() {
     assert!(runner.specs_for("kb").is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn kb_allow_rule_uses_the_canonical_folder() {
+    let mut fx = with_kb();
+    let real = fx
+        .tmp
+        .path()
+        .join("kb")
+        .join("rocketapi")
+        .canonicalize()
+        .expect("real");
+    let link = fx.tmp.path().join("kb-link");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    fx.config.kb_path = Some(link.to_string_lossy().into_owned());
+    let runner = scripted(vec![reply("auth.md\n")]);
+    fx.engine(&runner)
+        .kb_refresh_step(Some(("001", "demo")))
+        .expect("step");
+    let spec = &runner.specs_for("kb")[0];
+    let rule = format!(
+        "Edit(//{}/**)",
+        real.display().to_string().trim_start_matches('/')
+    );
+    assert!(
+        spec.allowed_tools.contains(&rule),
+        "{:?}",
+        spec.allowed_tools
+    );
+    assert_eq!(spec.add_dirs, vec![real]);
+    assert!(spec.prompt.contains(&link.to_string_lossy().into_owned()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_to_a_path_with_bad_characters_fails_the_run() {
+    let mut fx = Fixture::new();
+    let real = fx.tmp.path().join("kb[1]");
+    std::fs::create_dir_all(&real).expect("mkdir");
+    let link = fx.tmp.path().join("kb-link");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    fx.config.kb_path = Some(link.to_string_lossy().into_owned());
+    let runner = scripted(vec![reply("auth.md\n")]);
+    let out = fx.engine(&runner).kb_refresh_step(None).expect("step");
+    match out {
+        KbOutcome::Failed(text) => {
+            assert!(text.contains("resolves to"), "{text}");
+            assert!(text.contains("may only contain"), "{text}");
+        }
+        other => panic!("unexpected outcome {other:?}"),
+    }
+    assert!(runner.specs_for("kb").is_empty());
+}
+
 mod merge_hook {
     use super::reply;
-    use crate::common::{approved_job_config, scripted, Effect, MergeFixture};
+    use crate::common::{approved_job_config, driver_for, scripted, Effect, MergeFixture};
     use factory_agent::AgentSpec;
     use factory_core::{Config, Stage};
     use factory_engine::{merge_stage, MergeResult};
@@ -189,6 +242,22 @@ mod merge_hook {
             "kb_path is not set"
         );
         assert!(!fx.ledger().contains("Ruling: kb"));
+    }
+
+    #[test]
+    fn kb_refresh_with_a_bad_kb_path_reports_the_cause() {
+        // The fixture rewrites a relative kb_path into the temp dir, so a second driver
+        // on the same repo carries the bad value.
+        let fx = fixture(vec![], false);
+        let config = Config {
+            kb_path: Some("kb/x".to_string()),
+            ..Config::default()
+        };
+        let driver = driver_for(&fx.main, fx.runner.clone(), config);
+        let line = driver.kb_refresh(&fx.id, true).expect("line");
+        assert!(line.contains("must be absolute"), "{line}");
+        assert!(!line.contains("kb_path is not set"), "{line}");
+        assert!(fx.runner.specs_for("kb").is_empty());
     }
 
     #[test]
