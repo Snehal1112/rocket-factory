@@ -5,11 +5,14 @@ use factory_checks::{
 };
 use factory_core::{
     classify_paths, code_paths_of, has_test_marker, has_test_path, uncovered_paths, Config,
-    DiffClass, ParkKind, ParkPart, Stage,
+    DiffClass, ParkKind, ParkPart, ReviewState, Stage,
 };
 
 use crate::decide::fix_rounds_used;
 use crate::park::part_from_file;
+
+/// The named check results kept on the board next to the review roles.
+const GATES: [&str; 2] = ["format", "lint"];
 
 const NO_TESTS_NOTE: &str = "no test file or test marker in a code diff";
 
@@ -88,7 +91,29 @@ impl Engine<'_> {
         let md = self.job_dir.join("checks.md");
         write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
         append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
+        self.record_gates(&plan, &report)?;
         Ok(report)
+    }
+
+    /// Puts the `format` and `lint` results on the board. A gate with no result has no entry.
+    fn record_gates(&self, plan: &CheckPlan, report: &ChecksReport) -> Result<(), EngineError> {
+        self.update(|j| {
+            for gate in GATES {
+                let mut results = report
+                    .results
+                    .iter()
+                    .filter(|r| plan.gate_of(&r.command) == Some(gate))
+                    .peekable();
+                if results.peek().is_none() {
+                    j.reviews.remove(gate);
+                } else if results.all(|r| r.passed) {
+                    j.set_review(gate, ReviewState::Pass);
+                } else {
+                    j.set_review(gate, ReviewState::Changes);
+                }
+            }
+            Ok(())
+        })
     }
 
     /// The paths changed by the whole job diff, relative to the project folder.
