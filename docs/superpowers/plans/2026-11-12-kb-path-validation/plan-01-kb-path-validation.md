@@ -21,7 +21,7 @@
 1. `kb/x`, `./x` and `~user/x` are refused as not absolute. Pinned by `relative_kb_path_is_rejected_at_load`.
 2. A missing `HOME` never fails the config load. Pinned by `tilde_kb_path_loads_without_home`.
 3. A `Config` built without `parse` and holding a bad path never yields a KB folder. Pinned by `kb_dir_hides_an_error_and_kb_dir_checked_shows_it`.
-4. A symlink whose target holds a glob character fails the run before any agent starts. Pinned by `a_symlink_to_a_glob_path_fails_the_run`.
+4. A symlink whose target holds a character outside the allowlist fails the run before any agent starts. Pinned by `a_symlink_to_a_path_with_bad_characters_fails_the_run`.
 5. The KB prompt keeps the configured path while the grants use the real folder. Pinned by `kb_allow_rule_uses_the_canonical_folder`.
 6. A refresh with a bad path reports the cause in the ledger, not "kb_path is not set". Pinned by `kb_refresh_with_a_bad_kb_path_reports_the_cause`.
 7. An unknown job id is refused without the project lease. Pinned by `kb_refresh_for_an_unknown_job_is_not_blocked_by_the_project_lease`.
@@ -46,7 +46,7 @@
 
 **Interfaces:**
 - Consumes: `expand_home(path: &str, home: Option<&str>) -> Option<PathBuf>`, `CoreError::Config(String)`.
-- Produces: `pub enum KbPathError { HomeUnset { path: String }, NotAbsolute { path: String }, ParentDir { path: String }, BadChar { path: String, ch: char } }` deriving `Debug, Clone, PartialEq, Eq, thiserror::Error` with the messages `kb_path {path} starts with ~ but HOME is unset or empty`, `kb_path {path} must be absolute or start with ~/`, `kb_path {path} must not contain a .. component` and `kb_path {path} must not contain {ch:?}`; `pub fn check_kb_path(raw: &str) -> Result<(), KbPathError>`; `pub fn resolve_kb_path(raw: &str, home: Option<&str>) -> Result<PathBuf, KbPathError>`; `Config::kb_dir_checked(&self) -> Result<Option<PathBuf>, KbPathError>` (`Ok(None)` when unset, `HOME` read from the environment); `Config::kb_dir(&self) -> Option<PathBuf>` kept as `self.kb_dir_checked().ok().flatten()`. All four items are exported from the crate root.
+- Produces: `pub enum KbPathError { HomeUnset { path: String }, NotAbsolute { path: String }, ParentDir { path: String }, InvalidChar { path: String, ch: char } }` deriving `Debug, Clone, PartialEq, Eq, thiserror::Error` with the messages `kb_path {path} starts with ~ but HOME is unset or empty`, `kb_path {path} must be absolute or start with ~/`, `kb_path {path} must not contain a .. component` and `kb_path {path} may only contain ASCII letters, digits and / . _ - ~, not {ch:?}`; `pub fn check_kb_path(raw: &str) -> Result<(), KbPathError>`; `pub fn resolve_kb_path(raw: &str, home: Option<&str>) -> Result<PathBuf, KbPathError>`; `Config::kb_dir_checked(&self) -> Result<Option<PathBuf>, KbPathError>` (`Ok(None)` when unset, `HOME` read from the environment); `Config::kb_dir(&self) -> Option<PathBuf>` kept as `self.kb_dir_checked().ok().flatten()`. All four items are exported from the crate root.
 
 - [ ] **Step 1: Read the code this task touches.** Read `kb_dir`, `api_key_path`, `expand_home`, the load checks around `kb_path` in `Config::parse`, and the tests `kb_dir_is_none_when_unset`, `an_absolute_kb_path_is_kept` and `expand_home_handles_tilde_forms`, plus `crates/factory-core/tests/rocket_parity.rs`.
 - [ ] **Step 2: Write the failing tests** in the `config.rs` tests module:
@@ -61,10 +61,10 @@ fn relative_kb_path_is_rejected_at_load() {
 }
 
 #[test]
-fn kb_path_with_glob_characters_is_rejected_at_load() {
-    for ch in ["*", "?", "[", "]", "{", "}", "!", "\\t"] {
+fn kb_path_with_other_characters_is_rejected_at_load() {
+    for ch in ["*", "?", "[", "]", "{", "}", "!", ",", "(", ")", "\\\\", " ", "\\t", "é"] {
         let err = Config::parse(&format!("kb_path = \"/kb/a{ch}b\"\n")).expect_err("bad char");
-        assert!(err.to_string().contains("must not contain"), "{ch}: {err}");
+        assert!(err.to_string().contains("may only contain"), "{ch}: {err}");
     }
 }
 
@@ -79,7 +79,7 @@ fn kb_path_with_tilde_and_no_home_reports_home_unset() {
 
   Add these by name and inputs: `check_kb_path_accepts_the_documented_forms` (`/kb/rocketapi`, `~/kb`, `~` all `Ok`), `kb_path_with_tilde_expands_with_home` (`resolve_kb_path("~/kb", Some("/home/u"))` is `/home/u/kb`), `kb_path_with_parent_dir_is_rejected_at_load` (`/a/../b` and `~/../x` fail with `..`), `absolute_kb_path_still_loads`, `tilde_kb_path_loads_without_home` (`Config::parse("kb_path = \"~/kb\"")` is `Ok`), and `kb_dir_hides_an_error_and_kb_dir_checked_shows_it` (a `Config { kb_path: Some("kb/x".into()), ..Config::default() }` gives `kb_dir() == None` and a `NotAbsolute` error from `kb_dir_checked()`; an unset path gives `Ok(None)`).
 - [ ] **Step 3: Run them and see them fail.** Run `cargo test -j4 -p factory-core kb_path`. Expected: `cannot find function 'resolve_kb_path' in this scope`.
-- [ ] **Step 4: Implement the resolver.** The text rules run in this order: the value is `~`, starts with `~/`, or starts with `/`, else `NotAbsolute`; any `..` component when split on `/` gives `ParentDir`; the first character in `* ? [ ] { } !` or a control character gives `BadChar`. `resolve_kb_path` runs `check_kb_path`, then `expand_home`, and maps `None` to `HomeUnset`. `Config::parse` calls `check_kb_path` after the blank check and maps the error to `CoreError::Config(e.to_string())`. `/` and `~` alone stay valid.
+- [ ] **Step 4: Implement the resolver.** The text rules run in this order: the value is `~`, starts with `~/`, or starts with `/`, else `NotAbsolute`; any `..` component when split on `/` gives `ParentDir`; the first character that is not an ASCII letter, a digit or one of `/ . _ - ~` gives `InvalidChar`. Add `kb_path_injection_is_rejected_at_load`: `Config::parse("kb_path = \"/kb),Bash(curl:x\"")` fails with `may only contain`. `resolve_kb_path` runs `check_kb_path`, then `expand_home`, and maps `None` to `HomeUnset`. `Config::parse` calls `check_kb_path` after the blank check and maps the error to `CoreError::Config(e.to_string())`. `/` and `~` alone stay valid.
 - [ ] **Step 5: Run the tests and see them pass.** Run `cargo test -j4 -p factory-core`. Expected: all pass, including `rocket_parity` and the unchanged `an_absolute_kb_path_is_kept`.
 
 ### Task 2: The KB run uses the checked, canonical folder
@@ -115,7 +115,7 @@ fn kb_allow_rule_uses_the_canonical_folder() {
 }
 ```
 
-  Add `a_symlink_to_a_glob_path_fails_the_run` (Unix only: create a real folder named `kb[1]` in the temp dir, link to it, set `kb_path` to the link; assert `KbOutcome::Failed(text)` with `text` containing `resolves to` and `must not contain`, and `runner.specs_for("kb")` empty). Add `kb_refresh_with_a_bad_kb_path_reports_the_cause` in the driver-level module of `tests/kb.rs`: extend its `fixture` helper to take the `kb_path` text, use the relative `kb/x`, call `fx.driver.kb_refresh(&fx.id, true)`, and assert the line contains `must be absolute` and not `kb_path is not set`. Create `tests/kb_home_unset.rs`:
+  Add `a_symlink_to_a_path_with_bad_characters_fails_the_run` (Unix only: create a real folder named `kb[1]` in the temp dir, link to it, set `kb_path` to the link; assert `KbOutcome::Failed(text)` with `text` containing `resolves to` and `may only contain`, and `runner.specs_for("kb")` empty). Add `kb_refresh_with_a_bad_kb_path_reports_the_cause` in the driver-level module of `tests/kb.rs`: extend its `fixture` helper to take the `kb_path` text, use the relative `kb/x`, call `fx.driver.kb_refresh(&fx.id, true)`, and assert the line contains `must be absolute` and not `kb_path is not set`. Create `tests/kb_home_unset.rs`:
 
 ```rust
 mod common;
@@ -171,7 +171,7 @@ fn kb_refresh_for_an_unknown_job_is_not_blocked_by_the_project_lease() {
 ```
 
 - [ ] **Step 3: Run it and see it fail.** Run `cargo test -j4 -p factory-cli --test project_lease_cli kb_refresh_for_an_unknown_job`. Expected: the error says the project is busy.
-- [ ] **Step 4: Implement the reorder and update the docs.** Move the two checks above `hold_project`. In both docs state that `kb_path` must be absolute or start with `~/`, that relative paths, `..` and the characters `* ? [ ] { } !` are rejected when the config loads, that a `~/` path needs `HOME` at the time of the refresh, and that a symlinked folder is resolved to its real path.
+- [ ] **Step 4: Implement the reorder and update the docs.** Move the two checks above `hold_project`. In both docs state that `kb_path` must be absolute or start with `~/`, that relative paths, `..` and any character other than ASCII letters, digits and `/ . _ - ~` (so no spaces, commas, parentheses, backslashes or glob characters) are rejected when the config loads, that a `~/` path needs `HOME` at the time of the refresh, and that a symlinked folder is resolved to its real path.
 - [ ] **Step 5: Run the tests and see them pass.** Run `cargo test -j4 -p factory-cli --test project_lease_cli --test no_hardcoded_paths --test check_coverage_docs`, `cargo test -j4 -p factory-cli --test agent_lint` and `cargo clippy -j4 -p factory-cli`. Expected: all pass.
 
 Next plan: none
