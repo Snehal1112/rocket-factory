@@ -108,6 +108,43 @@ fn a_tracker_failure_keeps_the_merge() {
 }
 
 #[test]
+fn a_waiver_failure_is_labelled_waivers_in_the_events() {
+    let t = FakeTracker::new("o/r");
+    t.fail_on("create");
+    let fx = merged(vec![two_blockers()], &t);
+    let events = std::fs::read_to_string(fx.driver.events_path()).expect("events");
+    assert!(events.contains("waivers step:"), "{events}");
+    assert!(!events.contains("tickets step:"), "{events}");
+}
+
+#[test]
+fn a_panicking_tracker_does_not_skip_the_waiver_and_minor_steps() {
+    let inner = FakeTracker::new("o/r");
+    let config = factory_core::Config {
+        tickets_on_merge: true,
+        ..factory_core::Config::default()
+    };
+    let fx = common::approved_job_config(common::approving_runner(3), false, config);
+    let fx = common::with_boxed_tracker(
+        fx,
+        Box::new(common::PanicTracker {
+            inner: inner.clone(),
+            panic_on: Some("repo_name"),
+        }),
+    );
+    record_waiver(&job_dir(&fx), two_blockers()).expect("record");
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    assert!(
+        inner.calls().iter().any(|c| c.starts_with("create")),
+        "{:?}",
+        inner.calls()
+    );
+}
+
+#[test]
 fn waiver_tickets_retry_through_factory_tickets() {
     let t = FakeTracker::new("o/r");
     t.fail_on("create");

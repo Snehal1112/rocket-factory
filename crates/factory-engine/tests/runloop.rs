@@ -1,5 +1,24 @@
 mod common;
 use factory_engine::{create_job, create_job_with_spec, run_job, run_series, RunEnd};
+use std::sync::Arc;
+
+#[test]
+fn a_panic_in_a_run_frees_the_job_lease() {
+    let hook: common::RunHook = Arc::new(|_spec| panic!("agent exploded"));
+    let fx = common::SeriesFixture::owned("tester", hook);
+    let a = fx.plan_file("plan-01-a.md", 1, "none");
+    let job = create_job(&fx.driver, "lease", "one plan", Some(&a), None).expect("create");
+    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_job(&fx.driver, &job.id)
+    }));
+    assert!(ran.is_err(), "the hook panics, so the run unwinds");
+    let after = fx.driver.job(&job.id).expect("job");
+    assert!(
+        after.lease.is_none(),
+        "the lease must be freed: {:?}",
+        after.lease
+    );
+}
 
 #[test]
 fn run_job_goes_from_build_to_merged_in_one_call() {
@@ -670,4 +689,43 @@ fn a_plans_argument_is_stored_absolute() {
         let file = &job.series.as_ref().expect("series").plan_file;
         assert!(std::path::Path::new(file).is_absolute(), "{file}");
     }
+}
+
+#[test]
+fn a_series_continues_after_a_panicking_soft_step() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
+    fx.plan_file("plan-02-b.md", 1, "none");
+    let job = create_job(&fx.driver, "series", "two plans", Some(&a), None).expect("create");
+    let dir = fx.driver.job_dir(&job);
+    factory_engine::record_waiver(
+        &dir,
+        factory_engine::Waiver {
+            head: "abc123".into(),
+            round: 1,
+            file: "review-code-r1.md".into(),
+            reason: "fine for now".into(),
+            at: 10,
+            blockers: vec!["- [blocker] first problem".into()],
+            tickets: vec![None],
+            superseded: false,
+        },
+    )
+    .expect("record");
+    let common::SeriesFixture { tmp, main, driver } = fx;
+    let driver = driver.with_tracker(Box::new(common::PanicTracker {
+        inner: common::FakeTracker::new("o/r"),
+        panic_on: None,
+    }));
+    let _keep = (tmp, main);
+    assert_eq!(
+        run_series(&driver, &job.id).expect("series"),
+        RunEnd::Merged
+    );
+    let board = driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 2);
+    assert!(board
+        .jobs
+        .iter()
+        .all(|j| j.stage == factory_core::Stage::Merged));
 }

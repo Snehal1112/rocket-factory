@@ -585,14 +585,25 @@ fn park_unsettled(driver: &Driver, id: &str) -> Result<(), EngineError> {
     )
 }
 
+/// Frees the job lease when `run_job` ends, also while a panic unwinds.
+struct LeaseGuard<'a> {
+    driver: &'a Driver,
+    id: &'a str,
+}
+
+impl Drop for LeaseGuard<'_> {
+    fn drop(&mut self) {
+        self.driver.release_lease(self.id);
+    }
+}
+
 /// Drives one job to merged or needs-human. The board stage is the only state, so a crash resumes here.
 pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
-    // The guard keeps the project lease renewed for the whole run and is dropped after the job lease is released.
+    // The project guard keeps the project lease renewed for the whole run and drops after the job lease guard.
     let guard = driver.hold_project(id)?;
+    let _lease = LeaseGuard { driver, id };
     let span = job_span(id);
-    let result = span.in_scope(|| run_job_inner(driver, id, &guard));
-    driver.release_lease(id);
-    result
+    span.in_scope(|| run_job_inner(driver, id, &guard))
 }
 
 fn run_job_inner(
