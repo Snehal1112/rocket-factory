@@ -69,6 +69,7 @@ fn probe_job_view() -> JobView {
         escalated_model: None,
         builder_session_model: None,
         review_missing: false,
+        reviews: Default::default(),
         park_kind: None,
         task_session: None,
         builder_last: None,

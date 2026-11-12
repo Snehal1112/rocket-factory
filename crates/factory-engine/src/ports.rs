@@ -89,6 +89,8 @@ pub(crate) struct JobView {
     /// The model the stored builder session ran on, if known.
     pub builder_session_model: Option<String>,
     pub review_missing: bool,
+    /// The review roles and gates the job holds, with their states.
+    pub reviews: std::collections::BTreeMap<String, factory_core::ReviewState>,
     /// The kind of the park the job is in, if any.
     pub park_kind: Option<String>,
     /// The saved builder session of the task that was running, if any.
@@ -122,6 +124,7 @@ impl Engine<'_> {
             escalated_model: job.escalated_model.clone(),
             builder_session_model: job.builder_session_model.clone(),
             review_missing: job.review_missing(),
+            reviews: job.reviews.clone(),
             park_kind: job.park_kind.clone(),
             task_session: job.task_session.clone(),
             builder_last: job.builder_last.clone(),
