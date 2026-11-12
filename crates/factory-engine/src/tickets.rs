@@ -388,8 +388,8 @@ fn finish(driver: &Driver, job: &Job, dry_run: bool, report: TicketsReport) -> T
     report
 }
 
-/// Writes a failed or errored tickets step to the job's events as a driver note. Never fails the caller.
-pub(crate) fn notify_failure(driver: &Driver, id: &str, text: &str) {
+/// Writes a failed or errored soft step to the job's events as a driver note. Never fails the caller.
+pub(crate) fn notify_failure(driver: &Driver, id: &str, step: &str, text: &str) {
     let sink = factory_agent::EventSink::new(driver.events_path(), id);
     sink.emit(&factory_agent::AgentEvent {
         kind: factory_agent::EventKind::Notice,
@@ -398,7 +398,7 @@ pub(crate) fn notify_failure(driver: &Driver, id: &str, text: &str) {
         tool_name: None,
         tool_target: None,
         cwd: None,
-        last_message: Some(format!("tickets step: {text}")),
+        last_message: Some(format!("{step} step: {text}")),
         tokens: 0,
     });
 }

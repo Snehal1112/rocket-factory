@@ -77,24 +77,82 @@ pub fn park_with_parts(
     Ok(())
 }
 
+/// What went wrong in a soft step.
+enum StepFailure {
+    Error(EngineError),
+    Panic(String),
+}
+
+impl std::fmt::Display for StepFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StepFailure::Error(err) => write!(f, "{err}"),
+            StepFailure::Panic(text) => write!(f, "{text}"),
+        }
+    }
+}
+
+/// Runs one post-merge step and turns a panic into a `StepFailure::Panic` with the payload text.
+fn run_soft_step<T>(f: impl FnOnce() -> Result<T, EngineError>) -> Result<T, StepFailure> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(result) => result.map_err(StepFailure::Error),
+        Err(payload) => {
+            let text = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            Err(StepFailure::Panic(text))
+        }
+    }
+}
+
+/// The ledger line for a failed soft step. An error of `kb_refresh` or `costs_refresh` gets none.
+fn ledger_line(step: &str, failure: &StepFailure) -> Option<String> {
+    match failure {
+        StepFailure::Panic(text) => Some(format!("{step} panicked: {text}")),
+        StepFailure::Error(err) if matches!(step, "tickets" | "waivers" | "minors") => {
+            Some(format!("{step} error: {err}"))
+        }
+        StepFailure::Error(_) => None,
+    }
+}
+
+/// Reports a failed soft step to stderr, and to the ledger and events when it has a ledger line.
+fn report_failure(driver: &Driver, id: &str, step: &str, failure: &StepFailure) {
+    tracing::error!(event = "step.error", step, msg = %format!("{step} error for job {id}: {failure}"));
+    if let Some(line) = ledger_line(step, failure) {
+        write_step_ledger(driver, id, step, &line);
+        crate::tickets::notify_failure(driver, id, step, &failure.to_string());
+    }
+}
+
 /// Reports the result of a step after the merge. A failure never changes the merge result.
 fn report_soft_step(
     driver: &Driver,
     id: &str,
     step: &str,
-    result: Result<TicketsReport, EngineError>,
+    result: Result<TicketsReport, StepFailure>,
 ) {
     match result {
         Ok(report) if report.failed => {
             let text = report.lines.join("; ");
             tracing::error!(event = "step.error", step, msg = %format!("{step} error for job {id}: {text}"));
-            crate::tickets::notify_failure(driver, id, &text);
+            crate::tickets::notify_failure(driver, id, step, &text);
         }
         Ok(_) => {}
-        Err(err) => {
-            tracing::error!(event = "step.error", step, msg = %format!("{step} error for job {id}: {err}"));
-            crate::tickets::notify_failure(driver, id, &err.to_string());
-        }
+        Err(failure) => report_failure(driver, id, step, &failure),
+    }
+}
+
+/// Writes one folded line to the job's ledger. A missing job skips it and a failed write is only logged.
+fn write_step_ledger(driver: &Driver, id: &str, step: &str, line: &str) {
+    let Ok(job) = driver.job(id) else {
+        return;
+    };
+    let one_line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Err(e) = driver.ledger(&job).ruling(&one_line) {
+        tracing::error!(event = "step.error", step = %format!("{step}_ledger"), msg = %format!("{step} ledger error for job {id}: {e}"));
     }
 }
 
@@ -105,14 +163,12 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
             finish_merge(driver, id, &sha)?;
             tracing::info!(event = "merge.done", sha = %sha);
             // The merge is done, so a failed refresh must not change the result.
-            match driver.kb_refresh(id, false) {
+            match run_soft_step(|| driver.kb_refresh(id, false)) {
                 Ok(text) if text.starts_with("kb refresh failed") => {
                     tracing::error!(event = "step.error", step = "kb_refresh", msg = %format!("kb refresh error for job {id}: {text}"));
                 }
                 Ok(_) => {}
-                Err(err) => {
-                    tracing::error!(event = "step.error", step = "kb_refresh", msg = %format!("kb refresh error for job {id}: {err}"));
-                }
+                Err(failure) => report_failure(driver, id, "kb_refresh", &failure),
             }
             // Ticket hygiene is best effort too: a failure is written to the ledger, the job output and the events, and never changes the merge.
             if driver.config().tickets_on_merge {
@@ -120,7 +176,7 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
                     driver,
                     id,
                     "tickets",
-                    crate::tickets::tickets_step(driver, id, false),
+                    run_soft_step(|| crate::tickets::tickets_step(driver, id, false)),
                 );
             }
             // Waiver tickets are filed whether or not tickets_on_merge is set, and fail the same soft way.
@@ -128,18 +184,18 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
                 driver,
                 id,
                 "waivers",
-                crate::waivers::waiver_tickets_step(driver, id, false),
+                run_soft_step(|| crate::waivers::waiver_tickets_step(driver, id, false)),
             );
             // The minor ticket follows the same soft rule and has no series gate.
             report_soft_step(
                 driver,
                 id,
                 "minors",
-                crate::minors::minor_tickets_step(driver, id, false),
+                run_soft_step(|| crate::minors::minor_tickets_step(driver, id, false)),
             );
             // The costs refresh runs last so that it counts the kb run of this job.
-            if let Err(err) = crate::costs::refresh_costs(driver) {
-                tracing::error!(event = "step.error", step = "costs_refresh", msg = %format!("costs refresh error for job {id}: {err}"));
+            if let Err(failure) = run_soft_step(|| crate::costs::refresh_costs(driver)) {
+                report_failure(driver, id, "costs_refresh", &failure);
             }
             Ok(MergeResult::Merged(sha))
         }

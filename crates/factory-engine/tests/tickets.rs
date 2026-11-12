@@ -321,6 +321,75 @@ fn a_failing_tracker_never_changes_the_merge_result() {
     assert!(ledger.contains("tickets failed"), "{ledger}");
 }
 
+#[test]
+fn a_tracker_failure_still_writes_one_ledger_line() {
+    let t = tracker();
+    t.fail_on("repo_name");
+    let fx = approved_with_hook(true, Some(SPEC_WITH_TWO), &t);
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    let job = fx.driver.job(&fx.id).expect("job");
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    assert_eq!(
+        ledger
+            .lines()
+            .filter(|l| l.contains("tickets failed"))
+            .count(),
+        1,
+        "{ledger}"
+    );
+    assert!(!ledger.contains("tickets error"), "{ledger}");
+}
+
+#[test]
+fn a_panicking_tracker_after_a_merge_returns_merged() {
+    let fx = approved_with_hook(true, Some(SPEC_WITH_TWO), &tracker());
+    let fx = common::with_boxed_tracker(
+        fx,
+        Box::new(common::PanicTracker {
+            inner: tracker(),
+            panic_on: Some("repo_name"),
+        }),
+    );
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::Merged);
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    assert!(ledger.contains("tickets panicked"), "{ledger}");
+    assert!(
+        events_text(&fx).contains("tickets step:"),
+        "{}",
+        events_text(&fx)
+    );
+}
+
+#[test]
+fn a_broken_marker_after_a_merge_writes_a_ledger_line() {
+    let t = tracker();
+    let fx = approved_with_hook(true, Some(SPEC_WITH_TWO), &t);
+    let job = fx.driver.job(&fx.id).expect("job");
+    std::fs::write(fx.driver.job_dir(&job).join("tickets.json"), "{ not json").expect("marker");
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    assert!(ledger.contains("tickets error"), "{ledger}");
+    assert!(ledger.contains("not valid JSON"), "{ledger}");
+    assert_eq!(
+        fx.driver.job(&fx.id).expect("job").stage,
+        factory_core::Stage::Merged
+    );
+}
+
 fn events_text(fx: &MergeFixture) -> String {
     std::fs::read_to_string(fx.driver.events_path()).unwrap_or_default()
 }

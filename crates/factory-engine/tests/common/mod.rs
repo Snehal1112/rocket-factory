@@ -813,6 +813,75 @@ impl factory_engine::Tracker for FakeTracker {
     }
 }
 
+/// A tracker that panics in one method, or in every method when `panic_on` is `None`, and forwards the rest.
+/// It wraps a `FakeTracker` so that a panic never poisons the fake's mutex.
+pub struct PanicTracker {
+    pub inner: FakeTracker,
+    pub panic_on: Option<&'static str>,
+}
+
+impl PanicTracker {
+    fn check(&self, method: &str) {
+        if self.panic_on.is_none_or(|m| m == method) {
+            panic!("tracker panic in {method}");
+        }
+    }
+}
+
+impl factory_engine::Tracker for PanicTracker {
+    fn repo_name(&self) -> Result<String, String> {
+        self.check("repo_name");
+        self.inner.repo_name()
+    }
+    fn labels_of(&self, issue: u32) -> Result<Vec<String>, String> {
+        self.check("labels_of");
+        self.inner.labels_of(issue)
+    }
+    fn is_closed(&self, issue: u32) -> Result<bool, String> {
+        self.check("is_closed");
+        self.inner.is_closed(issue)
+    }
+    fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u32, String> {
+        self.check("create");
+        self.inner.create(title, body, labels)
+    }
+    fn find_created(&self, title: &str, footer: &str) -> Result<Option<u32>, String> {
+        self.check("find_created");
+        self.inner.find_created(title, footer)
+    }
+    fn comment(&self, issue: u32, body: &str) -> Result<(), String> {
+        self.check("comment");
+        self.inner.comment(issue, body)
+    }
+    fn close(&self, issue: u32) -> Result<(), String> {
+        self.check("close");
+        self.inner.close(issue)
+    }
+}
+
+/// Gives the fixture's driver a boxed tracker, keeping everything else.
+pub fn with_boxed_tracker(
+    fx: MergeFixture,
+    tracker: Box<dyn factory_engine::Tracker>,
+) -> MergeFixture {
+    let MergeFixture {
+        tmp,
+        main,
+        driver,
+        runner,
+        id,
+        head,
+    } = fx;
+    MergeFixture {
+        tmp,
+        main,
+        driver: driver.with_tracker(tracker),
+        runner,
+        id,
+        head,
+    }
+}
+
 /// Gives the fixture's driver a tracker, keeping everything else.
 pub fn with_tracker(fx: MergeFixture, tracker: FakeTracker) -> MergeFixture {
     let MergeFixture {
