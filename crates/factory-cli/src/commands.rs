@@ -1157,19 +1157,44 @@ fn kb_refresh(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
 /// Prints cache use per role and the resumed runs of every job on the board.
 fn cache_tokens(ctx: &CliCtx, days: Option<u32>) -> Result<String, CliError> {
     let d = ctx.driver()?;
+    let board = d.store().load()?;
+    let mut files: Vec<(PathBuf, &str)> = board
+        .jobs
+        .iter()
+        .map(|job| (d.job_dir(job).join("usage.jsonl"), job.id.as_str()))
+        .collect();
+    files.push((d.layout().spec_review_usage_file(), "spec-review"));
+    let mut warnings = String::new();
     let mut jobs = Vec::new();
-    for job in &d.store().load()?.jobs {
-        jobs.push(crate::tokens::load_usage(
-            &d.job_dir(job).join("usage.jsonl"),
-            &job.id,
-        )?);
+    let (mut skipped, mut no_ts) = (0, 0);
+    for (path, id) in &files {
+        match crate::tokens::load_usage(path, id) {
+            Ok(usage) => {
+                skipped += usage.skipped;
+                no_ts += usage.no_ts;
+                jobs.push(usage.records);
+            }
+            Err(e) => warnings.push_str(&format!(
+                "warning: could not read {}: {e}\n",
+                path.display()
+            )),
+        }
     }
-    jobs.push(crate::tokens::load_usage(
-        &d.layout().spec_review_usage_file(),
-        "spec-review",
-    )?);
-    let report = crate::tokens::cache_report(&jobs, days, now_secs() as u64);
-    Ok(crate::tokens::render_cache(&report))
+    let mut report = crate::tokens::cache_report(&jobs, days, now_secs() as u64);
+    report.skipped = skipped;
+    report.no_ts = no_ts;
+    Ok(format!(
+        "{warnings}{}",
+        crate::tokens::render_cache(&report)
+    ))
+}
+
+/// Percent of the budget used, saturating instead of overflowing.
+fn budget_percent(weighted: u64, budget: u64) -> u64 {
+    weighted
+        .saturating_mul(100)
+        .checked_div(budget)
+        .unwrap_or(0)
 }
 
 fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
@@ -1178,9 +1203,12 @@ fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     let t = job.tokens;
     let weighted = t.weighted();
     let budget = d.config().budget_weighted;
-    let pct = (weighted * 100).checked_div(budget).unwrap_or(0);
-    let records = crate::tokens::load_usage(&d.job_dir(&job).join("usage.jsonl"), id)?;
-    let report = crate::tokens::render(id, &crate::tokens::aggregate(&records));
+    let pct = budget_percent(weighted, budget);
+    let usage = crate::tokens::load_usage(&d.job_dir(&job).join("usage.jsonl"), id)?;
+    let records = usage.records;
+    let mut aggregated = crate::tokens::aggregate(&records);
+    aggregated.skipped = usage.skipped;
+    let report = crate::tokens::render(id, &aggregated);
     let heading = format!("tokens for job {id}");
     let body = report
         .strip_prefix(&format!("{heading}\n"))
@@ -1203,6 +1231,12 @@ fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tokens_percent_does_not_overflow_on_huge_totals() {
+        assert_eq!(budget_percent(u64::MAX, 100), u64::MAX / 100);
+        assert_eq!(budget_percent(5, 0), 0);
+    }
 
     #[test]
     fn runner_kind_follows_agent_cli() {
