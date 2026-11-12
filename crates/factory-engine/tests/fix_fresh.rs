@@ -34,6 +34,7 @@ fn reach_fix_round(end_ctx: u64, idle_secs: u64) -> Fixture {
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..CheckRule::default()
     }];
     build_round(&fx, end_ctx);
     assert_eq!(fx.job().round, 2);

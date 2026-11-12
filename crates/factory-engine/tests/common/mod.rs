@@ -116,6 +116,7 @@ impl Fixture {
             checks: vec![CheckRule {
                 paths: vec!["**".into()],
                 commands: vec!["true".into()],
+                ..CheckRule::default()
             }],
             // These tests cover fresh task builders. `task_carry.rs` turns the carry on itself.
             builder_carry_session: false,

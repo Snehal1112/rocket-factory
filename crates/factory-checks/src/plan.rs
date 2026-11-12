@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use factory_core::Config;
+use factory_core::{CheckRule, Config};
 
 use crate::workspace::Workspace;
 use crate::CheckError;
@@ -18,6 +18,23 @@ pub struct CheckPlan {
     pub notes: Vec<String>,
     /// Changed paths that a rule matched but no matching rule planned a command for.
     pub unplanned: Vec<String>,
+    /// The gate of each planned `format` or `lint` command. Commands from `commands` have no entry.
+    pub gates: BTreeMap<String, String>,
+}
+
+impl CheckPlan {
+    /// `format` or `lint` for a command planned from those lists, `None` for any other command.
+    pub fn gate_of(&self, command: &str) -> Option<&str> {
+        self.gates.get(command).map(String::as_str)
+    }
+}
+
+/// The command templates of a rule in plan order, each with its gate: `commands`, `format`, then `lint`.
+fn templates(rule: &CheckRule) -> impl Iterator<Item = (&String, Option<&'static str>)> {
+    let plain = rule.commands.iter().map(|t| (t, None));
+    let format = rule.format.iter().map(|t| (t, Some("format")));
+    let lint = rule.lint.iter().map(|t| (t, Some("lint")));
+    plain.chain(format).chain(lint)
 }
 
 /// Rejects a cargo command that lacks `-j4` or uses `--workspace` or `--all`.
@@ -52,7 +69,7 @@ pub fn validate_command(cmd: &str) -> Result<(), CheckError> {
 /// Validates every command of every `[[checks]]` rule. The engine calls this at start up.
 pub fn validate_config(cfg: &Config) -> Result<(), CheckError> {
     for rule in &cfg.checks {
-        for cmd in &rule.commands {
+        for cmd in rule.all_commands() {
             if cmd.contains("{crate}") && cmd.contains("{dependents}") {
                 return Err(CheckError::CrossProduct(cmd.clone()));
             }
@@ -85,6 +102,7 @@ pub fn plan_checks(changed_paths: &[String], cfg: &Config) -> CheckPlan {
 pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Workspace>) -> CheckPlan {
     let mut seen = BTreeSet::new();
     let mut commands = Vec::new();
+    let mut gates = BTreeMap::new();
     let mut notes: Vec<String> = Vec::new();
     let mut matched_any: BTreeSet<&str> = BTreeSet::new();
     let mut covered: BTreeSet<&str> = BTreeSet::new();
@@ -100,7 +118,7 @@ pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Worksp
             continue;
         }
         let crates: BTreeSet<String> = matched.iter().filter_map(|p| owner_of(p)).collect();
-        let uses_dependents = rule.commands.iter().any(|c| c.contains("{dependents}"));
+        let uses_dependents = rule.all_commands().any(|c| c.contains("{dependents}"));
         let mut dependents = match ws {
             Some(ws) if uses_dependents => ws.dependents(&crates),
             _ => Vec::new(),
@@ -113,7 +131,7 @@ pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Worksp
                 notes.push(note);
             }
         }
-        for template in &rule.commands {
+        for (template, gate) in templates(rule) {
             let mut expanded: Vec<String> = vec![template.clone()];
             if template.contains("{crate}") {
                 expanded = crates
@@ -146,6 +164,9 @@ pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Worksp
             }
             for cmd in valid {
                 if seen.insert(cmd.clone()) {
+                    if let Some(gate) = gate {
+                        gates.insert(cmd.clone(), gate.to_string());
+                    }
                     commands.push(cmd);
                 }
             }
@@ -167,6 +188,7 @@ pub fn plan_checks_in(changed_paths: &[String], cfg: &Config, ws: Option<&Worksp
         timeout: DEFAULT_TIMEOUT,
         notes,
         unplanned,
+        gates,
     }
 }
 
@@ -181,6 +203,7 @@ mod tests {
             .map(|(p, cmds)| CheckRule {
                 paths: p.iter().map(|s| s.to_string()).collect(),
                 commands: cmds.iter().map(|s| s.to_string()).collect(),
+                ..CheckRule::default()
             })
             .collect();
         Config {
@@ -476,7 +499,7 @@ mod tests {
         let plan = plan_checks(&paths(&["src/App.tsx", "src/App.test.tsx"]), &node_preset());
         assert_eq!(
             plan.commands,
-            ["bun run typecheck", "bun run lint", "bun test"]
+            ["bun run typecheck", "bun test", "bun run lint"]
         );
     }
 
@@ -484,6 +507,99 @@ mod tests {
     fn the_node_preset_runs_nothing_for_a_lockfile() {
         let plan = plan_checks(&paths(&["bun.lock"]), &node_preset());
         assert!(plan.commands.is_empty());
+    }
+
+    fn gate_rule(commands: &[&str], format: &[&str], lint: &[&str]) -> CheckRule {
+        let own = |l: &[&str]| l.iter().map(|s| s.to_string()).collect();
+        CheckRule {
+            paths: vec!["crates/**".into()],
+            commands: own(commands),
+            format: own(format),
+            lint: own(lint),
+        }
+    }
+
+    fn cfg_of(rule: CheckRule) -> Config {
+        Config {
+            checks: vec![rule],
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn format_and_lint_commands_are_planned_after_commands() {
+        let c = cfg_of(CheckRule {
+            paths: vec!["crates/*/**".into()],
+            commands: vec!["cargo check -j4 -p {crate}".into()],
+            format: vec!["cargo fmt -p {crate} -- --check".into()],
+            lint: vec!["cargo clippy -j4 -p {crate} --all-targets -- -D warnings".into()],
+        });
+        let plan = plan_checks_in(&paths(&["crates/foo/src/lib.rs"]), &c, None);
+        assert_eq!(
+            plan.commands,
+            [
+                "cargo check -j4 -p foo",
+                "cargo fmt -p foo -- --check",
+                "cargo clippy -j4 -p foo --all-targets -- -D warnings",
+            ]
+        );
+        assert_eq!(plan.gate_of("cargo fmt -p foo -- --check"), Some("format"));
+        assert_eq!(
+            plan.gate_of("cargo clippy -j4 -p foo --all-targets -- -D warnings"),
+            Some("lint")
+        );
+        assert_eq!(plan.gate_of("cargo check -j4 -p foo"), None);
+    }
+
+    #[test]
+    fn a_path_is_covered_by_a_lint_only_rule() {
+        let c = cfg_of(gate_rule(&[], &[], &["cargo clippy -j4 -p {crate}"]));
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, None);
+        assert_eq!(plan.commands, ["cargo clippy -j4 -p core"]);
+        assert!(plan.unplanned.is_empty());
+    }
+
+    #[test]
+    fn gate_lists_expand_dependents() {
+        let mut c = cfg_of(gate_rule(&[], &[], &["cargo test -j4 -p {dependents}"]));
+        c.dependents_cap = 1;
+        let plan = plan_checks_in(&paths(&["crates/core/src/a.rs"]), &c, Some(&ws()));
+        assert_eq!(plan.commands, ["cargo test -j4 -p app"]);
+        assert_eq!(plan.notes, ["SKIP dependents over the cap: rocket"]);
+        assert_eq!(plan.gate_of("cargo test -j4 -p app"), Some("lint"));
+    }
+
+    #[test]
+    fn an_invalid_cargo_command_in_a_gate_list_is_refused() {
+        let c = cfg_of(gate_rule(&[], &["cargo fmt --workspace"], &[]));
+        assert!(validate_config(&c).is_err());
+        let c = cfg_of(gate_rule(&[], &[], &["cargo clippy -p x"]));
+        assert!(validate_config(&c).is_err());
+    }
+
+    #[test]
+    fn the_first_rule_that_plans_a_command_decides_its_gate() {
+        let c = Config {
+            checks: vec![
+                gate_rule(&["cargo check -j4"], &[], &[]),
+                gate_rule(&[], &[], &["cargo check -j4"]),
+            ],
+            ..Config::default()
+        };
+        let plan = plan_checks_in(&paths(&["crates/a.rs"]), &c, None);
+        assert_eq!(plan.commands, ["cargo check -j4"]);
+        assert_eq!(plan.gate_of("cargo check -j4"), None);
+    }
+
+    #[test]
+    fn rust_preset_marks_fmt_and_clippy_as_gates() {
+        let plan = plan_checks(&paths(&["crates/x/src/lib.rs"]), &rust_preset());
+        assert_eq!(plan.gate_of("cargo fmt -p x -- --check"), Some("format"));
+        assert_eq!(
+            plan.gate_of("cargo clippy -j4 -p x --all-targets -- -D warnings"),
+            Some("lint")
+        );
+        assert_eq!(plan.gate_of("cargo check -j4 -p x"), None);
     }
 
     #[test]

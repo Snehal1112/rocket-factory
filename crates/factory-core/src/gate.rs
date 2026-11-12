@@ -221,6 +221,7 @@ mod tests {
         CheckRule {
             paths: vec![glob.into()],
             commands: vec!["true".into()],
+            ..CheckRule::default()
         }
     }
 

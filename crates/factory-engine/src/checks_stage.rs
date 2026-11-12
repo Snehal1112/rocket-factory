@@ -189,8 +189,7 @@ impl Engine<'_> {
     /// failed load falls back to the folder rule with a note in `checks.md`.
     fn plan_for(&self, scoped: &[String], workdir: &Path) -> CheckPlan {
         let needs_map = self.config.checks.iter().any(|r| {
-            r.commands
-                .iter()
+            r.all_commands()
                 .any(|c| c.contains("{crate}") || c.contains("{dependents}"))
         });
         if !needs_map || !workdir.join("Cargo.toml").is_file() {
@@ -332,6 +331,7 @@ mod gate_tests {
         factory_core::CheckRule {
             paths: vec![glob.into()],
             commands: vec!["true".into()],
+            ..factory_core::CheckRule::default()
         }
     }
 

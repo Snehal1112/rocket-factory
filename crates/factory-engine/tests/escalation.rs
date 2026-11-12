@@ -8,6 +8,7 @@ fn failing_checks(fx: &mut Fixture) {
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..CheckRule::default()
     }];
 }
 
@@ -132,6 +133,7 @@ fn passing_checks(fx: &mut Fixture) {
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["true".into()],
+        ..CheckRule::default()
     }];
 }
 

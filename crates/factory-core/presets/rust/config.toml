@@ -27,10 +27,10 @@ paths = ["crates/*/**"]
 commands = [
   "cargo check -j4 -p {crate}",
   "cargo test -j4 -p {crate}",
-  "cargo fmt -p {crate} -- --check",
-  "cargo clippy -j4 -p {crate} --all-targets -- -D warnings",
   "cargo test -j4 -p {dependents}",
 ]
+format = ["cargo fmt -p {crate} -- --check"]
+lint = ["cargo clippy -j4 -p {crate} --all-targets -- -D warnings"]
 
 # A single-crate repo: the crate sits at the root. These paths never match a workspace member's own files.
 # A virtual workspace's root manifest is covered by the root rule below.
@@ -39,9 +39,9 @@ paths = ["src/**", "tests/**", "benches/**", "examples/**", "build.rs"]
 commands = [
   "cargo check -j4",
   "cargo test -j4",
-  "cargo fmt -- --check",
-  "cargo clippy -j4 --all-targets -- -D warnings",
 ]
+format = ["cargo fmt -- --check"]
+lint = ["cargo clippy -j4 --all-targets -- -D warnings"]
 
 # Root manifest and lockfile. A change here can break any member, so check the whole workspace.
 [[checks]]

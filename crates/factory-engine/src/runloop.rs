@@ -49,6 +49,7 @@ pub(crate) fn add_job(
         job.series = series;
         job.model = model.map(str::to_string);
         job.budget_weighted = Some(driver.config().budget_weighted);
+        job.set_reviewers(&driver.config().reviewers);
         board.jobs.push(job.clone());
         Ok(job)
     })?;

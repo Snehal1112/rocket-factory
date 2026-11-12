@@ -104,6 +104,8 @@ The choice of reviewer model is written to the ledger as `review model: ...`. We
 | `builder_permissions` | bool | true | Each builder run gets permission mode `acceptEdits`, an allowlist of tools and the job folder as an extra directory, so it never waits on a prompt. `false` restores the old builder arguments. |
 | `builder_allow` | string list | `[]` | Extra allow rules such as `Bash(make:*)`, added after the derived ones. Rules for the programs in `git`, `rm`, `rmdir`, `curl`, `sudo`, `sh`, `bash`, `env` and `xargs` are refused, as are shell operators; with a bad entry the whole config fails closed. |
 | `reviewer_rules` | string list | `[]` | Joined into one line in the reviewer prompt, before the review checks. The prompt only, nothing enforces them. |
+| `reviewers` | string list | `["code"]` | The review roles a new job gets. Allowed values are `code` and `security`. It must include `code` and hold no duplicate; anything else is a config error. |
+| `security_rules` | string list | `[]` | Joined into one line in the security reviewer prompt. The prompt only, nothing enforces them. |
 | `plan_rules` | string list | `[]` | Rules for plans. Only the global `/factory` command reads them, through `factory project show`. The driver never puts them in a prompt, and the plan lint does not check them. |
 
 For all five string lists, every entry must be one non-empty line, with no newline.

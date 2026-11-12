@@ -32,6 +32,7 @@ fn only_src_checks(fx: &mut Fixture) {
     fx.config.checks = vec![CheckRule {
         paths: vec!["src/**".into()],
         commands: vec!["false".into()],
+        ..CheckRule::default()
     }];
 }
 
@@ -72,6 +73,7 @@ fn a_crate_rule_with_no_owner_parks_no_checks() {
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["cargo check -j4 -p {crate}".into()],
+        ..CheckRule::default()
     }];
     let runner = built(&fx, vec![("a.rs", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -92,6 +94,7 @@ fn a_path_covered_by_a_planned_command_is_not_gated() {
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["true".into()],
+        ..CheckRule::default()
     }];
     let runner = built(&fx, vec![("a.rs", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -267,6 +270,7 @@ fn a_failing_check_still_wins_over_the_no_tests_rule() {
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..CheckRule::default()
     }];
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -342,6 +346,7 @@ fn pwd_check(fx: &mut Fixture) {
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["sh check.sh".into()],
+        ..CheckRule::default()
     }];
 }
 

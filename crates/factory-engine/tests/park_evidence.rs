@@ -92,6 +92,7 @@ fn docs_rule(command: &str) -> factory_core::CheckRule {
     factory_core::CheckRule {
         paths: vec!["docs/**".to_string()],
         commands: vec![command.to_string()],
+        ..factory_core::CheckRule::default()
     }
 }
 

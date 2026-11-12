@@ -474,6 +474,7 @@ fn final_check_failure_blocks_auto_merge() {
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
     }];
     let e2 = fx.engine(&rr);
     assert_eq!(
@@ -949,6 +950,7 @@ fn failing_check() -> Vec<factory_core::CheckRule> {
     vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
     }]
 }
 
@@ -1173,6 +1175,7 @@ fn a_round_two_gate_park_shows_the_round_one_review() {
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["src/**".into()],
         commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
     }];
     let builder: Effect = Box::new(|spec| {
         std::fs::write(spec.cwd.join("b.txt"), "y\n").expect("write");

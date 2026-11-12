@@ -75,6 +75,8 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("builder_permissions", None),
             ("builder_allow", None),
             ("reviewer_rules", None),
+            ("reviewers", None),
+            ("security_rules", None),
             ("plan_rules", None),
         ],
     ),

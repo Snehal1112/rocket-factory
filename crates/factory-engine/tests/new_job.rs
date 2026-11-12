@@ -148,6 +148,23 @@ fn plan_warnings_are_stored_and_the_job_is_created() {
     assert_eq!(stored.spec_warning.as_deref(), Some(warning.as_str()));
 }
 
+#[test]
+fn a_new_job_gets_a_pending_review_per_configured_role() {
+    let config = factory_core::Config {
+        reviewers: vec!["code".to_string(), "security".to_string()],
+        ..factory_core::Config::default()
+    };
+    let fx = common::SeriesFixture::with_config("x", config);
+    let job = factory_engine::create_job(&fx.driver, "demo", "f", None, None).expect("create");
+    let mut keys: Vec<&String> = job.reviews.keys().collect();
+    keys.sort();
+    assert_eq!(keys, ["code", "security"]);
+    assert!(job
+        .reviews
+        .values()
+        .all(|s| *s == factory_core::ReviewState::Pending));
+}
+
 /// A repo with the branches of two projects and a driver, scoped to `web` when `scoped` is set.
 fn driver_over_branches(scoped: bool) -> (tempfile::TempDir, factory_engine::Driver) {
     let tmp = tempfile::tempdir().expect("tempdir");
