@@ -6,7 +6,8 @@
 use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use factory_core::{project, Home};
@@ -709,4 +710,87 @@ fn a_failing_decision_does_not_stop_the_others() {
     let r = s.tick().expect("tick");
     assert!(r.errors.iter().any(|m| m.contains(&a)), "{:?}", r.errors);
     assert_eq!(r.started, vec![b]);
+}
+
+const POLL_MS: u64 = 15 * 60_000;
+
+/// A supervisor whose clock the test moves.
+fn supervisor_at(e: &Env, clock: &Arc<AtomicU64>) -> Supervisor {
+    let clock = clock.clone();
+    let mut s = Supervisor::new(
+        e.home.clone(),
+        Box::new(ProcessSpawner::new(e.dir.join("factory"))),
+        Box::new(move || clock.load(Ordering::SeqCst)),
+    );
+    s.set_max_parallel(2);
+    s
+}
+
+/// Turns intake on in the project file and gives the child script a behavior.
+fn intake_on(e: &Env, name: &str, behavior: &str) {
+    let path = e.home.project_dir(name).join("project.toml");
+    let text = std::fs::read_to_string(&path).expect("project file");
+    assert!(text.contains("\n[settings]\n"), "no settings table: {text}");
+    let text = text.replacen("\n[settings]\n", "\n[settings]\nintake = true\n", 1);
+    std::fs::write(&path, text).expect("write");
+    std::fs::write(e.dir.join(format!("behavior-{name}---once")), behavior).expect("behavior");
+}
+
+#[test]
+fn intake_polling_is_off_for_projects_without_the_setting() {
+    let e = env();
+    e.add_project("p");
+    let mut s = supervisor_at(&e, &Arc::new(AtomicU64::new(1000)));
+    let r = s.tick().expect("tick");
+    assert!(r.started.is_empty());
+    assert!(e.queue_ids().is_empty());
+}
+
+#[test]
+fn an_intake_request_is_enqueued_when_intake_is_on() {
+    let e = env();
+    e.add_project("p");
+    intake_on(&e, "p", "merged");
+    let mut s = supervisor_at(&e, &Arc::new(AtomicU64::new(1000)));
+    let r = s.tick().expect("tick");
+    assert_eq!(r.started, vec!["0000000001000-p-000".to_string()]);
+}
+
+#[test]
+fn an_intake_request_is_not_enqueued_twice() {
+    let e = env();
+    e.add_project("p");
+    intake_on(&e, "p", "merged");
+    let state = e.state_dir("p");
+    std::fs::create_dir_all(&state).expect("state dir");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_secs_f64();
+    let owner = format!("driver-{}-1", std::process::id());
+    acquire_project_lease(&state, "001", &owner, 100_000.0, now, WAIT).expect("lease");
+    let clock = Arc::new(AtomicU64::new(1000));
+    let mut s = supervisor_at(&e, &clock);
+    s.tick().expect("tick");
+    // The first request stays queued behind the lease, so a later poll time adds nothing.
+    clock.store(1000 + 3 * POLL_MS, Ordering::SeqCst);
+    s.tick().expect("tick");
+    assert_eq!(e.queue_ids(), vec!["0000000001000-p-000".to_string()]);
+    release_project_lease(&state, &owner, WAIT).expect("release");
+}
+
+#[test]
+fn the_next_request_waits_for_the_poll_interval() {
+    let e = env();
+    e.add_project("p");
+    intake_on(&e, "p", "merged");
+    let clock = Arc::new(AtomicU64::new(1000));
+    let mut s = supervisor_at(&e, &clock);
+    s.tick().expect("tick");
+    tick_until_finished(&mut s, "0000000001000-p-000");
+    clock.store(1000 + POLL_MS - 1, Ordering::SeqCst);
+    assert!(s.tick().expect("tick").started.is_empty());
+    clock.store(1000 + POLL_MS, Ordering::SeqCst);
+    let r = s.tick().expect("tick");
+    assert_eq!(r.started, vec![format!("{:013}-p-000", 1000 + POLL_MS)]);
 }
