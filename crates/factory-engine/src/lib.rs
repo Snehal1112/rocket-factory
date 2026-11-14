@@ -137,6 +137,9 @@ pub enum EngineError {
     Io(String),
     #[error("{0}")]
     Msg(String),
+    /// A drafted spec or plan failed a check before any job existed.
+    #[error("{0}")]
+    Invalid(String),
     /// The project lease was held when a run or approve started, so nothing was done.
     #[error("{0}")]
     ProjectBusy(String),

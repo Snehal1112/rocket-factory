@@ -24,6 +24,21 @@ pub(crate) fn add_job(
     stage: Stage,
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
+    add_job_marked(driver, slug, feature, issues, series, stage, model, None)
+}
+
+/// Like `add_job`, and sets the intake marker in the same board write that adds the job.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_job_marked(
+    driver: &Driver,
+    slug: &str,
+    feature: &str,
+    issues: &[u32],
+    series: Option<SeriesPos>,
+    stage: Stage,
+    model: Option<&str>,
+    intake_issue: Option<u32>,
+) -> Result<Job, EngineError> {
     // Folder and branch names keep a new id from colliding with a leftover of an older job.
     let dirs: Vec<String> = std::fs::read_dir(&driver.layout().jobs_dir)
         .map(|rd| {
@@ -48,6 +63,7 @@ pub(crate) fn add_job(
         job.issues = issues.to_vec();
         job.series = series;
         job.model = model.map(str::to_string);
+        job.intake_issue = intake_issue;
         job.budget_weighted = Some(driver.config().budget_weighted);
         job.set_reviewers(&driver.config().reviewers);
         board.jobs.push(job.clone());
@@ -314,6 +330,20 @@ pub(crate) fn record_accepted(driver: &Driver, slug: &str, job: Job, reason: &st
 /// Parses the chain, lints every plan and checks the spec, all before any job exists.
 /// `parse` reads the chain, so the caller picks the cap on tasks per plan and maps its errors.
 pub(crate) fn validate_series(
+    driver: &Driver,
+    start: &Path,
+    spec_path: Option<&Path>,
+    accept_spec: Option<&str>,
+    parse: impl Fn(&Path, &Path) -> Result<crate::Series, EngineError>,
+) -> Result<Validated, EngineError> {
+    // Every failure here comes from the drafted files, so it is a validation error.
+    validate_series_inner(driver, start, spec_path, accept_spec, parse).map_err(|e| match e {
+        EngineError::SpecRefused(r) => EngineError::SpecRefused(r),
+        other => EngineError::Invalid(other.to_string()),
+    })
+}
+
+fn validate_series_inner(
     driver: &Driver,
     start: &Path,
     spec_path: Option<&Path>,
@@ -712,7 +742,8 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                     total: pos.total,
                     id: pos.id.clone(),
                 };
-                let created = add_job(
+                // An intake job keeps its marker, so the tracker gate covers the late job too.
+                let created = add_job_marked(
                     driver,
                     &stem,
                     &job.feature,
@@ -720,14 +751,8 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                     Some(next_pos),
                     Stage::Build,
                     job.model.as_deref(),
+                    job.intake_issue,
                 )?;
-                // An intake job keeps its marker, so the tracker gate covers the late job too.
-                if let Some(issue) = job.intake_issue {
-                    driver.store().update_job(&created.id, |j| {
-                        j.intake_issue = Some(issue);
-                        Ok(())
-                    })?;
-                }
                 created.id
             }
         };
@@ -760,6 +785,45 @@ mod tests {
             Box::new(move |_| runner.clone()),
         )
         .expect("driver")
+    }
+
+    #[test]
+    fn add_job_marked_writes_the_marker_with_the_job() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let marked =
+            add_job_marked(&d, "demo", "f", &[], None, Stage::Build, None, Some(7)).expect("job");
+        assert_eq!(marked.intake_issue, Some(7));
+        assert_eq!(d.job(&marked.id).expect("reload").intake_issue, Some(7));
+        let plain = add_job(&d, "plain", "f", &[], None, Stage::Build, None).expect("job");
+        assert_eq!(d.job(&plain.id).expect("reload").intake_issue, None);
+    }
+
+    #[test]
+    fn validate_series_reports_a_spec_without_a_goal_as_invalid() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let plans = tmp.path().join("plans");
+        std::fs::create_dir_all(&plans).expect("plans");
+        std::fs::write(
+            plans.join("spec.md"),
+            "# Spec\n\n## Acceptance criteria\n\n- It works.\n",
+        )
+        .expect("spec");
+        std::fs::write(
+            plans.join("plan-01-a.md"),
+            "# Plan\n\n### Task 1: t\n\nNext plan: none\n",
+        )
+        .expect("plan");
+        let err = validate_series(&d, &plans, None, None, |root, start| {
+            crate::parse_series_with(root, start, None).map_err(EngineError::from)
+        })
+        .err()
+        .expect("a spec without a goal is refused");
+        assert!(
+            matches!(&err, EngineError::Invalid(m) if m.contains("has no `## Goal` section")),
+            "{err}"
+        );
     }
 
     #[test]
