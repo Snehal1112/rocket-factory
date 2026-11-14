@@ -550,7 +550,7 @@ impl SeriesFixture {
 
     /// A repo with the committer context, and a driver whose runner for each job is a `RoleRunner`
     /// with `verdict`, passed through `wrap`.
-    fn build(
+    pub fn build(
         verdict: &str,
         config: Config,
         wrap: impl Fn(RoleRunner) -> Arc<dyn AgentRunner> + 'static,

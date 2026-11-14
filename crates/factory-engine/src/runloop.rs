@@ -712,7 +712,7 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                     total: pos.total,
                     id: pos.id.clone(),
                 };
-                add_job(
+                let created = add_job(
                     driver,
                     &stem,
                     &job.feature,
@@ -720,8 +720,15 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                     Some(next_pos),
                     Stage::Build,
                     job.model.as_deref(),
-                )?
-                .id
+                )?;
+                // An intake job keeps its marker, so the tracker gate covers the late job too.
+                if let Some(issue) = job.intake_issue {
+                    driver.store().update_job(&created.id, |j| {
+                        j.intake_issue = Some(issue);
+                        Ok(())
+                    })?;
+                }
+                created.id
             }
         };
     }

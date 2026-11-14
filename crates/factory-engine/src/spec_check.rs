@@ -147,9 +147,28 @@ fn reviewer_agents_file(driver: &Driver) -> Result<PathBuf, String> {
 /// Appends one usage line for the review run to `usage.jsonl` in the spec reviews folder.
 /// No job owns the run, so this file is the only record of its tokens. A write error is ignored.
 fn log_review_usage(driver: &Driver, agent: &AgentSpec, run: &AgentRun, secs: u64) {
+    log_unowned_usage(
+        driver,
+        &driver.layout().spec_review_usage_file(),
+        SPEC_REVIEW_JOB,
+        agent,
+        run,
+        secs,
+    );
+}
+
+/// Appends one usage line for a run that no job owns to `path`. A write error is ignored.
+pub(crate) fn log_unowned_usage(
+    driver: &Driver,
+    path: &std::path::Path,
+    job: &str,
+    agent: &AgentSpec,
+    run: &AgentRun,
+    secs: u64,
+) {
     use std::io::Write;
     let line = crate::ports::usage_line(
-        SPEC_REVIEW_JOB,
+        job,
         agent,
         run,
         1,
@@ -158,13 +177,14 @@ fn log_review_usage(driver: &Driver, agent: &AgentSpec, run: &AgentRun, secs: u6
         secs,
         driver.config().agent_cli(),
     );
-    if std::fs::create_dir_all(driver.layout().spec_reviews_dir()).is_err() {
+    let Some(dir) = path.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
         return;
     }
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(driver.layout().spec_review_usage_file());
+        .open(path);
     if let Ok(mut f) = file {
         let _ = writeln!(f, "{line}");
     }

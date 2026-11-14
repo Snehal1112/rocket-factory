@@ -72,8 +72,8 @@ pub(crate) fn project_usage(
     let Ok(layout) = project::layout(home, name, file) else {
         return total;
     };
-    // The spec reviews belong to no job, so their log sits beside the job folders.
-    let mut logs = vec![layout.spec_review_usage_file()];
+    // The spec reviews and the intake drafter belong to no job, so their logs sit beside the job folders.
+    let mut logs = vec![layout.spec_review_usage_file(), layout.intake_usage_file()];
     if let Ok(dir) = std::fs::read_dir(&layout.jobs_dir) {
         logs.extend(dir.flatten().map(|e| e.path().join("usage.jsonl")));
     }

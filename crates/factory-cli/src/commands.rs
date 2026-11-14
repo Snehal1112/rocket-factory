@@ -417,6 +417,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             json,
             delivery,
         } => crate::probe::run_probe_command(ctx, harness, &role, json, delivery),
+        Command::Intake { dry_run, .. } => crate::intake::run_intake_command(ctx, dry_run),
         Command::Project { .. } => Err(CliError::Refused(
             "project commands do not need a repository, run them through project::run".into(),
         )),
@@ -1164,6 +1165,7 @@ fn cache_tokens(ctx: &CliCtx, days: Option<u32>) -> Result<String, CliError> {
         .map(|job| (d.job_dir(job).join("usage.jsonl"), job.id.as_str()))
         .collect();
     files.push((d.layout().spec_review_usage_file(), "spec-review"));
+    files.push((d.layout().intake_usage_file(), "intake"));
     let mut warnings = String::new();
     let mut jobs = Vec::new();
     let (mut skipped, mut no_ts) = (0, 0);

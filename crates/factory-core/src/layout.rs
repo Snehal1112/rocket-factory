@@ -145,9 +145,19 @@ impl Layout {
         self.state_dir.join("probes")
     }
 
+    /// The folder of intake work, one subfolder per issue with the export and the drafts.
+    pub fn intake_dir(&self) -> PathBuf {
+        self.state_dir.join("intake")
+    }
+
     /// The usage log of the spec reviews. No job owns those runs, so their tokens are logged here.
     pub fn spec_review_usage_file(&self) -> PathBuf {
         self.spec_reviews_dir().join("usage.jsonl")
+    }
+
+    /// The usage log of the intake drafter. No job owns those runs, so their tokens are logged here.
+    pub fn intake_usage_file(&self) -> PathBuf {
+        self.intake_dir().join("usage.jsonl")
     }
 
     pub fn events_file(&self) -> PathBuf {
@@ -335,6 +345,15 @@ mod tests {
         assert_eq!(
             l.spec_reviews_dir(),
             PathBuf::from("/r/.superpowers/factory/spec-reviews")
+        );
+    }
+
+    #[test]
+    fn intake_dir_is_under_the_state_dir() {
+        let l = Layout::in_repo(Path::new("/r"));
+        assert_eq!(
+            l.intake_dir(),
+            PathBuf::from("/r/.superpowers/factory/intake")
         );
     }
 

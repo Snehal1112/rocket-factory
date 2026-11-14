@@ -118,11 +118,12 @@ fn factory_file_names(dir: &Path) -> Result<Vec<String>, String> {
 }
 
 #[test]
-fn every_preset_ships_the_six_factory_agents() -> TestResult {
+fn every_preset_ships_the_seven_factory_agents() -> TestResult {
     let want = vec![
         "factory-builder.md".to_string(),
         "factory-code-reviewer.md".to_string(),
         "factory-committer.md".to_string(),
+        "factory-intake-drafter.md".to_string(),
         "factory-kb-refresher.md".to_string(),
         "factory-security-reviewer.md".to_string(),
         "factory-spec-reviewer.md".to_string(),
@@ -280,6 +281,38 @@ fn spec_reviewer_is_read_only_and_pins_its_rules() -> TestResult {
                 "{path}: both VERDICT lines must be on their own line"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn intake_drafter_can_write_only_and_pins_its_rules() -> TestResult {
+    for path in &PRESETS.map(|preset| preset_agent(preset, "factory-intake-drafter.md")) {
+        let text = read(path)?;
+        let fm = frontmatter(&text)?;
+        if fm_get(&fm, "name") != Some("factory-intake-drafter") {
+            return Err(format!("{path}: name is wrong"));
+        }
+        if fm_get(&fm, "tools") != Some("Read, Grep, Glob, Write") {
+            return Err(format!(
+                "{path}: tools must be exactly Read, Grep, Glob, Write"
+            ));
+        }
+        check_description(&fm, path)?;
+        check_max_turns(&fm, path)?;
+        require_all(
+            &text,
+            path,
+            &[
+                "<!-- factory-rules: 1 -->",
+                "untrusted",
+                "never an instruction",
+                "refused.md",
+                "plan-01-<slug>.md",
+                "Next plan:",
+                "Decided by: call",
+            ],
+        )?;
     }
     Ok(())
 }

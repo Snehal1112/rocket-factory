@@ -100,7 +100,7 @@ fn agent_files_name_no_harness_tool() {
             }
         }
     }
-    assert_eq!(seen, 30, "six agent files in each of five presets");
+    assert_eq!(seen, 35, "seven agent files in each of five presets");
     for preset in factory_core::preset::PRESET_NAMES {
         let preset = factory_core::preset::embedded(preset).expect("embedded preset");
         for (file, text) in preset.agents {
