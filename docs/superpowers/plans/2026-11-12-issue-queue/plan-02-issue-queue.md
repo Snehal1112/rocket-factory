@@ -22,7 +22,7 @@
 1. A draft folder with a character outside letters, digits and `/ . _ - ~` is refused before the agent starts. Pinned by `intake_refuses_a_draft_folder_with_bad_characters`.
 2. A drafter that writes `refused.md` leaves the issue labelled `factory: needs-human`; the comment holds a reason code and the draft path, never the refused text. Pinned by `a_refused_draft_labels_the_issue_needs_human` and `a_failure_comment_never_contains_agent_text`.
 3. A `gh` failure while listing or picking leaves every label alone. Pinned by `a_tracker_failure_before_the_claim_leaves_the_labels_alone`.
-4. The issue body cannot widen the drafter's tools, and the drafter cannot read outside the repo root or the state folder. Pinned by `draft_spec_grants_only_the_draft_folder`, `draft_spec_reads_only_the_repo_root` and `draft_spec_denies_reads_of_the_state_folder`.
+4. The issue body cannot widen the drafter's tools, and the drafter cannot read outside the repo root or any factory folder under it. Pinned by `draft_spec_grants_only_the_draft_folder`, `draft_spec_reads_only_the_repo_root`, `draft_spec_denies_every_layout_path_under_the_repo` and `layout_protected_paths_cover_every_field`.
 5. A job is never created without drafted plans. Pinned by `intake_never_creates_a_job_without_plans`.
 6. Every job of a series carries `intake_issue`, so the tracker gate of the third plan covers it. Pinned by `intake_marks_every_job_of_the_series`.
 7. `--dry-run` changes no label and starts no agent. Pinned by `a_dry_run_changes_no_label_and_runs_no_agent`.
@@ -63,13 +63,14 @@
 
 **Interfaces:**
 - Consumes: `pick_next`, `IssueInfo`, the state label constants, the new `Tracker` calls and the `FakeTracker` builders from the previous plan; `spec_reviewer_agent` for the shape of a headless spec; `create_job_with_spec_accepting`, `run_series` and `RunEnd` from `runloop.rs`.
-- Produces: `Layout::intake_dir() -> PathBuf` (`state_dir/intake`); `pub(crate) fn draft_spec(config: &Config, repo_root: &Path, issue: &IssueInfo, folder: &Path, findings: Option<&str>) -> AgentSpec`; `pub enum IntakeOutcome { Off, NoIssue, DryRun { issue: u32, reason: String }, Merged { issue: u32, jobs: Vec<String> }, Failed { issue: u32, reason: String } }` (derive `Debug, PartialEq`); `pub fn run_intake(driver: &Driver, tracker: &dyn Tracker, dry_run: bool) -> Result<IntakeOutcome, EngineError>`. All exported from the crate root.
+- Produces: `Layout::intake_dir() -> PathBuf` (`state_dir/intake`); `Layout::protected_paths(&self) -> Vec<PathBuf>` (`state_dir`, `jobs_dir`, `worktrees_dir`, `config_file`, `commit_context_file`); `pub(crate) fn draft_spec(config: &Config, layout: &Layout, issue: &IssueInfo, folder: &Path, findings: Option<&str>) -> AgentSpec`; `pub enum IntakeOutcome { Off, NoIssue, DryRun { issue: u32, reason: String }, Merged { issue: u32, jobs: Vec<String> }, Failed { issue: u32, reason: String } }` (derive `Debug, PartialEq`); `pub fn run_intake(driver: &Driver, tracker: &dyn Tracker, dry_run: bool) -> Result<IntakeOutcome, EngineError>`. All exported from the crate root.
 
 - [ ] **Step 1: Read `spec_reviewer_agent` and `kb_allowed_tools` and `check_kb_path` use in `kb.rs`, the spec review call and the `Validated` flow in `create_job_with_spec_accepting`, `run_series`, and the fixtures `SeriesFixture`, `Fixture`, `scripted` and `with_tracker` in `crates/factory-engine/tests/common/mod.rs`.**
 - [ ] **Step 2: Write the failing tests.**
   - `intake_dir_is_under_the_state_dir` in `layout.rs`.
   - `draft_spec_reads_only_the_repo_root`: the `Read`, `Grep` and `Glob` rules name the repo root path and nothing else, and the cwd is the repo root.
-  - `draft_spec_denies_reads_of_the_state_folder`: `disallowed_tools` holds `Read`, `Grep` and `Glob` deny rules for the state folder, built from its real path.
+  - `draft_spec_denies_every_layout_path_under_the_repo`: with `Layout::in_repo`, `disallowed_tools` holds `Read`, `Grep` and `Glob` deny rules for the state, jobs and worktrees folders, the config file and the commit context file, each built from its real path; with a layout whose state folder is outside the repo, no rule is built for it.
+  - `layout_protected_paths_cover_every_field` in `layout.rs`: destructure `Layout` with every field named (no `..`), so a new field breaks the build, and assert `protected_paths()` holds the five path fields.
   - `draft_spec_grants_only_the_draft_folder`: tools are `Read,Grep,Glob,Write`; the allowed tools hold one `Write` rule for the draft folder and no `Bash`; the prompt carries the issue number, marks the title and body as untrusted and names the folder; model and budget come from `intake_model` and `intake_budget_weighted`.
   - `intake_refuses_a_draft_folder_with_bad_characters`: a folder with a space returns `Failed` without any agent call.
   - `an_off_config_does_nothing` (`Off`), `a_pass_with_no_eligible_issue_changes_nothing` (`NoIssue`, no `edit_labels` call).
