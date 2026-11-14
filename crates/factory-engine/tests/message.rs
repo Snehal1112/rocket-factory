@@ -167,6 +167,63 @@ fn merge_message_ends_with_the_fixes_and_job_footers() {
         .contains("Fixes: #20, Factory-Job: 001"));
 }
 
+const SPEC_WITH_FOLLOW_UPS: &str = "## Goal\nsomething with enough words to pass the check here\n\n## Follow-ups\n\n- More work\n\n## Acceptance criteria\n- a\n";
+
+fn set_series(fx: &common::MergeFixture, index: u32, total: u32) {
+    fx.driver
+        .store()
+        .update_job(&fx.id, move |j| {
+            j.series = Some(factory_core::SeriesPos {
+                plan_file: "p".into(),
+                index,
+                total,
+                id: None,
+            });
+            Ok(())
+        })
+        .expect("series");
+}
+
+#[test]
+fn the_last_plan_says_fixes_even_with_follow_ups() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply(GOOD)])), true);
+    common::set_feature(&fx, "x #20", Some(SPEC_WITH_FOLLOW_UPS));
+    with_issues(&fx, vec![20]);
+    set_series(&fx, 3, 3);
+    let sha = merged(&fx);
+    assert!(
+        subject(&fx, &sha).ends_with("Fixes: #20\nFactory-Job: 001"),
+        "{}",
+        subject(&fx, &sha)
+    );
+}
+
+#[test]
+fn plan_one_of_three_says_relates_to_even_without_follow_ups() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply(GOOD)])), true);
+    with_issues(&fx, vec![20]);
+    set_series(&fx, 1, 3);
+    let sha = merged(&fx);
+    assert!(
+        subject(&fx, &sha).ends_with("Relates to: #20\nFactory-Job: 001"),
+        "{}",
+        subject(&fx, &sha)
+    );
+}
+
+#[test]
+fn a_single_plan_job_with_follow_ups_says_fixes() {
+    let fx = approved_job_with(Arc::new(scripted(vec![reply(GOOD)])), true);
+    common::set_feature(&fx, "x #20", Some(SPEC_WITH_FOLLOW_UPS));
+    with_issues(&fx, vec![20]);
+    let sha = merged(&fx);
+    assert!(
+        subject(&fx, &sha).ends_with("Fixes: #20\nFactory-Job: 001"),
+        "{}",
+        subject(&fx, &sha)
+    );
+}
+
 #[test]
 fn the_fixed_merge_message_gets_the_footers_too() {
     let fx = approved_job_with(Arc::new(scripted(vec![])), true);
