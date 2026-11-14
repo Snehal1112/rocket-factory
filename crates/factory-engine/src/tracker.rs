@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 /// How long one `gh` call may run.
 const GH_TIMEOUT: Duration = Duration::from_secs(60);
+/// How often a start that fails with "text file busy" is tried again.
+const SPAWN_RETRIES: u32 = 10;
 
 /// The issue operations the tickets step needs. Every failure is a short message.
 pub trait Tracker {
@@ -325,14 +327,26 @@ impl GhTracker {
     /// Runs one call and returns its trimmed standard output. A slow call is killed after the timeout.
     fn run(&self, args: &[String]) -> Result<String, String> {
         let name = args.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
-        let mut child = Command::new(&self.program)
-            .args(args)
-            .current_dir(&self.dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("{} could not start: {e}", self.program))?;
+        let spawn = || {
+            Command::new(&self.program)
+                .args(args)
+                .current_dir(&self.dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+        };
+        // A program that was just written can be busy for a moment while a forked child still holds it.
+        let mut spawned = spawn();
+        for _ in 0..SPAWN_RETRIES {
+            if !matches!(&spawned, Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            spawned = spawn();
+        }
+        let mut child =
+            spawned.map_err(|e| format!("{} could not start: {e}", self.program))?;
         let stdout = child.stdout.take().map(read_all);
         let stderr = child.stderr.take().map(read_all);
         let start = Instant::now();
