@@ -1,8 +1,10 @@
 //! The tracker port: how the driver reaches GitHub issues. The real one runs `gh`, tests use a fake.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// How long one `gh` call may run.
@@ -23,8 +25,9 @@ pub trait Tracker {
     fn close(&self, issue: u32) -> Result<(), String>;
     /// The open issues that carry `label`.
     fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String>;
-    /// The login of the user who last added `label` to the issue, or None when no event is found.
-    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String>;
+    /// Who last added `label` to the issue and when, or None when no event is found or the last
+    /// event has no login.
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String>;
     /// Adds and removes labels. A label to add that does not exist yet is created first.
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String>;
     /// The login `gh` runs as.
@@ -39,6 +42,14 @@ pub struct IssueInfo {
     pub body: String,
     pub labels: Vec<String>,
     pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A `labeled` event: the login that added the label and the time it did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelEvent {
+    pub actor: String,
+    pub at: String,
 }
 
 impl<T: Tracker + ?Sized> Tracker for Arc<T> {
@@ -66,7 +77,7 @@ impl<T: Tracker + ?Sized> Tracker for Arc<T> {
     fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String> {
         (**self).list_labelled(label)
     }
-    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
         (**self).labelled_by(issue, label)
     }
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
@@ -147,9 +158,11 @@ pub(crate) fn list_labelled_args(label: &str) -> Vec<String> {
         "--label",
         label,
         "--limit",
-        "100",
+        "500",
+        "--search",
+        "sort:created-asc",
         "--json",
-        "number,title,body,labels,createdAt",
+        "number,title,body,labels,createdAt,updatedAt",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -169,19 +182,32 @@ pub(crate) fn edit_labels_args(issue: u32, add: &[String], remove: &[String]) ->
     args
 }
 
+/// Prints only the `labeled` events, one compact JSON object per line.
+const EVENTS_JQ: &str = r#".[] | select(.event == "labeled") | {event, label: {name: .label.name}, actor: {login: .actor.login}, created_at}"#;
+
 pub(crate) fn events_args(repo: &str, issue: u32) -> Vec<String> {
     vec![
         "api".to_string(),
         format!("repos/{repo}/issues/{issue}/events"),
         "--paginate".to_string(),
+        "--jq".to_string(),
+        EVENTS_JQ.to_string(),
     ]
 }
 
 pub(crate) fn label_create_args(name: &str) -> Vec<String> {
-    ["label", "create", name, "--force"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "label",
+        "create",
+        name,
+        "--color",
+        "ededed",
+        "--description",
+        "factory intake state",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 /// The issue number at the end of the URL that `gh issue create` prints.
@@ -223,7 +249,7 @@ pub(crate) fn parse_found(json: &str, title: &str, footer: &str) -> Result<Optio
     Ok(found)
 }
 
-/// The issues from `gh issue list --json number,title,body,labels,createdAt`. A missing or null
+/// The issues from `gh issue list --json number,title,body,labels,createdAt,updatedAt`. A missing or null
 /// body counts as empty. An entry without a number is skipped.
 pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
     let value: serde_json::Value =
@@ -246,29 +272,36 @@ pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
                 body: issue["body"].as_str().unwrap_or("").to_string(),
                 labels,
                 created_at: issue["createdAt"].as_str().unwrap_or("").to_string(),
+                updated_at: issue["updatedAt"].as_str().unwrap_or("").to_string(),
             })
         })
         .collect();
     Ok(issues)
 }
 
-/// The login of the last `labeled` event for `label`, from `gh api .../events --paginate`. That
-/// prints one JSON array per page, so the pages are read one after another.
-pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<String>, String> {
-    let mut actor = None;
-    for page in serde_json::Deserializer::from_str(json).into_iter::<serde_json::Value>() {
-        let page = page.map_err(|e| format!("gh printed invalid JSON: {e}"))?;
-        for event in page.as_array().into_iter().flatten() {
+/// The actor and time of the last `labeled` event for `label`. The input is either the compact
+/// event lines the events call prints or full event arrays, one per page. The last matching event
+/// wins, so a null actor on it gives None even when an earlier event had a login.
+pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<LabelEvent>, String> {
+    let mut last = None;
+    for value in serde_json::Deserializer::from_str(json).into_iter::<serde_json::Value>() {
+        let value = value.map_err(|e| format!("gh printed invalid JSON: {e}"))?;
+        let events = match value.as_array() {
+            Some(page) => page.as_slice(),
+            None => std::slice::from_ref(&value),
+        };
+        for event in events {
             if event["event"].as_str() == Some("labeled")
                 && event["label"]["name"].as_str() == Some(label)
             {
-                if let Some(login) = event["actor"]["login"].as_str() {
-                    actor = Some(login.to_string());
-                }
+                last = Some(event["actor"]["login"].as_str().map(|login| LabelEvent {
+                    actor: login.to_string(),
+                    at: event["created_at"].as_str().unwrap_or("").to_string(),
+                }));
             }
         }
     }
-    Ok(actor)
+    Ok(last.flatten())
 }
 
 /// Runs `gh` in the main checkout. It never uses a shell.
@@ -300,10 +333,12 @@ impl GhTracker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("{} could not start: {e}", self.program))?;
+        let stdout = child.stdout.take().map(read_all);
+        let stderr = child.stderr.take().map(read_all);
         let start = Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(status)) => break status,
                 Ok(None) if start.elapsed() > GH_TIMEOUT => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -312,17 +347,29 @@ impl GhTracker {
                 Ok(None) => std::thread::sleep(Duration::from_millis(50)),
                 Err(e) => return Err(format!("{} {name} failed: {e}", self.program)),
             }
-        }
-        let out = child
-            .wait_with_output()
-            .map_err(|e| format!("{} {name} failed: {e}", self.program))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
+        };
+        let stdout = join_output(stdout);
+        let stderr = join_output(stderr);
+        if !status.success() {
+            let err = String::from_utf8_lossy(&stderr);
             let first = err.lines().next().unwrap_or("no message");
             return Err(format!("{} {name} failed: {first}", self.program));
         }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        Ok(String::from_utf8_lossy(&stdout).trim().to_string())
     }
+}
+
+/// Reads a pipe to its end on its own thread, so a full pipe never blocks the child.
+fn read_all<R: Read + Send + 'static>(mut pipe: R) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = pipe.read_to_end(&mut buf);
+        buf
+    })
+}
+
+fn join_output(handle: Option<JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    handle.and_then(|h| h.join().ok()).unwrap_or_default()
 }
 
 impl Tracker for GhTracker {
@@ -374,14 +421,20 @@ impl Tracker for GhTracker {
         parse_issue_list(&self.run(&list_labelled_args(label))?)
     }
 
-    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
         let repo = self.repo_name()?;
         parse_actor(&self.run(&events_args(&repo, issue))?, label)
     }
 
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
+        if add.is_empty() && remove.is_empty() {
+            return Ok(());
+        }
         for label in add {
-            self.run(&label_create_args(label))?;
+            match self.run(&label_create_args(label)) {
+                Err(e) if !e.contains("already exists") => return Err(e),
+                _ => {}
+            }
         }
         self.run(&edit_labels_args(issue, add, remove)).map(|_| ())
     }
@@ -508,25 +561,6 @@ mod tests {
     }
 
     #[test]
-    fn list_labelled_args() {
-        assert_eq!(
-            super::list_labelled_args("factory"),
-            strings(&[
-                "issue",
-                "list",
-                "--state",
-                "open",
-                "--label",
-                "factory",
-                "--limit",
-                "100",
-                "--json",
-                "number,title,body,labels,createdAt"
-            ])
-        );
-    }
-
-    #[test]
     fn edit_labels_args() {
         assert_eq!(
             super::edit_labels_args(7, &strings(&["a", "b"]), &strings(&["c"])),
@@ -546,18 +580,13 @@ mod tests {
 
     #[test]
     fn events_args() {
+        let args = super::events_args("o/r", 7);
         assert_eq!(
-            super::events_args("o/r", 7),
-            strings(&["api", "repos/o/r/issues/7/events", "--paginate"])
+            args[..3],
+            strings(&["api", "repos/o/r/issues/7/events", "--paginate"])[..]
         );
-    }
-
-    #[test]
-    fn label_create_args() {
-        assert_eq!(
-            super::label_create_args("factory: running"),
-            strings(&["label", "create", "factory: running", "--force"])
-        );
+        assert_eq!(args[3], "--jq");
+        assert!(args[4].contains("labeled"));
     }
 
     #[test]
@@ -576,6 +605,7 @@ mod tests {
                     body: "text".into(),
                     labels: strings(&["factory", "priority: P1"]),
                     created_at: "2026-11-01T10:00:00Z".into(),
+                    updated_at: String::new(),
                 },
                 IssueInfo {
                     number: 6,
@@ -583,6 +613,7 @@ mod tests {
                     body: String::new(),
                     labels: vec![],
                     created_at: "2026-11-02T10:00:00Z".into(),
+                    updated_at: String::new(),
                 },
             ]
         );
@@ -599,16 +630,14 @@ mod tests {
       {"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"}}
     ]"#;
 
+    fn login_of(json: &str, label: &str) -> Option<String> {
+        parse_actor(json, label).expect("parse").map(|e| e.actor)
+    }
+
     #[test]
     fn parse_actor_returns_the_last_labeled_event_for_the_label() {
-        assert_eq!(
-            parse_actor(EVENTS, "factory").expect("parse"),
-            Some("alice".to_string())
-        );
-        assert_eq!(
-            parse_actor(EVENTS, "bug").expect("parse"),
-            Some("bob".to_string())
-        );
+        assert_eq!(login_of(EVENTS, "factory"), Some("alice".to_string()));
+        assert_eq!(login_of(EVENTS, "bug"), Some("bob".to_string()));
     }
 
     #[test]
@@ -617,10 +646,7 @@ mod tests {
             "{EVENTS}{}",
             r#"[{"event":"labeled","label":{"name":"factory"},"actor":{"login":"erin"}}]"#
         );
-        assert_eq!(
-            parse_actor(&pages, "factory").expect("parse"),
-            Some("erin".to_string())
-        );
+        assert_eq!(login_of(&pages, "factory"), Some("erin".to_string()));
     }
 
     #[test]
@@ -629,6 +655,146 @@ mod tests {
         assert_eq!(parse_actor("[]", "factory").expect("parse"), None);
         assert_eq!(parse_actor("", "factory").expect("parse"), None);
         assert!(parse_actor("nope", "factory").is_err());
+    }
+
+    const LABELED: &str = r#"{"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"},"created_at":"2026-11-01T10:00:00Z"}"#;
+
+    #[test]
+    fn parse_actor_gives_none_when_the_last_event_has_no_login() {
+        let json = format!(
+            "[{LABELED},{}]",
+            r#"{"event":"labeled","label":{"name":"factory"},"actor":null,"created_at":"2026-11-02T10:00:00Z"}"#
+        );
+        assert_eq!(parse_actor(&json, "factory").expect("parse"), None);
+    }
+
+    #[test]
+    fn parse_actor_keeps_the_time_of_the_last_matching_event() {
+        let json = format!(
+            "[{LABELED},{},{}]",
+            r#"{"event":"labeled","label":{"name":"factory"},"actor":{"login":"bob"},"created_at":"2026-11-02T10:00:00Z"}"#,
+            r#"{"event":"unlabeled","label":{"name":"factory"},"actor":{"login":"carol"},"created_at":"2026-11-03T10:00:00Z"}"#
+        );
+        assert_eq!(
+            parse_actor(&json, "factory").expect("parse"),
+            Some(LabelEvent {
+                actor: "bob".to_string(),
+                at: "2026-11-02T10:00:00Z".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_actor_reads_compact_json_lines() {
+        let lines = format!("{LABELED}\n{LABELED}\n");
+        assert_eq!(
+            parse_actor(&lines, "factory").expect("parse"),
+            Some(LabelEvent {
+                actor: "alice".to_string(),
+                at: "2026-11-01T10:00:00Z".to_string()
+            })
+        );
+    }
+
+    /// Writes an executable fake `gh` script into `dir` and returns its path.
+    fn fake_gh(dir: &Path, body: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("gh");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod script");
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn edit_labels_with_nothing_to_change_makes_no_call() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("argv");
+        let gh = fake_gh(
+            dir.path(),
+            &format!("echo \"$@\" >> {}", record.to_string_lossy()),
+        );
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        tracker.edit_labels(7, &[], &[]).expect("no-op");
+        assert!(!record.exists());
+    }
+
+    #[test]
+    fn edit_labels_creates_a_missing_label_and_ignores_already_exists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let record = dir.path().join("argv");
+        let gh = fake_gh(
+            dir.path(),
+            &format!(
+                "echo \"$@\" >> {}\nif [ \"$1\" = label ]; then echo 'label already exists' >&2; exit 1; fi",
+                record.to_string_lossy()
+            ),
+        );
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        tracker
+            .edit_labels(7, &strings(&["factory: running"]), &[])
+            .expect("edit");
+        let calls = std::fs::read_to_string(&record).expect("record");
+        assert_eq!(calls.lines().count(), 2, "{calls}");
+        assert!(calls.contains("issue edit 7 --add-label factory: running"));
+    }
+
+    #[test]
+    fn edit_labels_reports_another_label_create_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "echo 'bad credentials' >&2; exit 1");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let err = tracker
+            .edit_labels(7, &strings(&["x"]), &[])
+            .expect_err("create fails");
+        assert!(err.contains("bad credentials"), "{err}");
+    }
+
+    #[test]
+    fn label_create_args_set_a_fixed_colour_and_description() {
+        assert_eq!(
+            super::label_create_args("factory: running"),
+            strings(&[
+                "label",
+                "create",
+                "factory: running",
+                "--color",
+                "ededed",
+                "--description",
+                "factory intake state"
+            ])
+        );
+    }
+
+    #[test]
+    fn list_labelled_args_ask_oldest_first_with_updated_at() {
+        let args = super::list_labelled_args("factory");
+        let at = |flag: &str| args.iter().position(|a| a == flag).expect("flag");
+        assert_eq!(args[at("--limit") + 1], "500");
+        assert_eq!(args[at("--search") + 1], "sort:created-asc");
+        assert!(args[at("--json") + 1].ends_with("createdAt,updatedAt"));
+    }
+
+    #[test]
+    fn parse_issue_list_reads_updated_at() {
+        let json = r#"[
+          {"number":5,"title":"A","labels":[],"createdAt":"c","updatedAt":"2026-11-03T10:00:00Z"},
+          {"number":6,"title":"B","labels":[],"createdAt":"c"}
+        ]"#;
+        let issues = parse_issue_list(json).expect("parse");
+        assert_eq!(issues[0].updated_at, "2026-11-03T10:00:00Z");
+        assert_eq!(issues[1].updated_at, "");
+    }
+
+    #[test]
+    fn a_gh_call_that_prints_more_than_the_pipe_buffer_still_returns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "head -c 204800 /dev/zero | tr '\\0' 'a'");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let start = Instant::now();
+        let out = tracker.run(&strings(&["x"])).expect("run");
+        assert_eq!(out.len(), 204800);
+        assert!(start.elapsed() < Duration::from_secs(20));
     }
 
     #[test]

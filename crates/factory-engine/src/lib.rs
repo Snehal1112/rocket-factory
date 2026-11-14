@@ -115,7 +115,7 @@ pub use tasks::{
 pub use tick::tick_plan;
 pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
 pub use tipfiles::RepoTip;
-pub use tracker::{GhTracker, IssueInfo, Tracker};
+pub use tracker::{GhTracker, IssueInfo, LabelEvent, Tracker};
 pub use waivers::{
     read_waivers, record_waiver, supersede_waivers, waived_blockers, waiver_tickets_step, Waiver,
     WAIVERS_FILE,

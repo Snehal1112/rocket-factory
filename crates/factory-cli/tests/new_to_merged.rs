@@ -948,7 +948,7 @@ impl factory_engine::Tracker for CountCreates {
     fn list_labelled(&self, _: &str) -> Result<Vec<factory_engine::IssueInfo>, String> {
         Ok(vec![])
     }
-    fn labelled_by(&self, _: u32, _: &str) -> Result<Option<String>, String> {
+    fn labelled_by(&self, _: u32, _: &str) -> Result<Option<factory_engine::LabelEvent>, String> {
         Ok(None)
     }
     fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {

@@ -690,7 +690,7 @@ pub struct FakeState {
     pub found: HashMap<String, u32>,
     pub on_create: Option<Arc<dyn Fn() + Send + Sync>>,
     pub issues: Vec<factory_engine::IssueInfo>,
-    pub actors: HashMap<(u32, String), String>,
+    pub actors: HashMap<(u32, String), factory_engine::LabelEvent>,
     pub user: String,
     pub label_edits: Vec<(u32, Vec<String>, Vec<String>)>,
 }
@@ -738,13 +738,15 @@ impl FakeTracker {
         self.state.lock().expect("lock").issues = issues;
         self
     }
-    /// Who `labelled_by` names for `label` on `issue`.
+    /// Who `labelled_by` names for `label` on `issue`. The event is dated far in the future.
     pub fn with_label_actor(self, issue: u32, label: &str, login: &str) -> FakeTracker {
-        self.state
-            .lock()
-            .expect("lock")
-            .actors
-            .insert((issue, label.to_string()), login.to_string());
+        self.state.lock().expect("lock").actors.insert(
+            (issue, label.to_string()),
+            factory_engine::LabelEvent {
+                actor: login.to_string(),
+                at: "9999-12-31T23:59:59Z".to_string(),
+            },
+        );
         self
     }
     pub fn with_user(self, login: &str) -> FakeTracker {
@@ -841,7 +843,11 @@ impl factory_engine::Tracker for FakeTracker {
             .cloned()
             .collect())
     }
-    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+    fn labelled_by(
+        &self,
+        issue: u32,
+        label: &str,
+    ) -> Result<Option<factory_engine::LabelEvent>, String> {
         let s = self.enter(format!("labelled_by {issue} {label}"), "labelled_by")?;
         Ok(s.actors.get(&(issue, label.to_string())).cloned())
     }
@@ -906,7 +912,11 @@ impl factory_engine::Tracker for PanicTracker {
         self.check("list_labelled");
         self.inner.list_labelled(label)
     }
-    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+    fn labelled_by(
+        &self,
+        issue: u32,
+        label: &str,
+    ) -> Result<Option<factory_engine::LabelEvent>, String> {
         self.check("labelled_by");
         self.inner.labelled_by(issue, label)
     }
