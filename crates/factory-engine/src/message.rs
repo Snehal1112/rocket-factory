@@ -43,15 +43,8 @@ pub struct MessageRequest<'a> {
     pub tip: &'a str,
     /// The GitHub issues of the job, for the footer the driver adds.
     pub issues: &'a [u32],
-    /// True when the job's spec lists follow-ups, so the merge footer says `Relates to` and does not close the ticket.
-    pub partial: bool,
-}
-
-/// True when `spec.md` in the job folder has at least one `## Follow-ups` bullet. A missing file is false.
-pub(crate) fn spec_has_follow_ups(job_dir: &Path) -> bool {
-    std::fs::read_to_string(job_dir.join("spec.md"))
-        .map(|spec| !crate::follow_ups(&spec).is_empty())
-        .unwrap_or(false)
+    /// True when this merge is the last plan of its job, so the footer says `Fixes`.
+    pub closes_ticket: bool,
 }
 
 /// The message the driver used before the committer existed. It is the fallback.
@@ -62,12 +55,12 @@ pub fn fixed_message(kind: MessageKind, job_id: &str, slug: &str, base: &str) ->
     }
 }
 
-/// The footer lines the driver adds: the issue line (`Fixes` for a merge, `Relates to` for a sync or a merge whose spec has follow-ups)
+/// The footer lines the driver adds: the issue line (`Fixes` for a merge that closes the ticket, `Relates to` for any other merge or a sync)
 /// and then `Factory-Job`.
 pub fn driver_footers(req: &MessageRequest<'_>) -> Vec<String> {
     let key = match req.kind {
-        MessageKind::Merge if req.partial => "Relates to",
-        MessageKind::Merge => "Fixes",
+        MessageKind::Merge if req.closes_ticket => "Fixes",
+        MessageKind::Merge => "Relates to",
         MessageKind::Sync => "Relates to",
     };
     let mut lines: Vec<String> = issue_footer(key, req.issues).into_iter().collect();
@@ -204,18 +197,31 @@ mod tests {
     use super::*;
     use factory_core::Config;
 
-    #[test]
-    fn merge_footer_relates_to_when_the_spec_has_follow_ups() {
-        let req = MessageRequest {
-            kind: MessageKind::Merge,
+    fn footer_req(kind: MessageKind, closes_ticket: bool) -> MessageRequest<'static> {
+        MessageRequest {
+            kind,
             job_id: "001",
             slug: "s",
             title: "t",
             base: "a",
             tip: "b",
             issues: &[76],
-            partial: true,
-        };
+            closes_ticket,
+        }
+    }
+
+    #[test]
+    fn a_merge_that_closes_the_ticket_says_fixes() {
+        let req = footer_req(MessageKind::Merge, true);
+        assert_eq!(
+            driver_footers(&req),
+            vec!["Fixes: #76".to_string(), "Factory-Job: 001".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_merge_that_does_not_close_the_ticket_says_relates_to() {
+        let req = footer_req(MessageKind::Merge, false);
         assert_eq!(
             driver_footers(&req),
             vec![
@@ -223,27 +229,18 @@ mod tests {
                 "Factory-Job: 001".to_string()
             ]
         );
-        let full = MessageRequest {
-            partial: false,
-            ..req
-        };
-        assert_eq!(
-            driver_footers(&full),
-            vec!["Fixes: #76".to_string(), "Factory-Job: 001".to_string()]
-        );
     }
 
     #[test]
-    fn spec_has_follow_ups_reads_spec_md_of_the_job_folder() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert!(
-            !spec_has_follow_ups(dir.path()),
-            "no spec.md means no follow-ups"
+    fn a_sync_is_always_relates_to() {
+        let req = footer_req(MessageKind::Sync, true);
+        assert_eq!(
+            driver_footers(&req),
+            vec![
+                "Relates to: #76".to_string(),
+                "Factory-Job: 001".to_string()
+            ]
         );
-        std::fs::write(dir.path().join("spec.md"), "## Goal\nx\n").expect("write");
-        assert!(!spec_has_follow_ups(dir.path()));
-        std::fs::write(dir.path().join("spec.md"), "## Follow-ups\n- One\n").expect("write");
-        assert!(spec_has_follow_ups(dir.path()));
     }
 
     #[test]
@@ -268,7 +265,7 @@ mod tests {
             base: "abc1234",
             tip: "def5678",
             issues: &[],
-            partial: false,
+            closes_ticket: true,
         };
         let commits = vec![CommitInfo {
             sha: "aaaaaaa1111".into(),
@@ -310,7 +307,7 @@ mod tests {
             base: "a",
             tip: "b",
             issues: &[20],
-            partial: false,
+            closes_ticket: true,
         };
         let prompt = message_prompt("c", &req, &[], "main");
         assert!(prompt.contains("Fixes: #20, Factory-Job: 001"), "{prompt}");
@@ -334,7 +331,7 @@ mod tests {
             base: "a",
             tip: "b",
             issues: &[],
-            partial: false,
+            closes_ticket: true,
         };
         assert!(message_prompt("c", &req, &[], "main").contains("(none)"));
     }

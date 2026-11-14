@@ -600,7 +600,7 @@ impl Driver {
                     base: &base,
                     tip: &tip,
                     issues: &job.issues,
-                    partial: crate::message::spec_has_follow_ups(&self.job_dir(&job)),
+                    closes_ticket: job.series.as_ref().is_none_or(|pos| pos.index >= pos.total),
                 },
             )
         })

@@ -125,7 +125,7 @@ pub struct Config {
     pub builder_excerpt: bool,
     /// Ask each new-task builder to run the `simplify` skill on its changes. Claude runs only.
     pub builder_simplify: bool,
-    /// After a merge, file the follow-up tickets and close the parent tickets. Off by default.
+    /// After a merge, file the follow-up tickets and close the parent tickets. On by default; set false to turn it off.
     pub tickets_on_merge: bool,
     /// After a merge, file one ticket for the open `[minor]` review findings. On by default.
     pub minor_tickets: bool,
@@ -243,7 +243,7 @@ impl Default for Config {
             commit_batch: true,
             builder_excerpt: true,
             builder_simplify: true,
-            tickets_on_merge: false,
+            tickets_on_merge: true,
             minor_tickets: true,
             intake: false,
             intake_label: "factory".to_string(),
@@ -1269,10 +1269,10 @@ mod tests {
     }
 
     #[test]
-    fn tickets_on_merge_is_off_by_default_and_can_be_turned_on() {
-        assert!(!Config::default().tickets_on_merge);
+    fn tickets_on_merge_is_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().tickets_on_merge);
         assert!(
-            Config::parse("tickets_on_merge = true")
+            !Config::parse("tickets_on_merge = false")
                 .expect("parse")
                 .tickets_on_merge
         );

@@ -130,6 +130,14 @@ pub(crate) fn fit_body(item_body: &str, footer_text: &str) -> String {
     format!("{cut}{CUT_LINE}{footer_text}")
 }
 
+/// True for a label a follow-up must not inherit: `tracking`, the intake label and the `factory:` state labels.
+/// The case rules match `pick_next` in `intake.rs`.
+fn is_intake_label(label: &str, intake_label: &str) -> bool {
+    label == "tracking"
+        || label.eq_ignore_ascii_case(intake_label)
+        || label.to_ascii_lowercase().starts_with("factory:")
+}
+
 fn list(numbers: &[u32]) -> String {
     numbers
         .iter()
@@ -198,7 +206,9 @@ pub fn tickets_step(
         match tracker.labels_of(*parent) {
             Ok(found) => {
                 for label in found {
-                    if label != "tracking" && !labels.contains(&label) {
+                    if !is_intake_label(&label, &driver.config().intake_label)
+                        && !labels.contains(&label)
+                    {
                         labels.push(label);
                     }
                 }
