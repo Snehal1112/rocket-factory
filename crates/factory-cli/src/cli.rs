@@ -135,6 +135,15 @@ pub enum Command {
         #[arg(long, value_parser = delivery_parser(), default_value = "agent")]
         delivery: Delivery,
     },
+    /// Pick one labelled GitHub issue, draft its spec and plans, build it and settle it. Needs `intake = true`.
+    Intake {
+        /// Run one pass and exit. A pass is always one issue, so this is the only mode.
+        #[arg(long)]
+        once: bool,
+        /// Name the issue that would be picked and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Track a feature that is still being specified, before it has a job.
     Spec {
         #[command(subcommand)]
@@ -432,6 +441,21 @@ mod tests {
             }
             other => panic!("not a probe: {other:?}"),
         }
+    }
+
+    #[test]
+    fn intake_flags_parse() {
+        let flags = |args: &[&str]| {
+            let mut argv = vec!["factory", "intake"];
+            argv.extend_from_slice(args);
+            match Cli::try_parse_from(argv).expect("parses").command {
+                Command::Intake { once, dry_run } => (once, dry_run),
+                other => panic!("not an intake: {other:?}"),
+            }
+        };
+        assert_eq!(flags(&["--once"]), (true, false));
+        assert_eq!(flags(&["--dry-run"]), (false, true));
+        assert_eq!(flags(&[]), (false, false));
     }
 
     #[test]

@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod costs;
 pub mod install;
+mod intake;
 mod log;
 pub mod plugin;
 pub mod presets;

@@ -417,6 +417,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             json,
             delivery,
         } => crate::probe::run_probe_command(ctx, harness, &role, json, delivery),
+        Command::Intake { dry_run, .. } => crate::intake::run_intake_command(ctx, dry_run),
         Command::Project { .. } => Err(CliError::Refused(
             "project commands do not need a repository, run them through project::run".into(),
         )),
