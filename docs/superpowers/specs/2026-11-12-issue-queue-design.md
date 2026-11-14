@@ -76,7 +76,7 @@ On the `Tracker` trait and `GhTracker` (with the `Arc<T>` forwarding impl):
 
 ### 4. The drafter role
 
-A new agent file `factory-intake-drafter.md` in the five presets (`crates/factory-core/presets/<preset>/agents/`), run headless through the existing `AgentRunner` port with `intake_model` and `intake_budget_weighted`. It may read only the repo root (`Read`, `Grep`, `Glob` rules built from the real repo path, with the run's cwd the repo root, so a factory home outside the repo and its key files are out of reach). The default layout keeps every factory folder inside the repo (`layout.rs:122-130`: state, jobs, worktrees, config file, commit context file), so the spec also sets `disallowed_tools` (`factory-agent/src/spec.rs:71`) with deny rules for `Read`, `Grep` and `Glob` on each of them. `Layout::protected_paths(&self) -> Vec<PathBuf>` returns those five paths, and the deny rules are built from it for the paths that lie under the repo root. A destructuring test lists every `Layout` field, so a field added later fails to compile until it is classified. The drafter's own draft folder is under the state folder and is not readable either, because the issue text and the repo are in the prompt or the working tree. The drafter writes only inside `<state>/intake/<issue>/` (a `Write` grant for that folder, built from the real path and checked like `kb_path`). Its prompt carries the issue title and body as data, marked as untrusted, plus the `plan_rules` and the spec quality bar of the `/factory` command. It writes `spec.md` and one to three plans named `plan-01-<slug>.md`, each with at most three tasks and a final `Next plan:` line, or a file `refused.md` holding one paragraph when the issue cannot be built unattended (too big, unclear, needs a decision). `agent_lint` covers the new file.
+A new agent file `factory-intake-drafter.md` in the five presets (`crates/factory-core/presets/<preset>/agents/`), run headless through the existing `AgentRunner` port with `intake_model` and `intake_budget_weighted`. Before it runs, `run_intake` exports the tracked files of the base branch tip into `<state>/intake/<issue>/tree/` with `Repo::export_tree` (section 5a). The drafter's cwd is that tree and its `Read`, `Grep` and `Glob` rules name only that folder, built from its real path and checked like `kb_path`. It therefore sees tracked files only: untracked files such as `.env`, key files and local config, `.git`, and every factory folder (state, jobs, worktrees) are not there to read. It may write only inside `<state>/intake/<issue>/draft/` (a `Write` grant for that folder, built the same way). It has no `Bash` and no network. Its prompt carries the issue title and body as data, marked as untrusted, plus the `plan_rules` and the spec quality bar of the `/factory` command. It writes `spec.md` and one to three plans named `plan-01-<slug>.md` into `draft/`, each with at most three tasks and a final `Next plan:` line, or a file `refused.md` holding one paragraph when the issue cannot be built unattended (too big, unclear, needs a decision). The decisions it writes end `Decided by: call`, so a design in a risky area is refused by the spec review and the issue ends `factory: needs-human`: this is intended, a risky decision needs a person. `agent_lint` covers the new file.
 
 The drafts stay in the state folder, not in the repository. Nothing an agent wrote for an intake job is posted to GitHub: intake's comments hold fixed text only (see 5), and the post-merge steps cannot post for an intake job (see 6).
 
@@ -87,16 +87,20 @@ The drafts stay in the state folder, not in the repository. Nothing an agent wro
 1. If `intake` is false, print `intake is off` and stop.
 2. List, filter and pick. No issue: print `no issue` and stop.
 3. Claim the issue: add `factory: running` and remove `intake_label`. No other label changes happen before this point, so a `gh` failure while listing or picking leaves every label alone.
-4. Run the drafter. A `refused.md`, a budget stop or a missing `spec.md` is a failure with no job. The engine then validates and creates the jobs through `create_job_with_spec_accepting` with the drafted plans and without `--accept-spec`; the `plan = None` path (a job from the feature text alone) is never used. On a validation or spec review refusal it redrafts once with the findings, then fails.
+4. Export the base branch into `tree/` and run the drafter in it. A `refused.md`, a budget stop or a missing `spec.md` is a failure with no job. The engine then validates and creates the jobs through `create_job_with_spec_accepting` with the drafted plans and without `--accept-spec`; the `plan = None` path (a job from the feature text alone) is never used. On a validation or spec review refusal it redrafts once with the findings, then fails.
 5. Once the jobs exist, comment `factory picked this up as job <id>`, then run the series (`run_series`) and wait for the end.
 6. Merged: swap `factory: running` for `factory: done`, comment `merged as job <ids>` and close the issue. Intake always closes it, because the ticket step does not run for intake jobs (section 6).
 7. Any other end or any failure: swap `factory: running` for `factory: needs-human` and comment a fixed text: `factory: needs-human`, one reason code (`draft-refused`, `draft-invalid`, `spec-review`, `over-budget`, `build-failed`), the job id when one exists, and the local path of the draft folder. The agent's own text (`refused.md`, review findings) stays on the machine. Never retry the issue until a person relabels it.
 
 An estimate over the job budget is a failure; `--accept-over-budget` is never passed.
 
+### 5a. `Repo::export_tree`
+
+`pub fn export_tree(&self, branch: &str, dest: &Path) -> Result<()>` in `factory-git/src/repo.rs`, with git2 and no shell-out. It writes every regular file of the tip tree of `branch` under `dest`, creating folders, and keeps the executable bit. It skips symlinks and submodules. It writes no `.git`. It refuses a `dest` that exists and is not empty with `GitError::Refused`.
+
 ### 6. Intake jobs cannot post through the tracker
 
-`Job` gets `intake_issue: Option<u32>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, optional, so the board stays compatible with `dashboard/`). `run_intake` sets it on every job of the series it creates.
+`Job` gets `intake_issue: Option<u32>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, optional, so the board stays compatible with `dashboard/`). `run_intake` sets it on every job of the series it creates. The late-creation fallback of `run_series` (`runloop.rs:703-714`, for a series made before plans got their jobs up front) copies `intake_issue` from the previous job, so a job created later is guarded too.
 
 The post-merge steps that talk to GitHub (`tickets.rs`, `minors.rs`, `waivers.rs`) would post text that agents wrote from the untrusted issue body: follow-ups from the drafted `spec.md`, `[minor]` lines and waived blockers from reviews of code built from it. The rule is deny by default and sits on the tracker, not on a list of steps:
 
@@ -130,7 +134,9 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 | Drafter writes `refused.md` | Failure path with reason code `draft-refused`; the text stays local |
 | Drafted decisions in a risky area end `Decided by: call` | The spec review refuses them twice and the issue ends `factory: needs-human`. This is intended: a risky decision needs a person |
 | Failure with no job | The comment has no job id, only the reason code and the draft path |
-| Issue body tells the drafter to read or copy a secret | The read rules stop at the repo root and no agent text is posted |
+| Issue body tells the drafter to read or copy a secret | The drafter reads an export of tracked files only, so untracked secrets, `.git` and factory folders are absent; no agent text is posted. A secret committed to the repository is readable, as it is for every agent |
+| `dest` of the export exists and is not empty | The export is refused and the issue ends `factory: needs-human` with `draft-invalid` |
+| Tracked symlink or submodule | Not exported |
 | Spec review refuses twice | Failure path |
 | Plans exceed three tasks or six plans | Validation refusal, one redraft, then failure |
 | Job ends `needs-human` | Failure path; the issue is not retried |
@@ -139,9 +145,10 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 
 ## Testing
 
+- `crates/factory-git/tests/export_tree.rs`: `export_tree_writes_tracked_files_only` (a committed nested file is written with its text; an untracked file and `.git` are absent), `export_tree_skips_symlinks`, `export_tree_refuses_a_non_empty_destination`.
 - `crates/factory-core`: `job_intake_issue_is_optional_and_absent_from_old_boards` (an old board file parses, a job without the field serialises without it), `intake_settings_have_the_documented_defaults`, `bad_intake_settings_are_config_errors` (empty label, comma, duplicate priority, zero poll, zero budget).
 - `crates/factory-engine/src/intake.rs` unit tests: `pick_next_prefers_the_higher_priority_then_the_older_issue`, `pick_next_sorts_unprioritised_issues_last`, `pick_next_skips_state_labelled_issues`, `pick_next_skips_untrusted_labellers`.
-- `crates/factory-engine/tests/intake.rs` (with the test `FakeTracker` and `FakeRunner`): `a_pass_with_no_eligible_issue_changes_nothing`, `a_merged_issue_is_commented_closed_and_labelled_done`, `a_refused_draft_labels_the_issue_needs_human` (the comment holds the reason code and the path, not the refused text), `a_failure_comment_never_contains_agent_text`, `intake_marks_every_job_of_the_series`, `draft_spec_reads_only_the_repo_root`, `draft_spec_denies_every_layout_path_under_the_repo`, `layout_protected_paths_cover_every_field`, `intake_never_creates_a_job_without_plans`, `a_spec_review_refusal_redrafts_once_then_fails`, `a_dry_run_changes_no_label`.
+- `crates/factory-engine/tests/intake.rs` (with the test `FakeTracker` and `FakeRunner`): `a_pass_with_no_eligible_issue_changes_nothing`, `a_merged_issue_is_commented_closed_and_labelled_done`, `a_refused_draft_labels_the_issue_needs_human` (the comment holds the reason code and the path, not the refused text), `a_failure_comment_never_contains_agent_text`, `intake_marks_every_job_of_the_series`, `draft_spec_reads_only_the_export`, `a_late_created_plan_job_keeps_the_intake_marker`, `intake_never_creates_a_job_without_plans`, `a_spec_review_refusal_redrafts_once_then_fails`, `a_dry_run_changes_no_label`.
 - `crates/factory-engine`: `guarded_tracker_refuses_every_write_and_forwards_reads`, `tracker_for_returns_the_raw_tracker_without_a_marker`, `the_ticket_step_skips_an_intake_job` (no `create`, `comment` or `close` call with `tickets_on_merge` on), `the_minor_ticket_step_skips_an_intake_job`, `a_waived_approve_of_an_intake_job_posts_nothing`, and the source test `only_intake_uses_the_raw_tracker`; the existing tests for other jobs keep passing.
 - `crates/factory-engine/tests/tracker_gh.rs` style tests for the new `gh` argument builders: `list_labelled_args`, `edit_labels_args`, `events_args`.
 - `crates/factory-supervisor`: `intake_requests_wait_while_the_project_is_busy`, `an_intake_request_is_not_enqueued_twice`, `intake_polling_is_off_for_projects_without_the_setting`.
@@ -153,7 +160,8 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 - `crates/factory-core/src/board.rs` (the optional `intake_issue` field)
 - `crates/factory-engine/src/compat.rs`, `tracker.rs`, `tickets.rs`, `minors.rs`, `waivers.rs`
 - `crates/factory-core/src/config.rs`, `settings_block.rs`, presets `<preset>/agents/factory-intake-drafter.md`
-- `crates/factory-engine/src/tracker.rs`, `intake.rs`, `lib.rs`
+- `crates/factory-git/src/repo.rs`
+- `crates/factory-engine/src/tracker.rs`, `intake.rs`, `runloop.rs`, `lib.rs`
 - `crates/factory-cli/src/cli.rs`, `commands.rs`, `intake.rs`
 - `crates/factory-supervisor/src/request.rs`, `scheduler.rs`, `supervisor.rs`
 - Tests as listed, the two docs
@@ -174,7 +182,8 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 - The drafter cannot read outside the repo root or write outside its draft folder.
 - A job is never created without drafted plans.
 - Intake closes a merged issue itself. No other step can create, comment on, close or relabel a GitHub issue for an intake job, including after `approve --waive`, and a step added later is covered the same way.
-- The drafter cannot read any `Layout` path under the repo root (state, jobs, worktrees, config), and a new `Layout` field cannot be added without being classified.
+- The drafter reads only an export of the tracked files of the base branch: untracked files, `.git` and every factory folder are out of its reach.
+- A job created by the late-creation fallback of `run_series` keeps the intake marker.
 - A board without `intake_issue` parses as before and the dashboard is unaffected.
 - `factory intake --dry-run` names the issue it would pick and changes nothing.
 - `factoryd` enqueues at most one `Intake` request per project at a time, and only when `intake` is on.
@@ -206,5 +215,6 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 - How should intake jobs be protected from posting agent text? Options: a default-deny gate in the tracker, add the waiver step to a skip list, refuse `approve --waive` on intake jobs. Chosen: a default-deny gate in the tracker. Decided by: user
 - How are intake jobs recognised? Options: an optional `Job.intake_issue` board field, the `issue-<n>` slug. Chosen: the optional field. Decided by: user
 - Where do the drafts live and what is the drafter denied? Options: the state folder with a deny on reads of it, a temp folder outside the repo, refuse a repo-local state folder. Chosen: the state folder with an explicit deny on reads of it. Decided by: user
-- How is the drafter's read access limited? Options: deny every `Layout` path inside the repo, run on a clean copy of the base branch. Chosen: deny every `Layout` path inside the repo, built from `Layout::protected_paths`, with a test that covers every field. Decided by: user
+- How is the drafter's read access limited? Options: deny every `Layout` path inside the repo, run on a clean export of the base branch, deny `.git` and ignored paths as well, accept the gap. Chosen first: deny every `Layout` path inside the repo. Replaced by the next decision, because a block-list leaves untracked secrets readable. Decided by: user
+- How is the drafter's read access limited, after the review found untracked secrets readable? Options: a clean export of the base branch's tracked files, deny `.git` and git-ignored paths as well, accept the gap. Chosen: a clean export of the base branch. Decided by: user
 - Where does the claim happen? Options: before the draft, after the job exists. Chosen: before the draft, because a job needs the drafted plans first. Decided by: call

@@ -1,95 +1,107 @@
-# Issue queue, part 3: factoryd polling and docs Implementation Plan
+# Issue queue, part 3: the drafter and `factory intake` Implementation Plan
 
 > **Spec:** docs/superpowers/specs/2026-11-12-issue-queue-design.md
 > **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.
 
-**Goal:** Let `factoryd` queue an intake pass for each project that turns `intake` on, stop every post-merge step from posting through the tracker for intake jobs, and document the feature.
+**Goal:** Add the intake drafter agent, the engine pass that picks, drafts, builds and settles one issue, and the `factory intake` command.
 
-**Architecture:** A new `Action::Intake` request goes through the existing queue and scheduler, and the spawned child is `factory --project <p> intake --once`. A timer in the supervisor loop enqueues at most one such request per project. No agent or tracker port is involved in `factory-supervisor`.
+**Architecture:** A new agent file is shipped in every preset and run headless like the spec reviewer. `run_intake` in `factory-engine` uses the `Tracker` port for GitHub and the `AgentRunner` port for the drafter, then reuses `create_job_with_spec_accepting` and `run_series`. The CLI command only calls it and prints one line.
 
-**Tech Stack:** Rust, the existing `factory-supervisor` request, queue and scheduler code.
+**Tech Stack:** Rust, the existing agent runner and tracker ports.
 
 ## Global Constraints
 
 - Commands are per crate: `cargo check -j4 -p <crate>` and `cargo test -j4 -p <crate> <filter>`. Never `--workspace` or `--all`.
-- No `Cargo.toml` change, no `git` shell-outs, no `/proc` reads (process checks go through `procinfo.rs`).
-- Request files stay compatible: older files parse as before, the new action is additive, and `deny_unknown_fields` stays.
+- No `Cargo.toml` change, no `git` shell-outs. Paths reach the driver only through `Layout`. Never read `/proc`.
+- The drafter gets no Bash and no network. It runs in a clean export of the base branch (`Repo::export_tree`) and reads only that export. It may write only inside its own `draft/` folder. Both grants are built from real paths and checked like `kb_path`.
+- No board, ledger or events field is added. The issue text reaches the drafter marked as untrusted data.
 - Tests use `.expect("...")` and `expect_err`, never the unwrap call. Comments are short full sentences.
 
 ## Review Focus
 
-1. An old `Run` or `Approve` request file still parses and runs. Pinned by `old_request_files_still_parse`.
-2. An `Intake` request with a series flag or approve flags is refused. Pinned by `an_intake_request_refuses_run_and_approve_flags`.
-3. A project with intake off never gets a request. Pinned by `intake_polling_is_off_for_projects_without_the_setting`.
-4. A second request is not queued while one is queued or running. Pinned by `an_intake_request_is_not_enqueued_twice`.
-5. With the daily budget used up the `Intake` request waits, like `Run`. Pinned by `an_intake_request_waits_for_the_daily_budget`.
-6. An intake job files no follow-up issue and no minor ticket, with `tickets_on_merge` on or off, and a waived approve of one posts nothing. Pinned by `the_ticket_step_skips_an_intake_job`, `the_minor_ticket_step_skips_an_intake_job` and `a_waived_approve_of_an_intake_job_posts_nothing`.
-8. No file but `intake.rs` reaches the unguarded tracker, so a step added later is covered. Pinned by `only_intake_uses_the_raw_tracker`.
-7. A job without the marker behaves as before. Pinned by the existing ticket and minor tests, which must keep passing.
+1. A draft folder with a character outside letters, digits and `/ . _ - ~` is refused before the agent starts. Pinned by `intake_refuses_a_draft_folder_with_bad_characters`.
+2. A drafter that writes `refused.md` leaves the issue labelled `factory: needs-human`; the comment holds a reason code and the draft path, never the refused text. Pinned by `a_refused_draft_labels_the_issue_needs_human` and `a_failure_comment_never_contains_agent_text`.
+3. A `gh` failure while listing or picking leaves every label alone. Pinned by `a_tracker_failure_before_the_claim_leaves_the_labels_alone`.
+4. The issue body cannot widen the drafter's tools, and the drafter reads only the export of tracked files, so untracked secrets, `.git` and factory folders are out of reach. Pinned by `draft_spec_grants_only_the_draft_folder` and `draft_spec_reads_only_the_export`.
+5. A job is never created without drafted plans. Pinned by `intake_never_creates_a_job_without_plans`.
+6. Every job of a series, a late-created one included, carries `intake_issue`, so the tracker gate of the fourth plan covers it. Pinned by `intake_marks_every_job_of_the_series` and `a_late_created_plan_job_keeps_the_intake_marker`.
+7. `--dry-run` changes no label and starts no agent. Pinned by `a_dry_run_changes_no_label_and_runs_no_agent`.
 
 ## File Structure
 
 | File | Responsibility |
 |---|---|
-| `crates/factory-supervisor/src/request.rs`, `scheduler.rs`, `spawn.rs` | The action, its validation, scheduling and child arguments |
-| `crates/factory-supervisor/src/supervisor.rs` | The poll timer |
-| `crates/factory-engine/src/compat.rs`, `tracker.rs` | `raw_tracker`, `tracker_for`, `GuardedTracker` |
-| `crates/factory-engine/src/tickets.rs`, `minors.rs`, `waivers.rs` | Use `tracker_for`; skip intake jobs quietly |
-| `docs/reference/software-factory.md`, `docs/guides/factory-user-guide.md` | The feature description |
+| `crates/factory-core/presets/<preset>/agents/factory-intake-drafter.md`, `src/preset.rs`, `src/resolve.rs` | The agent file in every preset and its registration |
+| `crates/factory-core/src/layout.rs` | `Layout::intake_dir` |
+| `crates/factory-engine/src/runloop.rs` | The late-creation fallback copies `intake_issue` |
+| `crates/factory-engine/src/intake.rs` | `draft_spec`, `run_intake`, `IntakeOutcome` |
+| `crates/factory-cli/src/cli.rs`, `commands.rs`, `intake.rs` | The `intake` command |
+| `crates/factory-engine/tests/intake.rs`, `crates/factory-cli/tests/intake_cmd.rs` | Tests |
 
-### Task 1: The `Intake` action
-
-**Files:**
-- Modify: `crates/factory-supervisor/src/request.rs`, `crates/factory-supervisor/src/scheduler.rs`, `crates/factory-supervisor/src/spawn.rs`, `crates/factory-supervisor/src/supervisor.rs` (outcome classification)
-- Test: unit tests in the same files
-
-**Interfaces:**
-- Consumes: `Action`, `Request::new`, `validate_job`, `decide`, the child argument builder in `spawn.rs` and `classify` in `supervisor.rs`.
-- Produces: `Action::Intake` (serialised `intake`); `Request::new(project, Action::Intake, "000", false, ts)` is valid; the scheduler holds an `Intake` while `daily_exhausted`, like `Run`, by extending the existing rule at `scheduler.rs:52` and not adding a second one; the child argv for `Intake` is `--project <p> intake --once`; `classify` reads the last stdout line of an intake child (`merged #n ...`, `failed #n ...`, `no issue`, `intake is off`) as a finished outcome, not an error.
-
-- [ ] **Step 1: Read `request.rs`, `scheduler.rs` (`decide` and its tests), the argument building in `spawn.rs`, and `classify` with its tests in `supervisor.rs`.**
-- [ ] **Step 2: Write the failing tests.** `old_request_files_still_parse` (JSON of a `run` and an `approve` request written without the new action). `an_intake_request_refuses_run_and_approve_flags` (series true, `without_review`, `waive_reason` each give an error). `an_intake_request_waits_for_the_daily_budget` (a `decide` input with `daily_exhausted`, one `Intake`: no decision). `an_intake_request_starts_on_an_idle_project`. `intake_child_arguments` (argv is `--project p intake --once`). `classify_reads_an_intake_end` (the four stdout lines above each classify as a settled outcome).
-- [ ] **Step 3: Run `cargo test -j4 -p factory-supervisor`.** Expected: `no variant named Intake found for enum Action`.
-- [ ] **Step 4: Implement** the variant, the validation (no series, no approve flags, job `000`), the scheduler rule, the argument list and the classification.
-- [ ] **Step 5: Run `cargo test -j4 -p factory-supervisor` then `cargo clippy -j4 -p factory-supervisor`.** Expected: all pass, no warnings.
-
-### Task 2: Intake jobs cannot post through the tracker
+### Task 1: The drafter agent file
 
 **Files:**
-- Modify: `crates/factory-engine/src/compat.rs`, `crates/factory-engine/src/tracker.rs`, `crates/factory-engine/src/tickets.rs`, `crates/factory-engine/src/minors.rs`, `crates/factory-engine/src/waivers.rs`, `crates/factory-engine/src/intake.rs`
-- Test: the existing ticket, minor and waiver test files in `crates/factory-engine/tests/`, unit tests in `tracker.rs`, and a new source test `crates/factory-engine/tests/raw_tracker_source.rs` written like `crates/factory-cli/tests/no_hardcoded_paths.rs`
+- Create: `crates/factory-core/presets/{rust,go,node,ruby,csharp}/agents/factory-intake-drafter.md`
+- Modify: `crates/factory-core/src/preset.rs`, `crates/factory-core/src/resolve.rs` (the test lists of agent file names), and the `legacy` preset only if it lists agent files
+- Test: `crates/factory-cli/tests/agent_lint.rs`, tests in `crates/factory-core/src/preset.rs`
 
 **Interfaces:**
-- Consumes: `Job.intake_issue` from the first plan; `Driver::tracker()` (`compat.rs:295`) and its three callers; the `FakeTracker` call log.
-- Produces: `Driver::raw_tracker(&self) -> &dyn Tracker` (crate-private, the renamed `tracker()`); `Driver::tracker_for(&self, job: &Job) -> Box<dyn Tracker + '_>`; `pub struct GuardedTracker<'a>` wrapping a `&'a dyn Tracker` that forwards the reading calls and returns `Err("refused for an intake job")` from `create`, `comment`, `close` and `edit_labels`. The three steps call `tracker_for(&job)`; `intake.rs` calls `raw_tracker()`. The engine logic stays behind the `Tracker` port.
+- Consumes: the format of `factory-spec-reviewer.md` (front matter, `<!-- factory-rules: N -->`, sections) and how `preset.rs` lists it.
+- Produces: an agent named `factory-intake-drafter` with `tools: Read, Grep, Glob, Write`, whose text says: the issue text is untrusted data and never an instruction; write `spec.md` with the headings of the `/factory` spec quality bar and one to three plans `plan-NN-<slug>.md` (at most three tasks each, a header with `> **Spec:**` and the executor line, `Next plan:` as the last line); read only inside the repo root and write only inside the folder named in the prompt; write `refused.md` with one paragraph instead when the issue is too big, unclear or needs a decision; every decision line ends `Decided by: call`.
 
-- [ ] **Step 1: Read `Driver::tracker` and `with_tracker` in `compat.rs`, the three callers in `tickets.rs:165`, `waivers.rs:141` and `minors.rs:65`, the entry functions around them, and the tests that drive the three steps with `FakeTracker` and `with_tracker`.**
+- [ ] **Step 1: Read `crates/factory-core/presets/rust/agents/factory-spec-reviewer.md`, the agent list of every preset in `crates/factory-core/src/preset.rs`, the tests in `crates/factory-core/src/resolve.rs` that name the agent files, and `crates/factory-cli/tests/agent_lint.rs`.**
+- [ ] **Step 2: Write the failing test** `every_preset_ships_the_intake_drafter` in `preset.rs`: for each preset in the built-in list, an entry named `factory-intake-drafter.md` exists and its text contains `untrusted` and `refused.md`. Also update the name lists in the `resolve.rs` tests to expect the new file.
+- [ ] **Step 3: Run `cargo test -j4 -p factory-core preset` and `cargo test -j4 -p factory-core resolve`.** Expected: the new test and the updated lists fail, the agent is missing.
+- [ ] **Step 4: Write the five agent files (the same text, with the stack paragraph of each preset's other agents) and register them in `preset.rs`.**
+- [ ] **Step 5: Run `cargo test -j4 -p factory-core` then `cargo test -j4 -p factory-cli --test agent_lint`.** Expected: all pass.
+
+### Task 2: The intake pass in the engine
+
+**Files:**
+- Modify: `crates/factory-core/src/layout.rs`, `crates/factory-engine/src/intake.rs`, `crates/factory-engine/src/runloop.rs`, `crates/factory-engine/src/lib.rs`
+- Create: `crates/factory-engine/tests/intake.rs`
+- Test: `crates/factory-engine/tests/intake.rs`, a unit test in `layout.rs`
+
+**Interfaces:**
+- Consumes: `pick_next`, `IssueInfo`, the state label constants, the new `Tracker` calls and the `FakeTracker` builders from the first plan, and `Repo::export_tree` from the second plan; `spec_reviewer_agent` for the shape of a headless spec; `create_job_with_spec_accepting`, `run_series` and `RunEnd` from `runloop.rs`.
+- Produces: `Layout::intake_dir() -> PathBuf` (`state_dir/intake`); `pub(crate) fn draft_spec(config: &Config, tree: &Path, draft: &Path, issue: &IssueInfo, findings: Option<&str>) -> AgentSpec`; `pub enum IntakeOutcome { Off, NoIssue, DryRun { issue: u32, reason: String }, Merged { issue: u32, jobs: Vec<String> }, Failed { issue: u32, reason: String } }` (derive `Debug, PartialEq`); `pub fn run_intake(driver: &Driver, tracker: &dyn Tracker, dry_run: bool) -> Result<IntakeOutcome, EngineError>`. All exported from the crate root.
+
+- [ ] **Step 1: Read `spec_reviewer_agent` and `kb_allowed_tools` and `check_kb_path` use in `kb.rs`, the spec review call and the `Validated` flow in `create_job_with_spec_accepting`, `run_series`, and the fixtures `SeriesFixture`, `Fixture`, `scripted` and `with_tracker` in `crates/factory-engine/tests/common/mod.rs`.**
 - [ ] **Step 2: Write the failing tests.**
-  - `guarded_tracker_refuses_every_write_and_forwards_reads` in `tracker.rs`: wrap a `FakeTracker`; the four writes return `Err` containing `refused for an intake job` and the fake logs no call; `repo_name`, `labels_of`, `is_closed` and `find_created` reach the fake.
-  - `tracker_for_returns_the_raw_tracker_without_a_marker`: a job with `intake_issue = None` still gets its `create` through to the fake.
-  - `the_ticket_step_skips_an_intake_job`: a merged job with `intake_issue = Some(7)`, a spec with a `## Follow-ups` bullet, `#7` in its issue list and `tickets_on_merge = true`; after the step the tracker has no `create`, `comment` or `close` call and no marker file was written.
-  - `the_minor_ticket_step_skips_an_intake_job`: `intake_issue = Some(7)` and a review file with a `[minor]` line; no `create` call.
-  - `a_waived_approve_of_an_intake_job_posts_nothing`: a `needs-human` job with `intake_issue = Some(7)` and an open blocker, approved with a waive reason; the approve merges, the tracker has no write call, and the ledger holds a soft-step failure line for the refusal.
-  - `only_intake_uses_the_raw_tracker`: no file under `crates/factory-engine/src` other than `compat.rs` and `intake.rs` contains `raw_tracker`.
-  Reuse the fixture of the neighbouring non-intake test for each step.
-- [ ] **Step 3: Run `cargo test -j4 -p factory-engine intake_job` and `cargo test -j4 -p factory-engine --test raw_tracker_source`.** Expected: `no method named tracker_for found`, then the guard tests fail.
-- [ ] **Step 4: Implement** the rename, `tracker_for`, `GuardedTracker`, the three call-site changes, and the early return at the top of the ticket and minor ticket entry functions for a job with `intake_issue`. Change the callers of `driver.tracker()` elsewhere (tests, the CLI) to the same names; `intake.rs` calls `raw_tracker()`.
-- [ ] **Step 5: Run `cargo test -j4 -p factory-engine` then `cargo clippy -j4 -p factory-engine`, and `cargo check -j4 -p factory-cli --tests`.** Expected: all pass, no warnings.
+  - `intake_dir_is_under_the_state_dir` in `layout.rs`.
+  - `draft_spec_reads_only_the_repo_root`: the `Read`, `Grep` and `Glob` rules name the repo root path and nothing else, and the cwd is the repo root.
+  - `draft_spec_reads_only_the_export`: the cwd is the `tree` folder and the `Read`, `Grep` and `Glob` rules name that folder and nothing else.
+  - `draft_spec_grants_only_the_draft_folder`: tools are `Read,Grep,Glob,Write`; the allowed tools hold one `Write` rule for the `draft` folder and no `Bash`; the prompt carries the issue number, marks the title and body as untrusted and names the folder; model and budget come from `intake_model` and `intake_budget_weighted`.
+  - `intake_refuses_a_draft_folder_with_bad_characters`: a folder with a space returns `Failed` without any agent call.
+  - `an_off_config_does_nothing` (`Off`), `a_pass_with_no_eligible_issue_changes_nothing` (`NoIssue`, no `edit_labels` call).
+  - `a_dry_run_changes_no_label_and_runs_no_agent`: `DryRun` names the picked issue; the runner has no call and the tracker no `edit_labels`.
+  - `a_refused_draft_labels_the_issue_needs_human`: a scripted drafter that writes `refused.md` with the text `SECRET-MARKER`; the outcome is `Failed`, the tracker saw `factory: running` added and the intake label removed at the claim, then `factory: needs-human` added and `factory: running` removed, and one comment holds `draft-refused` and the draft path.
+  - `a_failure_comment_never_contains_agent_text`: the same run; no comment body contains `SECRET-MARKER`.
+  - `intake_never_creates_a_job_without_plans`: a drafter that writes only `spec.md`; the outcome is `Failed` and the board has no new job.
+  - `a_merged_issue_is_commented_closed_and_labelled_done`: a scripted drafter that writes a valid spec and one plan (reuse the plan of an existing engine series test); the job merges; `close` and a `done` label edit were called, and the job-id comment came after the job existed.
+  - `intake_marks_every_job_of_the_series`: a two-plan series; every job on the board for it has `intake_issue == Some(<issue>)`.
+  - `a_late_created_plan_job_keeps_the_intake_marker`: a series whose second job does not exist yet (use the fixture of the existing test for the late-creation fallback in `runloop`); after the first job merges and the fallback creates it, the new job has the same `intake_issue`.
+  - `a_spec_review_refusal_redrafts_once_then_fails`: the review keeps refusing; the drafter ran twice and the second prompt holds the findings.
+  - `a_tracker_failure_before_the_claim_leaves_the_labels_alone`: `fail_on("list_labelled")` and `fail_on("current_user")` each give an error with no `edit_labels` call.
+- [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test intake` and `cargo test -j4 -p factory-core intake_dir`.** Expected: `cannot find function run_intake in this scope`.
+- [ ] **Step 4: Implement.** `run_intake` follows the pass of the spec (design section 5): resolve trusted users (`intake_trusted` or `current_user()`), `list_labelled`, `pick_next`, return `DryRun` early, claim the issue with one `edit_labels` call (add `factory: running`, remove the intake label), export the base branch with `export_tree` into `Layout::intake_dir()/<issue>/tree/`, run the drafter there with its output in `Layout::intake_dir()/<issue>/draft/` (both folders checked by `check_kb_path`), create the jobs through `create_job_with_spec_accepting` with the drafted plans and without an accept reason (never the `plan = None` path), redraft once on a refusal, comment with the job id once the jobs exist, run `run_series`, settle the issue. Slug `issue-<n>`, feature text `<title>, #<n>`. Failure comments hold only a reason code (`draft-refused`, `draft-invalid`, `spec-review`, `over-budget`, `build-failed`), the job id when one exists and the draft path. On a merge intake closes the issue itself, because the tracker gate stops every other step from posting for intake jobs. Intake's own calls use `raw_tracker()` from the fourth plan; until that plan lands it uses `driver.tracker()`. After the jobs are created it sets `intake_issue` on every job of the series, and the late-creation fallback in `run_series` (`runloop.rs`, the branch that calls `add_job` when no job exists for the next plan) copies `intake_issue` from the previous job.
+- [ ] **Step 5: Run `cargo test -j4 -p factory-engine` then `cargo clippy -j4 -p factory-core -p factory-engine`.** Expected: all pass, no warnings.
 
-### Task 3: The poll timer and the docs
+### Task 3: The `factory intake` command
 
 **Files:**
-- Modify: `crates/factory-supervisor/src/supervisor.rs`, `docs/reference/software-factory.md`, `docs/guides/factory-user-guide.md`
-- Test: unit tests in `crates/factory-supervisor/src/supervisor.rs` or the supervisor test file the existing tick tests use
+- Modify: `crates/factory-cli/src/cli.rs`, `crates/factory-cli/src/commands.rs`, `crates/factory-cli/src/lib.rs`
+- Create: `crates/factory-cli/src/intake.rs`, `crates/factory-cli/tests/intake_cmd.rs`
+- Test: `crates/factory-cli/tests/intake_cmd.rs`, a parse test in `cli.rs`
 
 **Interfaces:**
-- Consumes: the supervisor `tick`, the way it loads each project's settings (`project_states`) and the queue enqueue call used by `factoryd enqueue`; `Config::intake`, `intake_poll_minutes` from the first plan; `Action::Intake` from the previous task.
-- Produces: in `tick`, for each project whose config has `intake = true`, one `Intake` request is enqueued when the last enqueue for that project is older than `intake_poll_minutes` and no request of that project is queued or running; the last time is kept in memory and starts at zero so the first tick enqueues.
+- Consumes: `run_intake`, `IntakeOutcome` from the previous task and the way `tokens` and `probe` reach the driver and the tracker through `CliCtx`.
+- Produces: `factory intake [--once] [--dry-run]` and `pub fn run_intake_command(ctx: &CliCtx, dry_run: bool) -> Result<String, CliError>` printing one line per outcome: `intake is off`, `no issue`, `would pick #<n>: <reason>`, `merged #<n> as job <ids>`, `failed #<n>: <reason>`.
 
-- [ ] **Step 1: Read `tick`, `project_states`, the queue module's enqueue and list calls, and the tests that drive `tick` with a fake spawner and clock.**
-- [ ] **Step 2: Write the failing tests.** `intake_polling_is_off_for_projects_without_the_setting`; `an_intake_request_is_enqueued_when_intake_is_on` (one request after the first tick); `an_intake_request_is_not_enqueued_twice` (a second tick before the interval, and a tick while the first request is queued); `the_next_request_waits_for_the_poll_interval` (advance the fake clock by `intake_poll_minutes` and see one more).
-- [ ] **Step 3: Run `cargo test -j4 -p factory-supervisor intake`.** Expected: the tests fail, no request is enqueued.
-- [ ] **Step 4: Implement the timer in `tick`, then write the docs.** The reference gets one paragraph on the intake flow, the labels, the trust rule, the states and the skipped ticket steps; the user guide gets a section on turning it on, labelling an issue, what each `factory:` state means and how to relabel a failed issue to retry.
-- [ ] **Step 5: Run `cargo test -j4 -p factory-supervisor` then `cargo clippy -j4 -p factory-supervisor`.** Expected: all pass, no warnings.
+- [ ] **Step 1: Read how `Probe` and `Tokens` are declared in `cli.rs`, dispatched in `commands.rs`, and how `CliCtx` supplies a tracker (see `tickets.rs` in the tests and `with_tracker` in the engine test fixtures).**
+- [ ] **Step 2: Write the failing tests.** `cli.rs`: `intake_flags_parse` (`--once`, `--dry-run`, none). `intake_cmd.rs`, with the fake tracker and runner the neighbouring command tests use: `intake_off_prints_one_line`, `intake_dry_run_names_the_issue`, `intake_without_a_flag_runs_one_pass` (a refused draft prints `failed #<n>: ...` and returns Ok).
+- [ ] **Step 3: Run `cargo test -j4 -p factory-cli --test intake_cmd`.** Expected: unknown subcommand `intake`.
+- [ ] **Step 4: Implement the subcommand, its dispatch and `run_intake_command`.**
+- [ ] **Step 5: Run `cargo test -j4 -p factory-cli` then `cargo clippy -j4 -p factory-cli`.** Expected: all pass, no warnings.
 
-Next plan: none
+Next plan: docs/superpowers/plans/2026-11-12-issue-queue/plan-04-issue-queue.md
