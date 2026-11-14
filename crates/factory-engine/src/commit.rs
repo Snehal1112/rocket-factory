@@ -325,14 +325,14 @@ impl Engine<'_> {
         let prompt = committer_prompt(&context, req, &report, &above, self.config.commit_subagents);
 
         let mut run = self.run_agent(self.committer_run_spec(wt, req, &prompt))?;
-        let mut check = self.verify_commit_run(wt, req, &before, &run)?;
+        let mut check = self.verify_commit_run(wt, req, &tip, &before, &run)?;
         if let Some(findings) = check.findings() {
             let retry = retry_prompt(&findings);
             let text = retry_text(&prompt, &retry, run.session_id.is_some());
             let mut spec = self.committer_run_spec(wt, req, &text);
             spec.resume = run.session_id.clone();
             run = self.run_agent(spec)?;
-            check = self.verify_commit_run(wt, req, &before, &run)?;
+            check = self.verify_commit_run(wt, req, &tip, &before, &run)?;
         }
         match check {
             Check::Good(tip) => Ok(CommitOutcome::Committed {
@@ -360,6 +360,7 @@ impl Engine<'_> {
         &self,
         wt: &Worktree,
         req: &CommitRequest<'_>,
+        tip_before: &str,
         before: &[CommitInfo],
         run: &AgentRun,
     ) -> Result<Check, EngineError> {
@@ -376,9 +377,21 @@ impl Engine<'_> {
             Err(e) => return Err(git_err(e)),
         };
         if !self.repo.is_ancestor(req.floor, &tip).map_err(git_err)? {
-            return Ok(Check::Park(
-                "committer rewrote history at or below the floor".to_string(),
-            ));
+            // A floor that was already gone before the run was rewritten outside the factory.
+            let reason = if self
+                .repo
+                .is_ancestor(req.floor, tip_before)
+                .map_err(git_err)?
+            {
+                "committer rewrote history at or below the floor".to_string()
+            } else {
+                format!(
+                    "the branch no longer holds the reviewed head {}; it was rewritten outside the factory: run factory sync {}",
+                    short_sha(req.floor),
+                    self.job_id
+                )
+            };
+            return Ok(Check::Park(reason));
         }
         let dirty = !self.repo.worktree_is_clean(wt).map_err(git_err)?;
         let now = self.repo.commits_above(req.floor, &tip).map_err(git_err)?;

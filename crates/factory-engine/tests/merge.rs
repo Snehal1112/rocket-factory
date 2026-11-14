@@ -590,6 +590,19 @@ fn a_main_busy_hint_is_plain_approve_after_an_approving_review() {
 }
 
 #[test]
+fn a_main_busy_park_says_approve_retries_the_merge() {
+    let fx = common::approved_job();
+    set_verdict(&fx, "approve", 0);
+    std::fs::write(fx.main.join("README.md"), "dirty").expect("write");
+    merge_stage(&fx.driver, &fx.id).expect("stage");
+    let job = fx.driver.job(&fx.id).expect("job");
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    let text = &rec.parts.last().expect("part").text;
+    assert!(text.contains("Plain approve retries the merge"), "{text}");
+    assert!(text.contains("factory approve 001"), "{text}");
+}
+
+#[test]
 fn a_root_job_does_not_park_no_checks_for_files_main_changed_after_a_sync() {
     let fx = common::approved_job();
     // Main gains a code file that no check covers after the job forked.

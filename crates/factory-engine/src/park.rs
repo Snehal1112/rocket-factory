@@ -192,6 +192,11 @@ impl Engine<'_> {
             .and_then(|j| j.last_review.as_ref())
             .map(|r| r.verdict.clone());
         record.next = kind.next_for(&self.job_id, review_missing, record.verdict.as_deref());
+        if kind == ParkKind::NothingChanged && job.as_ref().is_some_and(|j| self.was_rewritten(j)) {
+            record
+                .next
+                .insert(0, format!("factory sync {}", self.job_id));
+        }
         if self.is_risky() {
             record.risky = Some(true);
         }
@@ -211,6 +216,17 @@ impl Engine<'_> {
             || self.ruling(&format!("needs-human, {reason}")),
         )?;
         Ok(StageOutcome::NeedsHuman(reason))
+    }
+
+    /// True when the reviewed head is no longer on the job branch. A branch that cannot be read counts as not rewritten.
+    fn was_rewritten(&self, job: &crate::ports::JobView) -> bool {
+        let Some(head) = job.head.as_deref() else {
+            return false;
+        };
+        self.repo
+            .tip(&job.branch)
+            .and_then(|tip| self.repo.is_ancestor(head, &tip))
+            .is_ok_and(|ancestor| !ancestor)
     }
 
     /// Evidence for a park the decision step chose. Anything that cannot be read is left out.

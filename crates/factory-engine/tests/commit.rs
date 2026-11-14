@@ -633,6 +633,58 @@ fn detaching_head_parks_without_a_retry() {
 }
 
 #[test]
+fn a_branch_rewritten_before_the_committer_parks_with_the_sync_hint() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let floor = commit_paths_at(&wt.path, &["a.txt"], GOOD, 1_000);
+    // The branch is rewritten before the run, so the floor is no longer on it.
+    reset_mixed(&wt.path, "HEAD~1");
+    commit_paths_at(&wt.path, &["a.txt"], GOOD, 2_000);
+    write_change(&wt, "b.txt");
+    let runner = scripted(vec![effect(|dir| {
+        commit_paths(dir, &["b.txt"], GOOD);
+        "done".to_string()
+    })]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&floor))
+        .expect("step");
+    match out {
+        CommitOutcome::Park(reason) => {
+            assert!(reason.contains("run factory sync"), "{reason}");
+            assert!(!reason.contains("committer rewrote"), "{reason}");
+        }
+        other => panic!("unexpected outcome {other:?}"),
+    }
+}
+
+#[test]
+fn a_committer_that_rewrites_history_keeps_the_old_text() {
+    let fx = Fixture::new();
+    context(&fx);
+    let wt = worktree(&fx);
+    write_change(&wt, "a.txt");
+    let floor = commit_paths(&wt.path, &["a.txt"], GOOD);
+    write_change(&wt, "b.txt");
+    let runner = scripted(vec![effect(|dir| {
+        amend_with(dir, &["b.txt"], GOOD);
+        "done".to_string()
+    })]);
+    let out = fx
+        .engine(&runner)
+        .commit_step(&wt, &request(&floor))
+        .expect("step");
+    match out {
+        CommitOutcome::Park(reason) => {
+            assert_eq!(reason, "committer rewrote history at or below the floor")
+        }
+        other => panic!("unexpected outcome {other:?}"),
+    }
+}
+
+#[test]
 fn a_floor_rewrite_on_the_retry_run_parks() {
     let fx = Fixture::new();
     context(&fx);

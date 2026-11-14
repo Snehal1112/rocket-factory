@@ -110,7 +110,7 @@ pub use specs::{
     ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS, RULES_VERSION,
 };
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
-pub use sync::{sync_stage, SyncOutcome};
+pub use sync::{sync_requested, sync_stage, SyncKind, SyncOutcome};
 pub use tasks::{
     parse_checkbox_tasks, parse_tasks, plan_outline, plan_title, review_focus, spec_goal, PlanTask,
 };

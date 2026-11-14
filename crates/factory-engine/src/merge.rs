@@ -311,6 +311,11 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
                 text.push_str(&format!(
                     "Commit or stash these in the main checkout, then run {approve} again."
                 ));
+                if approve == format!("factory approve {id}") {
+                    text.push_str(
+                        " Plain approve retries the merge, because the last review still matches the head.",
+                    );
+                }
                 return Ok(Step::Park(
                     format!("{main} busy: {reason}"),
                     ParkKind::Other,
@@ -320,7 +325,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         }
         if check.state == BaseState::MainMoved {
             match sync_stage(driver, id)? {
-                SyncOutcome::Synced => continue,
+                SyncOutcome::Synced | SyncOutcome::UpToDate => continue,
                 SyncOutcome::Parked(reason) => return Ok(Step::plain(reason)),
             }
         }
