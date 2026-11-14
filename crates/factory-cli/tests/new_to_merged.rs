@@ -945,6 +945,18 @@ impl factory_engine::Tracker for CountCreates {
     fn close(&self, _: u32) -> Result<(), String> {
         Ok(())
     }
+    fn list_labelled(&self, _: &str) -> Result<Vec<factory_engine::IssueInfo>, String> {
+        Ok(vec![])
+    }
+    fn labelled_by(&self, _: u32, _: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
+        Ok(())
+    }
+    fn current_user(&self) -> Result<String, String> {
+        Ok("me".into())
+    }
 }
 
 #[test]

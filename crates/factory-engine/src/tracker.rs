@@ -21,6 +21,24 @@ pub trait Tracker {
     fn find_created(&self, title: &str, footer: &str) -> Result<Option<u32>, String>;
     fn comment(&self, issue: u32, body: &str) -> Result<(), String>;
     fn close(&self, issue: u32) -> Result<(), String>;
+    /// The open issues that carry `label`.
+    fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String>;
+    /// The login of the user who last added `label` to the issue, or None when no event is found.
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String>;
+    /// Adds and removes labels. A label to add that does not exist yet is created first.
+    fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String>;
+    /// The login `gh` runs as.
+    fn current_user(&self) -> Result<String, String>;
+}
+
+/// One issue as the intake queue reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IssueInfo {
+    pub number: u32,
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub created_at: String,
 }
 
 impl<T: Tracker + ?Sized> Tracker for Arc<T> {
@@ -44,6 +62,18 @@ impl<T: Tracker + ?Sized> Tracker for Arc<T> {
     }
     fn close(&self, issue: u32) -> Result<(), String> {
         (**self).close(issue)
+    }
+    fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String> {
+        (**self).list_labelled(label)
+    }
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+        (**self).labelled_by(issue, label)
+    }
+    fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
+        (**self).edit_labels(issue, add, remove)
+    }
+    fn current_user(&self) -> Result<String, String> {
+        (**self).current_user()
     }
 }
 
@@ -108,6 +138,52 @@ pub(crate) fn close_args(issue: u32) -> Vec<String> {
     .collect()
 }
 
+pub(crate) fn list_labelled_args(label: &str) -> Vec<String> {
+    [
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--label",
+        label,
+        "--limit",
+        "100",
+        "--json",
+        "number,title,body,labels,createdAt",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+pub(crate) fn edit_labels_args(issue: u32, add: &[String], remove: &[String]) -> Vec<String> {
+    let mut args = vec!["issue".to_string(), "edit".to_string(), issue.to_string()];
+    for label in add {
+        args.push("--add-label".to_string());
+        args.push(label.clone());
+    }
+    for label in remove {
+        args.push("--remove-label".to_string());
+        args.push(label.clone());
+    }
+    args
+}
+
+pub(crate) fn events_args(repo: &str, issue: u32) -> Vec<String> {
+    vec![
+        "api".to_string(),
+        format!("repos/{repo}/issues/{issue}/events"),
+        "--paginate".to_string(),
+    ]
+}
+
+pub(crate) fn label_create_args(name: &str) -> Vec<String> {
+    ["label", "create", name, "--force"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 /// The issue number at the end of the URL that `gh issue create` prints.
 pub(crate) fn parse_created(output: &str) -> Option<u32> {
     output.trim().rsplit('/').next()?.parse().ok()
@@ -145,6 +221,54 @@ pub(crate) fn parse_found(json: &str, title: &str, footer: &str) -> Result<Optio
         .filter_map(|issue| issue["number"].as_u64().and_then(|n| u32::try_from(n).ok()))
         .min();
     Ok(found)
+}
+
+/// The issues from `gh issue list --json number,title,body,labels,createdAt`. A missing or null
+/// body counts as empty. An entry without a number is skipped.
+pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
+    let issues = value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|issue| {
+            let number = u32::try_from(issue["number"].as_u64()?).ok()?;
+            let labels = issue["labels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|l| l["name"].as_str().map(str::to_string))
+                .collect();
+            Some(IssueInfo {
+                number,
+                title: issue["title"].as_str().unwrap_or("").to_string(),
+                body: issue["body"].as_str().unwrap_or("").to_string(),
+                labels,
+                created_at: issue["createdAt"].as_str().unwrap_or("").to_string(),
+            })
+        })
+        .collect();
+    Ok(issues)
+}
+
+/// The login of the last `labeled` event for `label`, from `gh api .../events --paginate`. That
+/// prints one JSON array per page, so the pages are read one after another.
+pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<String>, String> {
+    let mut actor = None;
+    for page in serde_json::Deserializer::from_str(json).into_iter::<serde_json::Value>() {
+        let page = page.map_err(|e| format!("gh printed invalid JSON: {e}"))?;
+        for event in page.as_array().into_iter().flatten() {
+            if event["event"].as_str() == Some("labeled")
+                && event["label"]["name"].as_str() == Some(label)
+            {
+                if let Some(login) = event["actor"]["login"].as_str() {
+                    actor = Some(login.to_string());
+                }
+            }
+        }
+    }
+    Ok(actor)
 }
 
 /// Runs `gh` in the main checkout. It never uses a shell.
@@ -244,6 +368,34 @@ impl Tracker for GhTracker {
 
     fn close(&self, issue: u32) -> Result<(), String> {
         self.run(&close_args(issue)).map(|_| ())
+    }
+
+    fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String> {
+        parse_issue_list(&self.run(&list_labelled_args(label))?)
+    }
+
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+        let repo = self.repo_name()?;
+        parse_actor(&self.run(&events_args(&repo, issue))?, label)
+    }
+
+    fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
+        for label in add {
+            self.run(&label_create_args(label))?;
+        }
+        self.run(&edit_labels_args(issue, add, remove)).map(|_| ())
+    }
+
+    fn current_user(&self) -> Result<String, String> {
+        let args: Vec<String> = ["api", "user", "--jq", ".login"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let login = self.run(&args)?;
+        if login.is_empty() {
+            return Err("gh api user printed no login".to_string());
+        }
+        Ok(login)
     }
 }
 
@@ -349,6 +501,134 @@ mod tests {
     fn parse_found_rejects_invalid_json() {
         let err = parse_found("nope", "Fix x", FOOTER).expect_err("invalid");
         assert!(err.contains("invalid JSON"), "{err}");
+    }
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn list_labelled_args() {
+        assert_eq!(
+            super::list_labelled_args("factory"),
+            strings(&[
+                "issue",
+                "list",
+                "--state",
+                "open",
+                "--label",
+                "factory",
+                "--limit",
+                "100",
+                "--json",
+                "number,title,body,labels,createdAt"
+            ])
+        );
+    }
+
+    #[test]
+    fn edit_labels_args() {
+        assert_eq!(
+            super::edit_labels_args(7, &strings(&["a", "b"]), &strings(&["c"])),
+            strings(&[
+                "issue",
+                "edit",
+                "7",
+                "--add-label",
+                "a",
+                "--add-label",
+                "b",
+                "--remove-label",
+                "c"
+            ])
+        );
+    }
+
+    #[test]
+    fn events_args() {
+        assert_eq!(
+            super::events_args("o/r", 7),
+            strings(&["api", "repos/o/r/issues/7/events", "--paginate"])
+        );
+    }
+
+    #[test]
+    fn label_create_args() {
+        assert_eq!(
+            super::label_create_args("factory: running"),
+            strings(&["label", "create", "factory: running", "--force"])
+        );
+    }
+
+    #[test]
+    fn parse_issue_list_reads_labels_and_dates() {
+        let json = r#"[
+          {"number":5,"title":"A","body":"text","labels":[{"name":"factory"},{"name":"priority: P1"}],"createdAt":"2026-11-01T10:00:00Z"},
+          {"number":6,"title":"B","labels":[],"createdAt":"2026-11-02T10:00:00Z"}
+        ]"#;
+        let issues = parse_issue_list(json).expect("parse");
+        assert_eq!(
+            issues,
+            vec![
+                IssueInfo {
+                    number: 5,
+                    title: "A".into(),
+                    body: "text".into(),
+                    labels: strings(&["factory", "priority: P1"]),
+                    created_at: "2026-11-01T10:00:00Z".into(),
+                },
+                IssueInfo {
+                    number: 6,
+                    title: "B".into(),
+                    body: String::new(),
+                    labels: vec![],
+                    created_at: "2026-11-02T10:00:00Z".into(),
+                },
+            ]
+        );
+        assert!(parse_issue_list("nope")
+            .expect_err("invalid")
+            .contains("invalid JSON"));
+    }
+
+    const EVENTS: &str = r#"[
+      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"mallory"}},
+      {"event":"labeled","label":{"name":"bug"},"actor":{"login":"bob"}},
+      {"event":"commented","actor":{"login":"carol"}},
+      {"event":"unlabeled","label":{"name":"factory"},"actor":{"login":"dave"}},
+      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"}}
+    ]"#;
+
+    #[test]
+    fn parse_actor_returns_the_last_labeled_event_for_the_label() {
+        assert_eq!(
+            parse_actor(EVENTS, "factory").expect("parse"),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            parse_actor(EVENTS, "bug").expect("parse"),
+            Some("bob".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_actor_reads_paginated_pages() {
+        let pages = format!(
+            "{EVENTS}{}",
+            r#"[{"event":"labeled","label":{"name":"factory"},"actor":{"login":"erin"}}]"#
+        );
+        assert_eq!(
+            parse_actor(&pages, "factory").expect("parse"),
+            Some("erin".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_actor_is_none_without_a_matching_event() {
+        assert_eq!(parse_actor(EVENTS, "other").expect("parse"), None);
+        assert_eq!(parse_actor("[]", "factory").expect("parse"), None);
+        assert_eq!(parse_actor("", "factory").expect("parse"), None);
+        assert!(parse_actor("nope", "factory").is_err());
     }
 
     #[test]

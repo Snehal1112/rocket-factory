@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::Fixture;
-use factory_engine::Tracker;
+use factory_engine::{IssueInfo, Tracker};
 
 /// A tracker that fails the test when any method is called.
 struct NoCalls;
@@ -29,6 +29,18 @@ impl Tracker for NoCalls {
     }
     fn close(&self, _: u32) -> Result<(), String> {
         panic!("close was called")
+    }
+    fn list_labelled(&self, _: &str) -> Result<Vec<IssueInfo>, String> {
+        Err("not used".into())
+    }
+    fn labelled_by(&self, _: u32, _: &str) -> Result<Option<String>, String> {
+        Err("not used".into())
+    }
+    fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
+        Err("not used".into())
+    }
+    fn current_user(&self) -> Result<String, String> {
+        Err("not used".into())
     }
 }
 
