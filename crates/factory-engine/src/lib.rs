@@ -69,7 +69,9 @@ pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
 pub use decide::{decide, risk_summary, DecideInput, Decision};
 pub use drafts::{find_draft, remove_draft, set_draft_stage, start_draft};
 pub use followups::{follow_ups, FollowUp};
-pub use intake::{pick_next, STATE_DONE, STATE_NEEDS_HUMAN, STATE_RUNNING};
+pub use intake::{
+    pick_next, run_intake, IntakeOutcome, STATE_DONE, STATE_NEEDS_HUMAN, STATE_RUNNING,
+};
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
 pub use lock::{lock_board, BoardLock};
