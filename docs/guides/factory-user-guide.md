@@ -668,6 +668,24 @@ factory tickets 028
 
 Open `[minor]` findings of the last review become one ticket after the merge, a `- [ ]` checklist titled `Minor review findings from job <id>: <slug>`. `minors.json` in the job folder records the number, so a re-run files nothing twice, and `factory tickets <id>` retries a failed one. This runs whether or not `tickets_on_merge` is set, for every plan of a series. Set `minor_tickets = false` to turn it off.
 
+### Issue intake: let labelled issues run on their own
+
+Intake turns GitHub issues into jobs without a `/factory` session. It needs `gh` installed and logged in.
+
+1. Set `intake = true` in the project settings. Optional keys: `intake_label` (default `factory`), `priority_labels`, `intake_poll_minutes` (default 15), `intake_trusted`, `intake_model` and `intake_budget_weighted`. With `intake_trusted` empty, the trusted user is the `gh` user. If your token cannot call `gh api user`, intake refuses to run: set `intake_trusted` to your login list.
+2. Run `factoryd`. It queues one intake pass per project at each interval. `factory intake --dry-run` names the issue it would pick and changes nothing.
+3. Label an open issue with `factory`, and optionally `priority: P0`, `priority: P1` or `priority: P2`. Only a label added by a trusted user counts. If anyone edits, comments on or relabels the issue afterwards, it waits until a trusted user adds the label again.
+
+Each state shows as a label on the issue:
+
+| Label | Meaning |
+|---|---|
+| `factory: running` | Intake picked the issue and a comment names the job id. |
+| `factory: done` | The job merged, intake commented and closed the issue. |
+| `factory: needs-human` | The drafter refused, the spec review needs a person, or the job failed or parked. A fixed comment holds a reason code. |
+
+To retry a `factory: needs-human` issue, fix what the reason code names, remove the `factory: needs-human` label, and add `factory` again as a trusted user. Intake never posts text an agent wrote, and an intake job files no follow-up or minor ticket.
+
 ### 6.14 `factory kb-refresh`: refresh the knowledge base
 
 ```
