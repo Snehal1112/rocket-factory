@@ -52,10 +52,10 @@ Added to `Config` and to the project settings block (`settings_block.rs`), all o
 | Key | Default | Rule |
 |---|---|---|
 | `intake` | `false` | Turns polling and `factory intake` on |
-| `intake_label` | `"factory"` | Non-empty, no comma |
-| `priority_labels` | `["priority: P0", "priority: P1", "priority: P2"]` | Highest first, no duplicates |
+| `intake_label` | `"factory"` | Non-empty, no surrounding whitespace, no comma, does not start with `-`, is none of the three state labels |
+| `priority_labels` | `["priority: P0", "priority: P1", "priority: P2"]` | Highest first, no duplicates, no empty entry |
 | `intake_poll_minutes` | `15` | At least 1 |
-| `intake_trusted` | `[]` | Logins; empty means the `gh` user the factory runs as |
+| `intake_trusted` | `[]` | Logins, none empty or blank; empty means the `gh` user the factory runs as |
 | `intake_model` | `"claude-opus-5-5"` | Non-empty |
 | `intake_budget_weighted` | `400000` | Above zero; the drafter's cap per issue |
 
@@ -65,14 +65,16 @@ A bad value is a config error, which fails closed like every other setting.
 
 On the `Tracker` trait and `GhTracker` (with the `Arc<T>` forwarding impl):
 
-- `fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String>` using `gh issue list --state open --label <label> --json number,title,body,labels,createdAt`. `IssueInfo { number: u32, title: String, body: String, labels: Vec<String>, created_at: String }`.
-- `fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String>` returning the login of the user who last added `label`, read with `gh api repos/{owner}/{repo}/issues/{n}/events` (the `labeled` events). `None` when no event is found.
-- `fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String>` using `gh issue edit --add-label/--remove-label`. A missing label to add is created first with `gh label create <name> --force`.
-- `fn current_user(&self) -> Result<String, String>` using `gh api user`.
+- `fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String>` using `gh issue list --state open --label <label> --limit 500 --search "sort:created-asc" --json number,title,body,labels,createdAt,updatedAt`. `IssueInfo { number: u32, title: String, body: String, labels: Vec<String>, created_at: String, updated_at: String }`. With more than 500 labelled open issues the newest are dropped, which keeps the oldest first.
+- `fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String>` with `LabelEvent { actor: String, at: String }`: the login and the `created_at` of the last `labeled` event for `label`, read with `gh api repos/{owner}/{repo}/issues/{n}/events --paginate --jq` filtered to `labeled` events and printed as compact JSON lines. `None` when no event is found. The actor of the last matching event wins even when it has no login, so a null actor gives `None`.
+- `fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String>` using `gh issue edit`. It does nothing when both lists are empty. Before an add it runs `gh label create <name> --color ededed --description "factory intake state"` and ignores the "already exists" error, so an existing label keeps its colour and description.
+- `fn current_user(&self) -> Result<String, String>` using `gh api user --jq .login`. With a token that cannot call it the call fails and intake refuses to run; the user guide tells the user to set `intake_trusted` then.
+
+`GhTracker::run` reads stdout and stderr in two threads while it waits, so a `gh` call that prints more than the pipe buffer (64 KiB) does not block until the 60 second timeout.
 
 ### 3. Picking an issue
 
-`pub fn pick_next(issues: &[IssueInfo], cfg: &Config, trusted_label_actor: impl Fn(u32) -> Option<String>, trusted: &[String]) -> Option<IssueInfo>` in a new `factory-engine/src/intake.rs`. An issue is eligible when it is open, has `intake_label`, has none of `factory: running`, `factory: needs-human`, `factory: done`, and `labelled_by` is in the trusted list. Eligible issues sort by the index of the first matching entry of `priority_labels` (none sorts last), then by `created_at`, then by number. The first one wins. An issue that fails the trust rule is skipped and logged, never labelled.
+`pub fn pick_next(issues: &[IssueInfo], cfg: &Config, labelled_by: &dyn Fn(u32) -> Result<Option<LabelEvent>, String>, trusted: &[String]) -> Option<IssueInfo>` in `factory-engine/src/intake.rs`. An issue is a candidate when it is open, has `intake_label`, and has none of `factory: running`, `factory: needs-human`, `factory: done` (compared without regard to case). Candidates sort by the index of the first matching entry of `priority_labels` (none sorts last), then by `created_at` (an empty one sorts last), then by number. Then the function walks the sorted list and returns the first issue that is eligible: `labelled_by` returned an event whose actor is in `trusted` (compared without regard to case), and `updated_at <= at`, which means nobody touched the issue after the trusted label was added. An edit by anyone, and also a comment or a label change, makes the issue wait until a trusted user labels it again. A `labelled_by` error, no event, an untrusted actor and an empty `trusted` list all make the issue ineligible; each is logged and nothing is labelled. Sorting before the lookups keeps the number of `gh` calls to one per walked issue.
 
 ### 4. The drafter role
 
@@ -147,9 +149,10 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 
 - `crates/factory-git/tests/export_tree.rs`: `export_tree_writes_tracked_files_only` (a committed nested file is written with its text; an untracked file and `.git` are absent), `export_tree_skips_symlinks`, `export_tree_refuses_a_non_empty_destination`.
 - `crates/factory-core`: `job_intake_issue_is_optional_and_absent_from_old_boards` (an old board file parses, a job without the field serialises without it), `intake_settings_have_the_documented_defaults`, `bad_intake_settings_are_config_errors` (empty label, comma, duplicate priority, zero poll, zero budget).
-- `crates/factory-engine/src/intake.rs` unit tests: `pick_next_prefers_the_higher_priority_then_the_older_issue`, `pick_next_sorts_unprioritised_issues_last`, `pick_next_skips_state_labelled_issues`, `pick_next_skips_untrusted_labellers`.
+- `crates/factory-engine/src/intake.rs` unit tests: `pick_next_prefers_the_higher_priority_then_the_older_issue`, `pick_next_sorts_unprioritised_issues_last`, `pick_next_skips_state_labelled_issues`, `pick_next_skips_untrusted_labellers`, `pick_next_skips_an_issue_edited_after_labelling`, `pick_next_skips_a_null_actor`, `pick_next_returns_none_for_an_empty_trusted_list`, `pick_next_ranks_a_missing_date_last`, `pick_next_compares_labels_without_regard_to_case`, `pick_next_stops_asking_after_the_first_eligible_issue`.
 - `crates/factory-engine/tests/intake.rs` (with the test `FakeTracker` and `FakeRunner`): `a_pass_with_no_eligible_issue_changes_nothing`, `a_merged_issue_is_commented_closed_and_labelled_done`, `a_refused_draft_labels_the_issue_needs_human` (the comment holds the reason code and the path, not the refused text), `a_failure_comment_never_contains_agent_text`, `intake_marks_every_job_of_the_series`, `draft_spec_reads_only_the_export`, `a_late_created_plan_job_keeps_the_intake_marker`, `intake_never_creates_a_job_without_plans`, `a_spec_review_refusal_redrafts_once_then_fails`, `a_dry_run_changes_no_label`.
 - `crates/factory-engine`: `guarded_tracker_refuses_every_write_and_forwards_reads`, `tracker_for_returns_the_raw_tracker_without_a_marker`, `the_ticket_step_skips_an_intake_job` (no `create`, `comment` or `close` call with `tickets_on_merge` on), `the_minor_ticket_step_skips_an_intake_job`, `a_waived_approve_of_an_intake_job_posts_nothing`, and the source test `only_intake_uses_the_raw_tracker`; the existing tests for other jobs keep passing.
+- `crates/factory-engine/src/tracker.rs` unit tests for the review fixes: `parse_actor_gives_none_when_the_last_event_has_no_login`, `parse_actor_keeps_the_time_of_the_last_matching_event`, `edit_labels_with_nothing_to_change_makes_no_call`, `label_create_args_set_a_fixed_colour_and_description`, `list_labelled_args_ask_oldest_first_with_updated_at`, and `a_gh_call_that_prints_more_than_the_pipe_buffer_still_returns` (a fake `gh` script printing 200 KiB).
 - `crates/factory-engine/tests/tracker_gh.rs` style tests for the new `gh` argument builders: `list_labelled_args`, `edit_labels_args`, `events_args`.
 - `crates/factory-supervisor`: `intake_requests_wait_while_the_project_is_busy`, `an_intake_request_is_not_enqueued_twice`, `intake_polling_is_off_for_projects_without_the_setting`.
 - `crates/factory-cli/tests/agent_lint.rs` passes for the new agent file in all five presets.
@@ -187,6 +190,8 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 - A board without `intake_issue` parses as before and the dashboard is unaffected.
 - `factory intake --dry-run` names the issue it would pick and changes nothing.
 - `factoryd` enqueues at most one `Intake` request per project at a time, and only when `intake` is on.
+- An issue edited, commented on or relabelled after the trusted user added the intake label is not picked until that user labels it again.
+- A `gh` call that prints more than 64 KiB returns its output.
 - Nothing is pushed.
 - Existing `Run` and `Approve` requests and old request files behave as before.
 
@@ -215,6 +220,8 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 - How should intake jobs be protected from posting agent text? Options: a default-deny gate in the tracker, add the waiver step to a skip list, refuse `approve --waive` on intake jobs. Chosen: a default-deny gate in the tracker. Decided by: user
 - How are intake jobs recognised? Options: an optional `Job.intake_issue` board field, the `issue-<n>` slug. Chosen: the optional field. Decided by: user
 - Where do the drafts live and what is the drafter denied? Options: the state folder with a deny on reads of it, a temp folder outside the repo, refuse a repo-local state folder. Chosen: the state folder with an explicit deny on reads of it. Decided by: user
+- How is an edit after the trusted label handled? Options: skip issues edited after the label using `updatedAt`, accept the risk and document it, require the trusted user to be the last editor through GraphQL. Chosen: skip issues edited after the label, using `updatedAt` as a conservative stand-in. Decided by: user
+- How is the reviewed plan 1 code landed? Options: merge the branch and fix in a new job, fix first. Chosen: merge the branch into local main, then a fix job and a new series for the rest. Decided by: user
 - How is the drafter's read access limited? Options: deny every `Layout` path inside the repo, run on a clean export of the base branch, deny `.git` and ignored paths as well, accept the gap. Chosen first: deny every `Layout` path inside the repo. Replaced by the next decision, because a block-list leaves untracked secrets readable. Decided by: user
 - How is the drafter's read access limited, after the review found untracked secrets readable? Options: a clean export of the base branch's tracked files, deny `.git` and git-ignored paths as well, accept the gap. Chosen: a clean export of the base branch. Decided by: user
 - Where does the claim happen? Options: before the draft, after the job exists. Chosen: before the draft, because a job needs the drafted plans first. Decided by: call
