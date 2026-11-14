@@ -22,8 +22,13 @@ const DRAFTER_AGENT: &str = "factory-intake-drafter";
 const DRAFTER_MAX_TURNS: u32 = 60;
 /// The job id the drafter runs under, since no job exists yet.
 const INTAKE_JOB: &str = "intake";
-/// The first draft and one redraft after a refusal.
+/// The first draft and one redraft after a validation or spec review refusal.
 const DRAFT_ATTEMPTS: u32 = 2;
+
+/// True when a redraft can fix the error: a refusal of the spec or a failed check of the draft.
+fn redraftable(e: &EngineError) -> bool {
+    matches!(e, EngineError::SpecRefused(_) | EngineError::Invalid(_))
+}
 
 /// What one intake pass did.
 #[derive(Debug, PartialEq)]
@@ -395,8 +400,8 @@ fn write_drafter_agents(driver: &Driver, dir: &Path) -> Result<Option<PathBuf>, 
     Ok(Some(path))
 }
 
-/// Exports the base branch, runs the drafter and creates the jobs from its plans. A refusal of the
-/// drafted spec or plans gets one redraft with the findings. Returns the ids of the series' jobs, each
+/// Exports the base branch, runs the drafter and creates the jobs from its plans. A validation or
+/// spec review refusal gets one redraft with the findings, and any other error fails at once. Returns the ids of the series' jobs, each
 /// marked with the issue. No job is created without a drafted spec and plans.
 fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure> {
     let n = issue.number;
@@ -478,7 +483,7 @@ fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure
             None,
         ) {
             Ok(job) => break job,
-            Err(e) if attempt < DRAFT_ATTEMPTS => {
+            Err(e) if attempt < DRAFT_ATTEMPTS && redraftable(&e) => {
                 findings = Some(e.to_string());
                 attempt += 1;
             }
@@ -523,6 +528,23 @@ mod tests {
     use std::cell::Cell;
 
     const LABELLED_AT: &str = "2026-11-05T10:00:00Z";
+
+    #[test]
+    fn redraftable_is_true_only_for_validation_and_spec_refusals() {
+        assert!(redraftable(&EngineError::Invalid("bad".to_string())));
+        assert!(redraftable(&EngineError::SpecRefused(
+            crate::SpecRefusal::ReviewerMissing
+        )));
+        for e in [
+            EngineError::Io("disk".to_string()),
+            EngineError::Git("git".to_string()),
+            EngineError::Core("core".to_string()),
+            EngineError::Msg("board".to_string()),
+            EngineError::ProjectBusy("busy".to_string()),
+        ] {
+            assert!(!redraftable(&e), "{e}");
+        }
+    }
 
     fn issue(number: u32, labels: &[&str], created: &str) -> IssueInfo {
         IssueInfo {

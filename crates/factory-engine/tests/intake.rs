@@ -18,6 +18,8 @@ struct Script {
     review: String,
     drafter_reply: fn() -> AgentRun,
     drafter_specs: Mutex<Vec<AgentSpec>>,
+    /// The job whose reviewers ask for changes, if any.
+    changes_for: Option<&'static str>,
 }
 
 type DrafterReply = fn() -> AgentRun;
@@ -47,6 +49,11 @@ impl AgentRunner for IntakeRunner {
                 (self.script.drafter_reply)()
             }
             "spec-reviewer" => AgentRun::done(&self.script.review),
+            role if self.script.changes_for == Some(spec.job_id.as_str())
+                && !["builder", "committer"].contains(&role) =>
+            {
+                AgentRun::done("[blocker] wrong\nVERDICT: CHANGES")
+            }
             _ => self.inner.run(spec),
         }
     }
@@ -126,11 +133,37 @@ fn setup_full(
     verdict: &str,
     drafter_reply: fn() -> AgentRun,
 ) -> Intake {
+    setup_inner(config, issues, draft, review, verdict, drafter_reply, None)
+}
+
+/// Like `setup_full` with the two-plan draft, and every reviewer of `job` answers with a blocker.
+fn setup_changes_for(job: &'static str, config: Config) -> Intake {
+    setup_inner(
+        config,
+        vec![issue(7)],
+        two_plans,
+        "fine\nVERDICT: APPROVE",
+        "fine\nVERDICT: APPROVE",
+        drafted,
+        Some(job),
+    )
+}
+
+fn setup_inner(
+    config: Config,
+    issues: Vec<IssueInfo>,
+    draft: impl Fn(&Path) + Send + Sync + 'static,
+    review: &str,
+    verdict: &str,
+    drafter_reply: fn() -> AgentRun,
+    changes_for: Option<&'static str>,
+) -> Intake {
     let script = Arc::new(Script {
         draft: Box::new(draft),
         review: review.to_string(),
         drafter_reply,
         drafter_specs: Mutex::new(Vec::new()),
+        changes_for,
     });
     let wrapped = script.clone();
     let fx = common::SeriesFixture::build(verdict, config, move |inner| {
@@ -170,6 +203,32 @@ fn pass(it: &Intake) -> IntakeOutcome {
 
 fn s(text: &str) -> Vec<String> {
     vec![text.to_string()]
+}
+
+#[test]
+fn a_multi_plan_series_names_the_unmerged_job_in_the_failure_comment() {
+    // No fix rounds, so the first changes verdict on job 002 parks it.
+    let cfg = Config {
+        fix_rounds: 0,
+        ..config()
+    };
+    let it = setup_changes_for("002", cfg);
+    assert_eq!(
+        pass(&it),
+        IntakeOutcome::Failed {
+            issue: 7,
+            reason: "build-failed".to_string()
+        }
+    );
+    let board = it.driver.store().load().expect("board");
+    let first = board.find("001").expect("job 001");
+    assert_eq!(first.stage, Stage::Merged);
+    let said = comments(&it);
+    assert_eq!(said[0].1, "factory picked this up as job 001, 002");
+    let last = &said.last().expect("comment").1;
+    assert!(last.contains("reason: build-failed"), "{last}");
+    assert!(last.contains("job: 002"), "{last}");
+    assert!(!last.contains("job: 001"), "{last}");
 }
 
 #[test]
@@ -257,6 +316,45 @@ fn a_failure_comment_never_contains_agent_text() {
     for (_, body) in comments(&it) {
         assert!(!body.contains("SECRET-MARKER"), "{body}");
     }
+}
+
+#[test]
+fn a_job_creation_io_error_fails_at_once_without_a_redraft() {
+    let it = setup(one_plan);
+    // A file where the jobs folder belongs makes add_job fail with an I/O error after validation.
+    let jobs = it.driver.layout().jobs_dir.clone();
+    if jobs.is_dir() {
+        std::fs::remove_dir_all(&jobs).expect("remove the jobs folder");
+    }
+    std::fs::create_dir_all(jobs.parent().expect("jobs parent")).expect("jobs parent");
+    std::fs::write(&jobs, "not a folder").expect("jobs file");
+    assert_eq!(
+        pass(&it),
+        IntakeOutcome::Failed {
+            issue: 7,
+            reason: "draft-invalid".to_string()
+        }
+    );
+    assert_eq!(it.script.drafter_specs.lock().expect("specs").len(), 1);
+}
+
+#[test]
+fn a_draft_with_a_placeholder_is_redrafted_once() {
+    let it = setup(|draft| {
+        let spec = GOOD_SPEC.replace("in one step.", "in one step. TBD");
+        std::fs::write(draft.join("spec.md"), spec).expect("spec");
+        std::fs::write(draft.join("plan-01-a.md"), plan(1, "none")).expect("plan");
+    });
+    assert_eq!(
+        pass(&it),
+        IntakeOutcome::Failed {
+            issue: 7,
+            reason: "draft-invalid".to_string()
+        }
+    );
+    let calls = it.script.drafter_specs.lock().expect("specs");
+    assert_eq!(calls.len(), 2, "one redraft, no more");
+    assert!(calls[1].prompt.contains("still has"), "{}", calls[1].prompt);
 }
 
 #[test]
