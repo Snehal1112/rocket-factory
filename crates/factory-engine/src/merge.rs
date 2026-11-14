@@ -326,7 +326,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         if check.state == BaseState::MainMoved {
             match sync_stage(driver, id)? {
                 SyncOutcome::Synced | SyncOutcome::UpToDate => continue,
-                SyncOutcome::Parked(reason) => return Ok(Step::plain(reason)),
+                SyncOutcome::Parked(reason, _) => return Ok(Step::plain(reason)),
             }
         }
         let message = driver.commit_message(id, MessageKind::Merge)?;

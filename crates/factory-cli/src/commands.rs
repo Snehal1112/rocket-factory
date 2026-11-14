@@ -649,7 +649,7 @@ fn sync(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     Ok(match factory_engine::sync_requested(&d, id)? {
         factory_engine::SyncOutcome::UpToDate => format!("job {id} is up to date with {base}"),
         factory_engine::SyncOutcome::Synced => format!("job {id} synced with {base}"),
-        factory_engine::SyncOutcome::Parked(reason) => outcome_lines::needs_human_line(&reason),
+        factory_engine::SyncOutcome::Parked(reason, _) => outcome_lines::needs_human_line(&reason),
     })
 }
 

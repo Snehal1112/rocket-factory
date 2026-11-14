@@ -10,7 +10,8 @@ pub enum SyncOutcome {
     Synced,
     /// A requested sync found nothing to do.
     UpToDate,
-    Parked(String),
+    /// The park reason, and the kind of a non-risky decision that keeps its own.
+    Parked(String, Option<ParkKind>),
 }
 
 /// Who asks for the sync. Only an automatic sync counts against `MAX_SYNCS`.
@@ -53,6 +54,11 @@ pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineEr
     ) {
         return Err(EngineError::Msg(format!("job {id} is {}", job.stage)));
     }
+    if job.batch_snapshot.is_some() {
+        return Err(EngineError::Msg(format!(
+            "job {id} has a pending batch commit, use rework to finish it"
+        )));
+    }
     let wt = job_worktree(driver, &job)?;
     if !crate::merge::git_op("worktree_is_clean", || driver.repo().worktree_is_clean(&wt))? {
         return Err(EngineError::Msg(format!(
@@ -89,8 +95,13 @@ pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineEr
     let outcome = sync_with(driver, id, SyncKind::Requested, whole_branch)?;
     // Nobody else parks a requested sync, so the job must not stay in review with a park message.
     // A park that `park_after_sync` already wrote keeps its own kind and evidence.
-    if let SyncOutcome::Parked(reason) = &outcome {
-        crate::merge::park(driver, id, reason)?;
+    if let SyncOutcome::Parked(reason, kind) = &outcome {
+        let kind = kind.unwrap_or(ParkKind::Other);
+        crate::merge::park_with_parts(driver, id, reason, kind, Vec::new())?;
+    } else if job.stage == Stage::NeedsHuman && driver.job(id)?.stage == Stage::Approve {
+        // The parked job was held for a reason the review does not recheck, so a person releases it.
+        let reason = format!("sync review passed, run factory approve {id}");
+        crate::merge::park_with_parts(driver, id, &reason, ParkKind::Other, Vec::new())?;
     }
     Ok(outcome)
 }
@@ -105,11 +116,14 @@ fn sync_with(
 ) -> Result<SyncOutcome, EngineError> {
     let job = driver.job(id)?;
     if kind == SyncKind::Auto && job.syncs >= MAX_SYNCS {
-        return Ok(SyncOutcome::Parked(format!(
-            "{} moved again after {} syncs",
-            driver.repo().base_branch(),
-            job.syncs
-        )));
+        return Ok(SyncOutcome::Parked(
+            format!(
+                "{} moved again after {} syncs",
+                driver.repo().base_branch(),
+                job.syncs
+            ),
+            None,
+        ));
     }
     let wt = job_worktree(driver, &job)?;
     let old_head = job.head.clone().unwrap_or_default();
@@ -130,13 +144,13 @@ fn sync_with(
             driver.repo().merge_main_into(&wt, &message)
         })? {
             MergeOutcome::Conflict { paths } => {
-                return Ok(SyncOutcome::Parked(format!(
-                    "sync conflict in {}",
-                    paths.join(", ")
-                )));
+                return Ok(SyncOutcome::Parked(
+                    format!("sync conflict in {}", paths.join(", ")),
+                    None,
+                ));
             }
             MergeOutcome::Refused { reason } => {
-                return Ok(SyncOutcome::Parked(format!("sync refused: {reason}")))
+                return Ok(SyncOutcome::Parked(format!("sync refused: {reason}"), None))
             }
             MergeOutcome::UpToDate => None,
             MergeOutcome::Merged { merge_sha } => Some(merge_sha),
@@ -171,10 +185,10 @@ fn sync_with(
     match driver.checks(id)? {
         StageOutcome::Advanced(Stage::Review) => {}
         StageOutcome::Advanced(_) => {
-            return Ok(SyncOutcome::Parked("checks failed after sync".into()))
+            return Ok(SyncOutcome::Parked("checks failed after sync".into(), None))
         }
         StageOutcome::NeedsHuman(why) => {
-            return Ok(SyncOutcome::Parked(format!("after sync: {why}")))
+            return Ok(SyncOutcome::Parked(format!("after sync: {why}"), None))
         }
     }
     let outcome = if rewritten {
@@ -192,21 +206,28 @@ fn sync_with(
     match &outcome.decision {
         Decision::AutoMerge => match driver.apply(id, &outcome)? {
             StageOutcome::Advanced(Stage::Approve) => Ok(SyncOutcome::Synced),
-            _ => Ok(SyncOutcome::Parked("final checks failed after sync".into())),
+            _ => Ok(SyncOutcome::Parked(
+                "final checks failed after sync".into(),
+                None,
+            )),
         },
-        Decision::FixRound => Ok(SyncOutcome::Parked("sync review asked for changes".into())),
+        Decision::FixRound => Ok(SyncOutcome::Parked(
+            "sync review asked for changes".into(),
+            None,
+        )),
         Decision::NeedsHuman { kind, reason: why } => {
             let text = format!("after sync: {why}");
             if *kind != ParkKind::RiskyDiff {
-                return Ok(SyncOutcome::Parked(text));
+                return Ok(SyncOutcome::Parked(text, Some(*kind)));
             }
             let parked = driver.park_after_sync(id, &text);
             if let Err(err) = &parked {
                 tracing::error!(event = "park.error", msg = %format!("park after sync failed for job {id}: {err}"));
             }
-            Ok(SyncOutcome::Parked(crate::park::sync_park_text(
-                parked, &text,
-            )))
+            Ok(SyncOutcome::Parked(
+                crate::park::sync_park_text(parked, &text),
+                None,
+            ))
         }
     }
 }
