@@ -3,7 +3,7 @@ mod common;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use factory_agent::{AgentRun, AgentRunner, AgentSpec};
+use factory_agent::{AgentRun, AgentRunner, AgentSpec, StopReason};
 use factory_core::{Config, Stage};
 use factory_engine::{
     create_job, run_intake, run_series, IntakeOutcome, IssueInfo, STATE_DONE, STATE_NEEDS_HUMAN,
@@ -16,7 +16,14 @@ const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a use
 struct Script {
     draft: Box<dyn Fn(&Path) + Send + Sync>,
     review: String,
+    drafter_reply: fn() -> AgentRun,
     drafter_specs: Mutex<Vec<AgentSpec>>,
+}
+
+type DrafterReply = fn() -> AgentRun;
+
+fn drafted() -> AgentRun {
+    AgentRun::done("drafted")
 }
 
 /// Plays the drafter and the spec reviewer from the script and hands every other role to the
@@ -37,7 +44,7 @@ impl AgentRunner for IntakeRunner {
                     .push(spec.clone());
                 let draft = spec.cwd.parent().expect("issue folder").join("draft");
                 (self.script.draft)(&draft);
-                AgentRun::done("drafted")
+                (self.script.drafter_reply)()
             }
             "spec-reviewer" => AgentRun::done(&self.script.review),
             _ => self.inner.run(spec),
@@ -100,13 +107,33 @@ fn setup_with(
     draft: impl Fn(&Path) + Send + Sync + 'static,
     review: &str,
 ) -> Intake {
+    setup_full(
+        config,
+        issues,
+        draft,
+        review,
+        "fine\nVERDICT: APPROVE",
+        drafted,
+    )
+}
+
+/// `verdict` is what the code reviewers answer, `drafter_reply` the run the drafter returns.
+fn setup_full(
+    config: Config,
+    issues: Vec<IssueInfo>,
+    draft: impl Fn(&Path) + Send + Sync + 'static,
+    review: &str,
+    verdict: &str,
+    drafter_reply: fn() -> AgentRun,
+) -> Intake {
     let script = Arc::new(Script {
         draft: Box::new(draft),
         review: review.to_string(),
+        drafter_reply,
         drafter_specs: Mutex::new(Vec::new()),
     });
     let wrapped = script.clone();
-    let fx = common::SeriesFixture::build("fine\nVERDICT: APPROVE", config, move |inner| {
+    let fx = common::SeriesFixture::build(verdict, config, move |inner| {
         Arc::new(IntakeRunner {
             inner,
             script: wrapped.clone(),
@@ -349,6 +376,134 @@ fn a_late_created_plan_job_keeps_the_intake_marker() {
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs.len(), 2);
     assert_eq!(board.jobs[1].intake_issue, Some(7));
+}
+
+#[test]
+fn a_job_that_ends_needs_human_labels_the_issue_with_its_job_id() {
+    // No fix rounds, so the first changes verdict parks the job.
+    let cfg = Config {
+        fix_rounds: 0,
+        ..config()
+    };
+    let it = setup_full(
+        cfg,
+        vec![issue(7)],
+        one_plan,
+        "fine\nVERDICT: APPROVE",
+        "[blocker] REVIEWER-TEXT wrong\nVERDICT: CHANGES",
+        drafted,
+    );
+    let out = pass(&it);
+    assert_eq!(
+        out,
+        IntakeOutcome::Failed {
+            issue: 7,
+            reason: "build-failed".to_string()
+        }
+    );
+    assert_eq!(
+        edits(&it).last(),
+        Some(&(7, s(STATE_NEEDS_HUMAN), s(STATE_RUNNING)))
+    );
+    let said = comments(&it);
+    assert_eq!(said[0].1, "factory picked this up as job 001");
+    let last = &said.last().expect("comment").1;
+    assert!(last.contains("reason: build-failed"), "{last}");
+    assert!(last.contains("job: 001"), "{last}");
+    let draft = it.driver.layout().intake_dir().join("7").join("draft");
+    assert!(last.contains(&draft.display().to_string()), "{last}");
+    assert!(!last.contains("REVIEWER-TEXT"), "{last}");
+    assert_eq!(it.tracker.state.lock().expect("lock").closes.len(), 0);
+}
+
+fn over_budget() -> AgentRun {
+    AgentRun {
+        stop_reason: StopReason::BudgetStop,
+        ..AgentRun::done("SECRET-MARKER partial")
+    }
+}
+
+fn stalled() -> AgentRun {
+    AgentRun {
+        stop_reason: StopReason::Stalled,
+        ..AgentRun::done("SECRET-MARKER partial")
+    }
+}
+
+#[test]
+fn a_drafter_that_stops_early_fails_the_issue_with_no_job() {
+    let cases: [(DrafterReply, &str); 2] =
+        [(over_budget, "over-budget"), (stalled, "draft-invalid")];
+    for (reply, reason) in cases {
+        let it = setup_full(
+            config(),
+            vec![issue(7)],
+            one_plan,
+            "x",
+            "fine\nVERDICT: APPROVE",
+            reply,
+        );
+        let out = pass(&it);
+        assert_eq!(
+            out,
+            IntakeOutcome::Failed {
+                issue: 7,
+                reason: reason.to_string()
+            }
+        );
+        assert!(it.driver.store().load().expect("board").jobs.is_empty());
+        assert_eq!(
+            edits(&it).last(),
+            Some(&(7, s(STATE_NEEDS_HUMAN), s(STATE_RUNNING)))
+        );
+        let said = comments(&it);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(
+            said[0].1.contains(&format!("reason: {reason}")),
+            "{}",
+            said[0].1
+        );
+        assert!(!said[0].1.contains("job:"), "{}", said[0].1);
+        assert!(!said[0].1.contains("SECRET-MARKER"), "{}", said[0].1);
+    }
+}
+
+#[test]
+fn a_drafter_run_adds_a_usage_line() {
+    let it = setup(one_plan);
+    pass(&it);
+    let log = std::fs::read_to_string(it.driver.layout().intake_usage_file()).expect("usage log");
+    let line: serde_json::Value =
+        serde_json::from_str(log.lines().next().expect("line")).expect("json");
+    assert_eq!(line["role"], "intake-drafter");
+    assert_eq!(line["job"], "intake");
+}
+
+#[test]
+fn intake_refuses_to_run_under_codex() {
+    let cfg = Config {
+        agent_cli: Some("codex".to_string()),
+        ..config()
+    };
+    let it = setup_with(cfg, vec![issue(7)], one_plan, "x");
+    let err = run_intake(&it.driver, &it.tracker, false).expect_err("codex");
+    assert!(err.to_string().contains("codex"), "{err}");
+    assert_eq!(it.tracker.count("edit_labels"), 0);
+    assert!(it.script.drafter_specs.lock().expect("specs").is_empty());
+}
+
+#[test]
+fn an_issue_reference_in_the_title_does_not_reach_the_job_feature() {
+    let mut tricky = issue(7);
+    tricky.title = "Fixes #999".to_string();
+    let it = setup_with(config(), vec![tricky], one_plan, "x\nVERDICT: APPROVE");
+    pass(&it);
+    let board = it.driver.store().load().expect("board");
+    assert!(
+        !board.jobs[0].feature.contains("#999"),
+        "{}",
+        board.jobs[0].feature
+    );
 }
 
 #[test]

@@ -155,6 +155,11 @@ impl Layout {
         self.spec_reviews_dir().join("usage.jsonl")
     }
 
+    /// The usage log of the intake drafter. No job owns those runs, so their tokens are logged here.
+    pub fn intake_usage_file(&self) -> PathBuf {
+        self.intake_dir().join("usage.jsonl")
+    }
+
     pub fn events_file(&self) -> PathBuf {
         self.state_dir.join("events.jsonl")
     }

@@ -217,6 +217,12 @@ pub fn run_intake(
     if !cfg.intake {
         return Ok(IntakeOutcome::Off);
     }
+    // The drafter is confined by Claude-only grants. Codex would give it a shell that reads the disk.
+    if cfg.agent_cli() == "codex" {
+        return Err(EngineError::Msg(
+            "intake: the issue drafter needs the Claude CLI, it cannot run under codex".to_string(),
+        ));
+    }
     let Some(issue) = pick_issue(cfg, tracker)? else {
         return Ok(IntakeOutcome::NoIssue);
     };
@@ -379,9 +385,15 @@ fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure
     repo.export_tree(repo.base_branch(), &tree)
         .map_err(|e| invalid(&e))?;
     let slug = format!("issue-{n}");
+    // No `#` in the title, so it cannot carry an issue reference into a commit message.
     let feature = format!(
         "{}, #{n}",
-        issue.title.split_whitespace().collect::<Vec<_>>().join(" ")
+        issue
+            .title
+            .replace('#', "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     let mut findings: Option<String> = None;
     let mut attempt = 1;
@@ -389,7 +401,16 @@ fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure
         reset_dir(&draft).map_err(|e| invalid(&e))?;
         let mut spec = draft_spec(driver.config(), &tree, &draft, issue, findings.as_deref());
         spec.agents_file = agents.clone();
+        let started = std::time::Instant::now();
         let run = driver.run_agent_for(INTAKE_JOB, &spec);
+        crate::spec_check::log_unowned_usage(
+            driver,
+            &driver.layout().intake_usage_file(),
+            INTAKE_JOB,
+            &spec,
+            &run,
+            started.elapsed().as_secs(),
+        );
         match run.stop_reason {
             StopReason::Done => {}
             StopReason::BudgetStop => {
