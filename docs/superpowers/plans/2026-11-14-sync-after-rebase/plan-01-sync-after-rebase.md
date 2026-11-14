@@ -20,6 +20,8 @@
 - No board, ledger or events field is added. Board JSON stays compatible with `factory-server`.
 - The driver never rewrites history: a sync merges main in and never rebases.
 - A requested sync does not call the `MAX_SYNCS` check and does not change `job.syncs`. An automatic sync is unchanged.
+- Reviewers: `ReviewRun::Rebase` runs every role the job holds, as `ReviewRun::Round` does at `review.rs:134`. A sync that is not a rewrite keeps `ReviewRun::Sync`, the code reviewer only.
+- Order of a requested sync: reset the floor when the branch was rewritten, then merge main when the branch is behind, then one review. The merge never starts a second review.
 - Exact texts: `job <id> is up to date with <base>`, `the worktree of job <id> has uncommitted changes`, `job <id> is <state>`, `branch rewritten outside the factory, floor reset to base, head is <sha>`, and `the branch no longer holds the reviewed head <sha7>; it was rewritten outside the factory: run factory sync <id>`. The old text `committer rewrote history at or below the floor` stays for a real committer rewrite.
 
 ## Review Focus
@@ -27,8 +29,9 @@
 1. A job whose branch is behind main and not rewritten must merge main, not reset the floor. Pinned by `sync_requested_merges_main_into_a_job_that_is_behind`.
 2. A rewritten branch must end with `prev_head` empty so the reviewer sees `base..head`, and the earlier review files stay. Pinned by `sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch`.
 3. A requested sync after two automatic syncs must still run and leave `syncs` at 2. Pinned by `sync_requested_does_not_count_against_max_syncs`.
-4. An up-to-date job must cost nothing and change no stage. Pinned by `sync_requested_on_an_up_to_date_job_changes_nothing`.
-5. A committer that really rewrites history must keep the old park text, and only a rewrite that happened before the run gets the sync hint. Pinned by `a_committer_that_rewrites_history_keeps_the_old_text` and `a_branch_rewritten_before_the_committer_parks_with_the_sync_hint`.
+4. A rewritten branch must get the security reviewer, and a rewritten branch that is also behind main must get main merged before the one review. Pinned by `a_rebase_review_runs_the_security_reviewer` and `a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review`.
+5. An up-to-date job must cost nothing and change no stage. Pinned by `sync_requested_on_an_up_to_date_job_changes_nothing`.
+6. A committer that really rewrites history must keep the old park text, and only a rewrite that happened before the run gets the sync hint. Pinned by `a_committer_that_rewrites_history_keeps_the_old_text` and `a_branch_rewritten_before_the_committer_parks_with_the_sync_hint`.
 
 ## File Structure
 
@@ -56,11 +59,13 @@
   - `sync_requested_merges_main_into_a_job_that_is_behind`: the job has a merge commit, stage `review` and a review ran.
   - `sync_requested_does_not_count_against_max_syncs`: with `syncs = 2` it runs and `syncs` stays 2.
   - `sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch`: after the rewrite `prev_head` is none, the stage is `review`, the ledger holds the ruling text from Global Constraints, and `review-code-r<round>-rebase.md` exists next to the earlier review files.
+  - `a_rebase_review_runs_the_security_reviewer`: after a rewrite both the code and the security reviewer run. `a_sync_without_a_rewrite_runs_the_code_reviewer_only` pins the other case.
+  - `a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review`: one review run, and the merge commit is part of the reviewed head.
   - `sync_requested_on_an_up_to_date_job_changes_nothing`: the outcome is `UpToDate`, the stage and `head` are unchanged and no agent ran.
   - `sync_requested_refuses_a_merged_job` and `sync_requested_refuses_a_dirty_worktree`: each gives `Err` with the exact text.
   - `sync_requested_conflict_parks_and_names_the_paths`: the outcome is `Parked` and names the file.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test sync_review sync_requested`.** Expected: FAIL with `cannot find function sync_requested in this scope`.
-- [ ] **Step 4: Implement** `sync_with` by moving the body of `sync_stage` and gating the `MAX_SYNCS` check and the `syncs += 1` on `SyncKind::Auto`. Implement `sync_requested`: refuse a merged or cancelled job, a job with no worktree and a dirty worktree (`repo.worktree_is_clean`); detect a rewrite with `!is_ancestor(job.head, tip(branch))` and, when true, set `head = tip`, `prev_head = None`, force stage `review` and write the ledger ruling in one `store().update`, and review with `ReviewRun::Rebase`; when not rewritten, run `sync_with(Requested)` and return `UpToDate` if main was already merged. Export it from `lib.rs`.
+- [ ] **Step 4: Implement** `sync_with` by moving the body of `sync_stage` and gating the `MAX_SYNCS` check and the `syncs += 1` on `SyncKind::Auto`. Implement `sync_requested`: refuse a merged or cancelled job, a job with no worktree and a dirty worktree (`repo.worktree_is_clean`); detect a rewrite with `!is_ancestor(job.head, tip(branch))` and, when true, set `head = tip`, `prev_head = None`, force stage `review` and write the ledger ruling in one `store().update`. Then merge main when the branch is behind, without a review of its own, and run the checks and one review: `ReviewRun::Rebase` after a rewrite, `ReviewRun::Sync` otherwise. When nothing was rewritten and main was already merged, return `UpToDate`. Export it from `lib.rs`.
 - [ ] **Step 5: Run `cargo test -j4 -p factory-engine`.** Expected: all pass, including the existing `sync_review` and merge tests.
 - [ ] **Step 6: Run `cargo fmt -p factory-engine -- --check` and `cargo clippy -j4 -p factory-engine --all-targets -- -D warnings`.** Expected: no output and no warnings.
 

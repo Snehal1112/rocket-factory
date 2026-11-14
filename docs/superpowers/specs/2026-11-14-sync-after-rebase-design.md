@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add `factory sync <id>`, so a person can bring a job up to date with the base branch at any time, and recover a job whose branch was rewritten outside the factory, without losing the code and security review.
+Add `factory sync <id>`, so a person can bring a job up to date with the base branch at any time, and recover a job whose branch was rewritten outside the factory, with a whole-branch code and security review before any merge.
 
 ## Overview
 
@@ -21,6 +21,7 @@ The driver already has the right flow for a branch that is behind main: `sync_st
 |---|---|---|
 | `sync_stage` (`sync.rs:14-101`) | Refuses after `MAX_SYNCS` (2, `merge.rs:10`), merges main into the branch, sets `prev_head = old head`, `head = merge sha`, `syncs += 1`, forces stage `review`, runs checks, then `review_sync` | Only the merge step calls it (`merge.rs:259`) |
 | Round diff (`review.rs:56`) | The reviewer sees `prev_head..head`, or `base..head` when `prev_head` is none. Risk and size judge the whole job diff | None: a reset floor gives a whole-branch review |
+| Sync review roles (`review.rs:130-134`) | A sync review runs the code reviewer only. Only `ReviewRun::Round` runs every role the job holds | A rewritten branch needs the security reviewer too |
 | Floor check (`commit.rs:378-381`) | Parks with `committer rewrote history at or below the floor` when the floor is not an ancestor of the tip | The text blames the committer when the branch was rewritten before the run |
 | No-op fix round (`build.rs:195-207`) | Parks as `nothing-changed` with next commands `rework` and `cancel` | No hint that the branch was rewritten, no way to review the current head |
 | CLI (`cli.rs`, `commands.rs`) | `run` takes the project lease, the job lease and a guard (`commands.rs:612-627`) | No command for a sync |
@@ -37,12 +38,15 @@ The driver already has the right flow for a branch that is behind main: `sync_st
 ```
 factory sync <id>
   refuse: merged or cancelled job, no worktree, dirty worktree, live lease
-  rewritten? (job.head is not an ancestor of the branch tip)
+  1. rewritten? (job.head is not an ancestor of the branch tip)
      yes: head = tip, prev_head = none, ruling "branch rewritten outside the factory"
-  behind main? (base branch tip not an ancestor of the branch tip)
+  2. behind main? (base branch tip not an ancestor of the branch tip)
      yes: merge main into the branch (conflict parks, paths named)
   neither: print "job <id> is up to date with <base>", change nothing
-  otherwise: stage review (forced, logged), checks, code and security review, then the usual decision
+  otherwise: stage review (forced, logged), then checks, then
+     rewritten:    one whole-branch review by every role the job holds (code and security)
+     not rewritten: one review of the sync diff by the code reviewer only, as an automatic sync
+  then the usual decision
 ```
 
 ### 1. The command
@@ -56,9 +60,10 @@ factory sync <id>
 - `pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError>` in `sync.rs`. `sync_stage` becomes `sync_with(driver, id, SyncKind)` with `enum SyncKind { Auto, Requested }`, and `sync_stage` calls it with `Auto`. The merge, checks and review steps stay shared.
 - `Requested` skips the `MAX_SYNCS` check and does not add to `job.syncs`. `Auto` is unchanged.
 - Rewrite detection: `!repo.is_ancestor(job.head, tip(job.branch))`. When true, one `store().update` sets `head = tip`, `prev_head = None` and forces stage `review`, and the ledger gets the ruling `branch rewritten outside the factory, floor reset to base, head is <sha>`. The review then covers `base..head`, the whole branch.
-- When the branch is behind the base branch, the existing merge path runs. `MergeOutcome::UpToDate` with no rewrite returns early with no stage change and no review.
-- The review of a reset floor is saved as `review-code-r<round>-rebase.md`, so the earlier round reviews are kept. A new `ReviewRun::Rebase` variant carries the file name.
-- Every other step (checks, the code and security reviewers, `Decision`, `park_after_sync`) is the code `sync_stage` runs today.
+- The order is fixed: reset the floor first, then merge main when the branch is behind, then one review. A rewritten branch that is also behind gets main merged in before the single `Rebase` review, and the merge does not start a second review.
+- When the branch is not rewritten and is behind the base branch, the existing merge path runs. `MergeOutcome::UpToDate` with no rewrite returns early with no stage change and no review.
+- A new `ReviewRun::Rebase` variant runs every role the job holds, the same as `ReviewRun::Round` does at `review.rs:134`, so a rewritten branch always gets the security reviewer. It saves the code review as `review-code-r<round>-rebase.md`, so the earlier round reviews are kept. A sync that is not a rewrite keeps `ReviewRun::Sync`, which runs the code reviewer only (`review.rs:130-134`).
+- Every other step (checks, `Decision`, `park_after_sync`) is the code `sync_stage` runs today.
 
 ### 3. A clear park for a rewritten branch
 
@@ -86,6 +91,8 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 - `sync_requested_merges_main_into_a_job_that_is_behind` (engine): the job gets a merge commit, goes back to `review` and runs checks and review.
 - `sync_requested_does_not_count_against_max_syncs` (engine): with `syncs = 2` it still runs and `syncs` stays 2.
 - `sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch` (engine): rewrite the branch with `git2`, the job ends in `review` with `prev_head` none, and the review diff covers `base..head` and is saved as `review-code-r<round>-rebase.md`.
+- `a_rebase_review_runs_the_security_reviewer` (engine): after a rewrite the security reviewer runs as well as the code reviewer. `a_sync_without_a_rewrite_runs_the_code_reviewer_only` pins the other case.
+- `a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review` (engine): one review run, the merge commit is in the reviewed head.
 - `sync_requested_on_an_up_to_date_job_changes_nothing` (engine): no stage change, no agent run.
 - `sync_requested_refuses_a_merged_job`, `..._a_dirty_worktree` (engine).
 - `sync_requested_conflict_parks_and_names_the_paths` (engine).
@@ -111,8 +118,8 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 
 ## Acceptance criteria
 
-- `factory sync <id>` merges main into a job branch that is behind and runs checks and both reviews on the result.
-- After a manual rebase, `factory sync <id>` resets the floor and the job gets a whole-branch code and security review before any merge.
+- `factory sync <id>` merges main into a job branch that is behind and runs the checks and the code reviewer on the sync diff.
+- After a manual rebase, `factory sync <id>` resets the floor, merges main when the branch is also behind, and the job gets one whole-branch review by the code and security reviewers before any merge.
 - A requested sync is not limited by `MAX_SYNCS` and does not change `syncs`.
 - A merged, cancelled, dirty or leased job is refused with a clear message.
 - A rewritten branch parks with a message that names `factory sync <id>`, and the old committer text stays for a real committer rewrite.
@@ -134,6 +141,7 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 - How to recover a rewritten branch: an explicit `factory sync` that resets the floor to the base for a whole-branch review, not a patch-id match and not a refusal. Decided by: user
 - `factory sync` runs in any open stage with no live lease, not only in `needs-human`. Decided by: user
 - A requested sync does not count against `MAX_SYNCS`, only automatic syncs do. Decided by: user
+- A requested sync that only merges main keeps the code reviewer alone on the sync diff, as an automatic sync does. A sync after a rebase runs the code and security reviewers on the whole branch. Decided by: user
 - A sync merges main into the branch and never rebases, so the driver's no-rewrite rule stays. Decided by: call
 - The whole-branch review is saved under a new name, so earlier reviews are kept. Decided by: call
 - The `main busy` text is improved in the same change, since it is the same dead end. Decided by: call
