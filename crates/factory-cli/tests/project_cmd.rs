@@ -185,7 +185,7 @@ fn show_prints_the_resolved_project() {
         "state folder:".to_string(),
         "worktrees folder:".to_string(),
         "risk paths:".to_string(),
-        "tickets on merge: false".to_string(),
+        "tickets on merge: true".to_string(),
         "agent files:".to_string(),
         "problems: none".to_string(),
     ] {

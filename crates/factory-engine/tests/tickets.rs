@@ -1,5 +1,6 @@
 mod common;
 use common::{approved_job, set_feature, with_tracker, FakeTracker, MergeFixture};
+use factory_core::Config;
 use factory_engine::{merge_stage, tickets_step, MergeResult};
 
 const SPEC_WITH_TWO: &str = "## Goal\nsomething with enough words to pass the check here\n\n## Follow-ups\n\n- Shared name helpers. More detail here.\n- Merge QueryParam and Header\n\n## Acceptance criteria\n- a\n";
@@ -8,7 +9,14 @@ const SPEC_NONE: &str =
 
 /// A merged job `001` whose feature text cites issue 76, with a fake tracker for `o/r`.
 fn merged(spec: Option<&str>, tracker: &FakeTracker) -> MergeFixture {
-    let fx = with_tracker(approved_job(), tracker.clone());
+    let config = Config {
+        tickets_on_merge: false,
+        ..Config::default()
+    };
+    let fx = with_tracker(
+        common::approved_job_config(common::approving_runner(3), false, config),
+        tracker.clone(),
+    );
     set_feature(&fx, "dedup cleanups https://github.com/o/r/issues/76", spec);
     assert!(matches!(
         merge_stage(&fx.driver, &fx.id).expect("merge"),
@@ -265,8 +273,6 @@ fn a_failing_tracker_leaves_the_merged_job_merged() {
     );
 }
 
-use factory_core::Config;
-
 /// Like `merged` but the merge itself runs the hook, so the fixture stops at the approved stage.
 fn approved_with_hook(on: bool, spec: Option<&str>, tracker: &FakeTracker) -> MergeFixture {
     let config = Config {
@@ -279,6 +285,70 @@ fn approved_with_hook(on: bool, spec: Option<&str>, tracker: &FakeTracker) -> Me
     );
     set_feature(&fx, "dedup cleanups #76", spec);
     fx
+}
+
+#[test]
+fn a_merge_with_the_default_config_runs_the_ticket_step() {
+    let t = tracker();
+    let fx = with_tracker(
+        common::approved_job_config(common::approving_runner(3), false, Config::default()),
+        t.clone(),
+    );
+    set_feature(&fx, "dedup cleanups #76", Some(SPEC_WITH_TWO));
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    let s = t.state.lock().expect("lock");
+    assert_eq!(s.created.len(), 2);
+    assert_eq!(s.closes, vec![76]);
+}
+
+/// Merges with the step off, then files the follow-ups by hand and returns the created labels.
+fn created_labels(parent_labels: &[&str], config: Config) -> Vec<Vec<String>> {
+    let t = FakeTracker::new("o/r").with_labels(76, parent_labels);
+    let config = Config {
+        tickets_on_merge: false,
+        ..config
+    };
+    let fx = with_tracker(
+        common::approved_job_config(common::approving_runner(3), false, config),
+        t.clone(),
+    );
+    set_feature(&fx, "dedup cleanups #76", Some(SPEC_WITH_TWO));
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    tickets_step(&fx.driver, &fx.id, false).expect("step");
+    let s = t.state.lock().expect("lock");
+    s.created.iter().map(|c| c.2.clone()).collect()
+}
+
+#[test]
+fn follow_up_labels_drop_the_intake_label_and_state_labels() {
+    let created = created_labels(
+        &[
+            "Factory",
+            "Factory: Running",
+            "factory: needs-human",
+            "FACTORY: DONE",
+            "tracking",
+            "tech-debt",
+        ],
+        Config::default(),
+    );
+    assert_eq!(created, vec![vec!["tech-debt".to_string()]; 2]);
+}
+
+#[test]
+fn a_custom_intake_label_is_dropped_from_follow_up_labels() {
+    let config = Config {
+        intake_label: "bot".into(),
+        ..Config::default()
+    };
+    let created = created_labels(&["bot", "tech-debt"], config);
+    assert_eq!(created, vec![vec!["tech-debt".to_string()]; 2]);
 }
 
 #[test]

@@ -423,15 +423,15 @@ mod tests {
     fn tickets_on_merge_is_a_valid_project_setting() {
         let e = env();
         assert!(
-            !resolve(&e.home, "p", &Tip::default())
+            resolve(&e.home, "p", &Tip::default())
                 .expect("resolve")
                 .config
                 .tickets_on_merge
         );
-        set_settings(&e, "tickets_on_merge = true\n");
+        set_settings(&e, "tickets_on_merge = false\n");
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
         assert!(r.problems.is_empty(), "{:?}", r.problems);
-        assert!(r.config.tickets_on_merge && !r.config.degraded);
+        assert!(!r.config.tickets_on_merge && !r.config.degraded);
     }
 
     #[test]
