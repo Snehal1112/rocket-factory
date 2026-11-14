@@ -90,8 +90,8 @@ The intake section of `docs/guides/factory-user-guide.md` gets a table of the re
   - `intake_does_not_check_the_agent_file_when_the_driver_has_none`.
   - `a_drafter_that_cannot_start_fails_with_the_drafter_failed_code` (a `Failed` stop and a `Stalled` stop; no job on the board; the comment holds `reason: drafter-failed`).
   - `a_drafter_that_hits_the_turn_limit_is_draft_invalid`.
-  - `an_empty_draft_logs_the_tail_of_the_last_message_locally` (reads the cause through the log or a `failure` hook the test can see, and checks that the tail is at most 600 characters on one line).
-  - `the_failure_comment_never_holds_the_last_message` (a last message of `SECRET-MARKER`; no comment body contains it).
+  - `an_empty_draft_failure_comment_never_holds_the_last_message` (a last message of `SECRET-MARKER` and an empty draft; reason `draft-invalid`; no comment holds it).
+  - Unit tests in `intake.rs` for the pure function that builds the log text: `empty_draft_cause_keeps_the_last_600_characters_on_one_line` and `empty_draft_cause_with_an_empty_message`. The `tracing` call itself is not captured in tests.
   - Update the stalled row of `a_drafter_that_stops_early_fails_the_issue_with_no_job` (`:434`) from `draft-invalid` to `drafter-failed`.
 - `crates/factory-engine/src/intake.rs` unit tests: update `draft_spec_grants_only_the_draft_folder` to expect one `Edit(//state/intake/7/draft/**)` rule and no rule that starts with `Write(`; add `draft_spec_path_rules_use_only_matched_tools`.
 - `crates/factory-cli/tests/project_cmd.rs` (next to `project_show_reports_a_missing_security_agent`, built the same way with `show_without_security_agent`): `project_show_reports_a_missing_drafter_agent_file_when_intake_is_on` and `project_show_has_no_intake_problem_when_intake_is_off`.
