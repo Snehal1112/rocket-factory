@@ -59,6 +59,278 @@ fn review_calls(fx: &common::MergeFixture) -> usize {
     fx.runner.specs_for("reviewer").len() + fx.runner.specs_for("security-review").len()
 }
 
+/// A fixture whose config runs `command` as the only check.
+fn fixture_with_check(command: &str, effects: Vec<common::Effect>) -> common::MergeFixture {
+    let config = factory_core::Config {
+        checks: vec![factory_core::CheckRule {
+            paths: vec!["**".into()],
+            commands: vec![command.to_string()],
+            ..factory_core::CheckRule::default()
+        }],
+        ..factory_core::Config::default()
+    };
+    let fx = common::approved_job_config(Arc::new(scripted(effects)), true, config);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.round = 1;
+            Ok(())
+        })
+        .expect("round");
+    fx
+}
+
+fn force_stage(fx: &common::MergeFixture, stage: factory_core::Stage) {
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| j.set_stage(stage, Some("test"), true, 2.0))
+        .expect("stage");
+}
+
+fn last_review(verdict: &str) -> factory_core::LastReview {
+    factory_core::LastReview {
+        round: 1,
+        verdict: verdict.to_string(),
+        blockers: 1,
+        file: "review-code-r1.md".to_string(),
+        source: "review".to_string(),
+    }
+}
+
+#[test]
+fn a_rewrite_resets_the_review_states_and_keeps_last_review() {
+    let fx = fixture_with_check("false", vec![]);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.set_reviewers(&["code".to_string(), "security".to_string()]);
+            j.set_review("code", factory_core::ReviewState::Pass);
+            j.set_review("security", factory_core::ReviewState::Pass);
+            j.last_review = Some(last_review("approve"));
+            Ok(())
+        })
+        .expect("reviews");
+    rewrite_branch(&fx);
+    assert!(matches!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::Parked(_)
+    ));
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+    assert_eq!(
+        job.reviews.get("code"),
+        Some(&factory_core::ReviewState::Pending)
+    );
+    assert_eq!(
+        job.reviews.get("security"),
+        Some(&factory_core::ReviewState::Pending)
+    );
+    assert_eq!(job.last_review, Some(last_review("approve")));
+    let refusal = job.approve_refusal(false, false).expect("refused");
+    assert!(
+        refusal.contains("has no code and security review yet"),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_rewrite_keeps_open_blockers_so_approve_without_review_is_still_refused() {
+    let fx = fixture_with_check("false", vec![]);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.last_review = Some(last_review("changes"));
+            Ok(())
+        })
+        .expect("last review");
+    rewrite_branch(&fx);
+    sync_requested(&fx.driver, &fx.id).expect("sync");
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.last_review, Some(last_review("changes")));
+    let refusal = job.approve_refusal(true, false).expect("refused");
+    assert!(refusal.contains("open review blockers"), "{refusal}");
+}
+
+#[test]
+fn a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch() {
+    // A first sync that stopped right after its reset left this state: stage review, pending
+    // reviews, no floor, and main not merged yet.
+    let fx = with_security_agent(fixture(behind_main_effects()));
+    common::commit_file(&fx.main, "other.md", "o");
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.prev_head = None;
+            j.reset_reviews();
+            j.set_stage(factory_core::Stage::Review, None, true, 2.0)
+        })
+        .expect("reset state");
+    assert_eq!(
+        sync_requested(&fx.driver, &fx.id).expect("second sync"),
+        SyncOutcome::Synced
+    );
+    assert_eq!(fx.runner.specs_for("reviewer").len(), 1);
+    assert_eq!(fx.runner.specs_for("security-review").len(), 1);
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.prev_head, None);
+    assert!(job_file(&fx, "review-code-r1-rebase.md").exists());
+}
+
+/// The texts of every saved review diff in the job folder.
+fn saved_diffs(fx: &common::MergeFixture) -> Vec<String> {
+    let job = fx.driver.job(&fx.id).expect("job");
+    std::fs::read_dir(fx.driver.job_dir(&job))
+        .expect("job dir")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "diff"))
+        .map(|path| std::fs::read_to_string(path).expect("diff"))
+        .collect()
+}
+
+#[test]
+fn a_rebase_review_diff_starts_at_the_merge_base() {
+    let fx = with_security_agent(fixture(behind_main_effects()));
+    common::commit_file(&fx.main, "docs/other.txt", "o\n");
+    rewrite_branch(&fx);
+    sync_requested(&fx.driver, &fx.id).expect("sync");
+    let diffs = saved_diffs(&fx);
+    assert!(!diffs.is_empty());
+    for diff in &diffs {
+        assert!(!diff.contains("docs/other.txt"), "{diff}");
+        assert!(diff.contains("docs/hello.txt"), "{diff}");
+    }
+}
+
+#[test]
+fn a_first_round_review_diff_is_unchanged() {
+    let fx = fixture(vec![reply(APPROVE)]);
+    force_stage(&fx, factory_core::Stage::Review);
+    fx.driver.checks(&fx.id).expect("checks");
+    fx.driver.review(&fx.id).expect("review");
+    // The branch forked from the main tip, so the base and the merge base are the same commit.
+    let stem = format!("review-{}..", &common::main_tip(&fx.main)[..7]);
+    let job = fx.driver.job(&fx.id).expect("job");
+    let found = std::fs::read_dir(fx.driver.job_dir(&job))
+        .expect("job dir")
+        .any(|e| {
+            let name = e.expect("entry").file_name().to_string_lossy().into_owned();
+            name.starts_with(&stem) && name.ends_with(".diff")
+        });
+    assert!(found, "no diff file starts with {stem}");
+}
+
+/// The effects of a requested sync of a job behind main: a message, a code review and a security review.
+fn behind_main_effects() -> Vec<common::Effect> {
+    vec![reply(GOOD), reply(APPROVE), reply(SECURITY_OK)]
+}
+
+#[test]
+fn a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head() {
+    // Approve keeps the floor and runs the sync review.
+    let fx = with_security_agent(fixture(vec![reply(GOOD), reply(APPROVE)]));
+    let head = fx.head.clone();
+    common::commit_file(&fx.main, "other.md", "o");
+    sync_requested(&fx.driver, &fx.id).expect("sync");
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.prev_head.as_deref(), Some(head.as_str()));
+    assert!(job_file(&fx, "review-code-r1-sync1.md").exists());
+    assert!(fx.runner.specs_for("security-review").is_empty());
+    // Every other open stage gets the whole-branch review and no floor.
+    for stage in [
+        factory_core::Stage::Review,
+        factory_core::Stage::Build,
+        factory_core::Stage::NeedsHuman,
+    ] {
+        let fx = with_security_agent(fixture(behind_main_effects()));
+        common::commit_file(&fx.main, "other.md", "o");
+        force_stage(&fx, stage);
+        sync_requested(&fx.driver, &fx.id).expect("sync");
+        let job = fx.driver.job(&fx.id).expect("job");
+        assert_eq!(job.prev_head, None, "{stage}");
+        assert!(
+            job_file(&fx, "review-code-r1-rebase.md").exists(),
+            "{stage}"
+        );
+        assert!(
+            !job_file(&fx, "review-code-r1-sync1.md").exists(),
+            "{stage}"
+        );
+    }
+}
+
+#[test]
+fn commits_added_on_top_of_head_get_the_whole_branch_review() {
+    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    let tip = common::commit_file(&common::worktree_of(&fx), "extra.md", "e");
+    sync_requested(&fx.driver, &fx.id).expect("sync");
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.head.as_deref(), Some(tip.as_str()));
+    assert_eq!(job.prev_head, None);
+    assert!(job_file(&fx, "review-code-r1-rebase.md").exists());
+    assert_eq!(fx.runner.specs_for("security-review").len(), 1);
+}
+
+#[test]
+fn an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage() {
+    for stage in [
+        factory_core::Stage::Approve,
+        factory_core::Stage::Review,
+        factory_core::Stage::Build,
+        factory_core::Stage::NeedsHuman,
+    ] {
+        let fx = fixture(vec![]);
+        force_stage(&fx, stage);
+        assert_eq!(
+            sync_requested(&fx.driver, &fx.id).expect("sync"),
+            SyncOutcome::UpToDate,
+            "{stage}"
+        );
+        let job = fx.driver.job(&fx.id).expect("job");
+        assert_eq!(job.stage, stage);
+        assert_eq!(job.head.as_deref(), Some(fx.head.as_str()));
+        assert!(fx.runner.last_spec().is_none(), "{stage}");
+    }
+}
+
+#[test]
+fn a_sync_runs_the_checks() {
+    let marker = tempfile::tempdir().expect("marker dir");
+    let file = marker.path().join("checks-ran");
+    let seen = file.clone();
+    // The review reply approves only when the checks already ran.
+    let review: common::Effect = Box::new(move |_| {
+        if seen.exists() {
+            APPROVE.to_string()
+        } else {
+            CHANGES.to_string()
+        }
+    });
+    let fx = fixture_with_check(
+        &format!("touch {}", file.display()),
+        vec![reply(GOOD), review],
+    );
+    common::commit_file(&fx.main, "other.md", "o");
+    assert_eq!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::Synced
+    );
+    assert!(file.exists());
+}
+
+#[test]
+fn sync_refuses_a_job_with_no_worktree() {
+    let fx = fixture(vec![]);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.worktree = None;
+            Ok(())
+        })
+        .expect("no worktree");
+    let err = sync_requested(&fx.driver, &fx.id).expect_err("refused");
+    assert_eq!(err.to_string(), "job has no worktree to sync");
+}
+
 #[test]
 fn sync_requested_merges_main_into_a_job_that_is_behind() {
     let fx = fixture(vec![reply(GOOD), reply(APPROVE)]);
@@ -113,7 +385,7 @@ fn sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch()
     assert_eq!(job.prev_head, None);
     assert_eq!(job.head.as_deref(), Some(tip.as_str()));
     assert!(ledger(&fx).contains(&format!(
-        "branch rewritten outside the factory, floor reset to base, head is {tip}"
+        "whole-branch review requested, floor reset to base, head is {tip}"
     )));
     assert!(job_file(&fx, "review-code-r1-rebase.md").exists());
     assert!(job_file(&fx, "review-code-r1.md").exists());
