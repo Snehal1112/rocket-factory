@@ -99,6 +99,10 @@ fn args_of(req: &Request) -> Vec<String> {
                 args.push(format!("--waive={reason}"));
             }
         }
+        Action::Intake => {
+            args.push("intake".to_string());
+            args.push("--once".to_string());
+        }
     }
     args
 }
@@ -270,6 +274,12 @@ pub(crate) mod tests {
             text.contains(&format!("cwd={}\n", home_real.display())),
             "{text}"
         );
+    }
+
+    #[test]
+    fn intake_child_arguments() {
+        let r = Request::new("p", Action::Intake, "000", false, 1).expect("request");
+        assert_eq!(args_of(&r), ["--project", "p", "intake", "--once"]);
     }
 
     #[test]

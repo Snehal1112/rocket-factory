@@ -138,7 +138,7 @@ pub fn waiver_tickets_step(
     let base = driver.repo().base_branch().to_string();
     let tip = driver.repo().tip(&base).unwrap_or_default();
     let sha = short_sha(&tip).to_string();
-    let tracker = driver.tracker();
+    let tracker = driver.tracker_for(&job);
     'all: for w in 0..list.len() {
         // A rework replaced this approve before it merged, so its blockers were not waived in the end.
         if list[w].superseded {

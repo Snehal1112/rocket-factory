@@ -6,14 +6,14 @@ use std::path::Path;
 use std::time::Duration;
 
 use factory_core::outcome_lines::BUSY_EXIT_CODE;
-use factory_core::{project, CoreError, Home, HomeConfig};
+use factory_core::{project, resolve, BaseTipFiles, CoreError, Home, HomeConfig};
 use factory_engine::procinfo::{process_state, ProcState};
 use factory_engine::{owner_pid, project_lease_status, ProjectLeaseStatus};
 
 use crate::lock::{stop_file, InstanceLock, LockError};
 use crate::queue::{self, QueueItem};
 use crate::records::{self, ChildRecord, Outcome, ResultRecord};
-use crate::request::Request;
+use crate::request::{Action, Request, INTAKE_JOB};
 use crate::scheduler::{decide, Decision, ProjectState, SchedulerInput};
 use crate::spawn::{ChildPoll, Spawner};
 
@@ -87,6 +87,9 @@ pub struct Supervisor {
     busy_retries: HashMap<String, u32>,
     /// True once start-up recovery ran.
     recovered: bool,
+    /// When an intake request was last enqueued per project, in clock milliseconds. Kept in memory only,
+    /// so the first tick after a start enqueues.
+    intake_last: HashMap<String, u64>,
     /// Held for the life of the supervisor when it was made by `new_locked`. It must stay the LAST field:
     /// fields drop in declaration order, and the lock must outlive every other field.
     _lock: Option<InstanceLock>,
@@ -195,8 +198,21 @@ pub fn classify(out: &str, err: &str, code: Option<Option<i32>>) -> Outcome {
     // An adopted child has no exit code, so its last line decides. A series and approve print merged only at the very end, so that line is a finished result.
     // A merge ends with exit code 0. A `merged` line next to another code is not a result.
     let clean_exit = matches!(code, None | Some(Some(0)));
-    if clean_exit && (last == "merged" || last.starts_with("merged ")) {
+    // `merged #n ...` is covered above. An intake pass that found nothing to do is settled too.
+    if clean_exit
+        && (last == "merged"
+            || last.starts_with("merged ")
+            || last == "no issue"
+            || last == "intake is off")
+    {
         return Outcome::Merged;
+    }
+    if let Some(rest) = last.strip_prefix("failed ").filter(|r| r.starts_with('#')) {
+        if clean_exit {
+            return Outcome::NeedsHuman {
+                reason: rest.to_string(),
+            };
+        }
     }
     if let Some(rest) = last.strip_prefix("needs-human") {
         if rest.is_empty() || rest.starts_with(':') || rest.starts_with(' ') {
@@ -290,6 +306,19 @@ pub fn log_report(report: &TickReport, printed: &mut HashSet<String>) {
     }
 }
 
+/// A base tip with no files, for settings that the repo override cannot change.
+struct NoTip;
+
+impl BaseTipFiles for NoTip {
+    fn read_file(&self, _rel: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    fn list_dir(&self, _rel: &str) -> Result<Vec<(String, String)>, String> {
+        Ok(Vec::new())
+    }
+}
+
 /// The shortest pause between two ticks.
 pub const MIN_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -312,6 +341,7 @@ impl Supervisor {
             started_ids: HashSet::new(),
             busy_retries: HashMap::new(),
             recovered: false,
+            intake_last: HashMap::new(),
             _lock: None,
         }
     }
@@ -636,6 +666,63 @@ impl Supervisor {
         }
     }
 
+    /// Queues one intake request for each project that turns `intake` on, when its last one is older than
+    /// `intake_poll_minutes` and the project has no request queued or running. A broken project file
+    /// means no request, like every other setting.
+    fn enqueue_intake(
+        &mut self,
+        queue: &mut Vec<Request>,
+        running_projects: &[String],
+        states: &BTreeMap<String, ProjectState>,
+        report: &mut TickReport,
+    ) {
+        let Ok(entries) = project::list(&self.home) else {
+            return;
+        };
+        let now = (self.clock)();
+        for entry in entries {
+            if matches!(
+                states.get(&entry.name),
+                None | Some(ProjectState::Disabled { .. })
+            ) || running_projects.contains(&entry.name)
+                || queue.iter().any(|r| r.project == entry.name)
+            {
+                continue;
+            }
+            // The repo override cannot change intake settings, so no base tip is read.
+            let Ok(resolved) = resolve(&self.home, &entry.name, &NoTip) else {
+                continue;
+            };
+            let cfg = resolved.config;
+            let interval_ms = u64::from(cfg.intake_poll_minutes) * 60_000;
+            let due = self
+                .intake_last
+                .get(&entry.name)
+                .is_none_or(|last| now.saturating_sub(*last) >= interval_ms);
+            if !cfg.intake || !due {
+                continue;
+            }
+            let req = match Request::new(&entry.name, Action::Intake, INTAKE_JOB, false, now) {
+                Ok(r) => r,
+                Err(e) => {
+                    report
+                        .errors
+                        .push(format!("intake request for {}: {e}", entry.name));
+                    continue;
+                }
+            };
+            match queue::enqueue(&self.home, &req) {
+                Ok(()) => {
+                    self.intake_last.insert(entry.name.clone(), now);
+                    queue.push(req);
+                }
+                Err(e) => report
+                    .errors
+                    .push(format!("intake request for {}: {e}", entry.name)),
+            }
+        }
+    }
+
     /// Projects held by a live driver process that has no child record.
     fn find_orphans(
         states: &BTreeMap<String, ProjectState>,
@@ -741,6 +828,7 @@ impl Supervisor {
                 report.orphans.push(p);
             }
         }
+        self.enqueue_intake(&mut queue, &running_projects, &project_states, &mut report);
         self.reload_daily_limit(&mut report);
         let daily_exhausted = self.daily_exhausted_now(&mut report);
         let input = SchedulerInput {
@@ -876,6 +964,27 @@ mod tests {
         assert!(matches!(
             classify("merged\nplan 2 of 2\n", "", None),
             Outcome::Lost { .. }
+        ));
+    }
+
+    #[test]
+    fn classify_reads_an_intake_end() {
+        for line in ["merged #12 abc1234", "no issue", "intake is off"] {
+            assert_eq!(
+                classify(&format!("{line}\n"), "", Some(Some(0))),
+                Outcome::Merged,
+                "{line}"
+            );
+        }
+        assert_eq!(
+            classify("failed #12 needs-human\n", "", Some(Some(0))),
+            Outcome::NeedsHuman {
+                reason: "#12 needs-human".into()
+            }
+        );
+        assert!(matches!(
+            classify("no issue\n", "", Some(Some(1))),
+            Outcome::Failed { .. }
         ));
     }
 

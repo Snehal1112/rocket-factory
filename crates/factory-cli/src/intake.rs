@@ -11,7 +11,7 @@ pub fn run_intake_command(ctx: &CliCtx, dry_run: bool) -> Result<String, CliErro
         ctx.runnable()?;
     }
     let d = ctx.driver()?;
-    let outcome = factory_engine::run_intake(&d, d.tracker(), dry_run)?;
+    let outcome = factory_engine::run_intake(&d, d.raw_tracker(), dry_run)?;
     Ok(render_outcome(&outcome))
 }
 

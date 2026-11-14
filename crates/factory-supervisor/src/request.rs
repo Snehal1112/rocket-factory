@@ -29,7 +29,12 @@ pub enum RequestError {
 pub enum Action {
     Run,
     Approve,
+    /// One intake pass for a project. It has no job, so the job field holds `INTAKE_JOB`.
+    Intake,
 }
+
+/// The placeholder job of an intake request.
+pub const INTAKE_JOB: &str = "000";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -119,6 +124,9 @@ impl Request {
     pub fn validate(&self) -> Result<(), RequestError> {
         validate_name(&self.project).map_err(|e| RequestError::Project(e.to_string()))?;
         validate_job(&self.job)?;
+        if self.action == Action::Intake && self.job != INTAKE_JOB {
+            return Err(RequestError::Job(self.job.clone()));
+        }
         if self.series && self.action != Action::Run {
             return Err(RequestError::SeriesNotAllowed);
         }
@@ -242,6 +250,39 @@ mod tests {
             .without_review()
             .expect("approve");
         assert_eq!(both.waive("x"), Err(RequestError::WaiveWithoutReview));
+    }
+
+    #[test]
+    fn old_request_files_still_parse() {
+        let run: Request = serde_json::from_str(GOOD_JSON).expect("parse");
+        assert_eq!(run.action, Action::Run);
+        run.validate().expect("valid");
+        let approve = r#"{"id":"0000000000002-p-3","project":"p","action":"approve","job":"3","series":false,"ts_ms":2}"#;
+        let approve: Request = serde_json::from_str(approve).expect("parse");
+        assert_eq!(approve.action, Action::Approve);
+        approve.validate().expect("valid");
+    }
+
+    #[test]
+    fn an_intake_request_refuses_run_and_approve_flags() {
+        let ok = Request::new("p", Action::Intake, "000", false, 1).expect("intake");
+        assert_eq!(
+            serde_json::to_string(&ok.action).expect("json"),
+            "\"intake\""
+        );
+        assert_eq!(
+            Request::new("p", Action::Intake, "000", true, 1),
+            Err(RequestError::SeriesNotAllowed)
+        );
+        assert_eq!(
+            ok.clone().without_review(),
+            Err(RequestError::WithoutReviewNotAllowed)
+        );
+        assert_eq!(ok.waive("x"), Err(RequestError::WaiveNotAllowed));
+        assert_eq!(
+            Request::new("p", Action::Intake, "1", false, 1),
+            Err(RequestError::Job("1".to_string()))
+        );
     }
 
     #[test]

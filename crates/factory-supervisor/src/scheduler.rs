@@ -49,7 +49,8 @@ pub fn decide(input: &SchedulerInput) -> Vec<Decision> {
             }),
             Some(ProjectState::LeaseHeld { .. }) => {}
             Some(ProjectState::Ready) => {
-                let held = input.daily_exhausted && req.action == Action::Run;
+                let held =
+                    input.daily_exhausted && matches!(req.action, Action::Run | Action::Intake);
                 if !held && free > 0 && !busy.contains(req.project.as_str()) {
                     free -= 1;
                     busy.insert(req.project.as_str());
@@ -98,6 +99,24 @@ mod tests {
                     .map(|a| (*a, ProjectState::Ready))
             })
             .collect()
+    }
+
+    #[test]
+    fn an_intake_request_waits_for_the_daily_budget() {
+        let intake = Request::new("a", Action::Intake, "000", false, 1).expect("request");
+        let mut i = input(2, vec![intake], &[], &ready(&["a"]));
+        i.daily_exhausted = true;
+        assert!(decide(&i).is_empty());
+    }
+
+    #[test]
+    fn an_intake_request_starts_on_an_idle_project() {
+        let intake = Request::new("a", Action::Intake, "000", false, 1).expect("request");
+        let d = decide(&input(2, vec![intake], &[], &ready(&["a"])));
+        match d.as_slice() {
+            [Decision::Start(r)] => assert_eq!(r.action, Action::Intake),
+            other => panic!("{other:?}"),
+        }
     }
 
     fn started(d: &[Decision]) -> Vec<String> {
