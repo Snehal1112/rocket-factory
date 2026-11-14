@@ -108,7 +108,7 @@ fn two_plans(draft: &Path) {
     std::fs::write(draft.join("plan-02-b.md"), plan(1, "none")).expect("plan 2");
 }
 
-const SPEC_WITH_FOLLOW_UPS: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n\n## Follow-ups\n\n- SECRET-TITLE other work. More detail.\n";
+const SPEC_WITH_FOLLOW_UPS: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n\n## Follow-ups\n\n- SECRET-TITLE other work. More detail.\n\n## Decisions\n\n- Use the readme. Source: README.md:1. Decided by: call\n";
 
 /// A draft of one plan with a follow-up in the spec.
 fn one_plan_with_follow_ups(draft: &Path) {
