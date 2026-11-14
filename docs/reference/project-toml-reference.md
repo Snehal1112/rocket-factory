@@ -135,7 +135,7 @@ The builder also gets deny rules for `Edit` and `Write` on the job folder, so it
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `base_branch` | string | `"main"` | Jobs branch from it and merge into it. Must be a valid git branch name and must not start with `factory/`. |
-| `tickets_on_merge` | bool | false | After a merge, file follow-up tickets and close the parent tickets with `gh`. A failure never changes the merge. |
+| `tickets_on_merge` | bool | true | After the last plan merges, file follow-up tickets first, then comment on and close the parent tickets with `gh`. `false` turns it off. A failure never changes the merge. |
 | `minor_tickets` | bool | true | After a merge, file one ticket with a checklist of the open `[minor]` findings of the last review. It needs no `tickets_on_merge`, applies to every plan of a series and never changes the merge. |
 | `intake` | bool | false | Turns on polling for labelled GitHub issues and `factory intake`. |
 | `intake_label` | string | `"factory"` | The label that makes an open issue eligible. Not empty, no comma. |

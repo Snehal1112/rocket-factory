@@ -46,7 +46,7 @@ The factory runs on Linux and macOS (see the note at the end). It is built from 
 | Claude Code, logged in | The factory runs `claude -p` for every agent. | `claude --version` |
 | The `superpowers` plugin for Claude Code (any recent version) | `/factory` uses `superpowers:brainstorming`, `superpowers:writing-plans` and the builder uses `superpowers:subagent-driven-development`. | In Claude Code, run `/plugin` and look for it. |
 | The `dev-workflow-skills` plugin | The committer agent writes commits with the `dev-workflow-skills:1-git-commit` skill. | In Claude Code, run `/plugin` and look for it. |
-| `gh` (GitHub CLI), optional | Only for ticket hygiene (`tickets_on_merge`). Skip it if you do not use GitHub issues. | `gh --version` |
+| `gh` (GitHub CLI) | For ticket hygiene, which runs after a merge by default (`tickets_on_merge`). Without `gh` the step reports a failure and the merge stays. Set `tickets_on_merge = false` if you do not use GitHub issues. | `gh --version` |
 | `cargo` on the machine, only for Rust projects | The `rust` preset checks run `cargo check` and `cargo test` in your project. | `cargo --version` |
 | `bundle` on the machine, only for Ruby projects | The `ruby` preset checks run `bundle exec rubocop` and `bundle exec rspec`. | `bundle --version` |
 | `dotnet` on the machine, only for C# projects | The `csharp` preset checks run `dotnet build` and `dotnet test`. | `dotnet --version` |
@@ -361,7 +361,7 @@ budget_weighted = 1500000
 fix_rounds = 2
 builder_model = "claude-sonnet-5-5"
 reviewer_model = "claude-sonnet-5-5"
-tickets_on_merge = false
+tickets_on_merge = true
 ```
 
 Keys you may want, with defaults:
@@ -377,7 +377,7 @@ Keys you may want, with defaults:
 | `reviewer_model_large` | `claude-opus-5-5` | A stronger reviewer for risky or big diffs. Set it to the same name as `reviewer_model` to turn it off. |
 | `risk_paths` | from the preset | Globs that make a diff risky and force your review. |
 | `read_first` | `CLAUDE.md` | Files the builder reads first. |
-| `tickets_on_merge` | false | File follow-up GitHub issues and close the parent issue after a merge (needs `gh`). |
+| `tickets_on_merge` | true | File follow-up GitHub issues, then comment on and close the parent issue after the last plan merges (needs `gh`). `false` turns it off. |
 | `plan_rules` | empty | Extra rules that `/factory` applies to every plan it writes. |
 
 The full key list is in `README.md`.

@@ -664,7 +664,10 @@ factory tickets 028
 - It skips, with exit code 0, when the job is not merged, is not the last plan of a series, or the feature text has no issue references.
 - It is safe to run twice. A marker file in the job folder stops any call from repeating.
 - It never changes the merge result.
-- Set `tickets_on_merge = true` in the project settings to run it automatically after every merge. The default is off.
+- It runs automatically after the last plan of a job merges: `tickets_on_merge` defaults to true, and `false` turns it off. It files the follow-ups first, then comments and closes. A failed filing is a warning, and `factory tickets <id>` retries it.
+- The merge of the last plan ends with `Fixes: #N`, which also closes the issue on push. Earlier plans of a series end with `Relates to: #N`. The spec's follow-ups do not change the footer.
+- Upgrade note: a project that never set `tickets_on_merge` now files follow-ups and closes tickets after a merge. Set it to `false` to keep the old behaviour.
+- Follow-ups never carry the `factory` or `factory: ...` labels, so intake does not pick them up.
 
 Open `[minor]` findings of the last review become one ticket after the merge, a `- [ ]` checklist titled `Minor review findings from job <id>: <slug>`. `minors.json` in the job folder records the number, so a re-run files nothing twice, and `factory tickets <id>` retries a failed one. This runs whether or not `tickets_on_merge` is set, for every plan of a series. Set `minor_tickets = false` to turn it off.
 
@@ -681,7 +684,7 @@ Each state shows as a label on the issue:
 | Label | Meaning |
 |---|---|
 | `factory: running` | Intake picked the issue and a comment names the job id. |
-| `factory: done` | The job merged, intake commented and closed the issue. |
+| `factory: done` | The job merged, intake filed the spec's follow-ups, commented and closed the issue. |
 | `factory: needs-human` | The drafter refused, the spec review needs a person, or the job failed or parked. A fixed comment holds a reason code. |
 
 The comment of a `factory: needs-human` issue holds one of these reason codes:
@@ -697,7 +700,7 @@ The comment of a `factory: needs-human` issue holds one of these reason codes:
 
 After an upgrade, run `factory presets refresh` so the seeded presets get the new agent files. File write rules for an agent run are `Edit(path)` rules.
 
-To retry a `factory: needs-human` issue, fix what the reason code names, remove the `factory: needs-human` label, and add `factory` again as a trusted user. Intake never posts text an agent wrote, and an intake job files no follow-up or minor ticket.
+To retry a `factory: needs-human` issue, fix what the reason code names, remove the `factory: needs-human` label, and add `factory` again as a trusted user. Intake never posts text an agent wrote. After a merge it files the spec's follow-ups itself, and the merged comment ends with one fixed line: `follow-ups filed as #a, #b`, `no follow-ups` or `follow-ups not filed, see the spec of job <id>`. The follow-ups never carry `factory` or `factory: ...` labels. `factory tickets <id>` still skips an intake job, and an intake job files no minor ticket.
 
 ### 6.14 `factory kb-refresh`: refresh the knowledge base
 
@@ -1297,7 +1300,7 @@ Project settings live in `~/.factory/projects/<name>/project.toml` under `[setti
 | `risk_paths` | File patterns that always need your approval. | from the preset |
 | `checks` | Which commands run for which changed files. | from the preset |
 | `require_tests` | Park a change that adds no test. | false |
-| `tickets_on_merge` | File follow-up tickets after each merge. | false |
+| `tickets_on_merge` | File follow-up tickets, then close the parent tickets, after the last plan merges. | true |
 | `minor_tickets` | File one ticket for the open minor review findings after each merge. | true |
 | `kb_path` | A knowledge base folder. Unset turns the knowledge base off. | unset |
 | `log_level` | How much the log records. | `info` |
