@@ -61,7 +61,7 @@ In the label copy of `tickets_step`, skip `tracking`, the configured `intake_lab
 
 The follow-up filing of `tickets_step` becomes its own function in `tickets.rs`:
 
-`pub fn file_follow_ups(driver: &Driver, id: &str, tracker: &dyn Tracker, dry_run: bool) -> Result<TicketsReport, EngineError>`
+`pub fn file_follow_ups(driver: &Driver, id: &str, tracker: &dyn Tracker, dry_run: bool) -> Result<FiledFollowUps, EngineError>`, where `FiledFollowUps { report: TicketsReport, numbers: Vec<u32>, listed: usize }` carries the issue numbers created or adopted and the count of spec bullets
 
 It runs the part of `tickets_step` from the label copy to the last `created` record (parents, labels, marker, one issue per bullet). It does not comment and does not close. `tickets_step` calls it for a normal job, then comments and closes as today. Its skips for a job that is not merged, not the last plan, or has no issue reference apply to both callers; the intake skip stays in `tickets_step` only.
 
