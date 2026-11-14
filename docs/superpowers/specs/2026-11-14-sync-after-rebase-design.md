@@ -62,7 +62,8 @@ factory sync <id>
 - Rewrite detection: `!repo.is_ancestor(job.head, tip(job.branch))`. When true, one `store().update` sets `head = tip`, `prev_head = None` and forces stage `review`, and the ledger gets the ruling `branch rewritten outside the factory, floor reset to base, head is <sha>`. The review then covers `base..head`, the whole branch.
 - The order is fixed: reset the floor first, then merge main when the branch is behind, then one review. A rewritten branch that is also behind gets main merged in before the single `Rebase` review, and the merge does not start a second review.
 - When the branch is not rewritten and is behind the base branch, the existing merge path runs. `MergeOutcome::UpToDate` with no rewrite returns early with no stage change and no review.
-- A new `ReviewRun::Rebase` variant runs every role the job holds, the same as `ReviewRun::Round` does at `review.rs:134`, so a rewritten branch always gets the security reviewer. It saves the code review as `review-code-r<round>-rebase.md`, so the earlier round reviews are kept. A sync that is not a rewrite keeps `ReviewRun::Sync`, which runs the code reviewer only (`review.rs:130-134`).
+- After a rewrite the merge step leaves `prev_head = None`, so the one review covers `base..head`. It must not set `prev_head` to the rewritten tip, which would shrink the review to the merge diff.
+- A new `ReviewRun::Rebase` variant always runs `code` and `security`, whatever roles the job holds, and does not apply the docs-only skip (`security_skippable`, `review.rs:377`). A job holds only the roles of the project config (`set_reviewers`, `runloop.rs:68`), so before the review the driver adds the `security` entry to the job when it is missing. It saves the code review as `review-code-r<round>-rebase.md`, so the earlier round reviews are kept. A sync that is not a rewrite keeps `ReviewRun::Sync`, which runs the code reviewer only (`review.rs:130-134`).
 - Every other step (checks, `Decision`, `park_after_sync`) is the code `sync_stage` runs today.
 
 ### 3. A clear park for a rewritten branch
@@ -91,8 +92,8 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 - `sync_requested_merges_main_into_a_job_that_is_behind` (engine): the job gets a merge commit, goes back to `review` and runs checks and review.
 - `sync_requested_does_not_count_against_max_syncs` (engine): with `syncs = 2` it still runs and `syncs` stays 2.
 - `sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch` (engine): rewrite the branch with `git2`, the job ends in `review` with `prev_head` none, and the review diff covers `base..head` and is saved as `review-code-r<round>-rebase.md`.
-- `a_rebase_review_runs_the_security_reviewer` (engine): after a rewrite the security reviewer runs as well as the code reviewer. `a_sync_without_a_rewrite_runs_the_code_reviewer_only` pins the other case.
-- `a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review` (engine): one review run, the merge commit is in the reviewed head.
+- `a_rebase_review_runs_the_security_reviewer` (engine): on a job whose reviewers are `["code"]`, with a docs-only diff, a rewrite still runs the security reviewer as well as the code reviewer. `a_sync_without_a_rewrite_runs_the_code_reviewer_only` pins the other case.
+- `a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review` (engine): one review run, the merge commit is in the reviewed head, `prev_head` is none and the review diff starts at `base`.
 - `sync_requested_on_an_up_to_date_job_changes_nothing` (engine): no stage change, no agent run.
 - `sync_requested_refuses_a_merged_job`, `..._a_dirty_worktree` (engine).
 - `sync_requested_conflict_parks_and_names_the_paths` (engine).

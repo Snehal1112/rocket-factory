@@ -20,8 +20,8 @@
 - No board, ledger or events field is added. Board JSON stays compatible with `factory-server`.
 - The driver never rewrites history: a sync merges main in and never rebases.
 - A requested sync does not call the `MAX_SYNCS` check and does not change `job.syncs`. An automatic sync is unchanged.
-- Reviewers: `ReviewRun::Rebase` runs every role the job holds, as `ReviewRun::Round` does at `review.rs:134`. A sync that is not a rewrite keeps `ReviewRun::Sync`, the code reviewer only.
-- Order of a requested sync: reset the floor when the branch was rewritten, then merge main when the branch is behind, then one review. The merge never starts a second review.
+- Reviewers: `ReviewRun::Rebase` always runs `code` and `security`, whatever roles the job holds, and skips no role for a docs-only diff. The driver adds the `security` entry to the job before the review when it is missing. A sync that is not a rewrite keeps `ReviewRun::Sync`, the code reviewer only.
+- Order of a requested sync: reset the floor when the branch was rewritten, then merge main when the branch is behind, then one review. The merge never starts a second review, and after a rewrite it leaves `prev_head` empty so the review covers `base..head`.
 - Exact texts: `job <id> is up to date with <base>`, `the worktree of job <id> has uncommitted changes`, `job <id> is <state>`, `branch rewritten outside the factory, floor reset to base, head is <sha>`, and `the branch no longer holds the reviewed head <sha7>; it was rewritten outside the factory: run factory sync <id>`. The old text `committer rewrote history at or below the floor` stays for a real committer rewrite.
 
 ## Review Focus
@@ -59,8 +59,8 @@
   - `sync_requested_merges_main_into_a_job_that_is_behind`: the job has a merge commit, stage `review` and a review ran.
   - `sync_requested_does_not_count_against_max_syncs`: with `syncs = 2` it runs and `syncs` stays 2.
   - `sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch`: after the rewrite `prev_head` is none, the stage is `review`, the ledger holds the ruling text from Global Constraints, and `review-code-r<round>-rebase.md` exists next to the earlier review files.
-  - `a_rebase_review_runs_the_security_reviewer`: after a rewrite both the code and the security reviewer run. `a_sync_without_a_rewrite_runs_the_code_reviewer_only` pins the other case.
-  - `a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review`: one review run, and the merge commit is part of the reviewed head.
+  - `a_rebase_review_runs_the_security_reviewer`: a job whose reviewers are `["code"]` with a docs-only diff still runs both the code and the security reviewer after a rewrite. `a_sync_without_a_rewrite_runs_the_code_reviewer_only` pins the other case.
+  - `a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review`: one review run, the merge commit is part of the reviewed head, `prev_head` is none and the review diff starts at `base`.
   - `sync_requested_on_an_up_to_date_job_changes_nothing`: the outcome is `UpToDate`, the stage and `head` are unchanged and no agent ran.
   - `sync_requested_refuses_a_merged_job` and `sync_requested_refuses_a_dirty_worktree`: each gives `Err` with the exact text.
   - `sync_requested_conflict_parks_and_names_the_paths`: the outcome is `Parked` and names the file.
