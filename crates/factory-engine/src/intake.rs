@@ -262,6 +262,11 @@ pub fn run_intake(
         .map_err(|e| tracker_err("cannot comment on the issue", e))?;
     let cause = match run_series(driver, &jobs[0]) {
         Ok(RunEnd::Merged) => {
+            let last = jobs.last().unwrap_or(&jobs[0]);
+            let line = follow_up_line(
+                crate::tickets::file_follow_ups(driver, last, tracker, false),
+                last,
+            );
             tracker
                 .edit_labels(
                     number,
@@ -270,7 +275,7 @@ pub fn run_intake(
                 )
                 .map_err(|e| tracker_err("cannot label the issue done", e))?;
             tracker
-                .comment(number, &format!("merged as job {ids}"))
+                .comment(number, &format!("merged as job {ids}\n{line}"))
                 .map_err(|e| tracker_err("cannot comment on the issue", e))?;
             tracker
                 .close(number)
@@ -286,6 +291,29 @@ pub fn run_intake(
     let mut f = failure("build-failed", number, cause);
     f.job = Some(first_unmerged(driver, &jobs));
     settle_failure(tracker, number, &f, &draft)
+}
+
+/// The fixed line of the merged comment about the follow-ups: issue numbers and fixed words only.
+/// A filing error or a failed report is logged and never stops the close.
+fn follow_up_line(filed: Result<crate::FiledFollowUps, EngineError>, last: &str) -> String {
+    let not_filed = format!("follow-ups not filed, see the spec of job {last}");
+    match filed {
+        Ok(f) if !f.report.failed && !f.report.skipped && f.listed == 0 => {
+            "no follow-ups".to_string()
+        }
+        Ok(f) if !f.report.failed && !f.report.skipped && f.numbers.len() == f.listed => {
+            let numbers: Vec<String> = f.numbers.iter().map(|n| format!("#{n}")).collect();
+            format!("follow-ups filed as {}", numbers.join(", "))
+        }
+        Ok(f) => {
+            tracing::error!(event = "step.error", step = "intake_follow_ups", msg = %f.report.lines.join("; "));
+            not_filed
+        }
+        Err(e) => {
+            tracing::error!(event = "step.error", step = "intake_follow_ups", msg = %e);
+            not_filed
+        }
+    }
 }
 
 /// The first job of the series that is not merged, else the first job.
@@ -528,6 +556,23 @@ mod tests {
     use std::cell::Cell;
 
     const LABELLED_AT: &str = "2026-11-05T10:00:00Z";
+
+    #[test]
+    fn a_skipped_filing_is_reported_as_not_filed() {
+        let skipped = crate::FiledFollowUps {
+            report: crate::TicketsReport {
+                lines: vec!["the feature text has no issue references".to_string()],
+                failed: false,
+                skipped: true,
+            },
+            numbers: Vec::new(),
+            listed: 0,
+        };
+        assert_eq!(
+            follow_up_line(Ok(skipped), "002"),
+            "follow-ups not filed, see the spec of job 002"
+        );
+    }
 
     #[test]
     fn redraftable_is_true_only_for_validation_and_spec_refusals() {

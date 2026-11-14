@@ -94,12 +94,20 @@ the `gh` CLI in the main checkout (the repo from `Layout`); tests use a fake.
 
 - `factory tickets <id> [--dry-run]` runs the step for a merged job. `--dry-run` makes only read calls and
   prints each action. It exits non-zero when a `gh` call failed.
-- `tickets_on_merge` (default `false`, a normal setting in `config.toml` or in `[settings]` of `project.toml`)
-  runs the same step at the end of the merge.
+- `tickets_on_merge` (default `true`, a normal setting in `config.toml` or in `[settings]` of `project.toml`)
+  runs the same step at the end of the merge. `false` turns it off. Upgrade note: a project that never set it
+  now closes its tickets after a merge.
 - The parent tickets come from the feature text given to `factory new`: `#N` and
   `https://github.com/<owner>/<repo>/issues/N` both count. A URL for another repository makes the step skip.
 - The remaining work is the `## Follow-ups` section of the job's `spec.md`, one ticket per bullet. A spec with
-  follow-ups gives the merge footer `Relates to: #N` instead of `Fixes: #N`.
+  follow-ups does not change the merge footer: the last plan of a job (and a single-plan job) ends with
+  `Fixes: #N`, every earlier plan with `Relates to: #N`, and builder, fix and sync commits with `Relates to`.
+  The step files the follow-ups first, then comments, then closes. `Fixes` also closes on push. A failed filing
+  is a warning, and `factory tickets <id>` retries it. Follow-ups never carry `tracking`, the intake label or a
+  `factory: ...` label.
+- An intake job files its spec follow-ups through its own call and adds one fixed line to the merged comment
+  (`follow-ups filed as #a, #b`, `no follow-ups` or `follow-ups not filed, see the spec of job <id>`).
+  `factory tickets <id>` still skips intake jobs.
 - `tickets.json` in the job folder records every call, so a rerun never files a ticket twice.
 - A follow-up that was started but not recorded is found again by its title and the `Filed by factory job` line,
   so a rerun adopts that issue instead of filing a second one.

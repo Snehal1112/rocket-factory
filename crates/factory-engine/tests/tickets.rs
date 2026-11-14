@@ -1,7 +1,7 @@
 mod common;
 use common::{approved_job, set_feature, with_tracker, FakeTracker, MergeFixture};
 use factory_core::Config;
-use factory_engine::{merge_stage, tickets_step, MergeResult};
+use factory_engine::{file_follow_ups, merge_stage, tickets_step, MergeResult};
 
 const SPEC_WITH_TWO: &str = "## Goal\nsomething with enough words to pass the check here\n\n## Follow-ups\n\n- Shared name helpers. More detail here.\n- Merge QueryParam and Header\n\n## Acceptance criteria\n- a\n";
 const SPEC_NONE: &str =
@@ -879,4 +879,80 @@ fn the_ticket_step_skips_an_intake_job() {
     }
     let job = fx.driver.job(&fx.id).expect("job");
     assert!(!fx.driver.job_dir(&job).join("tickets.json").exists());
+}
+
+#[test]
+fn file_follow_ups_files_and_does_not_comment_or_close() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    let out = file_follow_ups(&fx.driver, &fx.id, &t, false).expect("file");
+    assert!(
+        !out.report.failed && !out.report.skipped,
+        "{:?}",
+        out.report
+    );
+    assert_eq!(out.numbers, vec![201, 202]);
+    assert_eq!(out.listed, 2);
+    let s = t.state.lock().expect("lock");
+    assert_eq!(s.created.len(), 2);
+    assert!(s.comments.is_empty() && s.closes.is_empty());
+}
+
+#[test]
+fn file_follow_ups_reports_zero_listed_for_a_spec_without_follow_ups() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_NONE), &t);
+    let out = file_follow_ups(&fx.driver, &fx.id, &t, false).expect("file");
+    assert!(out.numbers.is_empty());
+    assert_eq!(out.listed, 0);
+    assert_eq!(t.count("create"), 0);
+}
+
+#[test]
+fn file_follow_ups_adopts_a_pending_title() {
+    let t = tracker().with_found("Shared name helpers", 150);
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    seed_marker(&fx, r#"{"created":[],"pending":["Shared name helpers"]}"#);
+    let out = file_follow_ups(&fx.driver, &fx.id, &t, false).expect("file");
+    assert_eq!(out.numbers.first(), Some(&150));
+    assert_eq!(out.numbers.len(), 2);
+    assert_eq!(t.count("create Shared name helpers"), 0);
+    assert_eq!(t.count("create Merge QueryParam and Header"), 1);
+}
+
+#[test]
+fn file_follow_ups_skips_a_job_that_is_not_the_last_plan() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.series = Some(factory_core::SeriesPos {
+                plan_file: "p".into(),
+                index: 1,
+                total: 2,
+                id: None,
+            });
+            Ok(())
+        })
+        .expect("series");
+    let out = file_follow_ups(&fx.driver, &fx.id, &t, false).expect("file");
+    assert!(out.report.skipped, "{:?}", out.report);
+    assert!(out.numbers.is_empty());
+    assert_eq!(t.count("create"), 0);
+}
+
+#[test]
+fn tickets_step_still_writes_one_ledger_line() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    tickets_step(&fx.driver, &fx.id, false).expect("step");
+    let job = fx.driver.job(&fx.id).expect("job");
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    let lines = ledger
+        .lines()
+        .filter(|l| l.contains("tickets done"))
+        .count();
+    assert_eq!(lines, 1, "{ledger}");
 }

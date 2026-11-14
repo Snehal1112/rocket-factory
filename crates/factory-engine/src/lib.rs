@@ -115,7 +115,7 @@ pub use tasks::{
     parse_checkbox_tasks, parse_tasks, plan_outline, plan_title, review_focus, spec_goal, PlanTask,
 };
 pub use tick::tick_plan;
-pub use tickets::{tickets_step, TicketsReport, TICKETS_FILE};
+pub use tickets::{file_follow_ups, tickets_step, FiledFollowUps, TicketsReport, TICKETS_FILE};
 pub use tipfiles::RepoTip;
 pub use tracker::{GhTracker, IssueInfo, LabelEvent, Tracker};
 pub use waivers::{
