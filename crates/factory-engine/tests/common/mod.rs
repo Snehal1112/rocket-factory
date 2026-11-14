@@ -689,6 +689,10 @@ pub struct FakeState {
     pub fail: HashSet<String>,
     pub found: HashMap<String, u32>,
     pub on_create: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub issues: Vec<factory_engine::IssueInfo>,
+    pub actors: HashMap<(u32, String), String>,
+    pub user: String,
+    pub label_edits: Vec<(u32, Vec<String>, Vec<String>)>,
 }
 
 /// A tracker that records its calls. Clones share one state, so a test keeps a handle after the driver owns the box.
@@ -727,6 +731,24 @@ impl FakeTracker {
     /// Runs `hook` just before a successful `create` returns.
     pub fn with_on_create(self, hook: impl Fn() + Send + Sync + 'static) -> FakeTracker {
         self.state.lock().expect("lock").on_create = Some(Arc::new(hook));
+        self
+    }
+    /// The open issues `list_labelled` filters by label.
+    pub fn with_issues(self, issues: Vec<factory_engine::IssueInfo>) -> FakeTracker {
+        self.state.lock().expect("lock").issues = issues;
+        self
+    }
+    /// Who `labelled_by` names for `label` on `issue`.
+    pub fn with_label_actor(self, issue: u32, label: &str, login: &str) -> FakeTracker {
+        self.state
+            .lock()
+            .expect("lock")
+            .actors
+            .insert((issue, label.to_string()), login.to_string());
+        self
+    }
+    pub fn with_user(self, login: &str) -> FakeTracker {
+        self.state.lock().expect("lock").user = login.to_string();
         self
     }
     pub fn fail_on(&self, method: &str) {
@@ -811,6 +833,29 @@ impl factory_engine::Tracker for FakeTracker {
         s.closed.insert(issue);
         Ok(())
     }
+    fn list_labelled(&self, label: &str) -> Result<Vec<factory_engine::IssueInfo>, String> {
+        let s = self.enter(format!("list_labelled {label}"), "list_labelled")?;
+        Ok(s.issues
+            .iter()
+            .filter(|i| i.labels.iter().any(|l| l == label))
+            .cloned()
+            .collect())
+    }
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+        let s = self.enter(format!("labelled_by {issue} {label}"), "labelled_by")?;
+        Ok(s.actors.get(&(issue, label.to_string())).cloned())
+    }
+    fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
+        let mut s = self.enter(format!("edit_labels {issue}"), "edit_labels")?;
+        s.label_edits.push((issue, add.to_vec(), remove.to_vec()));
+        Ok(())
+    }
+    fn current_user(&self) -> Result<String, String> {
+        Ok(self
+            .enter("current_user".into(), "current_user")?
+            .user
+            .clone())
+    }
 }
 
 /// A tracker that panics in one method, or in every method when `panic_on` is `None`, and forwards the rest.
@@ -856,6 +901,22 @@ impl factory_engine::Tracker for PanicTracker {
     fn close(&self, issue: u32) -> Result<(), String> {
         self.check("close");
         self.inner.close(issue)
+    }
+    fn list_labelled(&self, label: &str) -> Result<Vec<factory_engine::IssueInfo>, String> {
+        self.check("list_labelled");
+        self.inner.list_labelled(label)
+    }
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<String>, String> {
+        self.check("labelled_by");
+        self.inner.labelled_by(issue, label)
+    }
+    fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
+        self.check("edit_labels");
+        self.inner.edit_labels(issue, add, remove)
+    }
+    fn current_user(&self) -> Result<String, String> {
+        self.check("current_user");
+        self.inner.current_user()
     }
 }
 
