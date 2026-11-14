@@ -182,7 +182,7 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 - Eligible issues run one at a time, `priority: P0` before `P1` before `P2`, then oldest first.
 - A picked issue gets `factory: running`, a comment with the job id, and on merge a closing comment and `factory: done`.
 - A failed or parked issue gets `factory: needs-human` and a fixed comment with a reason code, and the queue moves on. No agent-written text is posted.
-- The drafter cannot read outside the repo root or write outside its draft folder.
+- The drafter cannot read outside the export folder or write outside its draft folder.
 - A job is never created without drafted plans.
 - Intake closes a merged issue itself. No other step can create, comment on, close or relabel a GitHub issue for an intake job, including after `approve --waive`, and a step added later is covered the same way.
 - The drafter reads only an export of the tracked files of the base branch: untracked files, `.git` and every factory folder are out of its reach.
@@ -219,7 +219,7 @@ Intake therefore closes the issue itself. The follow-ups and minor findings stay
 - What do the post-merge ticket steps do for intake jobs? Options: skip both the follow-up filing and the minor ticket, accept that they post agent text, skip follow-ups only. Chosen: skip both. Decided by: user
 - How should intake jobs be protected from posting agent text? Options: a default-deny gate in the tracker, add the waiver step to a skip list, refuse `approve --waive` on intake jobs. Chosen: a default-deny gate in the tracker. Decided by: user
 - How are intake jobs recognised? Options: an optional `Job.intake_issue` board field, the `issue-<n>` slug. Chosen: the optional field. Decided by: user
-- Where do the drafts live and what is the drafter denied? Options: the state folder with a deny on reads of it, a temp folder outside the repo, refuse a repo-local state folder. Chosen: the state folder with an explicit deny on reads of it. Decided by: user
+- Where do the drafts live and what is the drafter denied? Options: the state folder with a deny on reads of it, a temp folder outside the repo, refuse a repo-local state folder. Chosen first: the state folder with an explicit deny on reads of it. Replaced by the clean export decisions below, because the drafter now works in an export under the state folder. Decided by: user
 - How is an edit after the trusted label handled? Options: skip issues edited after the label using `updatedAt`, accept the risk and document it, require the trusted user to be the last editor through GraphQL. Chosen: skip issues edited after the label, using `updatedAt` as a conservative stand-in. Decided by: user
 - How is the reviewed plan 1 code landed? Options: merge the branch and fix in a new job, fix first. Chosen: merge the branch into local main, then a fix job and a new series for the rest. Decided by: user
 - How is the drafter's read access limited? Options: deny every `Layout` path inside the repo, run on a clean export of the base branch, deny `.git` and ignored paths as well, accept the gap. Chosen first: deny every `Layout` path inside the repo. Replaced by the next decision, because a block-list leaves untracked secrets readable. Decided by: user
