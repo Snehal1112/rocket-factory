@@ -150,6 +150,9 @@ pub struct Job {
     /// The `round` value when the latest rework started, so fix rounds count from there. New in the act-on-review-findings series, absent in older boards.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rework_base: u32,
+    /// The GitHub issue number this job fixes for the issue queue. Absent for every other job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intake_issue: Option<u32>,
 }
 
 /// The last finished builder of the job, a task or fix builder, used to decide a carry or a fresh fix builder.
@@ -285,6 +288,7 @@ impl Job {
             provider: None,
             last_review: None,
             rework_base: 0,
+            intake_issue: None,
         }
     }
 
@@ -888,6 +892,19 @@ mod tests {
         let text = serde_json::to_string(&j).expect("json");
         let back: Job = serde_json::from_str(&text).expect("parse");
         assert_eq!(back.provider.as_deref(), Some("codex"));
+    }
+
+    #[test]
+    fn job_intake_issue_is_optional_and_absent_from_old_boards() {
+        let mut j = job();
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(!text.contains("intake_issue"), "{text}");
+        let back: Job = serde_json::from_str(&text).expect("old job loads");
+        assert_eq!(back.intake_issue, None);
+        j.intake_issue = Some(42);
+        let text = serde_json::to_string(&j).expect("json");
+        let back: Job = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back.intake_issue, Some(42));
     }
 
     #[test]

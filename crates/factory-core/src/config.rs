@@ -129,6 +129,20 @@ pub struct Config {
     pub tickets_on_merge: bool,
     /// After a merge, file one ticket for the open `[minor]` review findings. On by default.
     pub minor_tickets: bool,
+    /// Turn on polling for labelled GitHub issues and `factory intake`. Off by default.
+    pub intake: bool,
+    /// The label that makes an open issue eligible. Not empty, no comma.
+    pub intake_label: String,
+    /// Priority labels, highest first, no duplicates. An issue without one sorts last.
+    pub priority_labels: Vec<String>,
+    /// Minutes between polls of `factoryd`. At least 1.
+    pub intake_poll_minutes: u32,
+    /// Logins whose label counts. Empty means the `gh` user the factory runs as.
+    pub intake_trusted: Vec<String>,
+    /// The model of the drafter agent.
+    pub intake_model: String,
+    /// Per-run cap on weighted tokens for the drafter of one issue.
+    pub intake_budget_weighted: u64,
     /// Run the spec reviewer agent in `factory new`. The risky-decision check runs whatever this is.
     pub spec_review: bool,
     /// Per-run cap on weighted tokens for one spec review run.
@@ -231,6 +245,16 @@ impl Default for Config {
             builder_simplify: true,
             tickets_on_merge: false,
             minor_tickets: true,
+            intake: false,
+            intake_label: "factory".to_string(),
+            priority_labels: ["priority: P0", "priority: P1", "priority: P2"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            intake_poll_minutes: 15,
+            intake_trusted: Vec::new(),
+            intake_model: "claude-opus-5-5".to_string(),
+            intake_budget_weighted: 400_000,
             spec_review: true,
             spec_review_budget_weighted: 100_000,
             kb_path: None,
@@ -361,11 +385,32 @@ impl Config {
                     .into(),
             ));
         }
+        if cfg.intake_label.trim().is_empty() || cfg.intake_label.contains(',') {
+            return Err(CoreError::Config(
+                "intake_label must not be empty and must not contain a comma".into(),
+            ));
+        }
+        if cfg
+            .priority_labels
+            .iter()
+            .enumerate()
+            .any(|(i, l)| cfg.priority_labels[..i].contains(l))
+        {
+            return Err(CoreError::Config(
+                "priority_labels must not repeat a label".into(),
+            ));
+        }
+        if cfg.intake_poll_minutes == 0 || cfg.intake_budget_weighted == 0 {
+            return Err(CoreError::Config(
+                "intake_poll_minutes and intake_budget_weighted must be above zero".into(),
+            ));
+        }
         let models = [
             &cfg.builder_model,
             &cfg.reviewer_model,
             &cfg.commit_model,
             &cfg.kb_model,
+            &cfg.intake_model,
         ];
         if models.iter().any(|m| m.trim().is_empty()) {
             return Err(CoreError::Config("model names must not be empty".into()));
@@ -1112,6 +1157,47 @@ mod tests {
         assert!(err
             .to_string()
             .contains("log_level must be one of error, warn, info, debug, trace"));
+    }
+
+    #[test]
+    fn intake_settings_have_the_documented_defaults() {
+        let cfg = Config::default();
+        assert!(!cfg.intake);
+        assert_eq!(cfg.intake_label, "factory");
+        assert_eq!(
+            cfg.priority_labels,
+            ["priority: P0", "priority: P1", "priority: P2"]
+        );
+        assert_eq!(cfg.intake_poll_minutes, 15);
+        assert!(cfg.intake_trusted.is_empty());
+        assert_eq!(cfg.intake_model, "claude-opus-5-5");
+        assert_eq!(cfg.intake_budget_weighted, 400_000);
+    }
+
+    #[test]
+    fn bad_intake_settings_are_config_errors() {
+        for bad in [
+            "intake_label = \"\"",
+            "intake_label = \"a,b\"",
+            "priority_labels = [\"x\", \"x\"]",
+            "intake_poll_minutes = 0",
+            "intake_budget_weighted = 0",
+            "intake_model = \"\"",
+        ] {
+            Config::parse(bad).expect_err(bad);
+        }
+    }
+
+    #[test]
+    fn intake_settings_parse_from_toml() {
+        let cfg = Config::parse(
+            "intake = true\nintake_label = \"bot\"\npriority_labels = [\"p1\", \"p2\"]\nintake_trusted = [\"alice\"]",
+        )
+        .expect("parses");
+        assert!(cfg.intake);
+        assert_eq!(cfg.intake_label, "bot");
+        assert_eq!(cfg.priority_labels, ["p1", "p2"]);
+        assert_eq!(cfg.intake_trusted, ["alice"]);
     }
 
     #[test]

@@ -93,6 +93,18 @@ const GROUPS: &[(&str, &[Key])] = &[
         ],
     ),
     (
+        "Issue intake.",
+        &[
+            ("intake", None),
+            ("intake_label", None),
+            ("priority_labels", None),
+            ("intake_poll_minutes", None),
+            ("intake_trusted", None),
+            ("intake_model", None),
+            ("intake_budget_weighted", None),
+        ],
+    ),
+    (
         "Checks and gates.",
         &[
             ("checks", None),
