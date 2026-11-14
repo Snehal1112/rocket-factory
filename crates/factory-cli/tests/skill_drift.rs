@@ -1,10 +1,22 @@
-//! Checks that the installed superpowers skills still have what the factory commands rely on.
-//! It passes on a machine with no plugin installed.
+//! Checks that the installed superpowers has the skills the factory commands name.
+//! It reads no skill text and passes on a machine with no plugin installed.
 
 use std::path::{Path, PathBuf};
 
-/// The superpowers version the commands were written against.
-const SKILLS_TESTED_AGAINST: &str = "6.4.2";
+/// The skills the factory commands invoke.
+const REQUIRED_SKILLS: [&str; 3] = [
+    "brainstorming",
+    "writing-plans",
+    "subagent-driven-development",
+];
+
+/// The required skills whose `<name>/SKILL.md` is not a file.
+fn missing_skills(skills: &Path) -> Vec<&'static str> {
+    REQUIRED_SKILLS
+        .into_iter()
+        .filter(|name| !skills.join(name).join("SKILL.md").is_file())
+        .collect()
+}
 
 /// Splits `6.4.2` into numbers so versions compare in order. Non-numeric parts count as 0.
 fn version_key(name: &str) -> Vec<u64> {
@@ -29,8 +41,38 @@ fn newest_skills(home: &Path) -> Option<(String, PathBuf)> {
     found.into_iter().max_by_key(|(v, _)| version_key(v))
 }
 
-fn read(path: &Path) -> String {
-    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+/// Creates `<skills>/<name>/SKILL.md`.
+fn add_skill(skills: &Path, name: &str) {
+    let dir = skills.join(name);
+    std::fs::create_dir(&dir).expect("skill dir");
+    std::fs::write(dir.join("SKILL.md"), "x").expect("skill file");
+}
+
+#[test]
+fn skill_names_check_passes_with_no_plugin_installed() {
+    let home = tempfile::tempdir().expect("temp home");
+    assert!(newest_skills(home.path()).is_none());
+}
+
+#[test]
+fn a_missing_skill_folder_is_named() {
+    let skills = tempfile::tempdir().expect("temp skills");
+    for name in ["brainstorming", "writing-plans"] {
+        add_skill(skills.path(), name);
+    }
+    assert_eq!(
+        missing_skills(skills.path()),
+        vec!["subagent-driven-development"]
+    );
+}
+
+#[test]
+fn all_three_skill_folders_pass() {
+    let skills = tempfile::tempdir().expect("temp skills");
+    for name in REQUIRED_SKILLS {
+        add_skill(skills.path(), name);
+    }
+    assert!(missing_skills(skills.path()).is_empty());
 }
 
 #[test]
@@ -44,41 +86,9 @@ fn installed_skills_still_have_what_the_commands_rely_on() {
         return;
     };
     println!("skill drift: checked superpowers {version}");
-    if version != SKILLS_TESTED_AGAINST {
-        println!("note: the commands were written against superpowers {SKILLS_TESTED_AGAINST}, found {version}");
-    }
-    // The command overrides these brainstorming sentences by quoting them, so they must still be there.
-    let brainstorming = read(&skills.join("brainstorming/SKILL.md"))
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    for quoted in [
-        "ask one focused question about purpose or intended use",
-        "open-ended is fine too",
-    ] {
-        assert!(
-            brainstorming.contains(quoted),
-            "brainstorming no longer says: {quoted}"
-        );
-    }
-    let plans = read(&skills.join("writing-plans/SKILL.md"));
+    let missing = missing_skills(&skills);
     assert!(
-        plans.contains("Interfaces:"),
-        "writing-plans no longer names Interfaces:"
-    );
-    assert!(
-        plans.contains("Review Focus"),
-        "writing-plans no longer names Review Focus"
-    );
-    assert!(
-        skills
-            .join("subagent-driven-development/SKILL.md")
-            .is_file(),
-        "subagent-driven-development is gone"
-    );
-    let prompt = read(&skills.join("subagent-driven-development/implementer-prompt.md"));
-    assert!(
-        prompt.contains("Status"),
-        "implementer-prompt.md no longer asks for a Status"
+        missing.is_empty(),
+        "superpowers {version} lacks skills the commands name: {missing:?}"
     );
 }

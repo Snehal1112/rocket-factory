@@ -89,7 +89,7 @@ You need:
 - **A C compiler** (gcc or clang). The git library needs one.
 - **git**.
 - **Claude Code**, logged in. Check with `claude -p "say ok"`.
-- The **superpowers** plugin (version 6.4.2) and the **dev-workflow-skills** plugin.
+- The **superpowers** plugin (any recent version; the factory uses its `brainstorming`, `writing-plans` and `subagent-driven-development` skills) and the **dev-workflow-skills** plugin.
 - **gh** (GitHub CLI), optional. Only `factory tickets` needs it.
 - The build tool of your own project: `cargo` for Rust, `bundle` for Ruby, `dotnet` for C#, `go` for Go, `bun` for Node.js and React.
 
