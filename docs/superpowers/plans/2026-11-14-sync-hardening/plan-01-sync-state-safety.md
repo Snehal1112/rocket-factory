@@ -19,14 +19,14 @@
 - Do not shell out to `git`. Do not read `/proc`. No board, ledger or events field is added.
 - `last_review` is never cleared by the reset. Open blockers keep refusing `approve`, also with `--without-review`.
 - The whole-branch path is: `head = tip`, `prev_head = None`, `reset_reviews()`, stage `review` forced, all in one `store().update_job`, then `ReviewRun::Rebase` (code and security).
-- The floor is kept (`prev_head = old head`, `ReviewRun::Sync`) only when the stage is `approve` and `tip == head`.
+- The decision table of a requested sync: `tip == head` and not behind main gives `UpToDate` in every stage; `tip == head`, behind main and stage `approve` keeps the floor (`prev_head = old head`, `ReviewRun::Sync`); every other case takes the whole-branch path. A pending `batch_snapshot` refuses the sync.
 - The ledger ruling is written before the board update.
 
 ## Review Focus
 
 1. A job that parks after the reset and before the rebase review must not be approvable. Pinned by `a_rewrite_resets_the_review_states_and_keeps_last_review`.
 2. A second sync after an interrupted first one must still review the whole branch. Pinned by `a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch`.
-3. A job in `review`, `build` or `needs-human` must not keep a floor. Pinned by `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head`.
+3. A job in `review`, `build` or `needs-human` that is behind main must not keep a floor, and an up-to-date job with `tip == head` must change nothing in any stage. Pinned by `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head`.
 4. Commits added by hand on top of `head` must get the whole-branch review. Pinned by `commits_added_on_top_of_head_get_the_whole_branch_review`.
 5. After main moved, the rebase review diff must hold none of the main changes. Pinned by `a_rebase_review_diff_starts_at_the_merge_base`.
 
@@ -44,14 +44,15 @@
 
 **Interfaces:**
 - Consumes: `Job::reset_reviews()` (`factory-core/src/board.rs:389`), `Job.last_review: Option<LastReview>`, `set_stage_logged`, `driver.ledger(&job).ruling(..)`, the existing `sync_with(driver, id, kind, rewritten)`.
-- Produces: in `sync_requested`, `let whole_branch = job.stage != Stage::Approve || tip != head`. When true the single update described in Global Constraints runs, after the ruling, and `sync_with` is called with `rewritten = true` (its parameter keeps its meaning: the floor stays empty and the review is `Rebase`). The `rewritten` test `!is_ancestor(head, tip)` is removed.
+- Produces: in `sync_requested`, `let behind = ..` (the base branch tip is not an ancestor of the branch tip), `if tip == head && !behind { return Ok(SyncOutcome::UpToDate) }`, then `let whole_branch = tip != head || job.stage != Stage::Approve`. When `whole_branch` is true the single update described in Global Constraints runs, after the ruling, and `sync_with` is called with `rewritten = true` (its parameter keeps its meaning: the floor stays empty and the review is `Rebase`). The `rewritten` test `!is_ancestor(head, tip)` is removed.
 
 - [ ] **Step 1: Read** `sync.rs`, the fixtures of `tests/sync_review.rs` and `Job::reset_reviews`.
 - [ ] **Step 2: Write the failing tests** in `tests/sync_review.rs`, reusing its job-behind-main fixture and its branch rewrite helper:
   - `a_rewrite_resets_the_review_states_and_keeps_last_review`: rewrite the branch, make the checks park the job after the reset, then assert the reviews read pending, `last_review` is unchanged and the approve refusal text appears when `approve` is attempted. A second case sets `last_review` to `changes` and asserts that `approve --without-review` is still refused.
   - `a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch`: stop the first run after the reset (a runner that errors on the first review call), run `sync_requested` again, assert one `Rebase` review and `prev_head` none.
-  - `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head`: a table of four jobs with the same behind-main branch, in stage `approve`, `review`, `build` and `needs-human`. Show one full case for `approve` (`prev_head` equals the old head, a `-sync1` review) and list the others by stage with the expected `prev_head` none and a `-rebase` review.
+  - `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head`: a table of four jobs with the same behind-main branch and `tip == head`, in stage `approve`, `review`, `build` and `needs-human`. Show one full case for `approve` (`prev_head` equals the old head, a `-sync1` review) and list the others by stage with the expected `prev_head` none and a `-rebase` review.
   - `commits_added_on_top_of_head_get_the_whole_branch_review`: add a commit on top of `head` in `approve`, assert the `-rebase` review and a security run.
+  - `an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage`: `UpToDate` in `approve`, `review`, `build` and `needs-human`, with no stage change and no agent run.
   - `a_sync_runs_the_checks`: a requested sync runs the checks before the review (assert the check runner was called and the order).
   - `sync_refuses_a_job_with_no_worktree`: the job has no worktree, expect `Err`.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test sync_review a_rewrite_resets`.** Expected: FAIL with an assertion on the review states.

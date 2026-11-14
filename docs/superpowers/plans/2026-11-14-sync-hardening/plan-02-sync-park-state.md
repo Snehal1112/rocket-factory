@@ -25,7 +25,8 @@
 2. A `changes-remain` decision after a sync must keep its kind and the `approve --waive` hint. Pinned by `a_changes_remain_decision_keeps_its_park_kind_after_a_sync`.
 3. A pending batch snapshot must refuse a sync like it refuses an approve. Pinned by `sync_refuses_a_pending_batch_snapshot`.
 4. A rebase review must not overwrite the round's raw files. Pinned by `a_rebase_review_keeps_the_round_raw_files`.
-5. A refused sync must exit as a refusal, not an engine error. Pinned by `sync_refusals_are_cli_refused`.
+5. A passing whole-branch review of a parked job must not release it. Pinned by `a_passing_whole_branch_review_re_parks_a_needs_human_job`.
+6. A refused sync must exit as a refusal, not an engine error. Pinned by `sync_refusals_are_cli_refused`.
 
 ## File Structure
 
@@ -43,13 +44,14 @@
 
 **Interfaces:**
 - Consumes: `merge::park_with_parts(driver, id, reason, kind, parts)`, `ParkKind`, `Job.park_kind`, `Job.park_summary`, `Job.park_at`, `Job.batch_snapshot`.
-- Produces: `SyncOutcome::Parked(String, Option<ParkKind>)`, `sync_with` returning the kind of a non-risky `Decision::NeedsHuman`, and `sync_requested` that parks with the carried kind (`ParkKind::Other` when none). It never clears park fields after `sync_with` returns: the forced move out of `needs-human` to stage `review` (`set_stage`, `board.rs:416-419`) already cleared the old park, and a park written inside `sync_with` is the new one. `sync_requested` refuses a job with a pending `batch_snapshot` with the same text `approve` uses.
+- Produces: `SyncOutcome::Parked(String, Option<ParkKind>)`, `sync_with` returning the kind of a non-risky `Decision::NeedsHuman`, and `sync_requested` that parks with the carried kind (`ParkKind::Other` when none). It never clears park fields after `sync_with` returns: the forced move out of `needs-human` to stage `review` (`set_stage`, `board.rs:416-419`) already cleared the old park, and a park written inside `sync_with` is the new one. `sync_requested` refuses a job with a pending `batch_snapshot` with the same text `approve` uses. When the sync started in `needs-human` and `sync_with` ended with the job in `approve` after a passing review, `sync_requested` parks it again with `ParkKind::Other` and the reason `sync review passed, run factory approve <id>`, keeping the recorded review states and `last_review`.
 
 - [ ] **Step 1: Read** `sync.rs`, `merge.rs` (`park_with_parts`), and the approve refusal for `batch_snapshot`.
 - [ ] **Step 2: Write the failing tests** in `tests/sync_review.rs`:
   - `a_sync_conflict_on_a_needs_human_job_replaces_the_park_record`: a job parked as `nothing-changed`, then a requested sync that conflicts; assert `park.json` holds the conflict path and kind `other`, a new ruling line exists, and the old evidence is gone.
   - `a_checks_gate_failure_during_a_sync_keeps_its_own_park_kind`: on a `needs-human` job a gate failure during the sync keeps its `NoChecks` kind and evidence in `park.json`.
   - `a_changes_remain_decision_keeps_its_park_kind_after_a_sync`: a whole-branch review that leaves blockers; assert `park.json` kind is `changes-remain` and `next` holds `factory approve 001 --waive`.
+  - `a_passing_whole_branch_review_re_parks_a_needs_human_job`: a job parked as `needs-human`, a sync whose whole-branch review passes; assert the stage is `needs-human`, the reason is `sync review passed, run factory approve 001`, and a plain `approve` then passes.
   - `sync_refuses_a_pending_batch_snapshot`: set `batch_snapshot`, expect `Err` with the approve text.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test sync_review a_sync_conflict_on_a_needs_human_job`.** Expected: FAIL with an assertion on the park record.
 - [ ] **Step 4: Implement** the outcome change, the clearing update and the refusal. Update every match on `SyncOutcome::Parked` in `merge.rs` and tests.

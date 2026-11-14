@@ -37,15 +37,26 @@ The rest are smaller: a wrong diff base, stale park evidence, a lost park kind, 
 
 ### 1. A reviewed floor only after an approved head
 
-A requested sync keeps the reviewed floor (`prev_head = old head`) only when the job is in stage `approve` and the branch tip equals `head`. In every other case the head is not known to be reviewed, so the sync is a whole-branch review: `prev_head = None`, `ReviewRun::Rebase`, code and security. The rule applies in `build`, `review` and `needs-human`.
+A requested sync decides from three facts: the stage, whether the branch tip equals `head`, and whether the branch is behind the base branch.
 
-A branch is changed outside the factory when `tip != head`, not only when `head` is not an ancestor of `tip`. Commits added by hand on top of `head` count, so they get the whole-branch review too.
+| `tip == head` | Behind main | Stage | Result |
+|---|---|---|---|
+| yes | no | any | `UpToDate`, nothing changes, as today |
+| yes | yes | `approve` | Merge main, keep the floor (`prev_head = old head`), code reviewer on the sync diff, as an automatic sync |
+| yes | yes | `build`, `review`, `needs-human` | Whole-branch review: merge main, `prev_head = None`, `ReviewRun::Rebase`, code and security |
+| no | any | any | Whole-branch review as above |
+
+A branch is changed outside the factory when `tip != head`, not only when `head` is not an ancestor of `tip`. Commits added by hand on top of `head` count, so they get the whole-branch review too. A job in `build` that is behind main gets the whole-branch review of its current work, and a pending `batch_snapshot` refuses the sync.
 
 ### 2. A durable reset
 
 When the sync takes the whole-branch path, one `store().update_job` does all of: `head = tip`, `prev_head = None`, `reset_reviews()` and the forced stage `review`. `last_review` is kept until the new review writes its verdict, so open blockers still refuse `approve`, also with `--without-review` (`board.rs:296-344`). A run that stops afterwards leaves the job in `review` with pending reviews, so `approve` refuses it, and the next `factory sync` takes the whole-branch path again because the stage is not `approve`.
 
 The ledger ruling is written first, then the board update, so a crash between them leaves a ruling without a change, not a change without a ruling.
+
+### 2a. A passing review of a parked job does not release it
+
+When the sync started from `needs-human` and the whole-branch review passes, the job goes back to `needs-human` with the reason `sync review passed, run factory approve <id>`. The review result and `last_review` are recorded, so a plain `factory approve <id>` then passes. The job was parked for a reason the sync review does not recheck (the diff cap, the budget, the fix rounds), so a person still releases it. A job that started in `approve`, `review` or `build` follows the usual decision.
 
 ### 3. The whole-branch diff
 
@@ -68,7 +79,10 @@ For a review with no `prev_head`, `review_stage_as` uses `range_start(base, head
 | Case | Behaviour |
 |---|---|
 | Job in `approve`, `tip == head`, behind main | Merge main, floor `old head`, code reviewer on the sync diff, as an automatic sync |
-| Job in `review`, `build` or `needs-human` | Whole-branch review, code and security |
+| Job in `review`, `build` or `needs-human`, up to date, `tip == head` | `UpToDate`, nothing changes |
+| Job in `review`, `build` or `needs-human`, behind main | Whole-branch review, code and security |
+| Job in `build` behind main | Whole-branch review of the current work, a pending `batch_snapshot` refuses |
+| Whole-branch review passes on a job that started in `needs-human` | Back to `needs-human`, reason `sync review passed, run factory approve <id>`, plain `approve` then passes |
 | `tip != head` in any stage | Whole-branch review |
 | A first sync stops after the reset | Next run: the stage is `review`, so the whole-branch path runs again |
 | Sync conflict, or a checks gate failure, on a `needs-human` job | The forced move to `review` cleared the old park, so the new park keeps its own kind and evidence |
@@ -81,7 +95,9 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 
 - `a_rewrite_resets_the_review_states_and_keeps_last_review` (engine): after the reset and a park before the review, the reviews are pending, `last_review` is unchanged and `approve` refuses. A second case with `last_review` at `changes` shows that `approve --without-review` is still refused.
 - `a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch` (engine): stop after the reset, run again, the review covers `merge base..head`.
-- `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head` (engine): the floor is kept there, and is none in `review`, `build` and `needs-human`.
+- `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head` (engine): behind main with `tip == head`, the floor is kept in `approve`, and is none in `review`, `build` and `needs-human`.
+- `an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage` (engine): `UpToDate` in `approve`, `review`, `build` and `needs-human`, with no stage change and no agent run.
+- `a_passing_whole_branch_review_re_parks_a_needs_human_job` (engine): the job ends in `needs-human` with the exact reason, and plain `approve` then passes.
 - `commits_added_on_top_of_head_get_the_whole_branch_review` (engine).
 - `a_rebase_review_diff_starts_at_the_merge_base` (engine): after main moved, the review diff holds none of the main changes.
 - `a_sync_conflict_on_a_needs_human_job_replaces_the_park_record` (engine): `park.json` holds the new conflict and a new ruling exists.
@@ -110,7 +126,9 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 
 ## Acceptance criteria
 
-- A requested sync outside `approve`, or with `tip != head`, resets the review states, keeps `last_review`, and runs a whole-branch code and security review before anything can merge.
+- A requested sync that is behind main outside `approve`, or with `tip != head`, resets the review states, keeps `last_review`, and runs a whole-branch code and security review before anything can merge.
+- A requested sync on an up-to-date job with `tip == head` changes nothing in any stage.
+- A whole-branch review that passes on a job that started in `needs-human` leaves it in `needs-human` until `factory approve`.
 - A sync that stops after the reset can be run again and still reviews the whole branch, and `approve` refuses in between.
 - The whole-branch review diff starts at the merge base, not the recorded base.
 - A park after a requested sync replaces the old park record, and a non-risky decision keeps its kind and hints.
@@ -128,6 +146,8 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 ## Decisions
 
 - A requested sync keeps the reviewed floor only in `approve` with `tip == head`, and every other case gets a whole-branch review. Options: also keep it in `needs-human` after an approve, or refuse a sync outside `approve`. Chosen: only `approve` with `tip == head`. Decided by: user
-- Any `tip != head` counts as a change outside the factory, not only a rewrite. Decided by: call
-- The reset clears `reviews` only and keeps `last_review`, so an interrupted sync cannot be approved and open blockers keep refusing `approve`. Decided by: call
-- The whole-branch diff starts at the merge base with the base branch. Decided by: call
+- Any `tip != head` counts as a change outside the factory, not only a rewrite, and gets the whole-branch code and security review. Decided by: user
+- An up-to-date job with `tip == head` stays `UpToDate` in every stage. Decided by: user
+- A passing whole-branch review of a job that started in `needs-human` re-parks it, so a person runs `factory approve`. Decided by: user
+- The reset clears `reviews` only and keeps `last_review`, so an interrupted sync cannot be approved and open blockers keep refusing `approve`. `--without-review` stays the user's explicit override. Decided by: user
+- The whole-branch diff starts at the merge base with the base branch. Decided by: user
