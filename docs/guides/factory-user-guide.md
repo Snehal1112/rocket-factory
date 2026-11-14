@@ -487,6 +487,24 @@ factory rework 028 "Handle the empty list case and add a test for it"
 - It also revives a cancelled job.
 - It does not run the job. It prints `job N back to build, round <N>` for the next round, or `job N back to build, same task` for a job parked mid-task. You must run `factory run 028` afterwards.
 
+### 6.6a `factory sync`: bring a job up to date
+
+```
+factory sync <ID>
+```
+
+Merges the base branch into the job branch and reruns the checks and the code reviewer on the sync diff. Use it when main moved, or after you rebased the job branch by hand.
+
+```bash
+factory sync 028
+```
+
+- The job must be in `build`, `review`, `approve` or `needs-human`, have no live lease and have a clean worktree. A merged or cancelled job is refused.
+- After a rebase outside the factory, the reviewed head is gone from the branch. `sync` resets the floor to the base, merges the base branch when the branch is also behind, and runs one whole-branch review by the code and security reviewers. The earlier review files are kept.
+- A requested sync does not count against the limit of automatic syncs.
+- It prints `job N is up to date with <base>` and changes nothing when there is nothing to do. A merge conflict parks the job with the paths named.
+- A park that says `run factory sync <id>` or lists it under next commands is this dead end.
+
 ### 6.7 `factory cancel`: give up on a job
 
 ```

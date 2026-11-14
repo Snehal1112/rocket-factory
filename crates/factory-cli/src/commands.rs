@@ -445,6 +445,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             event.as_deref(),
             tail,
         ),
+        Command::Sync { id } => sync(ctx, &norm(&id)?),
         Command::Tickets { id, dry_run } => tickets(ctx, &norm(&id)?, dry_run),
         Command::KbRefresh { job } => kb_refresh(ctx, &norm(&job)?),
     }
@@ -630,6 +631,25 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     Ok(match end {
         RunEnd::Merged => outcome_lines::merged_line(None),
         RunEnd::NeedsHuman(reason) => outcome_lines::needs_human_line(&reason),
+    })
+}
+
+fn sync(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
+    ctx.runnable()?;
+    let _span = factory_engine::job_span(id).entered();
+    let d = ctx.driver()?;
+    // The project lease and the job lease are held until the command returns, as `run` does.
+    let _project = d.hold_project(id)?;
+    d.renew_lease(id)?;
+    let _guard = LeaseGuard {
+        driver: &d,
+        id: id.to_string(),
+    };
+    let base = d.repo().base_branch().to_string();
+    Ok(match factory_engine::sync_requested(&d, id)? {
+        factory_engine::SyncOutcome::UpToDate => format!("job {id} is up to date with {base}"),
+        factory_engine::SyncOutcome::Synced => format!("job {id} synced with {base}"),
+        factory_engine::SyncOutcome::Parked(reason) => outcome_lines::needs_human_line(&reason),
     })
 }
 

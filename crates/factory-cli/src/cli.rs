@@ -179,6 +179,10 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Merge the base branch into a job, reset a rewritten branch, then rerun the checks and reviews.
+    Sync {
+        id: String,
+    },
     /// File the follow-up tickets of a merged job and close its parent tickets.
     Tickets {
         id: String,
@@ -592,6 +596,12 @@ mod tests {
         assert!(matches!(cli.command, Command::Upgrade { dry_run: true }));
         let cli = Cli::try_parse_from(["factory", "upgrade"]).expect("parse");
         assert!(matches!(cli.command, Command::Upgrade { dry_run: false }));
+    }
+
+    #[test]
+    fn sync_parses_one_id() {
+        let cli = Cli::try_parse_from(["factory", "sync", "012"]).expect("parses");
+        assert!(matches!(cli.command, Command::Sync { ref id } if id == "012"));
     }
 
     #[test]
