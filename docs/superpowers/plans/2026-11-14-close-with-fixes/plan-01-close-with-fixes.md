@@ -23,7 +23,7 @@
 ## Review Focus
 
 1. A series where plan 1 of 3 merges with a spec that has no follow-ups: the footer must be `Relates to`, not `Fixes`. Pinned by `plan_one_of_three_says_relates_to_even_without_follow_ups` in the footer task.
-2. A custom `intake_label` (not `factory`) on the parent: it must be dropped too. Pinned by `a_custom_intake_label_is_dropped_from_follow_up_labels` in the default task.
+2. A custom `intake_label` (not `factory`) on the parent, and a parent label in another case such as `Factory`: both must be dropped too. Pinned by `a_custom_intake_label_is_dropped_from_follow_up_labels` in the default task.
 3. A project that sets `tickets_on_merge = false` explicitly keeps the step off. Pinned by `with_the_key_off_no_merge_calls_the_tracker` (existing, must keep passing) in the default task.
 4. Every existing merge test whose feature text cites an issue must still pass with the new default. Pinned by the full-suite run in the default task.
 5. A merge with no issues gets no issue footer on any plan. Pinned by the existing `a_job_without_issues_gets_only_the_job_footer` in the footer task.
@@ -104,8 +104,8 @@ Expected: all pass, including `merge_message_ends_with_the_fixes_and_job_footers
 - Test: `crates/factory-engine/tests/tickets.rs`
 
 **Interfaces:**
-- Consumes: `Config.intake_label: String` (default `factory`), the constants `STATE_RUNNING`, `STATE_NEEDS_HUMAN`, `STATE_DONE` in `crates/factory-engine/src/intake.rs:14-18`.
-- Produces: `Config::default().tickets_on_merge == true`. Follow-up labels exclude `tracking`, `cfg.intake_label` and the three state labels, for every job.
+- Consumes: `Config.intake_label: String` (default `factory`) and the matching rule in `pick_next`, `crates/factory-engine/src/intake.rs:137-146`.
+- Produces: `Config::default().tickets_on_merge == true`. Follow-up labels exclude `tracking`, any label equal to `cfg.intake_label` ignoring ASCII case, and any label starting with `factory:` ignoring ASCII case, for every job.
 
 - [ ] **Step 1: Read the code**
 
@@ -135,7 +135,7 @@ fn a_merge_with_the_default_config_runs_the_ticket_step() {
 
 | Test | Parent #76 labels and config | Expected created labels |
 |---|---|---|
-| `follow_up_labels_drop_the_intake_label_and_state_labels` | `factory`, `factory: running`, `factory: needs-human`, `factory: done`, `tracking`, `tech-debt`; default config | `["tech-debt"]` for each created ticket |
+| `follow_up_labels_drop_the_intake_label_and_state_labels` | `Factory`, `Factory: Running`, `factory: needs-human`, `FACTORY: DONE`, `tracking`, `tech-debt`; default config | `["tech-debt"]` for each created ticket |
 | `a_custom_intake_label_is_dropped_from_follow_up_labels` | `bot`, `tech-debt`; `Config { intake_label: "bot".into(), ..Config::default() }` | `["tech-debt"]` |
 
 Build the fixtures as `approved_with_hook` does and call `tickets_step(&fx.driver, &fx.id, false)` after the merge with `tickets_on_merge: false` so the step runs once, by hand.
@@ -147,7 +147,7 @@ Expected: the default tests fail on the old default, and the label tests fail be
 
 - [ ] **Step 4: Implement the default and the label filter**
 
-In `config.rs` set the default to `true` and change the doc line to "After a merge, file the follow-up tickets and close the parent tickets. On by default; set false to turn it off." In `tickets.rs` the label loop skips a label that equals `"tracking"`, `driver.config().intake_label`, `crate::intake::STATE_RUNNING`, `STATE_NEEDS_HUMAN` or `STATE_DONE`.
+In `config.rs` set the default to `true` and change the doc line to "After a merge, file the follow-up tickets and close the parent tickets. On by default; set false to turn it off." In `tickets.rs` the label loop skips a label that equals `"tracking"`, one that equals `driver.config().intake_label` with `eq_ignore_ascii_case`, and one whose lowercase form starts with `factory:`. This is the rule `pick_next` uses at `intake.rs:137-146`; keep no list of exact names.
 
 - [ ] **Step 5: Run the crate suites**
 

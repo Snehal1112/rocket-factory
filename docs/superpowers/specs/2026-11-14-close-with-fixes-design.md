@@ -55,7 +55,7 @@ Example: a 3-plan series for `#40`. Merges of plans 1 and 2 end `Relates to: #40
 
 ### 3. Follow-up labels never include intake labels
 
-In the label copy of `tickets_step`, skip `tracking`, the configured `intake_label`, and the three state labels `factory: running`, `factory: needs-human` and `factory: done` (the constants in `intake.rs:14-18`). Without this, a follow-up filed from an intake parent would carry `factory` and intake would pick it up unattended. The skip applies to every job, intake or not.
+In the label copy of `tickets_step`, skip `tracking`, any label equal to the configured `intake_label` without regard to case, and any label that starts with `factory:` in any case. This is the rule `pick_next` uses (`intake.rs:137-146`), so a parent labelled `Factory` or `Factory: Running` is filtered too. There is no list of exact names. Without this, a follow-up filed from an intake parent would carry `factory` and intake would pick it up unattended. The skip applies to every job, intake or not.
 
 ### 4. Intake files the follow-ups
 
@@ -96,7 +96,7 @@ Filed follow-up issues carry the footer `Filed by factory job <id> (<slug>) from
 - `crates/factory-engine/tests/message.rs`: update the merge tests to set `closes_ticket`.
 - `crates/factory-engine/tests/message.rs`, through `Driver::commit_message`: `commit_message_uses_fixes_on_the_last_plan_even_with_follow_ups`, `commit_message_uses_relates_to_on_plan_one_of_three`, `commit_message_uses_fixes_for_a_single_plan_job`.
 - `crates/factory-core/src/config.rs`: change `tickets_on_merge_is_off_by_default_and_can_be_turned_on` (`config.rs:1272`) to `tickets_on_merge_is_on_by_default_and_can_be_turned_off`; `resolve.rs:423` test follows.
-- `crates/factory-engine/tests/tickets.rs`: `follow_up_labels_drop_the_intake_label_and_state_labels` (a parent with `factory: running`, `factory`, `tracking`, `tech-debt` gives only `tech-debt`); `file_follow_ups_files_and_does_not_close` (fake tracker records create calls and no close).
+- `crates/factory-engine/tests/tickets.rs`: `follow_up_labels_drop_the_intake_label_and_state_labels` (a parent with `Factory`, `Factory: Running`, `factory: done`, `tracking`, `tech-debt` gives only `tech-debt`); `file_follow_ups_files_and_does_not_close` (fake tracker records create calls and no close).
 - `crates/factory-engine/tests/intake.rs`: `a_merged_intake_job_files_its_follow_ups_before_the_close` (fake tracker call order: create, comment, close); `the_intake_comment_names_only_issue_numbers`; `a_failed_follow_up_still_closes_the_intake_issue_and_says_so`.
 - `crates/factory-engine/tests/tickets.rs`: `a_merge_with_the_default_config_runs_the_ticket_step`. `waivers.rs:124` and `log_events.rs:313` already set `tickets_on_merge: true`; a test that relied on the old default sets `false` explicitly.
 - Commands: `cargo test -j4 -p factory-core`, `-p factory-engine`, `-p factory-cli`, then `cargo clippy -j4 -p factory-core -p factory-engine -p factory-cli` and `cargo fmt --check` per crate.
@@ -149,3 +149,4 @@ None.
 - Are builder, fix and sync commits changed? Chosen: no, they stay `Relates to`. Decided by: call
 - Are the intake labels dropped for every job or only for intake? Options: every job, intake only. Chosen: every job, because a parent can carry them for other reasons. Decided by: call
 - Is `MessageRequest.partial` renamed? Options: rename to `closes_ticket`, keep the name. Chosen: rename, because it no longer means follow-ups. Decided by: call
+- How are intake labels matched when copying labels? Options: exact names, case-insensitive intake label plus any `factory:` prefix. Chosen: the case-insensitive rule, the same as `pick_next`, after the spec review found that exact names let `Factory` through. Decided by: call
