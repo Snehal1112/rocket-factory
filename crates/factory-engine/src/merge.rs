@@ -203,6 +203,8 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
             park_with_parts(driver, id, &reason, kind, parts)?;
             Ok(MergeResult::Parked(reason))
         }
+        // A cancelled job stays as the cancel left it, and the run ends as needs-human.
+        Err(EngineError::Cancelled) => Err(EngineError::Cancelled),
         Err(err) => {
             let reason = format!("merge failed: {err}");
             let parts = vec![ParkPart::new("Merge error", "git", &err.to_string())];
@@ -347,6 +349,10 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             }
             BaseState::MainMoved => continue,
             BaseState::Current => {}
+        }
+        // A cancel can land during the message run. Only the git merge is left after this check.
+        if driver.job(id)?.cancelled {
+            return Err(EngineError::Cancelled);
         }
         return match git_op("merge_no_ff", || {
             repo.merge_no_ff(&job.branch, &head, &message)

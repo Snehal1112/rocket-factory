@@ -1142,6 +1142,7 @@ fn a_parked_batch_resumes_on_the_next_build_call_without_new_builders() {
     let repo = git2::Repository::open(&wt).expect("open");
     repo.set_head(&format!("refs/heads/{}", parked.branch))
         .expect("reattach");
+    fx.resume_to_build();
     let runner2 = scripted_auto(vec![]);
     let out = fx.engine(&runner2).build_stage().expect("resume");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
@@ -1174,6 +1175,7 @@ fn park_a_batch(fx: &Fixture) -> std::path::PathBuf {
     let repo = git2::Repository::open(&wt).expect("open");
     repo.set_head(&format!("refs/heads/{}", parked.branch))
         .expect("reattach");
+    fx.resume_to_build();
     wt
 }
 
@@ -1367,6 +1369,7 @@ fn a_stop_between_commit_groups_resumes_without_losing_or_repeating_a_commit() {
         base: base.clone(),
     };
     fx.repo.reset_soft(&wtree, &base).expect("reset");
+    fx.resume_to_build();
     let runner = scripted_auto(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),

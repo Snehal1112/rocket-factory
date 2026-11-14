@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use factory_agent::{AgentRun, AgentSpec};
 use factory_core::{Board, CoreError, Job, Ledger, Stage, TaskState};
 
-use crate::{Engine, EngineError};
+use crate::{Engine, EngineError, StoreError};
 
 pub(crate) fn core_err<E: Display>(e: E) -> EngineError {
     EngineError::Core(e.to_string())
@@ -53,20 +53,35 @@ pub fn set_stage_logged(
 ) -> Result<(), CoreError> {
     let from = job.stage;
     job.set_stage(to, reason, force, now)?;
-    if from != to {
-        let (from, to_name) = (from.as_str(), to.as_str());
-        let reason = reason.map(one_line);
-        tracing::info!(
-            event = "stage.change",
-            job_id = job.id.as_str(),
-            from,
-            to = to_name,
-            reason = reason.as_deref().unwrap_or(""),
-            stage = to_name,
-            msg = format!("stage {from} -> {to_name}").as_str()
-        );
-    }
+    log_stage_change(&job.id, from, to, reason);
     Ok(())
+}
+
+/// Leaves needs-human for build, review or approve and logs `stage.change`.
+/// A failed move logs nothing and returns the same error.
+pub fn resume_logged(job: &mut Job, to: Stage, now: f64) -> Result<(), CoreError> {
+    let from = job.stage;
+    job.resume(to, now)?;
+    log_stage_change(&job.id, from, to, None);
+    Ok(())
+}
+
+/// Logs `stage.change` when the stage changed.
+fn log_stage_change(job_id: &str, from: Stage, to: Stage, reason: Option<&str>) {
+    if from == to {
+        return;
+    }
+    let (from, to_name) = (from.as_str(), to.as_str());
+    let reason = reason.map(one_line);
+    tracing::info!(
+        event = "stage.change",
+        job_id,
+        from,
+        to = to_name,
+        reason = reason.as_deref().unwrap_or(""),
+        stage = to_name,
+        msg = format!("stage {from} -> {to_name}").as_str()
+    );
 }
 
 /// A copy of the board fields the stages read.
@@ -141,7 +156,10 @@ impl Engine<'_> {
         // The store takes the board lock, so every stage write is serialized with the other writers.
         crate::BoardStore::new(&self.board_path, self.lock_wait)
             .update_job(&self.job_id, f)
-            .map_err(core_err)
+            .map_err(|e| match e {
+                StoreError::Core(CoreError::Cancelled) => EngineError::Cancelled,
+                other => core_err(other),
+            })
     }
 
     /// Moves the job to a stage. Only a fix round (review back to build) passes `force`.

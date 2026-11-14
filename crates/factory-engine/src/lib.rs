@@ -86,7 +86,7 @@ pub use one_job::{
 };
 pub use permissions::{builder_allowed_tools, builder_denied_tools, restore_file};
 pub use planlint::{lint_plan, PlanLint};
-pub use ports::set_stage_logged;
+pub use ports::{resume_logged, set_stage_logged};
 pub use probe::{run_probe, unique_stamp, Delivery};
 pub use project_lease::{
     acquire_project_lease, force_release_project_lease, lease_owner_dead, owner_pid, process_gone,
@@ -151,6 +151,9 @@ pub enum EngineError {
     /// `factory new` refused the spec, so no job exists.
     #[error("{0}")]
     SpecRefused(SpecRefusal),
+    /// The job was cancelled, so the stage stops and the run ends as needs-human.
+    #[error("job is cancelled")]
+    Cancelled,
 }
 
 /// What a stage did to the job. The caller chains stages by the new board stage.
