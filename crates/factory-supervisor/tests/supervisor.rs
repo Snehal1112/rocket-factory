@@ -728,12 +728,61 @@ fn supervisor_at(e: &Env, clock: &Arc<AtomicU64>) -> Supervisor {
 
 /// Turns intake on in the project file and gives the child script a behavior.
 fn intake_on(e: &Env, name: &str, behavior: &str) {
+    add_setting(e, name, "intake = true");
+    std::fs::write(e.dir.join(format!("behavior-{name}---once")), behavior).expect("behavior");
+}
+
+/// Adds one line to the settings table of the project file.
+fn add_setting(e: &Env, name: &str, line: &str) {
     let path = e.home.project_dir(name).join("project.toml");
     let text = std::fs::read_to_string(&path).expect("project file");
     assert!(text.contains("\n[settings]\n"), "no settings table: {text}");
-    let text = text.replacen("\n[settings]\n", "\n[settings]\nintake = true\n", 1);
+    let text = text.replacen("\n[settings]\n", &format!("\n[settings]\n{line}\n"), 1);
     std::fs::write(&path, text).expect("write");
-    std::fs::write(e.dir.join(format!("behavior-{name}---once")), behavior).expect("behavior");
+}
+
+#[test]
+fn a_disabled_project_gets_no_intake_request() {
+    let e = env();
+    let repo = e.add_project("p");
+    intake_on(&e, "p", "merged");
+    std::fs::remove_dir_all(&repo).expect("remove repo");
+    let mut s = supervisor_at(&e, &Arc::new(AtomicU64::new(1000)));
+    let r = s.tick().expect("tick");
+    assert!(r.started.is_empty());
+    assert!(e.queue_ids().is_empty());
+}
+
+#[test]
+fn a_bad_setting_gets_no_intake_request() {
+    let e = env();
+    e.add_project("p");
+    intake_on(&e, "p", "merged");
+    add_setting(&e, "p", "intake_poll_minutes = 0");
+    let mut s = supervisor_at(&e, &Arc::new(AtomicU64::new(1000)));
+    let r = s.tick().expect("tick");
+    assert!(r.started.is_empty());
+    assert!(e.queue_ids().is_empty());
+}
+
+#[test]
+fn a_queued_run_request_blocks_the_intake_request() {
+    let e = env();
+    e.add_project("p");
+    intake_on(&e, "p", "merged");
+    let state = e.state_dir("p");
+    std::fs::create_dir_all(&state).expect("state dir");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_secs_f64();
+    let owner = format!("driver-{}-1", std::process::id());
+    acquire_project_lease(&state, "001", &owner, 100_000.0, now, WAIT).expect("lease");
+    let run = e.enqueue("p", "1", "merged");
+    let mut s = supervisor_at(&e, &Arc::new(AtomicU64::new(1000)));
+    s.tick().expect("tick");
+    assert_eq!(e.queue_ids(), vec![run]);
+    release_project_lease(&state, &owner, WAIT).expect("release");
 }
 
 #[test]
