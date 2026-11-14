@@ -39,8 +39,9 @@ fn job_worktree(driver: &Driver, job: &Job) -> Result<Worktree, EngineError> {
     })
 }
 
-/// Syncs a job on request, in any open stage. It resets the floor of a branch that was rewritten
-/// outside the factory, merges main when the branch is behind, then runs one review.
+/// Syncs a job on request, in any open stage. Only an approved head keeps its reviewed floor. Any
+/// other case resets the reviews and the floor, merges main when the branch is behind, then runs
+/// the whole-branch review.
 pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError> {
     let job = driver.job(id)?;
     if job.cancelled {
@@ -63,20 +64,29 @@ pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineEr
         .clone()
         .ok_or_else(|| EngineError::Msg(format!("job {id} has no head to sync")))?;
     let tip = crate::merge::git_op("tip", || driver.repo().tip(&job.branch))?;
-    let rewritten =
-        !crate::merge::git_op("is_ancestor", || driver.repo().is_ancestor(&head, &tip))?;
-    if rewritten {
+    let behind = !crate::merge::git_op("is_ancestor", || {
+        driver.repo().is_ancestor(driver.repo().base_branch(), &tip)
+    })?;
+    if tip == head && !behind {
+        return Ok(SyncOutcome::UpToDate);
+    }
+    // Only an approved head keeps its reviewed floor. Any other case reviews the whole branch.
+    let whole_branch = tip != head || job.stage != Stage::Approve;
+    if whole_branch {
+        // The ruling comes first, so a crash leaves a ruling without a change and not the reverse.
+        driver.ledger(&job).ruling(&format!(
+            "whole-branch review requested, floor reset to base, head is {tip}"
+        ))?;
         let now = now_secs();
+        // One write resets everything, so a run that stops later cannot be approved unreviewed.
         driver.store().update_job(id, |j| {
             j.head = Some(tip.clone());
             j.prev_head = None;
+            j.reset_reviews();
             crate::ports::set_stage_logged(j, Stage::Review, None, true, now)
         })?;
-        driver.ledger(&job).ruling(&format!(
-            "branch rewritten outside the factory, floor reset to base, head is {tip}"
-        ))?;
     }
-    let outcome = sync_with(driver, id, SyncKind::Requested, rewritten)?;
+    let outcome = sync_with(driver, id, SyncKind::Requested, whole_branch)?;
     // Nobody else parks a requested sync, so the job must not stay in review with a park message.
     // A park that `park_after_sync` already wrote keeps its own kind and evidence.
     if let SyncOutcome::Parked(reason) = &outcome {

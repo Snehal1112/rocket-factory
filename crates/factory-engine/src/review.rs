@@ -55,13 +55,14 @@ impl Engine<'_> {
             .clone()
             .ok_or_else(|| EngineError::Msg("job has no head".into()))?;
         // The reviewer sees only the new work of this round. Risk and size judge the whole job diff.
-        let round_base = job.prev_head.clone().unwrap_or_else(|| base.clone());
+        // A review with no floor covers the whole branch, so it starts at the merge base with main.
+        let whole_base = self.range_start(&base, &head)?;
+        let round_base = job.prev_head.clone().unwrap_or_else(|| whole_base.clone());
         // The file names carry both short shas, so the round diff and the whole diff never overwrite each other.
         let round_diff = self
             .repo
             .diff_to_files(&round_base, &head, &self.job_dir)
             .map_err(git_err)?;
-        let whole_base = self.range_start(&base, &head)?;
         let whole = self
             .repo
             .diff_to_files(&whole_base, &head, &self.job_dir)
