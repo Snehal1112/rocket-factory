@@ -24,7 +24,7 @@
 3. A `gh` failure while listing or picking leaves every label alone. Pinned by `a_tracker_failure_before_the_claim_leaves_the_labels_alone`.
 4. The issue body cannot widen the drafter's tools, and the drafter cannot read outside the repo root. Pinned by `draft_spec_grants_only_the_draft_folder` and `draft_spec_reads_only_the_repo_root`.
 5. A job is never created without drafted plans. Pinned by `intake_never_creates_a_job_without_plans`.
-6. With `tickets_on_merge` on, intake does not close the issue. Pinned by `a_merged_issue_is_left_to_the_ticket_step_when_it_is_on`.
+6. Every job of a series carries `intake_issue`, so the post-merge ticket steps can skip it. Pinned by `intake_marks_every_job_of_the_series`.
 7. `--dry-run` changes no label and starts no agent. Pinned by `a_dry_run_changes_no_label_and_runs_no_agent`.
 
 ## File Structure
@@ -77,11 +77,11 @@
   - `a_failure_comment_never_contains_agent_text`: the same run; no comment body contains `SECRET-MARKER`.
   - `intake_never_creates_a_job_without_plans`: a drafter that writes only `spec.md`; the outcome is `Failed` and the board has no new job.
   - `a_merged_issue_is_commented_closed_and_labelled_done`: a scripted drafter that writes a valid spec and one plan (reuse the plan of an existing engine series test); the job merges; `close` and a `done` label edit were called, and the job-id comment came after the job existed.
-  - `a_merged_issue_is_left_to_the_ticket_step_when_it_is_on`: the same with `tickets_on_merge = true`; the `done` label edit was called and intake made no `close` call.
+  - `intake_marks_every_job_of_the_series`: a two-plan series; every job on the board for it has `intake_issue == Some(<issue>)`.
   - `a_spec_review_refusal_redrafts_once_then_fails`: the review keeps refusing; the drafter ran twice and the second prompt holds the findings.
   - `a_tracker_failure_before_the_claim_leaves_the_labels_alone`: `fail_on("list_labelled")` and `fail_on("current_user")` each give an error with no `edit_labels` call.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test intake` and `cargo test -j4 -p factory-core intake_dir`.** Expected: `cannot find function run_intake in this scope`.
-- [ ] **Step 4: Implement.** `run_intake` follows the pass of the spec (design section 5): resolve trusted users (`intake_trusted` or `current_user()`), `list_labelled`, `pick_next`, return `DryRun` early, claim the issue with one `edit_labels` call (add `factory: running`, remove the intake label), run the drafter into `Layout::intake_dir()/<issue>/` with the folder checked by `check_kb_path`, create the jobs through `create_job_with_spec_accepting` with the drafted plans and without an accept reason (never the `plan = None` path), redraft once on a refusal, comment with the job id once the jobs exist, run `run_series`, settle the issue. Slug `issue-<n>`, feature text `<title>, #<n>`. Failure comments hold only a reason code (`draft-refused`, `draft-invalid`, `spec-review`, `over-budget`, `build-failed`), the job id when one exists and the draft path. On a merge intake closes the issue only when `tickets_on_merge` is false.
+- [ ] **Step 4: Implement.** `run_intake` follows the pass of the spec (design section 5): resolve trusted users (`intake_trusted` or `current_user()`), `list_labelled`, `pick_next`, return `DryRun` early, claim the issue with one `edit_labels` call (add `factory: running`, remove the intake label), run the drafter into `Layout::intake_dir()/<issue>/` with the folder checked by `check_kb_path`, create the jobs through `create_job_with_spec_accepting` with the drafted plans and without an accept reason (never the `plan = None` path), redraft once on a refusal, comment with the job id once the jobs exist, run `run_series`, settle the issue. Slug `issue-<n>`, feature text `<title>, #<n>`. Failure comments hold only a reason code (`draft-refused`, `draft-invalid`, `spec-review`, `over-budget`, `build-failed`), the job id when one exists and the draft path. On a merge intake closes the issue itself, because the ticket step skips intake jobs. After the jobs are created it sets `intake_issue` on every job of the series.
 - [ ] **Step 5: Run `cargo test -j4 -p factory-engine` then `cargo clippy -j4 -p factory-core -p factory-engine`.** Expected: all pass, no warnings.
 
 ### Task 3: The `factory intake` command

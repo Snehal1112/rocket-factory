@@ -29,29 +29,31 @@
 | File | Responsibility |
 |---|---|
 | `crates/factory-core/src/config.rs`, `settings_block.rs` | The seven settings, defaults, validation, commented block |
+| `crates/factory-core/src/board.rs` | `Job.intake_issue`, an optional field |
 | `docs/reference/project-toml-reference.md` | The settings table rows |
 | `crates/factory-engine/src/tracker.rs` | `IssueInfo`, four trait methods, `Arc` forwarding, `GhTracker`, argument builders and parsers |
 | `crates/factory-engine/src/intake.rs`, `lib.rs` | `pick_next` and the state label constants |
 | `crates/factory-engine/tests/common/mod.rs` | `FakeTracker` support for the new calls |
 | `crates/factory-cli/tests/tickets.rs` | The `NoCalls` tracker gets the new methods |
 
-### Task 1: The intake settings
+### Task 1: The intake settings and the job marker
 
 **Files:**
-- Modify: `crates/factory-core/src/config.rs`, `crates/factory-core/src/settings_block.rs`, `docs/reference/project-toml-reference.md`
+- Modify: `crates/factory-core/src/config.rs`, `crates/factory-core/src/settings_block.rs`, `crates/factory-core/src/board.rs`, `docs/reference/project-toml-reference.md`
 - Test: unit tests in `crates/factory-core/src/config.rs`
 
 **Interfaces:**
 - Consumes: the way `minor_tickets` and `kb_budget_weighted` are declared, defaulted and validated in `Config`.
-- Produces: `Config` fields `intake: bool` (false), `intake_label: String` ("factory"), `priority_labels: Vec<String>` (`priority: P0`, `priority: P1`, `priority: P2`), `intake_poll_minutes: u32` (15), `intake_trusted: Vec<String>` (empty), `intake_model: String` ("claude-opus-5-5"), `intake_budget_weighted: u64` (400000). The next tasks and the later plans read them.
+- Produces: `Config` fields `intake: bool` (false), `intake_label: String` ("factory"), `priority_labels: Vec<String>` (`priority: P0`, `priority: P1`, `priority: P2`), `intake_poll_minutes: u32` (15), `intake_trusted: Vec<String>` (empty), `intake_model: String` ("claude-opus-5-5"), `intake_budget_weighted: u64` (400000). `Job.intake_issue: Option<u32>` with `#[serde(default, skip_serializing_if = "Option::is_none")]` and `None` in `Job::new`; this is an optional board field. The next tasks and the later plans read them.
 
 - [ ] **Step 1: Read `Config` and `Config::parse` validation in `crates/factory-core/src/config.rs` (the tests `minor_tickets_is_on_by_default_and_can_be_turned_off` and the kb budget test are the pattern), the `GROUPS` table in `settings_block.rs` and its tests, and the `minor_tickets` row of `docs/reference/project-toml-reference.md`.**
 - [ ] **Step 2: Write the failing tests.**
   - `intake_settings_have_the_documented_defaults`: `Config::default()` has the seven defaults above.
   - `bad_intake_settings_are_config_errors`: `Config::parse` with `expect_err` for `intake_label = ""`, `intake_label = "a,b"`, `priority_labels = ["x", "x"]`, `intake_poll_minutes = 0`, `intake_budget_weighted = 0`, `intake_model = ""`.
+  - `job_intake_issue_is_optional_and_absent_from_old_boards`: a board JSON written without the field loads with `intake_issue == None`, and a job with `None` serialises with no `intake_issue` key.
   - `intake_settings_parse_from_toml`: a config with `intake = true`, `intake_label = "bot"`, `priority_labels = ["p1", "p2"]`, `intake_trusted = ["alice"]` round-trips.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-core intake`.** Expected: `no field intake on type Config`.
-- [ ] **Step 4: Implement the fields with the doc comments of the table in the spec, the defaults, the checks in `Config::parse`, one new group "Issue intake." in `settings_block.rs` listing the seven keys (commented, no example text), and the table rows in `project-toml-reference.md`.** The `settings_block` tests that compare keys with `Config` must pass.
+- [ ] **Step 4: Implement the fields with the doc comments of the table in the spec, the defaults, the checks in `Config::parse`, one new group "Issue intake." in `settings_block.rs` listing the seven keys (commented, no example text), the optional `Job.intake_issue` field, and the table rows in `project-toml-reference.md`.** The `settings_block` tests that compare keys with `Config` must pass.
 - [ ] **Step 5: Run `cargo test -j4 -p factory-core`.** Expected: all pass.
 
 ### Task 2: Tracker calls and their fakes

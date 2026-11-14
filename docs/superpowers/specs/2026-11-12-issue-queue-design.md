@@ -41,7 +41,7 @@ factoryd timer (intake on) -> Intake request -> factory --project P intake --onc
   claim: label "factory: running", remove the intake label
   drafter agent (Opus) writes spec.md + plan-NN-*.md in <state>/intake/<issue>/
   create_job_with_spec_accepting (plans required) -> comment with the job id -> run the series -> merge
-  success: fixed comment, close (see 5), label "factory: done"
+  success: fixed comment, close the issue, label "factory: done"
   failure: label "factory: needs-human", fixed comment with a reason code, no agent text
 ```
 
@@ -78,7 +78,7 @@ On the `Tracker` trait and `GhTracker` (with the `Arc<T>` forwarding impl):
 
 A new agent file `factory-intake-drafter.md` in the five presets (`crates/factory-core/presets/<preset>/agents/`), run headless through the existing `AgentRunner` port with `intake_model` and `intake_budget_weighted`. It may read only the repo root (`Read`, `Grep`, `Glob` rules built from the real repo path, with the run's cwd the repo root, so the factory home and its key files are out of reach) and write only inside `<state>/intake/<issue>/` (a `Write` grant for that folder, built from the real path and checked like `kb_path`). Its prompt carries the issue title and body as data, marked as untrusted, plus the `plan_rules` and the spec quality bar of the `/factory` command. It writes `spec.md` and one to three plans named `plan-01-<slug>.md`, each with at most three tasks and a final `Next plan:` line, or a file `refused.md` holding one paragraph when the issue cannot be built unattended (too big, unclear, needs a decision). `agent_lint` covers the new file.
 
-The drafts stay in the state folder, not in the repository. Nothing the drafter wrote is ever posted to GitHub: comments hold fixed text only (see 5).
+The drafts stay in the state folder, not in the repository. Nothing an agent wrote for an intake job is posted to GitHub: intake's comments hold fixed text only (see 5), and the post-merge ticket steps skip intake jobs (see 6).
 
 ### 5. `factory intake`
 
@@ -89,16 +89,20 @@ The drafts stay in the state folder, not in the repository. Nothing the drafter 
 3. Claim the issue: add `factory: running` and remove `intake_label`. No other label changes happen before this point, so a `gh` failure while listing or picking leaves every label alone.
 4. Run the drafter. A `refused.md`, a budget stop or a missing `spec.md` is a failure with no job. The engine then validates and creates the jobs through `create_job_with_spec_accepting` with the drafted plans and without `--accept-spec`; the `plan = None` path (a job from the feature text alone) is never used. On a validation or spec review refusal it redrafts once with the findings, then fails.
 5. Once the jobs exist, comment `factory picked this up as job <id>`, then run the series (`run_series`) and wait for the end.
-6. Merged: swap `factory: running` for `factory: done`, and comment `merged as job <ids>`. The close has one owner: when `tickets_on_merge` is true the ticket step closes the issue (the feature text carries `#<n>`) and intake does not; when it is false intake closes it.
+6. Merged: swap `factory: running` for `factory: done`, comment `merged as job <ids>` and close the issue. Intake always closes it, because the ticket step does not run for intake jobs (section 6).
 7. Any other end or any failure: swap `factory: running` for `factory: needs-human` and comment a fixed text: `factory: needs-human`, one reason code (`draft-refused`, `draft-invalid`, `spec-review`, `over-budget`, `build-failed`), the job id when one exists, and the local path of the draft folder. The agent's own text (`refused.md`, review findings) stays on the machine. Never retry the issue until a person relabels it.
 
 An estimate over the job budget is a failure; `--accept-over-budget` is never passed.
 
-### 6. `factoryd`
+### 6. Post-merge steps skip intake jobs
 
-`Action::Intake` is added with `job` the fixed string `"000"` (valid under `validate_job`), no series, no approve flags. The scheduler treats it like `Run`: it waits while the project is busy or the daily budget is used up. A timer in the supervisor loop, for each project whose settings have `intake = true`, enqueues an `Intake` request every `intake_poll_minutes` when no request of that project is queued or running. The spawned child is `factory --project <p> intake --once`.
+`Job` gets `intake_issue: Option<u32>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, optional, so the board stays compatible with `dashboard/`). `run_intake` sets it on every job of the series it creates. The ticket step (`tickets.rs`, follow-ups and closing the parent issues) and the minor ticket step (`minors.rs`) return at once for a job with `intake_issue` set, because both would post text that agents wrote from the untrusted issue body: the follow-ups from the drafted `spec.md`, the minors from the review of code built from it. The follow-ups and minor findings stay in the job folder. The waiver ticket step is unchanged: it only runs on an approval a person asks for, and intake never approves. Skipping the ticket step also means it never copies the issue's `factory:` or priority labels onto new issues.
 
-### 7. Docs
+### 7. `factoryd`
+
+`Action::Intake` is added with `job` the fixed string `"000"` (valid under `validate_job`), no series, no approve flags. The scheduler's existing rule (`scheduler.rs:52`, which holds `Action::Run` when the daily budget is used up) is extended to hold `Intake` too, in place and not as a second rule. The scheduler treats it like `Run`: it waits while the project is busy or the daily budget is used up. A timer in the supervisor loop, for each project whose settings have `intake = true`, enqueues an `Intake` request every `intake_poll_minutes` when no request of that project is queued or running. The spawned child is `factory --project <p> intake --once`.
+
+### 8. Docs
 
 `docs/reference/project-toml-reference.md` gets the settings table. `docs/guides/factory-user-guide.md` gets a section on labels, the trust rule, the states and how to turn it on.
 
@@ -126,9 +130,10 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 
 ## Testing
 
-- `crates/factory-core`: `intake_settings_have_the_documented_defaults`, `bad_intake_settings_are_config_errors` (empty label, comma, duplicate priority, zero poll, zero budget).
+- `crates/factory-core`: `job_intake_issue_is_optional_and_absent_from_old_boards` (an old board file parses, a job without the field serialises without it), `intake_settings_have_the_documented_defaults`, `bad_intake_settings_are_config_errors` (empty label, comma, duplicate priority, zero poll, zero budget).
 - `crates/factory-engine/src/intake.rs` unit tests: `pick_next_prefers_the_higher_priority_then_the_older_issue`, `pick_next_sorts_unprioritised_issues_last`, `pick_next_skips_state_labelled_issues`, `pick_next_skips_untrusted_labellers`.
-- `crates/factory-engine/tests/intake.rs` (with the test `FakeTracker` and `FakeRunner`): `a_pass_with_no_eligible_issue_changes_nothing`, `a_merged_issue_is_commented_closed_and_labelled_done`, `a_refused_draft_labels_the_issue_needs_human` (the comment holds the reason code and the path, not the refused text), `a_failure_comment_never_contains_agent_text`, `draft_spec_reads_only_the_repo_root`, `intake_never_creates_a_job_without_plans`, `a_spec_review_refusal_redrafts_once_then_fails`, `a_dry_run_changes_no_label`.
+- `crates/factory-engine/tests/intake.rs` (with the test `FakeTracker` and `FakeRunner`): `a_pass_with_no_eligible_issue_changes_nothing`, `a_merged_issue_is_commented_closed_and_labelled_done`, `a_refused_draft_labels_the_issue_needs_human` (the comment holds the reason code and the path, not the refused text), `a_failure_comment_never_contains_agent_text`, `intake_marks_every_job_of_the_series`, `draft_spec_reads_only_the_repo_root`, `intake_never_creates_a_job_without_plans`, `a_spec_review_refusal_redrafts_once_then_fails`, `a_dry_run_changes_no_label`.
+- `crates/factory-engine` ticket tests: `the_ticket_step_skips_an_intake_job` (no `create`, `comment` or `close` call with `tickets_on_merge` on) and `the_minor_ticket_step_skips_an_intake_job`; the existing tests for other jobs keep passing.
 - `crates/factory-engine/tests/tracker_gh.rs` style tests for the new `gh` argument builders: `list_labelled_args`, `edit_labels_args`, `events_args`.
 - `crates/factory-supervisor`: `intake_requests_wait_while_the_project_is_busy`, `an_intake_request_is_not_enqueued_twice`, `intake_polling_is_off_for_projects_without_the_setting`.
 - `crates/factory-cli/tests/agent_lint.rs` passes for the new agent file in all five presets.
@@ -136,6 +141,8 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 
 ## Files changed
 
+- `crates/factory-core/src/board.rs` (the optional `intake_issue` field)
+- `crates/factory-engine/src/tickets.rs`, `minors.rs`
 - `crates/factory-core/src/config.rs`, `settings_block.rs`, presets `<preset>/agents/factory-intake-drafter.md`
 - `crates/factory-engine/src/tracker.rs`, `intake.rs`, `lib.rs`
 - `crates/factory-cli/src/cli.rs`, `commands.rs`, `intake.rs`
@@ -157,7 +164,8 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 - A failed or parked issue gets `factory: needs-human` and a fixed comment with a reason code, and the queue moves on. No agent-written text is posted.
 - The drafter cannot read outside the repo root or write outside its draft folder.
 - A job is never created without drafted plans.
-- When `tickets_on_merge` is true the ticket step closes the merged issue and intake does not; when it is false intake closes it.
+- Intake closes a merged issue itself. The ticket step and the minor ticket step post nothing for an intake job.
+- A board without `intake_issue` parses as before and the dashboard is unaffected.
 - `factory intake --dry-run` names the issue it would pick and changes nothing.
 - `factoryd` enqueues at most one `Intake` request per project at a time, and only when `intake` is on.
 - Nothing is pushed.
@@ -183,5 +191,7 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 - Where do the drafts live? Options: the state folder, committed docs. Chosen: the state folder, so an unattended run does not commit to main. Decided by: call
 - Is an over-budget estimate accepted? Options: never, ask. Chosen: never; it is a failure. Decided by: call
 - What does a failure comment contain? Options: fixed reason code and local path, agent text redacted and capped, no comment. Chosen: fixed reason code and local path. Decided by: user
-- Who closes the issue on merge when both intake and the ticket step are on? Options: the ticket step if on and else intake, intake always, never close. Chosen: the ticket step if on, else intake. Decided by: user
+- Who closes the issue on merge when both intake and the ticket step are on? Options: the ticket step if on and else intake, intake always, never close. Chosen first: the ticket step if on, else intake. Replaced by the next decision, which skips the ticket step for intake jobs, so intake always closes. Decided by: user
+- What do the post-merge ticket steps do for intake jobs? Options: skip both the follow-up filing and the minor ticket, accept that they post agent text, skip follow-ups only. Chosen: skip both. Decided by: user
+- How are intake jobs recognised? Options: an optional `Job.intake_issue` board field, the `issue-<n>` slug. Chosen: the optional field, because a slug can be typed by hand. Decided by: call
 - Where does the claim happen? Options: before the draft, after the job exists. Chosen: before the draft, because a job needs the drafted plans first. Decided by: call
