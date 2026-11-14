@@ -68,7 +68,7 @@ pub fn create_one_job_accepting(
         plan_warnings,
         spec_text,
         accepted,
-    } = validate_series(driver, plan, spec_path, accept_spec, |root, start| {
+    } = validate_series(driver, plan, spec_path, accept_spec, None, |root, start| {
         parse_series_with(root, start, None).map_err(|e| match e {
             SeriesError::TaskCount { path, found: 0 } => EngineError::Msg(format!(
                 "{}: a plan needs at least one task",
@@ -87,6 +87,7 @@ pub fn create_one_job_accepting(
             spec_path,
             model,
             accept_spec,
+            None,
         )?;
         let notes = vec!["--one-job had no effect: the chain has one plan".to_string()];
         return Ok(OneJob { job, notes });

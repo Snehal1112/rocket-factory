@@ -58,6 +58,7 @@ fn new(fx: &Fx, accept: Option<&str>) -> Result<factory_core::Job, EngineError> 
         Some(&fx.spec),
         None,
         accept,
+        None,
     )
 }
 
@@ -314,6 +315,7 @@ fn a_failed_review_is_run_again_by_a_new_process() {
         Some(&fx.spec),
         None,
         None,
+        None,
     )
     .expect_err("second refused");
     assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 2);
@@ -438,6 +440,7 @@ fn a_budget_stop_with_an_approve_line_still_refuses() {
         "f",
         Some(&fx.plan),
         Some(&fx.spec),
+        None,
         None,
         None,
     )

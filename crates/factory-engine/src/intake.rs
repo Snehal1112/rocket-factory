@@ -509,6 +509,7 @@ fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure
             None,
             None,
             None,
+            Some(&tree),
         ) {
             Ok(job) => break job,
             Err(e) if attempt < DRAFT_ATTEMPTS && redraftable(&e) => {

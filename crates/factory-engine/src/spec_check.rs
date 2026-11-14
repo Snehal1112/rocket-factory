@@ -8,7 +8,7 @@ use factory_core::{classify_paths, Config, DiffClass};
 use sha2::{Digest, Sha256};
 
 use crate::compat::ReviewRecord;
-use crate::runloop::user_decisions;
+use crate::runloop::{is_list_item, section_body, user_decisions};
 use crate::specs::{SPEC_REVIEWER_AGENT, SPEC_REVIEW_JOB};
 use crate::Driver;
 
@@ -28,6 +28,8 @@ pub enum SpecRefusal {
     ReviewerMissing,
     /// The review run did not finish, so it gave no verdict to trust.
     ReviewFailed { reason: String },
+    /// An intake spec has a decision without a real source. The text is the finding for the drafter.
+    UnsourcedDecision(String),
 }
 
 /// What `factory new` tells the user about the review it used.
@@ -63,6 +65,7 @@ impl fmt::Display for SpecRefusal {
                 f,
                 "the spec review did not finish ({reason}). {SPEC_OVERRIDE_HINT}"
             ),
+            SpecRefusal::UnsourcedDecision(message) => write!(f, "{message}"),
             SpecRefusal::ReviewerMissing => write!(
                 f,
                 "the spec reviewer agent is missing; run factory upgrade or factory presets refresh, or set spec_review = false"
@@ -255,16 +258,116 @@ fn verdict_of(text: &str, file: PathBuf) -> Result<(), SpecRefusal> {
 /// Runs the spec reviewer on the spec and the plans, unless an APPROVE review of the same text is on file.
 /// The review is saved under the spec reviews folder, and its path is in every refusal.
 pub fn review_spec(driver: &Driver, spec: &Path, plans: &[PathBuf]) -> Result<(), SpecRefusal> {
-    review_spec_with(driver, spec, plans, false)
+    review_spec_with(driver, spec, plans, false, false)
 }
 
-/// Like `review_spec`. With `reuse_saved`, a review on file for the same text gives its verdict whatever
+/// The line the reviewer prompt gets in intake mode.
+const INTAKE_PROMPT_LINE: &str =
+    "This spec was drafted unattended from an issue. Every decision cites a source file that exists.";
+
+/// The reviewer prompt, with the intake line added when the spec was drafted unattended.
+fn reviewer_prompt(base: &str, intake: bool) -> String {
+    if intake {
+        format!("{base}\n{INTAKE_PROMPT_LINE}")
+    } else {
+        base.to_string()
+    }
+}
+
+/// Checks that every list item under `## Decisions` of an intake spec cites a real file of the exported
+/// tree: `- <decision>. Source: <ref>[, <ref>]. Decided by: call`. Only the first line of an item is read.
+/// The error names the first decision that fails.
+pub(crate) fn check_intake_decisions(spec: &str, tree: &Path) -> Result<(), String> {
+    let body = section_body(spec, "Decisions").unwrap_or_default();
+    let items: Vec<&str> = body.lines().filter(|l| is_list_item(l)).collect();
+    if items.is_empty() {
+        return Err("the spec has no decisions".to_string());
+    }
+    let root = tree
+        .canonicalize()
+        .map_err(|e| format!("the exported tree cannot be read: {e}"))?;
+    for (index, item) in items.iter().enumerate() {
+        check_decision(item, &root).map_err(|why| {
+            let text = item
+                .trim_start()
+                .split_once(' ')
+                .map_or("", |(_, rest)| rest);
+            let head: String = text.chars().take(80).collect();
+            format!("decision {} (\"{head}\") is not sourced: {why}", index + 1)
+        })?;
+    }
+    Ok(())
+}
+
+/// Checks one decision line against the canonical tree.
+fn check_decision(item: &str, root: &Path) -> Result<(), String> {
+    if item.contains("Decided by: user") {
+        return Err("no user answered it, so it cannot say `Decided by: user`".to_string());
+    }
+    let start = item
+        .rfind("Source:")
+        .ok_or("it has no `Source:` clause on its line")?;
+    let after = &item[start + "Source:".len()..];
+    let end = after
+        .rfind(". Decided by: call")
+        .ok_or("the `Source:` clause must end with `. Decided by: call` on the same line")?;
+    for reference in after[..end].split(", ") {
+        check_ref(reference.trim(), root)?;
+    }
+    Ok(())
+}
+
+/// Checks one `path`, `path:line` or `path:first-last` reference.
+fn check_ref(reference: &str, root: &Path) -> Result<(), String> {
+    let (path, range) = match reference.rsplit_once(':') {
+        Some((path, tail)) if tail.starts_with(|c: char| c.is_ascii_digit()) => (path, Some(tail)),
+        _ => (reference, None),
+    };
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.split('/').any(|part| part == "..")
+    {
+        return Err(format!("`{reference}` is not a path inside the tree"));
+    }
+    let real = root
+        .join(path)
+        .canonicalize()
+        .map_err(|_| format!("`{path}` does not exist in the tree"))?;
+    if !real.starts_with(root) || !real.is_file() {
+        return Err(format!("`{path}` is not a file inside the tree"));
+    }
+    let Some(range) = range else {
+        return Ok(());
+    };
+    let (first, last) = match range.split_once('-') {
+        Some((first, last)) => (first.parse::<usize>(), last.parse::<usize>()),
+        None => (range.parse::<usize>(), range.parse::<usize>()),
+    };
+    let (Ok(first), Ok(last)) = (first, last) else {
+        return Err(format!(
+            "`{reference}` has a line range that is not a number"
+        ));
+    };
+    let bytes = std::fs::read(&real).map_err(|e| format!("`{path}` cannot be read: {e}"))?;
+    let text = String::from_utf8(bytes).map_err(|_| format!("`{path}` is not UTF-8 text"))?;
+    let lines = text.lines().count();
+    if first == 0 || first > last || last > lines {
+        return Err(format!(
+            "`{reference}` is outside the file, which has {lines} lines"
+        ));
+    }
+    Ok(())
+}
+
+/// Like `review_spec`. With `intake`, the reviewer is told the spec was drafted unattended. With `reuse_saved`, a review on file for the same text gives its verdict whatever
 /// it is, so the user who overrides a refusal does not pay for a second run or lose the findings they read.
 pub(crate) fn review_spec_with(
     driver: &Driver,
     spec: &Path,
     plans: &[PathBuf],
     reuse_saved: bool,
+    intake: bool,
 ) -> Result<(), SpecRefusal> {
     if !driver.config().spec_review {
         return Ok(());
@@ -310,6 +413,7 @@ pub(crate) fn review_spec_with(
         return verdict_of(&saved, file);
     }
     let mut agent = driver.spec_reviewer_spec(driver.root(), spec, plans);
+    agent.prompt = reviewer_prompt(&agent.prompt, intake);
     // Claude takes its agents from the file. Without resolved files the checkout's own folder is used.
     if driver.config().agent_cli() != "codex" && !driver.agent_files().is_empty() {
         match reviewer_agents_file(driver) {
@@ -483,6 +587,149 @@ mod tests {
             reason: "stalled".into(),
         };
         assert!(failed.to_string().contains("did not finish (stalled)"));
+    }
+
+    /// A temp tree with `docs/a.md` (3 lines) and `docs/b.md` (1 line).
+    fn tree() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("docs")).expect("docs dir");
+        std::fs::write(dir.path().join("docs/a.md"), "one\ntwo\nthree\n").expect("write a");
+        std::fs::write(dir.path().join("docs/b.md"), "only\n").expect("write b");
+        dir
+    }
+
+    fn decisions(items: &[&str]) -> String {
+        let list: Vec<String> = items.iter().map(|i| format!("- {i}")).collect();
+        format!("## Decisions\n\n{}\n", list.join("\n"))
+    }
+
+    fn sourced(source: &str) -> String {
+        decisions(&[&format!(
+            "Use the guide. Source: {source}. Decided by: call"
+        )])
+    }
+
+    #[test]
+    fn check_intake_decisions_accepts_a_sourced_decision() {
+        let dir = tree();
+        assert_eq!(
+            check_intake_decisions(&sourced("docs/a.md:2"), dir.path()),
+            Ok(())
+        );
+        assert_eq!(
+            check_intake_decisions(&sourced("docs/a.md"), dir.path()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn check_intake_decisions_takes_a_range_and_two_refs() {
+        let dir = tree();
+        let spec = sourced("docs/a.md:2-3, docs/b.md");
+        assert_eq!(check_intake_decisions(&spec, dir.path()), Ok(()));
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_a_missing_source() {
+        let dir = tree();
+        let text = "Use the guide for the long reason that goes on and on and on and on and on and on and on";
+        let spec = decisions(&[&format!("{text}. Decided by: call")]);
+        let err = check_intake_decisions(&spec, dir.path()).expect_err("refused");
+        assert!(err.contains(&text[..80]), "{err}");
+        assert!(err.contains("decision 1"), "{err}");
+        let wrapped = "## Decisions\n\n- Use the guide,\n  Source: docs/a.md. Decided by: call\n";
+        check_intake_decisions(wrapped, dir.path()).expect_err("wrapped is refused");
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_a_user_decision() {
+        let dir = tree();
+        let spec = decisions(&["Use it. Source: docs/a.md. Decided by: user"]);
+        check_intake_decisions(&spec, dir.path()).expect_err("refused");
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_an_empty_section() {
+        let dir = tree();
+        for spec in ["## Goal\n\nx\n", "## Decisions\n\nnothing here\n"] {
+            let err = check_intake_decisions(spec, dir.path()).expect_err("refused");
+            assert!(err.contains("the spec has no decisions"), "{err}");
+        }
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_a_path_outside_the_tree() {
+        let dir = tree();
+        for source in ["../x", "/etc/hostname", "docs/../../x"] {
+            check_intake_decisions(&sourced(source), dir.path()).expect_err(source);
+        }
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_a_symlink_escape() {
+        let dir = tree();
+        let outside = tempfile::tempdir().expect("outside dir");
+        std::fs::write(outside.path().join("secret.md"), "x\n").expect("write secret");
+        std::os::unix::fs::symlink(outside.path().join("secret.md"), dir.path().join("link.md"))
+            .expect("symlink");
+        check_intake_decisions(&sourced("link.md"), dir.path()).expect_err("refused");
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_a_line_out_of_range() {
+        let dir = tree();
+        for source in [
+            "docs/a.md:0",
+            "docs/a.md:4",
+            "docs/a.md:3-2",
+            "docs/a.md:1-4",
+        ] {
+            check_intake_decisions(&sourced(source), dir.path()).expect_err(source);
+        }
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_a_missing_file() {
+        let dir = tree();
+        check_intake_decisions(&sourced("docs/none.md"), dir.path()).expect_err("refused");
+    }
+
+    #[test]
+    fn check_intake_decisions_refuses_a_file_that_is_not_utf8() {
+        let dir = tree();
+        std::fs::write(dir.path().join("bin.md"), [0xff, 0xfe]).expect("write bin");
+        check_intake_decisions(&sourced("bin.md:1"), dir.path()).expect_err("refused");
+    }
+
+    #[test]
+    fn check_intake_decisions_counts_lines_without_the_trailing_newline() {
+        let dir = tree();
+        std::fs::write(dir.path().join("c.md"), "a\nb\nc\n").expect("write c");
+        assert_eq!(
+            check_intake_decisions(&sourced("c.md:3"), dir.path()),
+            Ok(())
+        );
+        check_intake_decisions(&sourced("c.md:4"), dir.path()).expect_err("refused");
+    }
+
+    #[test]
+    fn check_intake_decisions_uses_the_last_source_on_the_line() {
+        let dir = tree();
+        let spec = decisions(&["Why Source: nope.md. Source: docs/a.md. Decided by: call"]);
+        assert_eq!(check_intake_decisions(&spec, dir.path()), Ok(()));
+    }
+
+    #[test]
+    fn the_reviewer_prompt_in_intake_mode_says_the_spec_was_drafted_unattended() {
+        let line = "This spec was drafted unattended from an issue. Every decision cites a source file that exists.";
+        assert!(reviewer_prompt("base", true).contains(line));
+        assert!(!reviewer_prompt("base", false).contains(line));
+    }
+
+    #[test]
+    fn an_unsourced_decision_displays_bare() {
+        let shown = SpecRefusal::UnsourcedDecision("decision 1 is not sourced".into()).to_string();
+        assert_eq!(shown, "decision 1 is not sourced");
     }
 
     fn stopped(reason: factory_agent::StopReason, error: Option<&str>) -> AgentRun {

@@ -506,6 +506,7 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
                 spec.as_deref(),
                 model.as_deref(),
                 accept_spec.as_deref(),
+                None,
             )?,
             Vec::new(),
         ),
