@@ -108,6 +108,21 @@ fn two_plans(draft: &Path) {
     std::fs::write(draft.join("plan-02-b.md"), plan(1, "none")).expect("plan 2");
 }
 
+const SPEC_WITH_FOLLOW_UPS: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n\n## Follow-ups\n\n- SECRET-TITLE other work. More detail.\n";
+
+/// A draft of one plan with a follow-up in the spec.
+fn one_plan_with_follow_ups(draft: &Path) {
+    std::fs::write(draft.join("spec.md"), SPEC_WITH_FOLLOW_UPS).expect("spec");
+    std::fs::write(draft.join("plan-01-a.md"), plan(1, "none")).expect("plan");
+}
+
+/// A draft of two plans with a follow-up in the spec.
+fn two_plans_with_follow_ups(draft: &Path) {
+    std::fs::write(draft.join("spec.md"), SPEC_WITH_FOLLOW_UPS).expect("spec");
+    std::fs::write(draft.join("plan-01-a.md"), plan(1, "plan-02-b.md")).expect("plan 1");
+    std::fs::write(draft.join("plan-02-b.md"), plan(1, "none")).expect("plan 2");
+}
+
 fn setup_with(
     config: Config,
     issues: Vec<IssueInfo>,
@@ -412,7 +427,7 @@ fn a_merged_issue_is_commented_closed_and_labelled_done() {
     assert_eq!(board.jobs[0].issues, vec![7]);
     let said = comments(&it);
     assert_eq!(said[0].1, "factory picked this up as job 001");
-    assert_eq!(said[1].1, "merged as job 001");
+    assert_eq!(said[1].1, "merged as job 001\nno follow-ups");
     assert_eq!(it.tracker.state.lock().expect("lock").closes, vec![7]);
     assert_eq!(
         edits(&it).last(),
@@ -427,6 +442,69 @@ fn a_merged_issue_is_commented_closed_and_labelled_done() {
         calls[0].cwd
     );
     assert!(it.main.join("README.md").exists());
+}
+
+#[test]
+fn a_merged_intake_job_files_its_follow_ups_before_the_close() {
+    let it = setup(one_plan_with_follow_ups);
+    it.tracker.state.lock().expect("lock").labels.insert(
+        7,
+        vec!["factory".into(), "priority: P0".into(), "tech-debt".into()],
+    );
+    assert!(matches!(pass(&it), IntakeOutcome::Merged { .. }));
+    let calls = it.tracker.calls();
+    let at = |p: &str| calls.iter().position(|c| c.starts_with(p)).expect("call");
+    assert!(at("create") < at("close"), "{calls:?}");
+    let s = it.tracker.state.lock().expect("lock");
+    assert_eq!(s.created.len(), 1);
+    assert_eq!(
+        s.created[0].2,
+        vec!["priority: P0".to_string(), "tech-debt".to_string()]
+    );
+    assert_eq!(s.closes, vec![7]);
+}
+
+#[test]
+fn the_intake_comment_names_only_issue_numbers() {
+    let it = setup(one_plan_with_follow_ups);
+    pass(&it);
+    let said = comments(&it);
+    assert_eq!(said[1].1, "merged as job 001\nfollow-ups filed as #201");
+    assert!(!said[1].1.contains("SECRET-TITLE"));
+}
+
+#[test]
+fn a_merged_intake_job_without_follow_ups_says_so() {
+    let it = setup(one_plan);
+    pass(&it);
+    assert_eq!(comments(&it)[1].1, "merged as job 001\nno follow-ups");
+}
+
+#[test]
+fn a_failed_follow_up_still_closes_the_intake_issue_and_says_so() {
+    let it = setup(one_plan_with_follow_ups);
+    it.tracker.fail_on("create");
+    assert!(matches!(pass(&it), IntakeOutcome::Merged { .. }));
+    assert_eq!(
+        comments(&it)[1].1,
+        "merged as job 001\nfollow-ups not filed, see the spec of job 001"
+    );
+    assert_eq!(it.tracker.state.lock().expect("lock").closes, vec![7]);
+    assert_eq!(
+        edits(&it).last(),
+        Some(&(7, s(STATE_DONE), s(STATE_RUNNING)))
+    );
+}
+
+#[test]
+fn a_two_plan_series_files_its_follow_ups_once() {
+    let it = setup(two_plans_with_follow_ups);
+    pass(&it);
+    assert_eq!(it.tracker.state.lock().expect("lock").created.len(), 1);
+    assert_eq!(
+        comments(&it)[1].1,
+        "merged as job 001, 002\nfollow-ups filed as #201"
+    );
 }
 
 #[test]

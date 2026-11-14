@@ -262,6 +262,11 @@ pub fn run_intake(
         .map_err(|e| tracker_err("cannot comment on the issue", e))?;
     let cause = match run_series(driver, &jobs[0]) {
         Ok(RunEnd::Merged) => {
+            let last = jobs.last().unwrap_or(&jobs[0]);
+            let line = follow_up_line(
+                crate::tickets::file_follow_ups(driver, last, tracker, false),
+                last,
+            );
             tracker
                 .edit_labels(
                     number,
@@ -270,7 +275,7 @@ pub fn run_intake(
                 )
                 .map_err(|e| tracker_err("cannot label the issue done", e))?;
             tracker
-                .comment(number, &format!("merged as job {ids}"))
+                .comment(number, &format!("merged as job {ids}\n{line}"))
                 .map_err(|e| tracker_err("cannot comment on the issue", e))?;
             tracker
                 .close(number)
@@ -286,6 +291,27 @@ pub fn run_intake(
     let mut f = failure("build-failed", number, cause);
     f.job = Some(first_unmerged(driver, &jobs));
     settle_failure(tracker, number, &f, &draft)
+}
+
+/// The fixed line of the merged comment about the follow-ups: issue numbers and fixed words only.
+/// A filing error or a failed report is logged and never stops the close.
+fn follow_up_line(filed: Result<crate::FiledFollowUps, EngineError>, last: &str) -> String {
+    let not_filed = format!("follow-ups not filed, see the spec of job {last}");
+    match filed {
+        Ok(f) if !f.report.failed && f.listed == 0 => "no follow-ups".to_string(),
+        Ok(f) if !f.report.failed && f.numbers.len() == f.listed => {
+            let numbers: Vec<String> = f.numbers.iter().map(|n| format!("#{n}")).collect();
+            format!("follow-ups filed as {}", numbers.join(", "))
+        }
+        Ok(f) => {
+            tracing::error!(event = "step.error", step = "intake_follow_ups", msg = %f.report.lines.join("; "));
+            not_filed
+        }
+        Err(e) => {
+            tracing::error!(event = "step.error", step = "intake_follow_ups", msg = %e);
+            not_filed
+        }
+    }
 }
 
 /// The first job of the series that is not merged, else the first job.
