@@ -156,7 +156,7 @@ struct Staged {
 }
 
 /// A finished report to hand back as it is, or the filed state.
-enum Stage1 {
+enum StageOutcome {
     Stop(TicketsReport),
     Ready(Box<Staged>),
 }
@@ -180,12 +180,12 @@ pub fn file_follow_ups(
 ) -> Result<FiledFollowUps, EngineError> {
     let job = driver.job(id)?;
     match stage_follow_ups(driver, &job, tracker, dry_run, false)? {
-        Stage1::Stop(report) => Ok(FiledFollowUps {
+        StageOutcome::Stop(report) => Ok(FiledFollowUps {
             report,
             numbers: Vec::new(),
             listed: 0,
         }),
-        Stage1::Ready(staged) => {
+        StageOutcome::Ready(staged) => {
             let numbers = filed_numbers(&staged.items, &staged.marker);
             let listed = staged.items.len();
             Ok(FiledFollowUps {
@@ -212,35 +212,37 @@ fn filed_numbers(items: &[FollowUp], marker: &Marker) -> Vec<u32> {
 }
 
 /// Applies the skips, copies the parent labels and files one ticket per spec bullet.
-/// A failure writes its ledger line before it comes back as `Stage1::Stop`.
+/// A failure writes its ledger line before it comes back as `StageOutcome::Stop`.
 fn stage_follow_ups(
     driver: &Driver,
     job: &Job,
     tracker: &dyn Tracker,
     dry_run: bool,
     skip_intake: bool,
-) -> Result<Stage1, EngineError> {
+) -> Result<StageOutcome, EngineError> {
     let id = &job.id;
     let mut report = TicketsReport::default();
     if job.stage != Stage::Merged {
-        return Ok(Stage1::Stop(report.skip(format!("job {id} is not merged"))));
+        return Ok(StageOutcome::Stop(
+            report.skip(format!("job {id} is not merged")),
+        ));
     }
     if let Some(pos) = &job.series {
         if pos.index < pos.total {
-            return Ok(Stage1::Stop(report.skip(format!(
+            return Ok(StageOutcome::Stop(report.skip(format!(
                 "plan {} of {} is not the last plan of the series",
                 pos.index, pos.total
             ))));
         }
     }
     if skip_intake && job.intake_issue.is_some() {
-        return Ok(Stage1::Stop(
+        return Ok(StageOutcome::Stop(
             report.skip(format!("job {id} is an intake job")),
         ));
     }
     let refs = parse_issue_refs(&job.feature);
     if refs.is_empty() {
-        return Ok(Stage1::Stop(
+        return Ok(StageOutcome::Stop(
             report.skip("the feature text has no issue references".to_string()),
         ));
     }
@@ -248,13 +250,13 @@ fn stage_follow_ups(
         Ok(name) => name,
         Err(e) => {
             report.fail(format!("repository name: {e}"));
-            return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
+            return Ok(StageOutcome::Stop(finish(driver, job, dry_run, report)));
         }
     };
     for r in &refs {
         if let Some(other) = &r.repo {
             if !other.eq_ignore_ascii_case(&repo) {
-                return Ok(Stage1::Stop(report.skip(format!(
+                return Ok(StageOutcome::Stop(report.skip(format!(
                     "issue #{} belongs to {other}, this repository is {repo}",
                     r.number
                 ))));
@@ -285,7 +287,7 @@ fn stage_follow_ups(
             }
             Err(e) => {
                 report.fail(format!("labels of #{parent}: {e}"));
-                return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
+                return Ok(StageOutcome::Stop(finish(driver, job, dry_run, report)));
             }
         }
     }
@@ -322,7 +324,7 @@ fn stage_follow_ups(
                             "adopted #{number} `{}` but could not record it: {e}",
                             item.title
                         ));
-                        return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
+                        return Ok(StageOutcome::Stop(finish(driver, job, dry_run, report)));
                     }
                     report
                         .lines
@@ -332,14 +334,14 @@ fn stage_follow_ups(
                 Ok(None) => {}
                 Err(e) => {
                     report.fail(format!("find `{}`: {e}", item.title));
-                    return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
+                    return Ok(StageOutcome::Stop(finish(driver, job, dry_run, report)));
                 }
             }
         } else {
             marker.pending.push(item.title.clone());
             if let Err(e) = marker.save(&marker_path) {
                 report.fail(format!("record pending `{}`: {e}", item.title));
-                return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
+                return Ok(StageOutcome::Stop(finish(driver, job, dry_run, report)));
             }
         }
         let body = fit_body(&item.body, &footer_text);
@@ -352,7 +354,7 @@ fn stage_follow_ups(
                         "created #{number} `{}` but could not record it: {e}",
                         item.title
                     ));
-                    return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
+                    return Ok(StageOutcome::Stop(finish(driver, job, dry_run, report)));
                 }
                 report
                     .lines
@@ -360,11 +362,11 @@ fn stage_follow_ups(
             }
             Err(e) => {
                 report.fail(format!("create `{}`: {e}", item.title));
-                return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
+                return Ok(StageOutcome::Stop(finish(driver, job, dry_run, report)));
             }
         }
     }
-    Ok(Stage1::Ready(Box::new(Staged {
+    Ok(StageOutcome::Ready(Box::new(Staged {
         marker,
         marker_path,
         parents,
@@ -389,8 +391,8 @@ pub fn tickets_step(
         items,
         mut report,
     } = match stage_follow_ups(driver, &job, tracker.as_ref(), dry_run, true)? {
-        Stage1::Stop(report) => return Ok(report),
-        Stage1::Ready(staged) => *staged,
+        StageOutcome::Stop(report) => return Ok(report),
+        StageOutcome::Ready(staged) => *staged,
     };
     let filed = filed_numbers(&items, &marker);
     let base = driver.repo().base_branch().to_string();
