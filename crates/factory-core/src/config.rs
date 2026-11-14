@@ -385,9 +385,22 @@ impl Config {
                     .into(),
             ));
         }
-        if cfg.intake_label.trim().is_empty() || cfg.intake_label.contains(',') {
+        let label = &cfg.intake_label;
+        if label.trim().is_empty()
+            || label.trim() != label
+            || label.contains(',')
+            || label.starts_with('-')
+            || ["factory: running", "factory: needs-human", "factory: done"]
+                .iter()
+                .any(|state| label.eq_ignore_ascii_case(state))
+        {
             return Err(CoreError::Config(
-                "intake_label must not be empty and must not contain a comma".into(),
+                "intake_label must not be empty, have surrounding whitespace, contain a comma, start with '-' or be a factory state label".into(),
+            ));
+        }
+        if cfg.priority_labels.iter().any(|l| l.trim().is_empty()) {
+            return Err(CoreError::Config(
+                "priority_labels must not hold an empty label".into(),
             ));
         }
         if cfg
@@ -398,6 +411,11 @@ impl Config {
         {
             return Err(CoreError::Config(
                 "priority_labels must not repeat a label".into(),
+            ));
+        }
+        if cfg.intake_trusted.iter().any(|l| l.trim().is_empty()) {
+            return Err(CoreError::Config(
+                "intake_trusted must not hold an empty login".into(),
             ));
         }
         if cfg.intake_poll_minutes == 0 || cfg.intake_budget_weighted == 0 {
@@ -1183,6 +1201,12 @@ mod tests {
             "intake_poll_minutes = 0",
             "intake_budget_weighted = 0",
             "intake_model = \"\"",
+            "intake_trusted = [\"\"]",
+            "intake_trusted = [\"  \"]",
+            "intake_label = \"-x\"",
+            "intake_label = \" factory\"",
+            "intake_label = \"factory: running\"",
+            "priority_labels = [\"\"]",
         ] {
             Config::parse(bad).expect_err(bad);
         }

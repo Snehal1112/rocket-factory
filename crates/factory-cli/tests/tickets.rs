@@ -33,7 +33,7 @@ impl Tracker for NoCalls {
     fn list_labelled(&self, _: &str) -> Result<Vec<IssueInfo>, String> {
         Err("not used".into())
     }
-    fn labelled_by(&self, _: u32, _: &str) -> Result<Option<String>, String> {
+    fn labelled_by(&self, _: u32, _: &str) -> Result<Option<factory_engine::LabelEvent>, String> {
         Err("not used".into())
     }
     fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
