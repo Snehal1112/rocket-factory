@@ -25,8 +25,8 @@ fn only_intake_uses_the_raw_tracker() {
     let hits: Vec<String> = files
         .iter()
         .filter(|f| {
-            let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            !ALLOWED.contains(&name)
+            let rel = f.strip_prefix(&src).expect("under src");
+            !ALLOWED.iter().any(|a| rel == Path::new(a))
         })
         .filter(|f| {
             std::fs::read_to_string(f)
