@@ -1,5 +1,6 @@
 //! Checks on a spec that run before `factory new` creates any job.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -74,10 +75,12 @@ impl fmt::Display for SpecRefusal {
     }
 }
 
-/// The hex SHA-256 over the spec, each plan and the reviewer's agent file. Every part has an 8 byte
-/// length prefix, so moving text from one part to the next changes the key.
-fn review_key(spec: &str, plans: &[String], agent: &str) -> String {
+/// The hex SHA-256 over the spec, each plan, the reviewer's agent file and the intake flag. Every text
+/// part has an 8 byte length prefix, so moving text from one part to the next changes the key. The
+/// flag keeps a review made for an intake spec apart from one made with a person in the loop.
+fn review_key(spec: &str, plans: &[String], agent: &str, intake: bool) -> String {
     let mut hash = Sha256::new();
+    hash.update([u8::from(intake)]);
     for part in std::iter::once(spec)
         .chain(plans.iter().map(String::as_str))
         .chain(std::iter::once(agent))
@@ -258,19 +261,19 @@ fn verdict_of(text: &str, file: PathBuf) -> Result<(), SpecRefusal> {
 /// Runs the spec reviewer on the spec and the plans, unless an APPROVE review of the same text is on file.
 /// The review is saved under the spec reviews folder, and its path is in every refusal.
 pub fn review_spec(driver: &Driver, spec: &Path, plans: &[PathBuf]) -> Result<(), SpecRefusal> {
-    review_spec_with(driver, spec, plans, false, false)
+    review_spec_with(driver, spec, plans, false, None)
 }
 
 /// The line the reviewer prompt gets in intake mode.
 const INTAKE_PROMPT_LINE: &str =
-    "This spec was drafted unattended from an issue. Every decision cites a source file that exists.";
+    "This spec was drafted unattended from an issue. Every decision cites a source file that exists";
 
-/// The reviewer prompt, with the intake line added when the spec was drafted unattended.
-fn reviewer_prompt(base: &str, intake: bool) -> String {
-    if intake {
-        format!("{base}\n{INTAKE_PROMPT_LINE}")
-    } else {
-        base.to_string()
+/// The reviewer prompt, with the intake line added when the spec was drafted unattended. The line
+/// names the exported tree that the sources live in.
+fn reviewer_prompt(base: &str, intake_tree: Option<&Path>) -> String {
+    match intake_tree {
+        Some(tree) => format!("{base}\n{INTAKE_PROMPT_LINE} in {}.", tree.display()),
+        None => base.to_string(),
     }
 }
 
@@ -279,15 +282,20 @@ fn reviewer_prompt(base: &str, intake: bool) -> String {
 /// The error names the first decision that fails.
 pub(crate) fn check_intake_decisions(spec: &str, tree: &Path) -> Result<(), String> {
     let body = section_body(spec, "Decisions").unwrap_or_default();
-    let items: Vec<&str> = body.lines().filter(|l| is_list_item(l)).collect();
+    // A nested bullet is detail of its decision, not a decision, so only top level items count.
+    let items: Vec<&str> = body
+        .lines()
+        .filter(|l| !l.starts_with([' ', '\t']) && is_list_item(l))
+        .collect();
     if items.is_empty() {
         return Err("the spec has no decisions".to_string());
     }
     let root = tree
         .canonicalize()
         .map_err(|e| format!("the exported tree cannot be read: {e}"))?;
+    let mut line_counts = HashMap::new();
     for (index, item) in items.iter().enumerate() {
-        check_decision(item, &root).map_err(|why| {
+        check_decision(item, &root, &mut line_counts).map_err(|why| {
             let text = item
                 .trim_start()
                 .split_once(' ')
@@ -300,7 +308,11 @@ pub(crate) fn check_intake_decisions(spec: &str, tree: &Path) -> Result<(), Stri
 }
 
 /// Checks one decision line against the canonical tree.
-fn check_decision(item: &str, root: &Path) -> Result<(), String> {
+fn check_decision(
+    item: &str,
+    root: &Path,
+    line_counts: &mut HashMap<PathBuf, usize>,
+) -> Result<(), String> {
     if item.contains("Decided by: user") {
         return Err("no user answered it, so it cannot say `Decided by: user`".to_string());
     }
@@ -312,13 +324,17 @@ fn check_decision(item: &str, root: &Path) -> Result<(), String> {
         .rfind(". Decided by: call")
         .ok_or("the `Source:` clause must end with `. Decided by: call` on the same line")?;
     for reference in after[..end].split(", ") {
-        check_ref(reference.trim(), root)?;
+        check_ref(reference.trim(), root, line_counts)?;
     }
     Ok(())
 }
 
 /// Checks one `path`, `path:line` or `path:first-last` reference.
-fn check_ref(reference: &str, root: &Path) -> Result<(), String> {
+fn check_ref(
+    reference: &str,
+    root: &Path,
+    line_counts: &mut HashMap<PathBuf, usize>,
+) -> Result<(), String> {
     let (path, range) = match reference.rsplit_once(':') {
         Some((path, tail)) if tail.starts_with(|c: char| c.is_ascii_digit()) => (path, Some(tail)),
         _ => (reference, None),
@@ -349,9 +365,18 @@ fn check_ref(reference: &str, root: &Path) -> Result<(), String> {
             "`{reference}` has a line range that is not a number"
         ));
     };
-    let bytes = std::fs::read(&real).map_err(|e| format!("`{path}` cannot be read: {e}"))?;
-    let text = String::from_utf8(bytes).map_err(|_| format!("`{path}` is not UTF-8 text"))?;
-    let lines = text.lines().count();
+    let lines = match line_counts.get(&real) {
+        Some(lines) => *lines,
+        None => {
+            let bytes =
+                std::fs::read(&real).map_err(|e| format!("`{path}` cannot be read: {e}"))?;
+            let text =
+                String::from_utf8(bytes).map_err(|_| format!("`{path}` is not UTF-8 text"))?;
+            let lines = text.lines().count();
+            line_counts.insert(real, lines);
+            lines
+        }
+    };
     if first == 0 || first > last || last > lines {
         return Err(format!(
             "`{reference}` is outside the file, which has {lines} lines"
@@ -360,7 +385,7 @@ fn check_ref(reference: &str, root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Like `review_spec`. With `intake`, the reviewer is told the spec was drafted unattended.
+/// Like `review_spec`. With `intake_tree`, the reviewer is told the spec was drafted unattended from it.
 /// With `reuse_saved`, a review on file for the same text gives its verdict whatever it is, so
 /// the user who overrides a refusal does not pay for a second run or lose the findings they read.
 pub(crate) fn review_spec_with(
@@ -368,7 +393,7 @@ pub(crate) fn review_spec_with(
     spec: &Path,
     plans: &[PathBuf],
     reuse_saved: bool,
-    intake: bool,
+    intake_tree: Option<&Path>,
 ) -> Result<(), SpecRefusal> {
     if !driver.config().spec_review {
         return Ok(());
@@ -380,7 +405,12 @@ pub(crate) fn review_spec_with(
     }
     let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
     let plan_texts: Vec<String> = plans.iter().map(|p| read(p)).collect();
-    let key = review_key(&read(spec), &plan_texts, reviewer_file_text(driver));
+    let key = review_key(
+        &read(spec),
+        &plan_texts,
+        reviewer_file_text(driver),
+        intake_tree.is_some(),
+    );
     let file = driver.layout().spec_reviews_dir().join(format!("{key}.md"));
     let kept = driver
         .last_review
@@ -414,7 +444,7 @@ pub(crate) fn review_spec_with(
         return verdict_of(&saved, file);
     }
     let mut agent = driver.spec_reviewer_spec(driver.root(), spec, plans);
-    agent.prompt = reviewer_prompt(&agent.prompt, intake);
+    agent.prompt = reviewer_prompt(&agent.prompt, intake_tree);
     // Claude takes its agents from the file. Without resolved files the checkout's own folder is used.
     if driver.config().agent_cli() != "codex" && !driver.agent_files().is_empty() {
         match reviewer_agents_file(driver) {
@@ -643,6 +673,13 @@ mod tests {
     }
 
     #[test]
+    fn check_intake_decisions_skips_nested_bullets() {
+        let dir = tree();
+        let spec = "## Decisions\n\n- Use it. Source: docs/a.md. Decided by: call\n  - detail without a source\n";
+        assert_eq!(check_intake_decisions(spec, dir.path()), Ok(()));
+    }
+
+    #[test]
     fn check_intake_decisions_refuses_a_user_decision() {
         let dir = tree();
         let spec = decisions(&["Use it. Source: docs/a.md. Decided by: user"]);
@@ -722,9 +759,9 @@ mod tests {
 
     #[test]
     fn the_reviewer_prompt_in_intake_mode_says_the_spec_was_drafted_unattended() {
-        let line = "This spec was drafted unattended from an issue. Every decision cites a source file that exists.";
-        assert!(reviewer_prompt("base", true).contains(line));
-        assert!(!reviewer_prompt("base", false).contains(line));
+        let line = "This spec was drafted unattended from an issue. Every decision cites a source file that exists in /tmp/tree.";
+        assert!(reviewer_prompt("base", Some(Path::new("/tmp/tree"))).contains(line));
+        assert_eq!(reviewer_prompt("base", None), "base");
     }
 
     #[test]
@@ -779,15 +816,16 @@ mod tests {
 
     #[test]
     fn the_review_key_changes_with_a_plan() {
-        let a = review_key("spec", &["p1".into()], "agent");
+        let a = review_key("spec", &["p1".into()], "agent", false);
+        assert_ne!(a, review_key("spec", &["p1".into()], "agent", true));
         assert_eq!(a.len(), 64);
-        assert_eq!(a, review_key("spec", &["p1".into()], "agent"));
-        assert_ne!(a, review_key("spec", &["p2".into()], "agent"));
-        assert_ne!(a, review_key("spec", &["p1".into()], "agent 2"));
+        assert_eq!(a, review_key("spec", &["p1".into()], "agent", false));
+        assert_ne!(a, review_key("spec", &["p2".into()], "agent", false));
+        assert_ne!(a, review_key("spec", &["p1".into()], "agent 2", false));
         // Text moved from one part to the next is a different input.
         assert_ne!(
-            review_key("ab", &["c".into()], ""),
-            review_key("a", &["bc".into()], "")
+            review_key("ab", &["c".into()], "", false),
+            review_key("a", &["bc".into()], "", false)
         );
     }
 

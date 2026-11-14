@@ -418,12 +418,12 @@ fn validate_series_inner(
         // answer is refused before the agent runs, so an accepted one never pays for a review.
         let plan_paths: Vec<std::path::PathBuf> =
             series.plans.iter().map(|p| p.path.clone()).collect();
-        // An intake spec has sourced decisions instead, which are stricter than the risky-path rule.
-        let risky = match intake_tree {
-            Some(_) => None,
-            None => {
-                crate::spec_check::risky_without_user_decision(&text, &plan_texts, driver.config())
-            }
+        // An intake spec has sourced decisions and a review instead of a user's answer. Without the
+        // review, a risky intake spec keeps the refusal.
+        let risky = if intake_tree.is_some() && driver.config().spec_review {
+            None
+        } else {
+            crate::spec_check::risky_without_user_decision(&text, &plan_texts, driver.config())
         };
         let refusal = match risky {
             Some(reason) => Some(crate::spec_check::SpecRefusal::NoUserDecision(reason)),
@@ -432,7 +432,7 @@ fn validate_series_inner(
                 &spec,
                 &plan_paths,
                 accept_spec.is_some(),
-                intake_tree.is_some(),
+                intake_tree,
             )
             .err(),
         };
@@ -878,11 +878,38 @@ mod tests {
     }
 
     #[test]
-    fn validate_series_in_intake_mode_skips_the_risky_user_refusal() {
+    fn validate_series_in_intake_mode_skips_the_risky_user_refusal_only_with_a_review() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let reviewed = Config {
+            spec_review: true,
+            ..risky_config()
+        };
+        let d = driver_with(&tmp, reviewed);
+        let (plans, tree) = risky_series(&tmp, SOURCED_SPEC);
+        // The review runs, so the refusal is the review's, not the user-decision rule.
+        let err = validate(&d, &plans, None, Some(&tree))
+            .err()
+            .expect("the fake reviewer gives no verdict");
+        assert!(
+            !matches!(
+                err,
+                EngineError::SpecRefused(SpecRefusal::NoUserDecision(_))
+            ),
+            "{err}"
+        );
         let tmp = tempfile::tempdir().expect("tmp");
         let d = driver_with(&tmp, risky_config());
         let (plans, tree) = risky_series(&tmp, SOURCED_SPEC);
-        validate(&d, &plans, None, Some(&tree)).expect("an intake spec passes");
+        let err = validate(&d, &plans, None, Some(&tree))
+            .err()
+            .expect("without a review a risky intake spec is refused");
+        assert!(
+            matches!(
+                err,
+                EngineError::SpecRefused(SpecRefusal::NoUserDecision(_))
+            ),
+            "{err}"
+        );
         let err = validate(&d, &plans, None, None)
             .err()
             .expect("a normal risky spec without a user decision is refused");
