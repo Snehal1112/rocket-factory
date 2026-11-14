@@ -487,24 +487,6 @@ factory rework 028 "Handle the empty list case and add a test for it"
 - It also revives a cancelled job.
 - It does not run the job. It prints `job N back to build, round <N>` for the next round, or `job N back to build, same task` for a job parked mid-task. You must run `factory run 028` afterwards.
 
-### 6.6a `factory sync`: bring a job up to date
-
-```
-factory sync <ID>
-```
-
-Merges the base branch into the job branch and reruns the checks and the code reviewer on the sync diff. Use it when main moved, or after you rebased the job branch by hand.
-
-```bash
-factory sync 028
-```
-
-- The job must be in `build`, `review`, `approve` or `needs-human`, have no live lease and have a clean worktree. A merged or cancelled job is refused.
-- After a rebase outside the factory, the reviewed head is gone from the branch. `sync` resets the floor to the base, merges the base branch when the branch is also behind, and runs one whole-branch review by the code and security reviewers. The earlier review files are kept.
-- A requested sync does not count against the limit of automatic syncs.
-- It prints `job N is up to date with <base>` and changes nothing when there is nothing to do. A merge conflict parks the job with the paths named.
-- A park that says `run factory sync <id>` or lists it under next commands is this dead end.
-
 ### 6.7 `factory cancel`: give up on a job
 
 ```
@@ -1010,6 +992,29 @@ factory plugin sync --check
 - `--check` prints `plugin files are current`, or stops with `plugin files out of date: <file>; run factory plugin sync`.
 - Outside the repository root it stops with `<path> is not the repository root: .claude-plugin/marketplace.json is missing; use --repo`.
 - In your own projects you never need it. Install the plugin as in section 4.3.
+
+### 6.21 `factory sync`: bring a job up to date
+
+```
+factory sync <ID>
+```
+
+Merges the base branch into the job branch and reruns the checks and the reviewers. Use it when main moved, or after you changed the job branch by hand.
+
+```bash
+factory sync 028
+```
+
+- The job must be in `build`, `review`, `approve` or `needs-human`, have no live lease, have a clean worktree and no pending batch commit. A merged or cancelled job is refused.
+- Only a job in `approve` whose branch tip is still the reviewed head keeps its reviewed floor. It merges the base branch and gets one code review of the sync diff.
+- Every other case gets a whole-branch review: the floor is reset, the base branch is merged when the branch is behind, and the code and security reviewers review everything from the merge base. This covers a changed tip (a rebase, an amend or commits added by hand) and a job in `build`, `review` or `needs-human` that is behind main. The earlier review files are kept: a rebase review saves `review-<role>-r<round>-rebase.raw.md` and a sync review `review-<role>-r<round>-sync<n>.raw.md`.
+- The reset clears the review states and keeps the last review, so `approve` refuses the job until the new review has run, and open blockers still refuse it. A sync that stops early can be run again.
+- A whole-branch review that passes on a job that was in `needs-human` puts it back in `needs-human` with `sync review passed, run factory approve <id>`. Run `factory approve` to release it.
+- A park after a sync replaces the old park record. A review that leaves blockers parks as `changes-remain` with its usual hints.
+- A requested sync does not count against the limit of automatic syncs.
+- It prints `job N is up to date with <base>` and changes nothing when the tip is the reviewed head and the branch is not behind. A merge conflict parks the job with the paths named.
+- A park that says `run factory sync <id>` or lists it under next commands is this dead end.
+- The refusals exit like those of `approve` and `rework`.
 
 ---
 

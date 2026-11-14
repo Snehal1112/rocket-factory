@@ -113,7 +113,7 @@ fn a_rewrite_resets_the_review_states_and_keeps_last_review() {
     rewrite_branch(&fx);
     assert!(matches!(
         sync_requested(&fx.driver, &fx.id).expect("sync"),
-        SyncOutcome::Parked(_)
+        SyncOutcome::Parked(..)
     ));
     let job = fx.driver.job(&fx.id).expect("job");
     assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
@@ -522,13 +522,164 @@ fn sync_requested_conflict_on_a_rewritten_branch_parks_in_needs_human() {
 /// Asserts that a requested sync hits the conflict, parks the job and writes a park record.
 fn assert_conflict_parks(fx: &common::MergeFixture) {
     match sync_requested(&fx.driver, &fx.id).expect("sync") {
-        SyncOutcome::Parked(text) => assert!(text.contains("docs/hello.txt"), "{text}"),
+        SyncOutcome::Parked(text, _) => assert!(text.contains("docs/hello.txt"), "{text}"),
         other => panic!("expected a park, got {other:?}"),
     }
     let job = fx.driver.job(&fx.id).expect("job");
     assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
     let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
     assert!(rec.reason.contains("docs/hello.txt"), "{}", rec.reason);
+}
+
+#[test]
+fn a_sync_conflict_on_a_needs_human_job_replaces_the_park_record() {
+    let fx = fixture(vec![reply(GOOD)]);
+    factory_engine::park_with_parts(
+        &fx.driver,
+        &fx.id,
+        "nothing changed",
+        factory_core::ParkKind::NothingChanged,
+        vec![factory_core::ParkPart::new(
+            "Old",
+            "driver",
+            "old evidence text",
+        )],
+    )
+    .expect("old park");
+    common::commit_file(&fx.main, "docs/hello.txt", "main version\n");
+    assert!(matches!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::Parked(..)
+    ));
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.park_kind.as_deref(), Some("other"));
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::Other);
+    assert!(rec.reason.contains("docs/hello.txt"), "{}", rec.reason);
+    let text = serde_json::to_string(&rec).expect("json");
+    assert!(!text.contains("old evidence text"), "{text}");
+    assert!(
+        ledger(&fx).contains("parked in needs-human: sync conflict"),
+        "{}",
+        ledger(&fx)
+    );
+}
+
+#[test]
+fn a_checks_gate_failure_during_a_sync_keeps_its_own_park_kind() {
+    let config = factory_core::Config {
+        checks: vec![factory_core::CheckRule {
+            paths: vec!["src/**".into()],
+            commands: vec!["true".into()],
+            ..factory_core::CheckRule::default()
+        }],
+        code_paths: vec!["**".into()],
+        ..factory_core::Config::default()
+    };
+    let fx = common::approved_job_config(Arc::new(scripted(vec![])), true, config);
+    force_stage(&fx, factory_core::Stage::NeedsHuman);
+    rewrite_branch(&fx);
+    assert!(matches!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::Parked(..)
+    ));
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+    assert_eq!(
+        job.park_kind.as_deref(),
+        Some("no-checks"),
+        "{:?}",
+        job.reason
+    );
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::NoChecks);
+    assert!(rec.reason.contains("no check covers"), "{}", rec.reason);
+}
+
+#[test]
+fn a_changes_remain_decision_keeps_its_park_kind_after_a_sync() {
+    let fx = with_security_agent(fixture(vec![reply(CHANGES), reply(SECURITY_OK)]));
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.round = 9;
+            Ok(())
+        })
+        .expect("round");
+    rewrite_branch(&fx);
+    assert!(matches!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::Parked(_, Some(factory_core::ParkKind::ChangesRemain))
+    ));
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::ChangesRemain);
+    assert!(
+        rec.next
+            .iter()
+            .any(|n| n.starts_with("factory approve 001 --waive")),
+        "{:?}",
+        rec.next
+    );
+}
+
+#[test]
+fn a_passing_whole_branch_review_re_parks_a_needs_human_job() {
+    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    force_stage(&fx, factory_core::Stage::NeedsHuman);
+    rewrite_branch(&fx);
+    assert_eq!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::Synced
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+    assert_eq!(
+        job.reason.as_deref(),
+        Some("sync review passed, run factory approve 001")
+    );
+    assert!(job.last_review.is_some());
+    assert_eq!(job.approve_refusal(false, false), None);
+}
+
+#[test]
+fn a_rebase_review_keeps_the_round_raw_files() {
+    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    for role in ["code", "security"] {
+        std::fs::write(
+            job_file(&fx, &format!("review-{role}-r1.raw.md")),
+            "round raw\n",
+        )
+        .expect("round raw");
+    }
+    rewrite_branch(&fx);
+    sync_requested(&fx.driver, &fx.id).expect("sync");
+    for role in ["code", "security"] {
+        assert_eq!(
+            std::fs::read_to_string(job_file(&fx, &format!("review-{role}-r1.raw.md")))
+                .expect("round raw"),
+            "round raw\n"
+        );
+        assert!(job_file(&fx, &format!("review-{role}-r1-rebase.raw.md")).exists());
+    }
+}
+
+#[test]
+fn sync_refuses_a_pending_batch_snapshot() {
+    let fx = fixture(vec![]);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.batch_snapshot = Some("abc1234".to_string());
+            Ok(())
+        })
+        .expect("snapshot");
+    let err = sync_requested(&fx.driver, &fx.id).expect_err("refused");
+    assert_eq!(
+        err.to_string(),
+        "job 001 has a pending batch commit, use rework to finish it"
+    );
 }
 
 #[test]
@@ -571,7 +722,7 @@ fn a_sync_review_that_asks_for_changes_sets_last_review() {
     common::commit_file(&fx.main, "other.md", "o");
     assert_eq!(
         sync_stage(&fx.driver, &fx.id).expect("sync"),
-        SyncOutcome::Parked("sync review asked for changes".into())
+        SyncOutcome::Parked("sync review asked for changes".into(), None)
     );
     let last = fx
         .driver

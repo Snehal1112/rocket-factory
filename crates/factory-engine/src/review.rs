@@ -197,9 +197,11 @@ impl Engine<'_> {
             })?;
             let run = self.run_agent(spec)?;
             if multi {
-                let raw = self
-                    .job_dir
-                    .join(format!("review-{role}-r{}.raw.md", job.round));
+                // The round and run suffix of the review file name, such as `r1-rebase`.
+                let stem = file
+                    .trim_start_matches("review-code-")
+                    .trim_end_matches(".md");
+                let raw = self.job_dir.join(format!("review-{role}-{stem}.raw.md"));
                 std::fs::write(raw, &run.result_text).map_err(io_err)?;
             }
             let role_verdict = if run.stop_reason == factory_agent::StopReason::Done {
