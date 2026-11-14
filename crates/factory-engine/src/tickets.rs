@@ -2,13 +2,13 @@
 //! comment on the parent tickets and close them. Every call is recorded in `tickets.json` so a re-run
 //! never repeats one.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use factory_core::{parse_issue_refs, write_atomic, Job, Stage};
 use serde_json::{json, Value};
 
 use crate::ports::short_sha;
-use crate::{follow_ups, Driver, EngineError};
+use crate::{follow_ups, Driver, EngineError, FollowUp, Tracker};
 
 /// The marker file in the job folder.
 pub const TICKETS_FILE: &str = "tickets.json";
@@ -146,48 +146,118 @@ fn list(numbers: &[u32]) -> String {
         .join(", ")
 }
 
-/// Files the follow-ups of a merged job, comments on its parent tickets and closes them.
-/// With `dry_run` it makes only read calls and writes nothing. A `gh` failure is reported, never raised.
-pub fn tickets_step(
+/// The state after the follow-ups are filed, ready for the comment and the close.
+struct Staged {
+    marker: Marker,
+    marker_path: PathBuf,
+    parents: Vec<u32>,
+    items: Vec<FollowUp>,
+    report: TicketsReport,
+}
+
+/// A finished report to hand back as it is, or the filed state.
+enum Stage1 {
+    Stop(TicketsReport),
+    Ready(Box<Staged>),
+}
+
+/// The numbers and count `file_follow_ups` found for a job.
+pub struct FiledFollowUps {
+    pub report: TicketsReport,
+    /// Issue numbers created or adopted for this job, in the order of the spec bullets.
+    pub numbers: Vec<u32>,
+    /// How many bullets the spec lists under `## Follow-ups`.
+    pub listed: usize,
+}
+
+/// Files the follow-ups of a merged job and nothing else: no comment and no close.
+/// A skip or a failure gives an empty `numbers` and `listed`. With `dry_run` it makes only read calls.
+pub fn file_follow_ups(
     driver: &Driver,
     id: &str,
+    tracker: &dyn Tracker,
     dry_run: bool,
-) -> Result<TicketsReport, EngineError> {
+) -> Result<FiledFollowUps, EngineError> {
     let job = driver.job(id)?;
+    match stage_follow_ups(driver, &job, tracker, dry_run, false)? {
+        Stage1::Stop(report) => Ok(FiledFollowUps {
+            report,
+            numbers: Vec::new(),
+            listed: 0,
+        }),
+        Stage1::Ready(staged) => {
+            let numbers = filed_numbers(&staged.items, &staged.marker);
+            let listed = staged.items.len();
+            Ok(FiledFollowUps {
+                report: finish(driver, &job, dry_run, staged.report),
+                numbers,
+                listed,
+            })
+        }
+    }
+}
+
+/// The issue numbers recorded for the spec bullets, in spec order.
+fn filed_numbers(items: &[FollowUp], marker: &Marker) -> Vec<u32> {
+    items
+        .iter()
+        .filter_map(|item| {
+            marker
+                .created
+                .iter()
+                .find(|(title, _)| *title == item.title)
+                .map(|(_, n)| *n)
+        })
+        .collect()
+}
+
+/// Applies the skips, copies the parent labels and files one ticket per spec bullet.
+/// A failure writes its ledger line before it comes back as `Stage1::Stop`.
+fn stage_follow_ups(
+    driver: &Driver,
+    job: &Job,
+    tracker: &dyn Tracker,
+    dry_run: bool,
+    skip_intake: bool,
+) -> Result<Stage1, EngineError> {
+    let id = &job.id;
     let mut report = TicketsReport::default();
     if job.stage != Stage::Merged {
-        return Ok(report.skip(format!("job {id} is not merged")));
+        return Ok(Stage1::Stop(report.skip(format!("job {id} is not merged"))));
     }
     if let Some(pos) = &job.series {
         if pos.index < pos.total {
-            return Ok(report.skip(format!(
+            return Ok(Stage1::Stop(report.skip(format!(
                 "plan {} of {} is not the last plan of the series",
                 pos.index, pos.total
-            )));
+            ))));
         }
     }
-    if job.intake_issue.is_some() {
-        return Ok(report.skip(format!("job {id} is an intake job")));
+    if skip_intake && job.intake_issue.is_some() {
+        return Ok(Stage1::Stop(
+            report.skip(format!("job {id} is an intake job")),
+        ));
     }
     let refs = parse_issue_refs(&job.feature);
     if refs.is_empty() {
-        return Ok(report.skip("the feature text has no issue references".to_string()));
+        return Ok(Stage1::Stop(
+            report.skip("the feature text has no issue references".to_string()),
+        ));
     }
-    let tracker = driver.tracker_for(&job);
     let repo = match tracker.repo_name() {
         Ok(name) => name,
         Err(e) => {
             report.fail(format!("repository name: {e}"));
-            return Ok(finish(driver, &job, dry_run, report));
+            return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
         }
     };
     for r in &refs {
         if let Some(other) = &r.repo {
             if !other.eq_ignore_ascii_case(&repo) {
-                return Ok(report.skip(format!(
+                return Ok(Stage1::Stop(report.skip(format!(
                     "issue #{} belongs to {other}, this repository is {repo}",
                     r.number
-                )));
+                ))));
             }
         }
     }
@@ -195,7 +265,7 @@ pub fn tickets_step(
     parents.sort_unstable();
     parents.dedup();
 
-    let dir = driver.job_dir(&job);
+    let dir = driver.job_dir(job);
     let marker_path = dir.join(TICKETS_FILE);
     let mut marker = Marker::load(&marker_path)?;
     let spec = std::fs::read_to_string(dir.join("spec.md")).unwrap_or_default();
@@ -215,7 +285,7 @@ pub fn tickets_step(
             }
             Err(e) => {
                 report.fail(format!("labels of #{parent}: {e}"));
-                return Ok(finish(driver, &job, dry_run, report));
+                return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
             }
         }
     }
@@ -252,7 +322,7 @@ pub fn tickets_step(
                             "adopted #{number} `{}` but could not record it: {e}",
                             item.title
                         ));
-                        return Ok(finish(driver, &job, dry_run, report));
+                        return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
                     }
                     report
                         .lines
@@ -262,14 +332,14 @@ pub fn tickets_step(
                 Ok(None) => {}
                 Err(e) => {
                     report.fail(format!("find `{}`: {e}", item.title));
-                    return Ok(finish(driver, &job, dry_run, report));
+                    return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
                 }
             }
         } else {
             marker.pending.push(item.title.clone());
             if let Err(e) = marker.save(&marker_path) {
                 report.fail(format!("record pending `{}`: {e}", item.title));
-                return Ok(finish(driver, &job, dry_run, report));
+                return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
             }
         }
         let body = fit_body(&item.body, &footer_text);
@@ -282,7 +352,7 @@ pub fn tickets_step(
                         "created #{number} `{}` but could not record it: {e}",
                         item.title
                     ));
-                    return Ok(finish(driver, &job, dry_run, report));
+                    return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
                 }
                 report
                     .lines
@@ -290,21 +360,39 @@ pub fn tickets_step(
             }
             Err(e) => {
                 report.fail(format!("create `{}`: {e}", item.title));
-                return Ok(finish(driver, &job, dry_run, report));
+                return Ok(Stage1::Stop(finish(driver, job, dry_run, report)));
             }
         }
     }
+    Ok(Stage1::Ready(Box::new(Staged {
+        marker,
+        marker_path,
+        parents,
+        items,
+        report,
+    })))
+}
 
-    let filed: Vec<u32> = items
-        .iter()
-        .filter_map(|item| {
-            marker
-                .created
-                .iter()
-                .find(|(title, _)| *title == item.title)
-                .map(|(_, n)| *n)
-        })
-        .collect();
+/// Files the follow-ups of a merged job, comments on its parent tickets and closes them.
+/// With `dry_run` it makes only read calls and writes nothing. A `gh` failure is reported, never raised.
+pub fn tickets_step(
+    driver: &Driver,
+    id: &str,
+    dry_run: bool,
+) -> Result<TicketsReport, EngineError> {
+    let job = driver.job(id)?;
+    let tracker = driver.tracker_for(&job);
+    let Staged {
+        mut marker,
+        marker_path,
+        parents,
+        items,
+        mut report,
+    } = match stage_follow_ups(driver, &job, tracker.as_ref(), dry_run, true)? {
+        Stage1::Stop(report) => return Ok(report),
+        Stage1::Ready(staged) => *staged,
+    };
+    let filed = filed_numbers(&items, &marker);
     let base = driver.repo().base_branch().to_string();
     let main_tip = driver.repo().tip(&base).unwrap_or_default();
     let short = short_sha(&main_tip).to_string();
