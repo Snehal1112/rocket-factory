@@ -646,7 +646,11 @@ fn sync(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
         id: id.to_string(),
     };
     let base = d.repo().base_branch().to_string();
-    Ok(match factory_engine::sync_requested(&d, id)? {
+    let outcome = match factory_engine::sync_requested(&d, id) {
+        Err(factory_engine::EngineError::Refused(text)) => return Err(CliError::Refused(text)),
+        other => other?,
+    };
+    Ok(match outcome {
         factory_engine::SyncOutcome::UpToDate => format!("job {id} is up to date with {base}"),
         factory_engine::SyncOutcome::Synced => format!("job {id} synced with {base}"),
         factory_engine::SyncOutcome::Parked(reason, _) => outcome_lines::needs_human_line(&reason),

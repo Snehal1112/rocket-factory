@@ -644,6 +644,28 @@ fn a_passing_whole_branch_review_re_parks_a_needs_human_job() {
 }
 
 #[test]
+fn a_rebase_review_keeps_the_round_raw_files() {
+    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    for role in ["code", "security"] {
+        std::fs::write(
+            job_file(&fx, &format!("review-{role}-r1.raw.md")),
+            "round raw\n",
+        )
+        .expect("round raw");
+    }
+    rewrite_branch(&fx);
+    sync_requested(&fx.driver, &fx.id).expect("sync");
+    for role in ["code", "security"] {
+        assert_eq!(
+            std::fs::read_to_string(job_file(&fx, &format!("review-{role}-r1.raw.md")))
+                .expect("round raw"),
+            "round raw\n"
+        );
+        assert!(job_file(&fx, &format!("review-{role}-r1-rebase.raw.md")).exists());
+    }
+}
+
+#[test]
 fn sync_refuses_a_pending_batch_snapshot() {
     let fx = fixture(vec![]);
     fx.driver

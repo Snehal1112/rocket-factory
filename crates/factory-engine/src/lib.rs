@@ -137,6 +137,9 @@ pub enum EngineError {
     Io(String),
     #[error("{0}")]
     Msg(String),
+    /// A requested sync was refused before it changed anything.
+    #[error("{0}")]
+    Refused(String),
     /// A drafted spec or plan failed a check before any job existed.
     #[error("{0}")]
     Invalid(String),

@@ -46,22 +46,22 @@ fn job_worktree(driver: &Driver, job: &Job) -> Result<Worktree, EngineError> {
 pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError> {
     let job = driver.job(id)?;
     if job.cancelled {
-        return Err(EngineError::Msg(format!("job {id} is cancelled")));
+        return Err(EngineError::Refused(format!("job {id} is cancelled")));
     }
     if !matches!(
         job.stage,
         Stage::Build | Stage::Review | Stage::Approve | Stage::NeedsHuman
     ) {
-        return Err(EngineError::Msg(format!("job {id} is {}", job.stage)));
+        return Err(EngineError::Refused(format!("job {id} is {}", job.stage)));
     }
     if job.batch_snapshot.is_some() {
-        return Err(EngineError::Msg(format!(
+        return Err(EngineError::Refused(format!(
             "job {id} has a pending batch commit, use rework to finish it"
         )));
     }
     let wt = job_worktree(driver, &job)?;
     if !crate::merge::git_op("worktree_is_clean", || driver.repo().worktree_is_clean(&wt))? {
-        return Err(EngineError::Msg(format!(
+        return Err(EngineError::Refused(format!(
             "the worktree of job {id} has uncommitted changes"
         )));
     }
