@@ -497,6 +497,22 @@ fn a_failed_follow_up_still_closes_the_intake_issue_and_says_so() {
 }
 
 #[test]
+fn a_failed_follow_up_in_a_two_plan_series_names_the_last_job() {
+    let it = setup(two_plans_with_follow_ups);
+    it.tracker.fail_on("create");
+    assert!(matches!(pass(&it), IntakeOutcome::Merged { .. }));
+    assert_eq!(
+        comments(&it)[1].1,
+        "merged as job 001, 002\nfollow-ups not filed, see the spec of job 002"
+    );
+    assert_eq!(it.tracker.state.lock().expect("lock").closes, vec![7]);
+    assert_eq!(
+        edits(&it).last(),
+        Some(&(7, s(STATE_DONE), s(STATE_RUNNING)))
+    );
+}
+
+#[test]
 fn a_two_plan_series_files_its_follow_ups_once() {
     let it = setup(two_plans_with_follow_ups);
     pass(&it);

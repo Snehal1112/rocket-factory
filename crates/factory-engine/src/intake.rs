@@ -298,8 +298,10 @@ pub fn run_intake(
 fn follow_up_line(filed: Result<crate::FiledFollowUps, EngineError>, last: &str) -> String {
     let not_filed = format!("follow-ups not filed, see the spec of job {last}");
     match filed {
-        Ok(f) if !f.report.failed && f.listed == 0 => "no follow-ups".to_string(),
-        Ok(f) if !f.report.failed && f.numbers.len() == f.listed => {
+        Ok(f) if !f.report.failed && !f.report.skipped && f.listed == 0 => {
+            "no follow-ups".to_string()
+        }
+        Ok(f) if !f.report.failed && !f.report.skipped && f.numbers.len() == f.listed => {
             let numbers: Vec<String> = f.numbers.iter().map(|n| format!("#{n}")).collect();
             format!("follow-ups filed as {}", numbers.join(", "))
         }
@@ -554,6 +556,23 @@ mod tests {
     use std::cell::Cell;
 
     const LABELLED_AT: &str = "2026-11-05T10:00:00Z";
+
+    #[test]
+    fn a_skipped_filing_is_reported_as_not_filed() {
+        let skipped = crate::FiledFollowUps {
+            report: crate::TicketsReport {
+                lines: vec!["the feature text has no issue references".to_string()],
+                failed: false,
+                skipped: true,
+            },
+            numbers: Vec::new(),
+            listed: 0,
+        };
+        assert_eq!(
+            follow_up_line(Ok(skipped), "002"),
+            "follow-ups not filed, see the spec of job 002"
+        );
+    }
 
     #[test]
     fn redraftable_is_true_only_for_validation_and_spec_refusals() {
