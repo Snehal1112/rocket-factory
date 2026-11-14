@@ -12,11 +12,13 @@ use crate::specs::{ReviewerExtra, SECURITY_AGENT};
 use crate::tasks::{plan_outline, review_focus};
 use crate::{Engine, EngineError, StageOutcome};
 
-/// Which run a review belongs to. A sync review keeps its own file next to the round review.
+/// Which run a review belongs to. A sync or rebase review keeps its own file next to the round review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewRun {
     Round,
     Sync,
+    /// The whole branch after a rewrite outside the factory. It never skips the security role.
+    Rebase,
 }
 
 pub struct ReviewOutcome {
@@ -121,21 +123,27 @@ impl Engine<'_> {
                     .count();
                 self.job_dir.join(format!("{prefix}{}.md", taken + 1))
             }
+            ReviewRun::Rebase => self
+                .job_dir
+                .join(format!("review-code-r{}-rebase.md", job.round)),
         };
         let file = review_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        // A sync review runs the code reviewer only. A round runs every role the job holds.
+        // A sync review runs the code reviewer only. A round or rebase runs every role the job holds.
         let mut to_run: Vec<&'static str> = Vec::new();
         for role in REVIEW_ROLES {
             let held =
-                role == "code" || (run_kind == ReviewRun::Round && job.reviews.contains_key(role));
+                role == "code" || (run_kind != ReviewRun::Sync && job.reviews.contains_key(role));
             if !held {
                 continue;
             }
-            if role == "security" && security_skippable(&paths, class) {
+            if role == "security"
+                && run_kind != ReviewRun::Rebase
+                && security_skippable(&paths, class)
+            {
                 self.update(|j| {
                     j.set_review(role, ReviewState::Skipped);
                     Ok(())
@@ -224,10 +232,12 @@ impl Engine<'_> {
         let source = match run_kind {
             ReviewRun::Round => job.fix_source.clone().unwrap_or_else(|| "build".into()),
             ReviewRun::Sync => "sync".into(),
+            ReviewRun::Rebase => "rebase".into(),
         };
         let label = match run_kind {
             ReviewRun::Round => "review",
             ReviewRun::Sync => "sync review",
+            ReviewRun::Rebase => "rebase review",
         };
         let last = LastReview {
             round: job.round,

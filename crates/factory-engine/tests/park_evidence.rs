@@ -75,6 +75,41 @@ fn nothing_changed_without_a_reply_says_so() {
     assert_eq!(part.text, "The builder wrote no reply.");
 }
 
+#[test]
+fn a_nothing_changed_park_after_a_rewrite_lists_sync() {
+    // A fix round on an unrewritten branch does not offer sync.
+    let fx = committing_fixture();
+    let first = scripted_auto(vec![change_effect("a.txt")]);
+    fx.engine(&first).build_stage().expect("first");
+    start_fix_round(&fx);
+    let runner = scripted_auto(vec![Box::new(|_| "no change".to_string())]);
+    fx.engine(&runner).build_stage().expect("fix");
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::NothingChanged);
+    assert!(!rec.next.iter().any(|n| n.contains("factory sync")));
+
+    // The same park after the reviewed head left the branch lists sync.
+    let fx = committing_fixture();
+    let first = scripted_auto(vec![change_effect("a.txt")]);
+    fx.engine(&first).build_stage().expect("first");
+    start_fix_round(&fx);
+    let board = factory_core::Board::load(&fx.board_path).expect("load");
+    let wt = board.find("001").expect("job").worktree.clone();
+    amend_head(
+        std::path::Path::new(&wt.expect("worktree")),
+        "feat(test): reworded outside the factory",
+    );
+    let runner = scripted_auto(vec![Box::new(|_| "no change".to_string())]);
+    fx.engine(&runner).build_stage().expect("fix");
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::NothingChanged);
+    assert!(
+        rec.next.contains(&"factory sync 001".to_string()),
+        "{:?}",
+        rec.next
+    );
+}
+
 fn merge_record(fx: &common::MergeFixture) -> ParkRecord {
     let job = fx.driver.job(&fx.id).expect("job");
     ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json")
