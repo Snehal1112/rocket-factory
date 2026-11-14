@@ -274,6 +274,7 @@ fn spec_reviewer_is_read_only_and_pins_its_rules() -> TestResult {
                 "path:line",
                 "default-deny",
                 "Decided by: call",
+                "drafted unattended",
             ],
         )?;
         if !has_line(&text, "VERDICT: APPROVE") || !has_line(&text, "VERDICT: CHANGES") {
@@ -311,6 +312,8 @@ fn intake_drafter_can_write_only_and_pins_its_rules() -> TestResult {
                 "plan-01-<slug>.md",
                 "Next plan:",
                 "Decided by: call",
+                "## Read first",
+                "Source:",
             ],
         )?;
     }

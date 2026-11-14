@@ -334,12 +334,15 @@ pub(crate) fn validate_series(
     start: &Path,
     spec_path: Option<&Path>,
     accept_spec: Option<&str>,
+    intake_tree: Option<&Path>,
     parse: impl Fn(&Path, &Path) -> Result<crate::Series, EngineError>,
 ) -> Result<Validated, EngineError> {
     // Every failure here comes from the drafted files, so it is a validation error.
-    validate_series_inner(driver, start, spec_path, accept_spec, parse).map_err(|e| match e {
-        EngineError::SpecRefused(r) => EngineError::SpecRefused(r),
-        other => EngineError::Invalid(other.to_string()),
+    validate_series_inner(driver, start, spec_path, accept_spec, intake_tree, parse).map_err(|e| {
+        match e {
+            EngineError::SpecRefused(r) => EngineError::SpecRefused(r),
+            other => EngineError::Invalid(other.to_string()),
+        }
     })
 }
 
@@ -348,8 +351,11 @@ fn validate_series_inner(
     start: &Path,
     spec_path: Option<&Path>,
     accept_spec: Option<&str>,
+    intake_tree: Option<&Path>,
     parse: impl Fn(&Path, &Path) -> Result<crate::Series, EngineError>,
 ) -> Result<Validated, EngineError> {
+    // Nobody can answer a refusal of an unattended draft, so a reason to accept has no effect there.
+    let accept_spec = accept_spec.filter(|_| intake_tree.is_none());
     // Absolute paths keep `Next plan:` lookups and the stored plan files right from any directory.
     let absolute = |path: &Path| {
         std::fs::canonicalize(path)
@@ -396,6 +402,11 @@ fn validate_series_inner(
             }
         })?;
         check_spec(&text, &spec.display().to_string())?;
+        if let Some(tree) = intake_tree {
+            crate::spec_check::check_intake_decisions(&text, tree).map_err(|message| {
+                EngineError::SpecRefused(crate::spec_check::SpecRefusal::UnsourcedDecision(message))
+            })?;
+        }
         // A spec that touches risky paths needs a decision the user answered.
         let mut plan_texts: Vec<String> = Vec::new();
         for plan in &series.plans {
@@ -407,17 +418,21 @@ fn validate_series_inner(
         // answer is refused before the agent runs, so an accepted one never pays for a review.
         let plan_paths: Vec<std::path::PathBuf> =
             series.plans.iter().map(|p| p.path.clone()).collect();
-        let refusal = match crate::spec_check::risky_without_user_decision(
-            &text,
-            &plan_texts,
-            driver.config(),
-        ) {
+        // An intake spec has sourced decisions and a review instead of a user's answer. Without the
+        // review, a risky intake spec keeps the refusal.
+        let risky = if intake_tree.is_some() && driver.config().spec_review {
+            None
+        } else {
+            crate::spec_check::risky_without_user_decision(&text, &plan_texts, driver.config())
+        };
+        let refusal = match risky {
             Some(reason) => Some(crate::spec_check::SpecRefusal::NoUserDecision(reason)),
             None => crate::spec_check::review_spec_with(
                 driver,
                 &spec,
                 &plan_paths,
                 accept_spec.is_some(),
+                intake_tree,
             )
             .err(),
         };
@@ -464,10 +479,28 @@ pub fn create_job_with_spec(
     spec_path: Option<&Path>,
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
-    create_job_with_spec_accepting(driver, slug, feature, plan, spec_path, model, None)
+    create_job_with_spec_accepting(
+        driver,
+        slug,
+        feature,
+        plan,
+        spec_path,
+        model,
+        SpecMode::Accept(None),
+    )
 }
 
-/// Like `create_job_with_spec`. A reason in `accept_spec` turns a spec refusal into a pass and is recorded.
+/// How a spec is judged before its jobs exist.
+#[derive(Debug, Clone, Copy)]
+pub enum SpecMode<'a> {
+    /// A person is in the loop. A reason turns a spec refusal into a pass and is recorded.
+    Accept(Option<&'a str>),
+    /// The spec was drafted unattended. Its decisions must cite files of this tree, and nothing
+    /// can override a refusal.
+    Intake(&'a Path),
+}
+
+/// Like `create_job_with_spec`, with the `SpecMode` that judges the spec.
 pub fn create_job_with_spec_accepting(
     driver: &Driver,
     slug: &str,
@@ -475,8 +508,12 @@ pub fn create_job_with_spec_accepting(
     plan: Option<&Path>,
     spec_path: Option<&Path>,
     model: Option<&str>,
-    accept_spec: Option<&str>,
+    mode: SpecMode<'_>,
 ) -> Result<Job, EngineError> {
+    let (accept_spec, intake_tree) = match mode {
+        SpecMode::Accept(reason) => (reason, None),
+        SpecMode::Intake(tree) => (None, Some(tree)),
+    };
     // A spec with no plans would be skipped without a word, so refuse it.
     if spec_path.is_some() && plan.is_none() {
         return Err(EngineError::Msg("--spec needs --plans".to_string()));
@@ -499,10 +536,17 @@ pub fn create_job_with_spec_accepting(
         plan_warnings,
         spec_text,
         accepted,
-    } = validate_series(driver, start, spec_path, accept_spec, |root, start| {
-        crate::parse_series_with(root, start, Some(crate::series::MAX_TASKS_PER_PLAN))
-            .map_err(EngineError::from)
-    })?;
+    } = validate_series(
+        driver,
+        start,
+        spec_path,
+        accept_spec,
+        intake_tree,
+        |root, start| {
+            crate::parse_series_with(root, start, Some(crate::series::MAX_TASKS_PER_PLAN))
+                .map_err(EngineError::from)
+        },
+    )?;
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
     let series_id = if total > 1 {
@@ -563,9 +607,10 @@ pub fn create_job_with_spec_accepting(
     adopt_draft(driver, slug, &first);
     // The job is made either way. The warning only tells the reader how little the user decided.
     let mut first = first;
-    if spec_text
-        .as_deref()
-        .is_some_and(|text| user_decisions(text) == 0)
+    if intake_tree.is_none()
+        && spec_text
+            .as_deref()
+            .is_some_and(|text| user_decisions(text) == 0)
     {
         first = add_warning(driver, slug, first, NO_USER_DECISION);
     }
@@ -762,11 +807,16 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spec_check::SpecRefusal;
     use factory_agent::{AgentRunner, FakeRunner};
     use factory_core::{Config, Layout};
     use std::sync::Arc;
 
     fn driver(tmp: &tempfile::TempDir) -> Driver {
+        driver_with(tmp, Config::default())
+    }
+
+    fn driver_with(tmp: &tempfile::TempDir, config: Config) -> Driver {
         let root = tmp.path().join("repo");
         std::fs::create_dir_all(&root).expect("mkdir");
         let mut opts = git2::RepositoryInitOptions::new();
@@ -781,10 +831,115 @@ mod tests {
         let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::new(Vec::new()));
         Driver::new(
             Layout::in_repo(&root),
-            Config::default(),
+            config,
             Box::new(move |_| runner.clone()),
         )
         .expect("driver")
+    }
+
+    const SOURCED_SPEC: &str = "# Spec\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It works.\n\n## Decisions\n\n- Use the notes. Source: notes.md:1. Decided by: call\n";
+
+    /// A plans folder with a risky plan and the given spec, and a tree that holds `notes.md`.
+    fn risky_series(
+        tmp: &tempfile::TempDir,
+        spec: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let plans = tmp.path().join("plans");
+        std::fs::create_dir_all(&plans).expect("plans");
+        std::fs::write(plans.join("spec.md"), spec).expect("spec");
+        std::fs::write(
+            plans.join("plan-01-a.md"),
+            "# Plan\n\n### Task 1: t\n\n**Files:**\n- Modify: `src-tauri/src/lib.rs`\n\nNext plan: none\n",
+        )
+        .expect("plan");
+        let tree = tmp.path().join("tree");
+        std::fs::create_dir_all(&tree).expect("tree");
+        std::fs::write(tree.join("notes.md"), "note\n").expect("notes");
+        (plans, tree)
+    }
+
+    fn risky_config() -> Config {
+        Config {
+            risk_paths: vec!["src-tauri/**".to_string()],
+            spec_review: false,
+            ..Config::default()
+        }
+    }
+
+    fn validate(
+        d: &Driver,
+        plans: &Path,
+        accept: Option<&str>,
+        tree: Option<&Path>,
+    ) -> Result<Validated, EngineError> {
+        validate_series(d, plans, None, accept, tree, |root, start| {
+            crate::parse_series_with(root, start, None).map_err(EngineError::from)
+        })
+    }
+
+    #[test]
+    fn validate_series_in_intake_mode_skips_the_risky_user_refusal_only_with_a_review() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let reviewed = Config {
+            spec_review: true,
+            ..risky_config()
+        };
+        let d = driver_with(&tmp, reviewed);
+        let (plans, tree) = risky_series(&tmp, SOURCED_SPEC);
+        // The review runs, so the refusal is the review's, not the user-decision rule.
+        let err = validate(&d, &plans, None, Some(&tree))
+            .err()
+            .expect("the fake reviewer gives no verdict");
+        assert!(
+            !matches!(
+                err,
+                EngineError::SpecRefused(SpecRefusal::NoUserDecision(_))
+            ),
+            "{err}"
+        );
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver_with(&tmp, risky_config());
+        let (plans, tree) = risky_series(&tmp, SOURCED_SPEC);
+        let err = validate(&d, &plans, None, Some(&tree))
+            .err()
+            .expect("without a review a risky intake spec is refused");
+        assert!(
+            matches!(
+                err,
+                EngineError::SpecRefused(SpecRefusal::NoUserDecision(_))
+            ),
+            "{err}"
+        );
+        let err = validate(&d, &plans, None, None)
+            .err()
+            .expect("a normal risky spec without a user decision is refused");
+        assert!(
+            matches!(
+                err,
+                EngineError::SpecRefused(SpecRefusal::NoUserDecision(_))
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_series_in_intake_mode_refuses_an_unsourced_spec() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver_with(&tmp, risky_config());
+        let unsourced = SOURCED_SPEC.replace(" Source: notes.md:1.", "");
+        let (plans, tree) = risky_series(&tmp, &unsourced);
+        for accept in [None, Some("reason")] {
+            let err = validate(&d, &plans, accept, Some(&tree))
+                .err()
+                .expect("an unsourced spec is refused");
+            assert!(
+                matches!(
+                    err,
+                    EngineError::SpecRefused(SpecRefusal::UnsourcedDecision(_))
+                ),
+                "{err}"
+            );
+        }
     }
 
     #[test]
@@ -815,7 +970,7 @@ mod tests {
             "# Plan\n\n### Task 1: t\n\nNext plan: none\n",
         )
         .expect("plan");
-        let err = validate_series(&d, &plans, None, None, |root, start| {
+        let err = validate_series(&d, &plans, None, None, None, |root, start| {
             crate::parse_series_with(root, start, None).map_err(EngineError::from)
         })
         .err()

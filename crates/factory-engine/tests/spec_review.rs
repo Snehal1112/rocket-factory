@@ -6,7 +6,7 @@ use std::sync::Arc;
 use common::{driver_for, init_repo, scripted, write_commit_context, Effect, ScriptedRunner};
 use factory_agent::AgentSpec;
 use factory_core::Config;
-use factory_engine::{create_job_with_spec_accepting, Driver, EngineError};
+use factory_engine::{create_job_with_spec_accepting, Driver, EngineError, SpecMode};
 
 const SPEC: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n\
                     ## Acceptance criteria\n\n- It is done.\n\n## Decisions\n\n- Use a queue. Decided by: user\n";
@@ -57,7 +57,7 @@ fn new(fx: &Fx, accept: Option<&str>) -> Result<factory_core::Job, EngineError> 
         Some(&fx.plan),
         Some(&fx.spec),
         None,
-        accept,
+        SpecMode::Accept(accept),
     )
 }
 
@@ -313,7 +313,7 @@ fn a_failed_review_is_run_again_by_a_new_process() {
         Some(&fx.plan),
         Some(&fx.spec),
         None,
-        None,
+        SpecMode::Accept(None),
     )
     .expect_err("second refused");
     assert_eq!(fx.runner.specs_for("spec-reviewer").len(), 2);
@@ -439,7 +439,7 @@ fn a_budget_stop_with_an_approve_line_still_refuses() {
         Some(&fx.plan),
         Some(&fx.spec),
         None,
-        None,
+        SpecMode::Accept(None),
     )
     .expect_err("refused");
     assert!(

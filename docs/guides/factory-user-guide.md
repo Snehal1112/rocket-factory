@@ -712,9 +712,11 @@ The comment of a `factory: needs-human` issue holds one of these reason codes:
 | `draft-refused` | The drafter wrote `refused.md`. |
 | `draft-invalid` | No usable draft, or a drafter that used all its turns. |
 | `drafter-failed` | The drafter could not run: read the log and run `factory presets refresh`. |
-| `spec-review` | The drafted spec was refused twice. |
+| `spec-review` | The drafted spec was refused twice, for example because a decision had no source that exists. |
 | `over-budget` | The drafter hit `intake_budget_weighted`. |
 | `build-failed` | A job parked or failed. |
+
+An intake spec has no user to answer its decisions, so every decision must be sourced. The drafter reads `CLAUDE.md`, `docs/README.md`, the factory config and the nearest spec, and writes each decision as one line: `- <decision>. Source: <path>[:line[-last]]. Decided by: call`. The driver checks that every source is a real file inside the exported tree and that the lines exist. An unsourced, unreal or out-of-tree source, or a `Decided by: user` line, refuses the spec. It is redrafted once and then ends as `spec-review`. A sourced spec passes even when its plans touch risky paths, and it carries no "no decision was answered by the user" warning. `--accept-spec` has no effect on intake. If a decision touches a risky path and no file answers it, the drafter refuses with `draft-refused`.
 
 After an upgrade, run `factory presets refresh` so the seeded presets get the new agent files. File write rules for an agent run are `Edit(path)` rules.
 

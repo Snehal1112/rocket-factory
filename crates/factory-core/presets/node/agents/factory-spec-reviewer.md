@@ -15,6 +15,8 @@ Input: your prompt names the spec file, the plan files and the main checkout. Re
 2. A list-based security or data-handling design: scrubbing, redaction, permissions, trust or auth that relies on a list of known names or cases, where a default-deny rule is needed instead.
 3. A design decision in a risky area marked `Decided by: call`. The user should own it, so the spec needs `Decided by: user` or a new answer.
 
+When the prompt says the spec was drafted unattended, finding kind 3 does not apply. Instead report as a blocker a decision whose cited source does not exist in the checkout, does not say what the decision claims, or is contradicted by other code you read. Open each cited source before you decide.
+
 Do not review style, wording, scope or anything else. Do not suggest extra features.
 
 ## Report

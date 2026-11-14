@@ -6,7 +6,7 @@ use factory_core::{Job, Stage};
 
 use crate::runloop::{
     add_job, add_warning, adopt_draft, create_job_with_spec_accepting, record_accepted,
-    user_decisions, validate_series, Validated, NO_USER_DECISION,
+    user_decisions, validate_series, SpecMode, Validated, NO_USER_DECISION,
 };
 use crate::tasks::parse_checkbox_tasks;
 use crate::{combine_plans, parse_series_with, Driver, EngineError, SeriesError};
@@ -68,7 +68,7 @@ pub fn create_one_job_accepting(
         plan_warnings,
         spec_text,
         accepted,
-    } = validate_series(driver, plan, spec_path, accept_spec, |root, start| {
+    } = validate_series(driver, plan, spec_path, accept_spec, None, |root, start| {
         parse_series_with(root, start, None).map_err(|e| match e {
             SeriesError::TaskCount { path, found: 0 } => EngineError::Msg(format!(
                 "{}: a plan needs at least one task",
@@ -86,7 +86,7 @@ pub fn create_one_job_accepting(
             Some(plan),
             spec_path,
             model,
-            accept_spec,
+            SpecMode::Accept(accept_spec),
         )?;
         let notes = vec!["--one-job had no effect: the chain has one plan".to_string()];
         return Ok(OneJob { job, notes });

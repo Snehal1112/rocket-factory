@@ -10,7 +10,7 @@ use factory_engine::{
     STATE_RUNNING,
 };
 
-const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n";
+const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n\n## Decisions\n\n- Use the readme. Source: README.md:1. Decided by: call\n";
 
 /// What the scripted drafter writes into its draft folder, and what the spec reviewer answers.
 struct Script {
@@ -108,7 +108,7 @@ fn two_plans(draft: &Path) {
     std::fs::write(draft.join("plan-02-b.md"), plan(1, "none")).expect("plan 2");
 }
 
-const SPEC_WITH_FOLLOW_UPS: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n\n## Follow-ups\n\n- SECRET-TITLE other work. More detail.\n";
+const SPEC_WITH_FOLLOW_UPS: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n\n## Follow-ups\n\n- SECRET-TITLE other work. More detail.\n\n## Decisions\n\n- Use the readme. Source: README.md:1. Decided by: call\n";
 
 /// A draft of one plan with a follow-up in the spec.
 fn one_plan_with_follow_ups(draft: &Path) {
@@ -370,6 +370,61 @@ fn a_draft_with_a_placeholder_is_redrafted_once() {
     let calls = it.script.drafter_specs.lock().expect("specs");
     assert_eq!(calls.len(), 2, "one redraft, no more");
     assert!(calls[1].prompt.contains("still has"), "{}", calls[1].prompt);
+}
+
+#[test]
+fn an_intake_job_has_no_user_decision_warning() {
+    let it = setup(one_plan);
+    assert!(matches!(pass(&it), IntakeOutcome::Merged { .. }), "merged");
+    let board = it.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 1);
+    if let Some(warning) = &board.jobs[0].spec_warning {
+        assert!(!warning.contains("answered by the user"), "{warning}");
+    }
+}
+
+#[test]
+fn an_unsourced_draft_is_redrafted_once_then_fails_spec_review() {
+    let it = setup(|draft| {
+        let spec = GOOD_SPEC.replace(" Source: README.md:1.", "");
+        std::fs::write(draft.join("spec.md"), spec).expect("spec");
+        std::fs::write(draft.join("plan-01-a.md"), plan(1, "none")).expect("plan");
+    });
+    assert_eq!(
+        pass(&it),
+        IntakeOutcome::Failed {
+            issue: 7,
+            reason: "spec-review".to_string()
+        }
+    );
+    let calls = it.script.drafter_specs.lock().expect("specs");
+    assert_eq!(calls.len(), 2, "one redraft, no more");
+    assert!(
+        calls[1].prompt.contains("Use the readme."),
+        "{}",
+        calls[1].prompt
+    );
+    assert!(it.driver.store().load().expect("board").jobs.is_empty());
+}
+
+#[test]
+fn a_risky_draft_with_sourced_decisions_creates_the_job() {
+    let config = Config {
+        risk_paths: vec!["src-tauri/**".to_string()],
+        ..config()
+    };
+    let it = setup_with(
+        config,
+        vec![issue(7)],
+        |draft| {
+            std::fs::write(draft.join("spec.md"), GOOD_SPEC).expect("spec");
+            let risky = "# Plan\n\n### Task 1: t\n\n**Files:**\n- Modify: `src-tauri/src/lib.rs`\n\nNext plan: none\n";
+            std::fs::write(draft.join("plan-01-a.md"), risky).expect("plan");
+        },
+        "fine\nVERDICT: APPROVE",
+    );
+    assert!(matches!(pass(&it), IntakeOutcome::Merged { .. }), "merged");
+    assert_eq!(it.driver.store().load().expect("board").jobs.len(), 1);
 }
 
 #[test]
