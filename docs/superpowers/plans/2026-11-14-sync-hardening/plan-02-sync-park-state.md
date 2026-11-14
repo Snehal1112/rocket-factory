@@ -6,7 +6,7 @@
 
 **Goal:** A park after a requested sync replaces the old park record and keeps the kind of a non-risky decision, the sync refusals exit as `CliError::Refused`, and earlier raw review files are kept.
 
-**Architecture:** `sync_with` returns the park kind with its reason, `sync_requested` parks with that kind after clearing the old park fields, and the CLI maps the refusals. Git is the concrete `factory_git::Repo`, so no trait sits behind this logic.
+**Architecture:** `sync_with` returns the park kind with its reason, `sync_requested` parks with that kind, and the CLI maps the refusals. Git is the concrete `factory_git::Repo`, so no trait sits behind this logic.
 
 **Tech Stack:** Rust, `cargo test -j4 -p factory-engine`, `cargo test -j4 -p factory-cli`.
 
@@ -29,7 +29,7 @@
 
 ## File Structure
 
-- `crates/factory-engine/src/sync.rs`: `SyncOutcome::Parked` carries an optional `ParkKind`, the refusal for a pending snapshot, and the clearing of old park fields.
+- `crates/factory-engine/src/sync.rs`: `SyncOutcome::Parked` carries an optional `ParkKind` and the refusal for a pending snapshot.
 - `crates/factory-engine/src/review.rs`: the raw file names.
 - `crates/factory-engine/src/merge.rs`: nothing changes unless the park helper needs the cleared fields.
 - `crates/factory-cli/src/commands.rs`: the refusal mapping.
@@ -43,11 +43,12 @@
 
 **Interfaces:**
 - Consumes: `merge::park_with_parts(driver, id, reason, kind, parts)`, `ParkKind`, `Job.park_kind`, `Job.park_summary`, `Job.park_at`, `Job.batch_snapshot`.
-- Produces: `SyncOutcome::Parked(String, Option<ParkKind>)`, `sync_with` returning the kind of a non-risky `Decision::NeedsHuman`, and `sync_requested` that clears `park_kind`, `park_summary` and `park_at` in one update before it parks with the carried kind (`ParkKind::Other` when none). `sync_requested` refuses a job with a pending `batch_snapshot` with the same text `approve` uses.
+- Produces: `SyncOutcome::Parked(String, Option<ParkKind>)`, `sync_with` returning the kind of a non-risky `Decision::NeedsHuman`, and `sync_requested` that parks with the carried kind (`ParkKind::Other` when none). It never clears park fields after `sync_with` returns: the forced move out of `needs-human` to stage `review` (`set_stage`, `board.rs:416-419`) already cleared the old park, and a park written inside `sync_with` is the new one. `sync_requested` refuses a job with a pending `batch_snapshot` with the same text `approve` uses.
 
 - [ ] **Step 1: Read** `sync.rs`, `merge.rs` (`park_with_parts`), and the approve refusal for `batch_snapshot`.
 - [ ] **Step 2: Write the failing tests** in `tests/sync_review.rs`:
   - `a_sync_conflict_on_a_needs_human_job_replaces_the_park_record`: a job parked as `nothing-changed`, then a requested sync that conflicts; assert `park.json` holds the conflict path and kind `other`, a new ruling line exists, and the old evidence is gone.
+  - `a_checks_gate_failure_during_a_sync_keeps_its_own_park_kind`: on a `needs-human` job a gate failure during the sync keeps its `NoChecks` kind and evidence in `park.json`.
   - `a_changes_remain_decision_keeps_its_park_kind_after_a_sync`: a whole-branch review that leaves blockers; assert `park.json` kind is `changes-remain` and `next` holds `factory approve 001 --waive`.
   - `sync_refuses_a_pending_batch_snapshot`: set `batch_snapshot`, expect `Err` with the approve text.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test sync_review a_sync_conflict_on_a_needs_human_job`.** Expected: FAIL with an assertion on the park record.

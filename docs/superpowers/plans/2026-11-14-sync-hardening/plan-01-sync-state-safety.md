@@ -17,13 +17,14 @@
 - No unwrap in production Rust. Tests use `.expect("...")` and `expect_err`.
 - Code comments are short full sentences that end with a period.
 - Do not shell out to `git`. Do not read `/proc`. No board, ledger or events field is added.
-- The whole-branch path is: `head = tip`, `prev_head = None`, `reset_reviews()`, `last_review = None`, stage `review` forced, all in one `store().update_job`, then `ReviewRun::Rebase` (code and security).
+- `last_review` is never cleared by the reset. Open blockers keep refusing `approve`, also with `--without-review`.
+- The whole-branch path is: `head = tip`, `prev_head = None`, `reset_reviews()`, stage `review` forced, all in one `store().update_job`, then `ReviewRun::Rebase` (code and security).
 - The floor is kept (`prev_head = old head`, `ReviewRun::Sync`) only when the stage is `approve` and `tip == head`.
 - The ledger ruling is written before the board update.
 
 ## Review Focus
 
-1. A job that parks after the reset and before the rebase review must not be approvable. Pinned by `a_rewrite_resets_reviews_and_last_review`.
+1. A job that parks after the reset and before the rebase review must not be approvable. Pinned by `a_rewrite_resets_the_review_states_and_keeps_last_review`.
 2. A second sync after an interrupted first one must still review the whole branch. Pinned by `a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch`.
 3. A job in `review`, `build` or `needs-human` must not keep a floor. Pinned by `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head`.
 4. Commits added by hand on top of `head` must get the whole-branch review. Pinned by `commits_added_on_top_of_head_get_the_whole_branch_review`.
@@ -47,7 +48,7 @@
 
 - [ ] **Step 1: Read** `sync.rs`, the fixtures of `tests/sync_review.rs` and `Job::reset_reviews`.
 - [ ] **Step 2: Write the failing tests** in `tests/sync_review.rs`, reusing its job-behind-main fixture and its branch rewrite helper:
-  - `a_rewrite_resets_reviews_and_last_review`: rewrite the branch, make the checks park the job after the reset, then assert the reviews read pending, `last_review` is none and the approve refusal text appears when `approve` is attempted.
+  - `a_rewrite_resets_the_review_states_and_keeps_last_review`: rewrite the branch, make the checks park the job after the reset, then assert the reviews read pending, `last_review` is unchanged and the approve refusal text appears when `approve` is attempted. A second case sets `last_review` to `changes` and asserts that `approve --without-review` is still refused.
   - `a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch`: stop the first run after the reset (a runner that errors on the first review call), run `sync_requested` again, assert one `Rebase` review and `prev_head` none.
   - `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head`: a table of four jobs with the same behind-main branch, in stage `approve`, `review`, `build` and `needs-human`. Show one full case for `approve` (`prev_head` equals the old head, a `-sync1` review) and list the others by stage with the expected `prev_head` none and a `-rebase` review.
   - `commits_added_on_top_of_head_get_the_whole_branch_review`: add a commit on top of `head` in `approve`, assert the `-rebase` review and a security run.

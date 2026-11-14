@@ -8,7 +8,7 @@ Make `factory sync <id>` safe in every stage a job can be in: no code reaches a 
 
 Job 080 added `factory sync <id>` (`crates/factory-engine/src/sync.rs:44`), see `docs/superpowers/specs/2026-11-14-sync-after-rebase-design.md`. A spec audit found it complete against that spec. A separate code and safety review of the merged change found holes in the design itself. All tests start the job in `approve`, so none reach them. The three that matter most were read in the code:
 
-- A rewrite sets `head` and `prev_head` and forces stage `review`, but leaves `reviews` and `last_review` as they were (`sync.rs:68-74`). A park before the rebase review leaves a `needs-human` job whose unreviewed tip is `head` and whose reviews still read Pass, so `approve` can merge it.
+- A rewrite sets `head` and `prev_head` and forces stage `review`, but leaves `reviews` as they were (`sync.rs:68-74`). A park before the rebase review leaves a `needs-human` job whose unreviewed tip is `head` and whose reviews still read Pass, so `approve` can merge it.
 - "Rewritten" lives only in a local variable (`sync.rs:66-79`). If the first run stops after the reset, the next run sees `head == tip` and treats it as a plain sync.
 - A plain requested sync always sets `prev_head = old head` (`sync.rs:146-148`) as if that head had been reviewed and approved. That is true after an automatic sync, which runs only after approval, but a requested sync runs in `build`, `review` and `needs-human` too.
 
@@ -19,7 +19,7 @@ The rest are smaller: a wrong diff base, stale park evidence, a lost park kind, 
 | Piece | Today | Gap |
 |---|---|---|
 | Rewrite test (`sync.rs:66-67`) | `!is_ancestor(head, tip)` | Commits added by hand on top of `head` are not a rewrite, so they are folded into the sync diff with the code reviewer only |
-| Reset (`sync.rs:68-77`) | Sets `head`, `prev_head = None`, stage `review` | Reviews and `last_review` stay, and the ledger is a second write |
+| Reset (`sync.rs:68-77`) | Sets `head`, `prev_head = None`, stage `review` | Reviews stay Pass, and the ledger is a second write |
 | Floor on a plain sync (`sync.rs:146-148`) | `prev_head = old head` in any stage | Wrong unless the old head was reviewed and approved |
 | Round diff (`review.rs:58`) | With no `prev_head`, diffs from `job.base` | After a rebase or a merge of main the diff holds every main change since the original fork. `range_start` (`checks_stage.rs:149`) already uses the merge base for the whole diff |
 | Park of a requested sync (`sync.rs:80-84`, `merge.rs:49-61`) | `merge::park` | A `needs-human` job keeps the old `park_kind`, summary and `park.json` |
@@ -43,7 +43,7 @@ A branch is changed outside the factory when `tip != head`, not only when `head`
 
 ### 2. A durable reset
 
-When the sync takes the whole-branch path, one `store().update_job` does all of: `head = tip`, `prev_head = None`, `reset_reviews()`, `last_review = None`, and the forced stage `review`. A run that stops afterwards leaves the job in `review` with pending reviews, so `approve` refuses it, and the next `factory sync` takes the whole-branch path again because the stage is not `approve`.
+When the sync takes the whole-branch path, one `store().update_job` does all of: `head = tip`, `prev_head = None`, `reset_reviews()` and the forced stage `review`. `last_review` is kept until the new review writes its verdict, so open blockers still refuse `approve`, also with `--without-review` (`board.rs:296-344`). A run that stops afterwards leaves the job in `review` with pending reviews, so `approve` refuses it, and the next `factory sync` takes the whole-branch path again because the stage is not `approve`.
 
 The ledger ruling is written first, then the board update, so a crash between them leaves a ruling without a change, not a change without a ruling.
 
@@ -53,7 +53,7 @@ For a review with no `prev_head`, `review_stage_as` uses `range_start(base, head
 
 ### 4. Park state
 
-- A requested sync that parks a `needs-human` job clears `park_kind`, `park_summary` and `park_at` first, so `merge::park_with_parts` writes a new record, ruling and log line. The `park.json` is replaced.
+- A job in `needs-human` always takes the whole-branch path, whose forced move to stage `review` already clears the old park fields (`set_stage`, `board.rs:416-419`). A park written later by `sync_with` (the checks gate, a risky diff, a conflict) is therefore a new record with its own kind and evidence, and `sync_requested` never clears park fields after `sync_with` returns.
 - A non-risky `Decision::NeedsHuman` keeps its `ParkKind`, evidence and `next` list: `sync_with` returns the kind with the reason (`SyncOutcome::Parked` carries an optional `ParkKind`), and `sync_requested` parks with it.
 - A pending `batch_snapshot` is refused like `approve` refuses it.
 
@@ -71,7 +71,7 @@ For a review with no `prev_head`, `review_stage_as` uses `range_start(base, head
 | Job in `review`, `build` or `needs-human` | Whole-branch review, code and security |
 | `tip != head` in any stage | Whole-branch review |
 | A first sync stops after the reset | Next run: the stage is `review`, so the whole-branch path runs again |
-| Sync conflict on a `needs-human` job | New park record, old evidence replaced |
+| Sync conflict, or a checks gate failure, on a `needs-human` job | The forced move to `review` cleared the old park, so the new park keeps its own kind and evidence |
 | `ChangesRemain` after a whole-branch review | Parks as `changes-remain` with the `approve --waive` hint |
 | Open fix blockers and a requested sync | The whole-branch review is a new verdict and replaces `last_review` |
 
@@ -79,12 +79,13 @@ For a review with no `prev_head`, `review_stage_as` uses `range_start(base, head
 
 All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `crates/factory-engine/tests/sync_review.rs`.
 
-- `a_rewrite_resets_reviews_and_last_review` (engine): after the reset and a park before the review, the reviews are pending, `last_review` is none and `approve` refuses.
+- `a_rewrite_resets_the_review_states_and_keeps_last_review` (engine): after the reset and a park before the review, the reviews are pending, `last_review` is unchanged and `approve` refuses. A second case with `last_review` at `changes` shows that `approve --without-review` is still refused.
 - `a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch` (engine): stop after the reset, run again, the review covers `merge base..head`.
 - `a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head` (engine): the floor is kept there, and is none in `review`, `build` and `needs-human`.
 - `commits_added_on_top_of_head_get_the_whole_branch_review` (engine).
 - `a_rebase_review_diff_starts_at_the_merge_base` (engine): after main moved, the review diff holds none of the main changes.
 - `a_sync_conflict_on_a_needs_human_job_replaces_the_park_record` (engine): `park.json` holds the new conflict and a new ruling exists.
+- `a_checks_gate_failure_during_a_sync_keeps_its_own_park_kind` (engine): on a `needs-human` job the gate park keeps its `NoChecks` kind and evidence in `park.json`.
 - `a_changes_remain_decision_keeps_its_park_kind_after_a_sync` (engine).
 - `sync_refuses_a_pending_batch_snapshot` (engine).
 - `a_rebase_review_keeps_the_round_raw_files` (engine): both the round and the rebase raw files exist.
@@ -109,7 +110,7 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 
 ## Acceptance criteria
 
-- A requested sync outside `approve`, or with `tip != head`, resets the reviews and runs a whole-branch code and security review before anything can merge.
+- A requested sync outside `approve`, or with `tip != head`, resets the review states, keeps `last_review`, and runs a whole-branch code and security review before anything can merge.
 - A sync that stops after the reset can be run again and still reviews the whole branch, and `approve` refuses in between.
 - The whole-branch review diff starts at the merge base, not the recorded base.
 - A park after a requested sync replaces the old park record, and a non-risky decision keeps its kind and hints.
@@ -128,5 +129,5 @@ All tests use `.expect("...")`, never the unwrap call. Reuse the fixtures of `cr
 
 - A requested sync keeps the reviewed floor only in `approve` with `tip == head`, and every other case gets a whole-branch review. Options: also keep it in `needs-human` after an approve, or refuse a sync outside `approve`. Chosen: only `approve` with `tip == head`. Decided by: user
 - Any `tip != head` counts as a change outside the factory, not only a rewrite. Decided by: call
-- The reset also clears `reviews` and `last_review`, so an interrupted sync cannot be approved. Decided by: call
+- The reset clears `reviews` only and keeps `last_review`, so an interrupted sync cannot be approved and open blockers keep refusing `approve`. Decided by: call
 - The whole-branch diff starts at the merge base with the base branch. Decided by: call
