@@ -684,6 +684,19 @@ Each state shows as a label on the issue:
 | `factory: done` | The job merged, intake commented and closed the issue. |
 | `factory: needs-human` | The drafter refused, the spec review needs a person, or the job failed or parked. A fixed comment holds a reason code. |
 
+The comment of a `factory: needs-human` issue holds one of these reason codes:
+
+| Reason code | Meaning |
+|---|---|
+| `draft-refused` | The drafter wrote `refused.md`. |
+| `draft-invalid` | No usable draft, or a drafter that used all its turns. |
+| `drafter-failed` | The drafter could not run: read the log and run `factory presets refresh`. |
+| `spec-review` | The drafted spec was refused twice. |
+| `over-budget` | The drafter hit `intake_budget_weighted`. |
+| `build-failed` | A job parked or failed. |
+
+After an upgrade, run `factory presets refresh` so the seeded presets get the new agent files. File write rules for an agent run are `Edit(path)` rules.
+
 To retry a `factory: needs-human` issue, fix what the reason code names, remove the `factory: needs-human` label, and add `factory` again as a trusted user. Intake never posts text an agent wrote, and an intake job files no follow-up or minor ticket.
 
 ### 6.14 `factory kb-refresh`: refresh the knowledge base

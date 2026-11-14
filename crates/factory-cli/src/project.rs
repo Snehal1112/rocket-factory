@@ -233,6 +233,9 @@ fn which(home: &Home, path: Option<&Path>) -> Result<String, CliError> {
 /// The agent file that a `security` reviewer needs.
 const SECURITY_AGENT_FILE: &str = "factory-security-reviewer.md";
 
+/// The agent file that the intake drafter needs.
+const DRAFTER_AGENT_FILE: &str = "factory-intake-drafter.md";
+
 fn show(home: &Home, name: &str) -> Result<String, CliError> {
     let file = project::get(home, name)?;
     let base = base_of(&file);
@@ -279,6 +282,11 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
     {
         problems.push(format!(
             "reviewers lists \"security\" but {SECURITY_AGENT_FILE} was not found; run factory presets refresh"
+        ));
+    }
+    if resolved.config.intake && !resolved.agents.iter().any(|a| a.name == DRAFTER_AGENT_FILE) {
+        problems.push(format!(
+            "intake is on but {DRAFTER_AGENT_FILE} was not found; run factory presets refresh"
         ));
     }
     let l = &resolved.layout;
