@@ -147,6 +147,6 @@ None.
 - Does the merge of the last plan say `Fixes` even with follow-ups, and earlier plans `Relates to`? Chosen: yes. Decided by: user
 - Does the step close at merge time or after a push? Chosen: at merge time. Decided by: user
 - Are builder, fix and sync commits changed? Chosen: no, they stay `Relates to`. Decided by: call
-- Are the intake labels dropped for every job or only for intake? Options: every job, intake only. Chosen: every job, because a parent can carry them for other reasons. Decided by: call
+- Are the intake labels dropped for every job or only for intake? Options: every job, intake only. Chosen: every job, because a parent can carry them for other reasons. Decided by: user
 - Is `MessageRequest.partial` renamed? Options: rename to `closes_ticket`, keep the name. Chosen: rename, because it no longer means follow-ups. Decided by: call
-- How are intake labels matched when copying labels? Options: exact names, case-insensitive intake label plus any `factory:` prefix. Chosen: the case-insensitive rule, the same as `pick_next`, after the spec review found that exact names let `Factory` through. Decided by: call
+- How are intake labels matched when copying labels? Options: exact names, case-insensitive intake label plus any `factory:` prefix. Chosen: the case-insensitive rule, the same as `pick_next`, after the spec review found that exact names let `Factory` through. Decided by: user
