@@ -345,8 +345,7 @@ impl GhTracker {
             std::thread::sleep(Duration::from_millis(20));
             spawned = spawn();
         }
-        let mut child =
-            spawned.map_err(|e| format!("{} could not start: {e}", self.program))?;
+        let mut child = spawned.map_err(|e| format!("{} could not start: {e}", self.program))?;
         let stdout = child.stdout.take().map(read_all);
         let stderr = child.stderr.take().map(read_all);
         let start = Instant::now();
