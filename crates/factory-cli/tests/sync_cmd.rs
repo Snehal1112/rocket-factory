@@ -54,6 +54,43 @@ fn sync_refusals_are_cli_refused() {
     assert_eq!(refused(&fx), "job 001 is merged");
 }
 
+/// Syncs job 001 after `edit` changed it, and returns the refusal text.
+fn refusal_after(edit: impl FnOnce(&mut factory_core::Job)) -> String {
+    let mut fx = Fixture::with_risk_path("docs/**");
+    new_job(&mut fx);
+    fx.run(&["run", "1"]).expect("run");
+    let store = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    );
+    store
+        .update_job("001", |j| {
+            edit(j);
+            Ok(())
+        })
+        .expect("edit");
+    match fx.run(&["sync", "1"]).expect_err("refused") {
+        CliError::Refused(text) => text,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn sync_refuses_a_job_with_no_worktree_as_cli_refused() {
+    assert_eq!(
+        refusal_after(|j| j.worktree = None),
+        "job has no worktree to sync"
+    );
+}
+
+#[test]
+fn sync_refuses_a_job_with_no_head_as_cli_refused() {
+    assert_eq!(
+        refusal_after(|j| j.head = None),
+        "job 001 has no head to sync"
+    );
+}
+
 #[test]
 fn sync_refuses_a_job_with_a_live_lease() {
     let mut fx = Fixture::new();

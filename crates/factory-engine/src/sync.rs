@@ -31,7 +31,7 @@ fn job_worktree(driver: &Driver, job: &Job) -> Result<Worktree, EngineError> {
     let path = job
         .worktree
         .clone()
-        .ok_or_else(|| EngineError::Msg("job has no worktree to sync".into()))?;
+        .ok_or_else(|| EngineError::Refused("job has no worktree to sync".into()))?;
     Ok(Worktree {
         name: driver.repo().job_ref(&job.id, &job.slug).dir_name(),
         path: PathBuf::from(path),
@@ -68,7 +68,7 @@ pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineEr
     let head = job
         .head
         .clone()
-        .ok_or_else(|| EngineError::Msg(format!("job {id} has no head to sync")))?;
+        .ok_or_else(|| EngineError::Refused(format!("job {id} has no head to sync")))?;
     let tip = crate::merge::git_op("tip", || driver.repo().tip(&job.branch))?;
     let behind = !crate::merge::git_op("is_ancestor", || {
         driver.repo().is_ancestor(driver.repo().base_branch(), &tip)
