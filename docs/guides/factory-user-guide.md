@@ -511,6 +511,10 @@ factory cancel login-fix              # a draft name removes the draft card
 - Without `--force`, a job with a live lease is refused: `job has a live lease, use --force to cancel anyway`.
 - With a draft name instead of a number, the draft card is removed and its spec file is kept.
 
+`--force` cancels a job whose driver is still running. The driver is not stopped: it ends at its next stage move. A cancelled job never moves to review, approve or merged, and the run ends as `needs-human: cancelled: <reason>`. The work already done stays in the worktree. `rework` revives the job; `approve` and `sync` refuse it.
+
+There is one window. A cancel that lands during the git merge itself, which takes milliseconds, cannot stop that merge. Main then has the merge while the job stays cancelled, and a person can revert it like any merge.
+
 ### 6.8 `factory cleanup`: remove the worktree and branch
 
 ```
