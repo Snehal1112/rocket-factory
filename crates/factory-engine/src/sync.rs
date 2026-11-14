@@ -76,7 +76,13 @@ pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineEr
             "branch rewritten outside the factory, floor reset to base, head is {tip}"
         ))?;
     }
-    sync_with(driver, id, SyncKind::Requested, rewritten)
+    let outcome = sync_with(driver, id, SyncKind::Requested, rewritten)?;
+    // Nobody else parks a requested sync, so the job must not stay in review with a park message.
+    // A park that `park_after_sync` already wrote keeps its own kind and evidence.
+    if let SyncOutcome::Parked(reason) = &outcome {
+        crate::merge::park(driver, id, reason)?;
+    }
+    Ok(outcome)
 }
 
 /// The shared sync steps. `rewritten` is true when a requested sync already reset the floor, so

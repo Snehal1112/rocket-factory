@@ -234,10 +234,29 @@ fn sync_requested_refuses_a_dirty_worktree() {
 fn sync_requested_conflict_parks_and_names_the_paths() {
     let fx = fixture(vec![reply(GOOD)]);
     common::commit_file(&fx.main, "docs/hello.txt", "main version\n");
+    assert_conflict_parks(&fx);
+}
+
+#[test]
+fn sync_requested_conflict_on_a_rewritten_branch_parks_in_needs_human() {
+    let fx = fixture(vec![reply(GOOD)]);
+    common::commit_file(&fx.main, "docs/hello.txt", "main version\n");
+    rewrite_branch(&fx);
+    assert_conflict_parks(&fx);
+    // The floor reset stays, so a later review covers the whole branch.
+    assert_eq!(fx.driver.job(&fx.id).expect("job").prev_head, None);
+}
+
+/// Asserts that a requested sync hits the conflict, parks the job and writes a park record.
+fn assert_conflict_parks(fx: &common::MergeFixture) {
     match sync_requested(&fx.driver, &fx.id).expect("sync") {
         SyncOutcome::Parked(text) => assert!(text.contains("docs/hello.txt"), "{text}"),
         other => panic!("expected a park, got {other:?}"),
     }
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert!(rec.reason.contains("docs/hello.txt"), "{}", rec.reason);
 }
 
 #[test]
