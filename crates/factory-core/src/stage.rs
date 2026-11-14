@@ -46,7 +46,7 @@ impl Stage {
     }
 
     /// No backward move and no move out of merged, unless forced.
-    /// Any live stage may park in needs-human, and needs-human may resume at any stage after spec.
+    /// Any live stage may park in needs-human. Needs-human is left only by force or `Job::resume`.
     pub fn check_move(from: Stage, to: Stage, force: bool) -> Result<(), CoreError> {
         let bad = CoreError::StageMove { from, to };
         if force || from == to {
@@ -55,8 +55,7 @@ impl Stage {
         let allowed = match (from, to) {
             (Stage::Merged, _) => false,
             (_, Stage::NeedsHuman) => true,
-            (Stage::NeedsHuman, Stage::Spec) => false,
-            (Stage::NeedsHuman, _) => true,
+            (Stage::NeedsHuman, _) => false,
             _ => to.rank() >= from.rank(),
         };
         if allowed {
@@ -105,17 +104,20 @@ mod tests {
     }
 
     #[test]
-    fn needs_human_is_a_parking_stage() {
+    fn needs_human_moves_out_only_by_force() {
         for from in [Spec, Build, Review, Approve] {
             assert!(Stage::check_move(from, NeedsHuman, false).is_ok());
         }
-        for to in [Build, Review, Approve, Merged] {
+        for to in [Build, Review, Approve, Merged, Spec] {
             assert!(
-                Stage::check_move(NeedsHuman, to, false).is_ok(),
+                Stage::check_move(NeedsHuman, to, false).is_err(),
                 "needs-human -> {to}"
             );
+            assert!(
+                Stage::check_move(NeedsHuman, to, true).is_ok(),
+                "forced needs-human -> {to}"
+            );
         }
-        assert!(Stage::check_move(NeedsHuman, Spec, false).is_err());
     }
 
     #[test]

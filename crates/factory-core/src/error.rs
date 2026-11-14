@@ -15,6 +15,8 @@ pub enum CoreError {
     NoJob(String),
     #[error("illegal stage move {from} -> {to}")]
     StageMove { from: Stage, to: Stage },
+    #[error("job is cancelled")]
+    Cancelled,
     #[error("job already has base {have}, refusing to change it to {want}")]
     BaseChange { have: String, want: String },
     #[error("ledger text must be one non-empty line")]
