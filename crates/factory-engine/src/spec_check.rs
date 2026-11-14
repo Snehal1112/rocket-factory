@@ -360,8 +360,9 @@ fn check_ref(reference: &str, root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Like `review_spec`. With `intake`, the reviewer is told the spec was drafted unattended. With `reuse_saved`, a review on file for the same text gives its verdict whatever
-/// it is, so the user who overrides a refusal does not pay for a second run or lose the findings they read.
+/// Like `review_spec`. With `intake`, the reviewer is told the spec was drafted unattended.
+/// With `reuse_saved`, a review on file for the same text gives its verdict whatever it is, so
+/// the user who overrides a refusal does not pay for a second run or lose the findings they read.
 pub(crate) fn review_spec_with(
     driver: &Driver,
     spec: &Path,

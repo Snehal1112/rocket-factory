@@ -479,13 +479,28 @@ pub fn create_job_with_spec(
     spec_path: Option<&Path>,
     model: Option<&str>,
 ) -> Result<Job, EngineError> {
-    create_job_with_spec_accepting(driver, slug, feature, plan, spec_path, model, None, None)
+    create_job_with_spec_accepting(
+        driver,
+        slug,
+        feature,
+        plan,
+        spec_path,
+        model,
+        SpecMode::Accept(None),
+    )
 }
 
-/// Like `create_job_with_spec`. A reason in `accept_spec` turns a spec refusal into a pass and is recorded.
-/// With `intake_tree`, the spec was drafted unattended: its decisions must cite files of that tree, and
-/// `accept_spec` has no effect.
-#[allow(clippy::too_many_arguments)]
+/// How a spec is judged before its jobs exist.
+#[derive(Debug, Clone, Copy)]
+pub enum SpecMode<'a> {
+    /// A person is in the loop. A reason turns a spec refusal into a pass and is recorded.
+    Accept(Option<&'a str>),
+    /// The spec was drafted unattended. Its decisions must cite files of this tree, and nothing
+    /// can override a refusal.
+    Intake(&'a Path),
+}
+
+/// Like `create_job_with_spec`, with the `SpecMode` that judges the spec.
 pub fn create_job_with_spec_accepting(
     driver: &Driver,
     slug: &str,
@@ -493,9 +508,12 @@ pub fn create_job_with_spec_accepting(
     plan: Option<&Path>,
     spec_path: Option<&Path>,
     model: Option<&str>,
-    accept_spec: Option<&str>,
-    intake_tree: Option<&Path>,
+    mode: SpecMode<'_>,
 ) -> Result<Job, EngineError> {
+    let (accept_spec, intake_tree) = match mode {
+        SpecMode::Accept(reason) => (reason, None),
+        SpecMode::Intake(tree) => (None, Some(tree)),
+    };
     // A spec with no plans would be skipped without a word, so refuse it.
     if spec_path.is_some() && plan.is_none() {
         return Err(EngineError::Msg("--spec needs --plans".to_string()));

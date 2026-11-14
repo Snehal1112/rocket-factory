@@ -10,7 +10,7 @@ use factory_engine::{
     costs_path, create_job_with_spec_accepting, create_one_job_accepting, find_draft,
     force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs,
     project_lease_status, remove_draft, run_job, run_series, set_draft_stage, start_draft, today,
-    Driver, MergeResult, RepoTip, RunEnd, DEFAULT_LOCK_WAIT,
+    Driver, MergeResult, RepoTip, RunEnd, SpecMode, DEFAULT_LOCK_WAIT,
 };
 
 use crate::cli::{Cli, Command, SpecCmd};
@@ -505,8 +505,7 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
                 plans.as_deref(),
                 spec.as_deref(),
                 model.as_deref(),
-                accept_spec.as_deref(),
-                None,
+                SpecMode::Accept(accept_spec.as_deref()),
             )?,
             Vec::new(),
         ),

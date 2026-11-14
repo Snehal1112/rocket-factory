@@ -8,7 +8,9 @@ use factory_agent::{AgentSpec, StopReason};
 use factory_core::{agents_file, check_kb_path, is_agent_file_name, Config, Job, Stage};
 
 use crate::tracker::{IssueInfo, LabelEvent};
-use crate::{create_job_with_spec_accepting, run_series, Driver, EngineError, RunEnd, Tracker};
+use crate::{
+    create_job_with_spec_accepting, run_series, Driver, EngineError, RunEnd, SpecMode, Tracker,
+};
 
 /// Set while an issue is being drafted and built.
 pub const STATE_RUNNING: &str = "factory: running";
@@ -508,8 +510,7 @@ fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure
             Some(&draft),
             None,
             None,
-            None,
-            Some(&tree),
+            SpecMode::Intake(&tree),
         ) {
             Ok(job) => break job,
             Err(e) if attempt < DRAFT_ATTEMPTS && redraftable(&e) => {

@@ -6,7 +6,7 @@ use factory_core::{Job, Stage};
 
 use crate::runloop::{
     add_job, add_warning, adopt_draft, create_job_with_spec_accepting, record_accepted,
-    user_decisions, validate_series, Validated, NO_USER_DECISION,
+    user_decisions, validate_series, SpecMode, Validated, NO_USER_DECISION,
 };
 use crate::tasks::parse_checkbox_tasks;
 use crate::{combine_plans, parse_series_with, Driver, EngineError, SeriesError};
@@ -86,8 +86,7 @@ pub fn create_one_job_accepting(
             Some(plan),
             spec_path,
             model,
-            accept_spec,
-            None,
+            SpecMode::Accept(accept_spec),
         )?;
         let notes = vec!["--one-job had no effect: the chain has one plan".to_string()];
         return Ok(OneJob { job, notes });
