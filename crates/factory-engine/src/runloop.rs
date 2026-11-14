@@ -678,7 +678,19 @@ pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
     let guard = driver.hold_project(id)?;
     let _lease = LeaseGuard { driver, id };
     let span = job_span(id);
-    span.in_scope(|| run_job_inner(driver, id, &guard))
+    match span.in_scope(|| run_job_inner(driver, id, &guard)) {
+        Err(EngineError::Cancelled) => Ok(RunEnd::NeedsHuman(cancel_reason(driver, id))),
+        other => other,
+    }
+}
+
+/// The reason a cancelled job was parked with, or `cancelled` when it has none.
+fn cancel_reason(driver: &Driver, id: &str) -> String {
+    driver
+        .job(id)
+        .ok()
+        .and_then(|job| job.reason)
+        .unwrap_or_else(|| "cancelled".to_string())
 }
 
 fn run_job_inner(

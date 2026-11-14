@@ -16,7 +16,10 @@ use crate::{
 
 impl From<CoreError> for EngineError {
     fn from(e: CoreError) -> Self {
-        EngineError::Core(e.to_string())
+        match e {
+            CoreError::Cancelled => EngineError::Cancelled,
+            other => EngineError::Core(other.to_string()),
+        }
     }
 }
 impl From<GitError> for EngineError {
@@ -31,7 +34,10 @@ impl From<std::io::Error> for EngineError {
 }
 impl From<StoreError> for EngineError {
     fn from(e: StoreError) -> Self {
-        EngineError::Msg(e.to_string())
+        match e {
+            StoreError::Core(CoreError::Cancelled) => EngineError::Cancelled,
+            other => EngineError::Msg(other.to_string()),
+        }
     }
 }
 

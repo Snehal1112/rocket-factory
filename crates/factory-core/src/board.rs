@@ -394,7 +394,9 @@ impl Job {
         }
     }
 
-    /// Moves the job to a stage. The reason is kept only for needs-human. Nothing changes when the move is refused.
+    /// Moves the job to a stage. The reason is kept only for needs-human.
+    /// A cancelled job refuses every move except to needs-human, even with `force`.
+    /// Nothing changes when the move is refused.
     pub fn set_stage(
         &mut self,
         to: Stage,
@@ -402,7 +404,33 @@ impl Job {
         force: bool,
         now: f64,
     ) -> Result<(), CoreError> {
+        if self.cancelled && to != Stage::NeedsHuman {
+            return Err(CoreError::Cancelled);
+        }
         Stage::check_move(self.stage, to, force)?;
+        self.apply_move(to, reason, now);
+        Ok(())
+    }
+
+    /// Leaves needs-human for build, review or approve. This is the only move out of
+    /// needs-human without `force`. Nothing changes when the move is refused.
+    pub fn resume(&mut self, to: Stage, now: f64) -> Result<(), CoreError> {
+        if self.cancelled {
+            return Err(CoreError::Cancelled);
+        }
+        if self.stage != Stage::NeedsHuman
+            || !matches!(to, Stage::Build | Stage::Review | Stage::Approve)
+        {
+            return Err(CoreError::StageMove {
+                from: self.stage,
+                to,
+            });
+        }
+        self.apply_move(to, None, now);
+        Ok(())
+    }
+
+    fn apply_move(&mut self, to: Stage, reason: Option<&str>, now: f64) {
         if self.stage != to {
             self.stage = to;
             self.stage_since = now;
@@ -418,7 +446,6 @@ impl Job {
             self.park_at = None;
             self.park_summary = None;
         }
-        Ok(())
     }
 
     /// The base sha is recorded once. Changing it needs `force`.
@@ -1054,9 +1081,95 @@ mod tests {
         j.set_stage(Stage::NeedsHuman, Some("risky diff"), false, 400.0)
             .expect("park");
         assert_eq!(j.reason.as_deref(), Some("risky diff"));
-        j.set_stage(Stage::Review, Some("ignored"), false, 500.0)
-            .expect("resume");
+        j.resume(Stage::Review, 500.0).expect("resume");
         assert_eq!(j.reason, None);
+    }
+
+    #[test]
+    fn a_cancelled_job_refuses_every_move_except_needs_human() {
+        for force in [false, true] {
+            for to in [
+                Stage::Spec,
+                Stage::Build,
+                Stage::Review,
+                Stage::Approve,
+                Stage::Merged,
+            ] {
+                let mut j = job();
+                j.set_stage(Stage::NeedsHuman, Some("cancelled: x"), false, 1.0)
+                    .expect("park");
+                j.cancelled = true;
+                let before = j.clone();
+                let err = j.set_stage(to, None, force, 2.0).expect_err("refused");
+                assert!(
+                    matches!(err, CoreError::Cancelled),
+                    "{to} force={force}: {err}"
+                );
+                assert_eq!(j, before, "refused move leaves the job untouched");
+            }
+        }
+    }
+
+    #[test]
+    fn a_cancelled_job_can_still_park_again() {
+        let mut j = job();
+        j.set_stage(Stage::Build, None, false, 1.0).expect("build");
+        j.cancelled = true;
+        j.set_stage(Stage::NeedsHuman, Some("again"), false, 2.0)
+            .expect("park again");
+        assert_eq!(j.reason.as_deref(), Some("again"));
+        assert!(j.cancelled);
+    }
+
+    #[test]
+    fn resume_moves_needs_human_to_build_review_or_approve() {
+        for to in [Stage::Build, Stage::Review, Stage::Approve] {
+            let mut j = job();
+            j.set_stage(Stage::NeedsHuman, Some("risky"), false, 1.0)
+                .expect("park");
+            j.park_kind = Some("risky".into());
+            j.park_at = Some(1);
+            j.park_summary = Some("sum".into());
+            let n = j.stage_history.len();
+            j.resume(to, 3.0).expect("resume");
+            assert_eq!(j.stage, to);
+            assert_eq!(j.reason, None);
+            assert_eq!(j.park_kind, None);
+            assert_eq!(j.park_at, None);
+            assert_eq!(j.park_summary, None);
+            assert_eq!(j.stage_since, 3.0);
+            assert_eq!(j.stage_history.len(), n + 1);
+        }
+    }
+
+    #[test]
+    fn resume_refuses_spec_merged_and_other_stages() {
+        for to in [Stage::Spec, Stage::Merged] {
+            let mut j = job();
+            j.set_stage(Stage::NeedsHuman, Some("x"), false, 1.0)
+                .expect("park");
+            let before = j.clone();
+            let err = j.resume(to, 2.0).expect_err("refused");
+            assert!(matches!(err, CoreError::StageMove { .. }), "{to}: {err}");
+            assert_eq!(j, before);
+        }
+        let mut j = job();
+        j.set_stage(Stage::Review, None, false, 1.0)
+            .expect("review");
+        let before = j.clone();
+        let err = j.resume(Stage::Build, 2.0).expect_err("refused");
+        assert!(matches!(err, CoreError::StageMove { .. }), "{err}");
+        assert_eq!(j, before);
+    }
+
+    #[test]
+    fn resume_refuses_a_cancelled_job() {
+        let mut j = job();
+        j.set_stage(Stage::NeedsHuman, Some("x"), false, 1.0)
+            .expect("park");
+        j.cancelled = true;
+        let err = j.resume(Stage::Build, 2.0).expect_err("refused");
+        assert!(matches!(err, CoreError::Cancelled), "{err}");
     }
 
     #[test]

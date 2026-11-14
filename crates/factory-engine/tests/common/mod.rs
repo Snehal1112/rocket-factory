@@ -160,6 +160,13 @@ impl Fixture {
         let board = Board::load(&self.board_path).expect("load");
         board.find("001").expect("job").clone()
     }
+
+    /// Moves the parked job back to build, as rework does, so the next build call can run.
+    pub fn resume_to_build(&self) {
+        factory_engine::BoardStore::new(&self.board_path, std::time::Duration::from_secs(5))
+            .update_job("001", |j| j.resume(factory_core::Stage::Build, 1.0))
+            .expect("resume to build");
+    }
 }
 
 pub type Effect = Box<dyn Fn(&AgentSpec) -> String + Send + Sync>;

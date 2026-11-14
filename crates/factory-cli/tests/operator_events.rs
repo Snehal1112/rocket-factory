@@ -68,6 +68,45 @@ fn cancel_logs_reason_and_force() -> TestResult {
 }
 
 #[test]
+fn a_second_cancel_updates_the_reason() -> TestResult {
+    let sc = parked()?;
+    sc.run(&["cancel", "1", "--reason", "first"])?;
+    sc.run(&["cancel", "1", "--reason", "second"])?;
+    let job = sc.job("001")?;
+    assert!(job.cancelled);
+    assert_eq!(job.reason.as_deref(), Some("cancelled: second"));
+    Ok(())
+}
+
+#[test]
+fn rework_next_round_clears_cancelled_and_resumes_at_build() -> TestResult {
+    let sc = parked()?;
+    sc.run(&["cancel", "1"])?;
+    sc.run(&["rework", "1", "fix it"])?;
+    assert_eq!(sc.stage("001")?, "build");
+    assert!(!sc.job("001")?.cancelled);
+    Ok(())
+}
+
+#[test]
+fn approve_still_refuses_a_cancelled_job() -> TestResult {
+    let sc = parked()?;
+    sc.run(&["cancel", "1"])?;
+    let err = sc.run(&["approve", "1"]).expect_err("approve must refuse");
+    assert!(err.to_string().contains("was cancelled"), "{err}");
+    assert_eq!(sc.stage("001")?, "needs-human");
+    Ok(())
+}
+
+#[test]
+fn approve_resumes_a_driver_parked_job_through_resume() -> TestResult {
+    let sc = parked()?;
+    sc.run(&["approve", "1"])?;
+    assert_eq!(sc.stage("001")?, "merged");
+    Ok(())
+}
+
+#[test]
 fn refused_approve_logs_nothing() -> TestResult {
     let sc = Scenario::new("", vec![])?;
     let plan = sc.plan_b.to_string_lossy().to_string();

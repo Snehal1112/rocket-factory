@@ -719,7 +719,11 @@ fn approve(
     };
     let now = now_secs();
     d.store().update_job(id, |j| {
-        factory_engine::set_stage_logged(j, Stage::Approve, None, false, now)
+        if j.stage == Stage::NeedsHuman {
+            factory_engine::resume_logged(j, Stage::Approve, now)
+        } else {
+            factory_engine::set_stage_logged(j, Stage::Approve, None, false, now)
+        }
     })?;
     let ruling = if let Some(reason) = waive {
         let review = job.last_review.as_ref();
@@ -792,12 +796,11 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
             std::fs::write(d.job_dir(&job).join(user_note), note)?;
             d.ledger(&job).ruling(&format!("rework note: {note}"))?;
             d.store().update_job(id, |j| {
-                // Needs-human back to build is allowed by the stage guard, so no force.
-                factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
+                // A rework revives a cancelled job, so the flag goes first.
+                j.cancelled = false;
+                factory_engine::resume_logged(j, Stage::Build, now)?;
                 // The note is the findings now, so a no-change round is not a checks case.
                 j.fix_source = None;
-                // A rework revives a cancelled job, so approve does not refuse it later.
-                j.cancelled = false;
                 Ok(())
             })?;
             format!("job {id} back to build, same task")
@@ -819,13 +822,14 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
                     .ruling(&format!("waiver superseded by rework round {new_round}"))?;
             }
             d.store().update_job(id, |j| {
-                factory_engine::set_stage_logged(j, Stage::Build, None, false, now)?;
+                // A rework revives a cancelled job, so the flag goes first.
+                j.cancelled = false;
+                factory_engine::resume_logged(j, Stage::Build, now)?;
                 j.round = new_round;
                 // A rework grants a full new set of fix rounds.
                 j.rework_base = new_round - 1;
                 j.fix_source = Some("rework".to_string());
                 j.reset_reviews();
-                j.cancelled = false;
                 Ok(())
             })?;
             format!("job {id} back to build, round {new_round}")
