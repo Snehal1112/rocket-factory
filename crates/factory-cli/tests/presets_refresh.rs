@@ -33,7 +33,7 @@ fn the_command_reports_each_outcome_and_refused_paths() {
     );
     assert!(out.contains("unchanged: "), "{out}");
     assert!(
-        out.contains("1 written, 0 updated, 38 unchanged, 1 refused"),
+        out.contains("1 written, 0 updated, 43 unchanged, 1 refused"),
         "{out}"
     );
     assert!(out.contains("--force"), "{out}");
@@ -62,6 +62,7 @@ fn refresh_output_matches_the_golden_text() {
         "rust/agents/factory-builder.md",
         "rust/agents/factory-code-reviewer.md",
         "rust/agents/factory-committer.md",
+        "rust/agents/factory-intake-drafter.md",
         "rust/agents/factory-kb-refresher.md",
         "rust/agents/factory-security-reviewer.md",
         "rust/agents/factory-spec-reviewer.md",
@@ -69,6 +70,7 @@ fn refresh_output_matches_the_golden_text() {
         "go/agents/factory-builder.md",
         "go/agents/factory-code-reviewer.md",
         "go/agents/factory-committer.md",
+        "go/agents/factory-intake-drafter.md",
         "go/agents/factory-kb-refresher.md",
         "go/agents/factory-security-reviewer.md",
         "go/agents/factory-spec-reviewer.md",
@@ -77,6 +79,7 @@ fn refresh_output_matches_the_golden_text() {
         "ruby/agents/factory-builder.md",
         "ruby/agents/factory-code-reviewer.md",
         "ruby/agents/factory-committer.md",
+        "ruby/agents/factory-intake-drafter.md",
         "ruby/agents/factory-kb-refresher.md",
         "ruby/agents/factory-security-reviewer.md",
         "ruby/agents/factory-spec-reviewer.md",
@@ -85,6 +88,7 @@ fn refresh_output_matches_the_golden_text() {
         "csharp/agents/factory-builder.md",
         "csharp/agents/factory-code-reviewer.md",
         "csharp/agents/factory-committer.md",
+        "csharp/agents/factory-intake-drafter.md",
         "csharp/agents/factory-kb-refresher.md",
         "csharp/agents/factory-security-reviewer.md",
         "csharp/agents/factory-spec-reviewer.md",
@@ -93,6 +97,7 @@ fn refresh_output_matches_the_golden_text() {
         "node/agents/factory-builder.md",
         "node/agents/factory-code-reviewer.md",
         "node/agents/factory-committer.md",
+        "node/agents/factory-intake-drafter.md",
         "node/agents/factory-kb-refresher.md",
         "node/agents/factory-security-reviewer.md",
         "node/agents/factory-spec-reviewer.md",
@@ -100,7 +105,7 @@ fn refresh_output_matches_the_golden_text() {
         expected.push(format!("unchanged: {}", p(rel)));
     }
     expected.push(format!("refused: {}", p("rust/config.toml")));
-    expected.push("1 written, 0 updated, 38 unchanged, 1 refused".to_string());
+    expected.push("1 written, 0 updated, 43 unchanged, 1 refused".to_string());
     expected.push(
         "refused files differ from every known text, use --force to overwrite them".to_string(),
     );
@@ -119,6 +124,7 @@ fn the_refresh_output_is_byte_identical() {
         "factory-builder.md",
         "factory-code-reviewer.md",
         "factory-committer.md",
+        "factory-intake-drafter.md",
         "factory-kb-refresher.md",
         "factory-security-reviewer.md",
         "factory-spec-reviewer.md",
@@ -161,7 +167,7 @@ fn the_refresh_output_is_byte_identical() {
         }
     }
     expected.push(format!("refused: {}", p.join("rust/config.toml").display()));
-    expected.push("1 written, 0 updated, 38 unchanged, 1 refused".to_string());
+    expected.push("1 written, 0 updated, 43 unchanged, 1 refused".to_string());
     expected.push(
         "refused files differ from every known text, use --force to overwrite them".to_string(),
     );
