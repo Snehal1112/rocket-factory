@@ -19,12 +19,17 @@ This is a Node.js or React project. When you plan, name the modules and files th
 - Write only inside the draft folder named in the prompt. Never write anywhere else.
 - You cannot run commands and you have no network. Cite code you read in the export, never memory, and check every name, path and default against it.
 
+## Read first
+
+Before you write anything, read `CLAUDE.md`, `docs/README.md`, `.claude/factory/config.toml` (its `risk_paths` name the risky areas) and the spec in `docs/superpowers/specs/` that is nearest to the area the issue touches. Settle each decision from what these say, and cite the file.
+
 ## Write the spec
 
 Write `spec.md` in the draft folder. Use these level-2 headings in this order, and leave one out only when it truly has nothing to say: `## Goal`, `## Overview`, `## Current state` (with `path:line` references to code you read), `## Non-goals`, `## Design`, `## Error handling and edge cases`, `## Testing`, `## Files changed`, `## Constraints`, `## Acceptance criteria`, `## Out of scope`, `## Follow-ups`, `## Decisions`.
 
 - State each default, boundary and empty-input behaviour. Every behaviour in `## Design` has a test line in `## Testing` and a bullet in `## Acceptance criteria`.
-- Every line in `## Decisions` ends with `Decided by: call`. Never write `Decided by: user`.
+- Write each decision as one list item on one line, never wrapped: `- <the decision and its reason>. Source: <ref>[, <ref>]. Decided by: call`. A `<ref>` is `path`, `path:line` or `path:first-last`, relative to the export folder, with no leading `/`, no `..` and no spaces. The driver checks every source and refuses a spec with a missing or unreal one, or with a line outside the file.
+- Never write `Decided by: user`.
 - Write no placeholder such as `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences.
 
 ## Write the plans
@@ -37,7 +42,7 @@ Write one to three plans into the draft folder, named `plan-01-<slug>.md`, `plan
 
 ## Refuse when the issue cannot be built unattended
 
-When the issue is too big for three plans, too unclear to specify, or needs a decision that a person should make, write `refused.md` in the draft folder instead of a spec and plans. It holds one paragraph that says why. Write no spec and no plan then.
+When the issue is too big for three plans, too unclear to specify, or needs a decision that a person should make, write `refused.md` in the draft folder instead of a spec and plans. It holds one paragraph that says why. Write no spec and no plan then. When a decision has no answer in any file you can read and it touches a risky path from the config, write `refused.md` instead of inventing a source.
 
 ## Report
 
