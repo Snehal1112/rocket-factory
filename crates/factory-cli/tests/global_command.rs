@@ -430,9 +430,8 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
         "two or three alternatives",
         "because open questions were too hard to answer",
-        "\"ask one focused question about purpose or intended use\"",
-        "\"open-ended is fine too\"",
-        "the skill's spike and bounded paths do not apply",
+        "These rules win over the skill's own question style and its choice of path or size.",
+        "always take the path that writes a spec",
         "Always size it as a project with a written design",
         "If they still decline, run `<factory> --project <name> cancel <slug>` to remove the draft card and stop without building anything.",
         "Survey the code and the ticket first",
@@ -473,6 +472,17 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         pos("the commit after the spec approval comes first")
             < pos("Invoke `superpowers:writing-plans`")
     );
+    // The command quotes no sentence of the brainstorming skill.
+    for quoted in [
+        "ask one focused question about purpose or intended use",
+        "open-ended is fine too",
+        "spike and bounded",
+    ] {
+        assert!(
+            !text.contains(quoted),
+            "the command quotes the skill: {quoted}"
+        );
+    }
     // The 6.4.1 rules that no longer apply, and the inline executor.
     for removed in [
         "executing-plans",
@@ -509,6 +519,21 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
     }
     assert!(text.starts_with("---\n"));
     assert!(text.contains("\ndescription: "));
+}
+
+#[test]
+fn command_names_no_superpowers_version() {
+    for (name, text) in [
+        ("command", GLOBAL_COMMAND),
+        ("tool map", factory_core::TOOL_MAP_CLAUDE),
+    ] {
+        for version in ["6.4.", "7.0."] {
+            assert!(
+                !text.contains(version),
+                "the {name} names a superpowers version: {version}"
+            );
+        }
+    }
 }
 
 #[test]

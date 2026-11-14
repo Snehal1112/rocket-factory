@@ -470,8 +470,8 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             // The overrides of the brainstorming skill, the drafts and a split feature's ticket.
             "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
             "because open questions were too hard to answer",
-            "It replaces the skill's \"ask one focused question about purpose or intended use\" and its \"open-ended is fine too\".",
-            "the skill's spike and bounded paths do not apply",
+            "These rules win over the skill's own question style and its choice of path or size.",
+            "always take the path that writes a spec",
             "Always size it as a project with a written design",
             "If they still decline, run `<factory> --project <name> cancel <slug>` to remove the draft card and stop without building anything.",
             "Survey the code and the ticket first",
@@ -512,6 +512,10 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "SendMessage",
             // Nothing is drafted in a gitignored folder any more.
             ".superpowers/sdd/draft-",
+            // The command quotes no sentence of the brainstorming skill.
+            "ask one focused question about purpose or intended use",
+            "open-ended is fine too",
+            "spike and bounded",
             // The 6.4.1 rules that no longer apply, and the inline executor.
             "executing-plans",
             "architectural path",
