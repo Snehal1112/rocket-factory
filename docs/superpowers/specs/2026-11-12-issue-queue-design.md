@@ -76,9 +76,9 @@ On the `Tracker` trait and `GhTracker` (with the `Arc<T>` forwarding impl):
 
 ### 4. The drafter role
 
-A new agent file `factory-intake-drafter.md` in the five presets (`crates/factory-core/presets/<preset>/agents/`), run headless through the existing `AgentRunner` port with `intake_model` and `intake_budget_weighted`. It may read only the repo root (`Read`, `Grep`, `Glob` rules built from the real repo path, with the run's cwd the repo root, so the factory home and its key files are out of reach) and write only inside `<state>/intake/<issue>/` (a `Write` grant for that folder, built from the real path and checked like `kb_path`). Its prompt carries the issue title and body as data, marked as untrusted, plus the `plan_rules` and the spec quality bar of the `/factory` command. It writes `spec.md` and one to three plans named `plan-01-<slug>.md`, each with at most three tasks and a final `Next plan:` line, or a file `refused.md` holding one paragraph when the issue cannot be built unattended (too big, unclear, needs a decision). `agent_lint` covers the new file.
+A new agent file `factory-intake-drafter.md` in the five presets (`crates/factory-core/presets/<preset>/agents/`), run headless through the existing `AgentRunner` port with `intake_model` and `intake_budget_weighted`. It may read only the repo root (`Read`, `Grep`, `Glob` rules built from the real repo path, with the run's cwd the repo root, so a factory home outside the repo and its key files are out of reach). The default state folder is inside the repo (`layout.rs:125`), so the spec also sets `disallowed_tools` (`factory-agent/src/spec.rs:71`) with a deny rule for `Read`, `Grep` and `Glob` on the state folder, with no exception for its own draft folder: the issue text, the draft and the repo are in the prompt or the repo. The drafter writes only inside `<state>/intake/<issue>/` (a `Write` grant for that folder, built from the real path and checked like `kb_path`). Its prompt carries the issue title and body as data, marked as untrusted, plus the `plan_rules` and the spec quality bar of the `/factory` command. It writes `spec.md` and one to three plans named `plan-01-<slug>.md`, each with at most three tasks and a final `Next plan:` line, or a file `refused.md` holding one paragraph when the issue cannot be built unattended (too big, unclear, needs a decision). `agent_lint` covers the new file.
 
-The drafts stay in the state folder, not in the repository. Nothing an agent wrote for an intake job is posted to GitHub: intake's comments hold fixed text only (see 5), and the post-merge ticket steps skip intake jobs (see 6).
+The drafts stay in the state folder, not in the repository. Nothing an agent wrote for an intake job is posted to GitHub: intake's comments hold fixed text only (see 5), and the post-merge steps cannot post for an intake job (see 6).
 
 ### 5. `factory intake`
 
@@ -94,9 +94,18 @@ The drafts stay in the state folder, not in the repository. Nothing an agent wro
 
 An estimate over the job budget is a failure; `--accept-over-budget` is never passed.
 
-### 6. Post-merge steps skip intake jobs
+### 6. Intake jobs cannot post through the tracker
 
-`Job` gets `intake_issue: Option<u32>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, optional, so the board stays compatible with `dashboard/`). `run_intake` sets it on every job of the series it creates. The ticket step (`tickets.rs`, follow-ups and closing the parent issues) and the minor ticket step (`minors.rs`) return at once for a job with `intake_issue` set, because both would post text that agents wrote from the untrusted issue body: the follow-ups from the drafted `spec.md`, the minors from the review of code built from it. The follow-ups and minor findings stay in the job folder. The waiver ticket step is unchanged: it only runs on an approval a person asks for, and intake never approves. Skipping the ticket step also means it never copies the issue's `factory:` or priority labels onto new issues.
+`Job` gets `intake_issue: Option<u32>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, optional, so the board stays compatible with `dashboard/`). `run_intake` sets it on every job of the series it creates.
+
+The post-merge steps that talk to GitHub (`tickets.rs`, `minors.rs`, `waivers.rs`) would post text that agents wrote from the untrusted issue body: follow-ups from the drafted `spec.md`, `[minor]` lines and waived blockers from reviews of code built from it. The rule is deny by default and sits on the tracker, not on a list of steps:
+
+- `Driver::tracker()` (`compat.rs:295`) is renamed `Driver::raw_tracker()` and made crate-private. A new `Driver::tracker_for(&self, job: &Job) -> Box<dyn Tracker + '_>` returns the raw tracker for a job with no `intake_issue`, and a `GuardedTracker` for a job with one.
+- `GuardedTracker` forwards the reading calls (`repo_name`, `labels_of`, `is_closed`, `find_created`, `list_labelled`, `labelled_by`, `current_user`) and refuses `create`, `comment`, `close` and `edit_labels` with the error `refused for an intake job`.
+- The three steps get their tracker through `tracker_for(&job)`. A refusal is a soft failure like any other: it goes to the ledger and the merge result does not change. The ticket step and the minor ticket step also return at once for an intake job, so no refusal is logged on every merge.
+- Only `intake.rs` uses `raw_tracker()` for its own fixed-text calls. A source test fails when any other file under `crates/factory-engine/src` names `raw_tracker`.
+
+Intake therefore closes the issue itself. The follow-ups and minor findings stay in the job folder. Skipping the steps also means nothing copies the issue's `factory:` or priority labels onto new issues.
 
 ### 7. `factoryd`
 
@@ -133,7 +142,7 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 - `crates/factory-core`: `job_intake_issue_is_optional_and_absent_from_old_boards` (an old board file parses, a job without the field serialises without it), `intake_settings_have_the_documented_defaults`, `bad_intake_settings_are_config_errors` (empty label, comma, duplicate priority, zero poll, zero budget).
 - `crates/factory-engine/src/intake.rs` unit tests: `pick_next_prefers_the_higher_priority_then_the_older_issue`, `pick_next_sorts_unprioritised_issues_last`, `pick_next_skips_state_labelled_issues`, `pick_next_skips_untrusted_labellers`.
 - `crates/factory-engine/tests/intake.rs` (with the test `FakeTracker` and `FakeRunner`): `a_pass_with_no_eligible_issue_changes_nothing`, `a_merged_issue_is_commented_closed_and_labelled_done`, `a_refused_draft_labels_the_issue_needs_human` (the comment holds the reason code and the path, not the refused text), `a_failure_comment_never_contains_agent_text`, `intake_marks_every_job_of_the_series`, `draft_spec_reads_only_the_repo_root`, `intake_never_creates_a_job_without_plans`, `a_spec_review_refusal_redrafts_once_then_fails`, `a_dry_run_changes_no_label`.
-- `crates/factory-engine` ticket tests: `the_ticket_step_skips_an_intake_job` (no `create`, `comment` or `close` call with `tickets_on_merge` on) and `the_minor_ticket_step_skips_an_intake_job`; the existing tests for other jobs keep passing.
+- `crates/factory-engine`: `guarded_tracker_refuses_every_write_and_forwards_reads`, `tracker_for_returns_the_raw_tracker_without_a_marker`, `the_ticket_step_skips_an_intake_job` (no `create`, `comment` or `close` call with `tickets_on_merge` on), `the_minor_ticket_step_skips_an_intake_job`, `a_waived_approve_of_an_intake_job_posts_nothing`, and the source test `only_intake_uses_the_raw_tracker`; the existing tests for other jobs keep passing.
 - `crates/factory-engine/tests/tracker_gh.rs` style tests for the new `gh` argument builders: `list_labelled_args`, `edit_labels_args`, `events_args`.
 - `crates/factory-supervisor`: `intake_requests_wait_while_the_project_is_busy`, `an_intake_request_is_not_enqueued_twice`, `intake_polling_is_off_for_projects_without_the_setting`.
 - `crates/factory-cli/tests/agent_lint.rs` passes for the new agent file in all five presets.
@@ -142,7 +151,7 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 ## Files changed
 
 - `crates/factory-core/src/board.rs` (the optional `intake_issue` field)
-- `crates/factory-engine/src/tickets.rs`, `minors.rs`
+- `crates/factory-engine/src/compat.rs`, `tracker.rs`, `tickets.rs`, `minors.rs`, `waivers.rs`
 - `crates/factory-core/src/config.rs`, `settings_block.rs`, presets `<preset>/agents/factory-intake-drafter.md`
 - `crates/factory-engine/src/tracker.rs`, `intake.rs`, `lib.rs`
 - `crates/factory-cli/src/cli.rs`, `commands.rs`, `intake.rs`
@@ -164,7 +173,8 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 - A failed or parked issue gets `factory: needs-human` and a fixed comment with a reason code, and the queue moves on. No agent-written text is posted.
 - The drafter cannot read outside the repo root or write outside its draft folder.
 - A job is never created without drafted plans.
-- Intake closes a merged issue itself. The ticket step and the minor ticket step post nothing for an intake job.
+- Intake closes a merged issue itself. No other step can create, comment on, close or relabel a GitHub issue for an intake job, including after `approve --waive`, and a step added later is covered the same way.
+- The drafter cannot read the state folder.
 - A board without `intake_issue` parses as before and the dashboard is unaffected.
 - `factory intake --dry-run` names the issue it would pick and changes nothing.
 - `factoryd` enqueues at most one `Intake` request per project at a time, and only when `intake` is on.
@@ -193,5 +203,7 @@ An estimate over the job budget is a failure; `--accept-over-budget` is never pa
 - What does a failure comment contain? Options: fixed reason code and local path, agent text redacted and capped, no comment. Chosen: fixed reason code and local path. Decided by: user
 - Who closes the issue on merge when both intake and the ticket step are on? Options: the ticket step if on and else intake, intake always, never close. Chosen first: the ticket step if on, else intake. Replaced by the next decision, which skips the ticket step for intake jobs, so intake always closes. Decided by: user
 - What do the post-merge ticket steps do for intake jobs? Options: skip both the follow-up filing and the minor ticket, accept that they post agent text, skip follow-ups only. Chosen: skip both. Decided by: user
-- How are intake jobs recognised? Options: an optional `Job.intake_issue` board field, the `issue-<n>` slug. Chosen: the optional field, because a slug can be typed by hand. Decided by: call
+- How should intake jobs be protected from posting agent text? Options: a default-deny gate in the tracker, add the waiver step to a skip list, refuse `approve --waive` on intake jobs. Chosen: a default-deny gate in the tracker. Decided by: user
+- How are intake jobs recognised? Options: an optional `Job.intake_issue` board field, the `issue-<n>` slug. Chosen: the optional field. Decided by: user
+- Where do the drafts live and what is the drafter denied? Options: the state folder with a deny on reads of it, a temp folder outside the repo, refuse a repo-local state folder. Chosen: the state folder with an explicit deny on reads of it. Decided by: user
 - Where does the claim happen? Options: before the draft, after the job exists. Chosen: before the draft, because a job needs the drafted plans first. Decided by: call

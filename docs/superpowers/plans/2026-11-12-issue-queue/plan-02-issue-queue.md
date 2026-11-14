@@ -22,9 +22,9 @@
 1. A draft folder with a character outside letters, digits and `/ . _ - ~` is refused before the agent starts. Pinned by `intake_refuses_a_draft_folder_with_bad_characters`.
 2. A drafter that writes `refused.md` leaves the issue labelled `factory: needs-human`; the comment holds a reason code and the draft path, never the refused text. Pinned by `a_refused_draft_labels_the_issue_needs_human` and `a_failure_comment_never_contains_agent_text`.
 3. A `gh` failure while listing or picking leaves every label alone. Pinned by `a_tracker_failure_before_the_claim_leaves_the_labels_alone`.
-4. The issue body cannot widen the drafter's tools, and the drafter cannot read outside the repo root. Pinned by `draft_spec_grants_only_the_draft_folder` and `draft_spec_reads_only_the_repo_root`.
+4. The issue body cannot widen the drafter's tools, and the drafter cannot read outside the repo root or the state folder. Pinned by `draft_spec_grants_only_the_draft_folder`, `draft_spec_reads_only_the_repo_root` and `draft_spec_denies_reads_of_the_state_folder`.
 5. A job is never created without drafted plans. Pinned by `intake_never_creates_a_job_without_plans`.
-6. Every job of a series carries `intake_issue`, so the post-merge ticket steps can skip it. Pinned by `intake_marks_every_job_of_the_series`.
+6. Every job of a series carries `intake_issue`, so the tracker gate of the third plan covers it. Pinned by `intake_marks_every_job_of_the_series`.
 7. `--dry-run` changes no label and starts no agent. Pinned by `a_dry_run_changes_no_label_and_runs_no_agent`.
 
 ## File Structure
@@ -69,6 +69,7 @@
 - [ ] **Step 2: Write the failing tests.**
   - `intake_dir_is_under_the_state_dir` in `layout.rs`.
   - `draft_spec_reads_only_the_repo_root`: the `Read`, `Grep` and `Glob` rules name the repo root path and nothing else, and the cwd is the repo root.
+  - `draft_spec_denies_reads_of_the_state_folder`: `disallowed_tools` holds `Read`, `Grep` and `Glob` deny rules for the state folder, built from its real path.
   - `draft_spec_grants_only_the_draft_folder`: tools are `Read,Grep,Glob,Write`; the allowed tools hold one `Write` rule for the draft folder and no `Bash`; the prompt carries the issue number, marks the title and body as untrusted and names the folder; model and budget come from `intake_model` and `intake_budget_weighted`.
   - `intake_refuses_a_draft_folder_with_bad_characters`: a folder with a space returns `Failed` without any agent call.
   - `an_off_config_does_nothing` (`Off`), `a_pass_with_no_eligible_issue_changes_nothing` (`NoIssue`, no `edit_labels` call).
@@ -81,7 +82,7 @@
   - `a_spec_review_refusal_redrafts_once_then_fails`: the review keeps refusing; the drafter ran twice and the second prompt holds the findings.
   - `a_tracker_failure_before_the_claim_leaves_the_labels_alone`: `fail_on("list_labelled")` and `fail_on("current_user")` each give an error with no `edit_labels` call.
 - [ ] **Step 3: Run `cargo test -j4 -p factory-engine --test intake` and `cargo test -j4 -p factory-core intake_dir`.** Expected: `cannot find function run_intake in this scope`.
-- [ ] **Step 4: Implement.** `run_intake` follows the pass of the spec (design section 5): resolve trusted users (`intake_trusted` or `current_user()`), `list_labelled`, `pick_next`, return `DryRun` early, claim the issue with one `edit_labels` call (add `factory: running`, remove the intake label), run the drafter into `Layout::intake_dir()/<issue>/` with the folder checked by `check_kb_path`, create the jobs through `create_job_with_spec_accepting` with the drafted plans and without an accept reason (never the `plan = None` path), redraft once on a refusal, comment with the job id once the jobs exist, run `run_series`, settle the issue. Slug `issue-<n>`, feature text `<title>, #<n>`. Failure comments hold only a reason code (`draft-refused`, `draft-invalid`, `spec-review`, `over-budget`, `build-failed`), the job id when one exists and the draft path. On a merge intake closes the issue itself, because the ticket step skips intake jobs. After the jobs are created it sets `intake_issue` on every job of the series.
+- [ ] **Step 4: Implement.** `run_intake` follows the pass of the spec (design section 5): resolve trusted users (`intake_trusted` or `current_user()`), `list_labelled`, `pick_next`, return `DryRun` early, claim the issue with one `edit_labels` call (add `factory: running`, remove the intake label), run the drafter into `Layout::intake_dir()/<issue>/` with the folder checked by `check_kb_path`, create the jobs through `create_job_with_spec_accepting` with the drafted plans and without an accept reason (never the `plan = None` path), redraft once on a refusal, comment with the job id once the jobs exist, run `run_series`, settle the issue. Slug `issue-<n>`, feature text `<title>, #<n>`. Failure comments hold only a reason code (`draft-refused`, `draft-invalid`, `spec-review`, `over-budget`, `build-failed`), the job id when one exists and the draft path. On a merge intake closes the issue itself, because the tracker gate stops every other step from posting for intake jobs. Intake's own calls use `raw_tracker()` from the third plan; until that plan lands it uses `driver.tracker()`. After the jobs are created it sets `intake_issue` on every job of the series.
 - [ ] **Step 5: Run `cargo test -j4 -p factory-engine` then `cargo clippy -j4 -p factory-core -p factory-engine`.** Expected: all pass, no warnings.
 
 ### Task 3: The `factory intake` command
