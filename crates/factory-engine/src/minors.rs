@@ -32,6 +32,9 @@ pub fn minor_tickets_step(
     if job.stage != Stage::Merged {
         return Ok(skipped(format!("job {id} is not merged")));
     }
+    if job.intake_issue.is_some() {
+        return Ok(skipped(format!("job {id} is an intake job")));
+    }
     let dir = driver.job_dir(&job);
     if dir.join(MINORS_FILE).exists() {
         return Ok(skipped("the minor ticket is already filed".to_string()));
@@ -62,7 +65,7 @@ pub fn minor_tickets_step(
         last.file,
         short_sha(&tip)
     );
-    match driver.tracker().create(&title, &body, &[]) {
+    match driver.tracker_for(&job).create(&title, &body, &[]) {
         Ok(number) => {
             let text = serde_json::json!({ "issue": number }).to_string();
             write_atomic(&dir.join(MINORS_FILE), text.as_bytes())?;

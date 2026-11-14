@@ -292,8 +292,19 @@ impl Driver {
         self
     }
 
-    pub fn tracker(&self) -> &dyn crate::Tracker {
+    /// The tracker with no guard. Only intake may call it, a source test pins that. Every other step
+    /// goes through `tracker_for`.
+    pub fn raw_tracker(&self) -> &dyn crate::Tracker {
         self.tracker.as_ref()
+    }
+
+    /// The tracker a post-merge step of `job` may use. An intake job gets one that refuses every write.
+    pub fn tracker_for(&self, job: &Job) -> Box<dyn crate::Tracker + '_> {
+        if job.intake_issue.is_some() {
+            Box::new(crate::tracker::GuardedTracker::new(self.raw_tracker()))
+        } else {
+            Box::new(self.raw_tracker())
+        }
     }
 
     /// Changes how long board writes wait for the lock.

@@ -260,3 +260,31 @@ fn superseded_waivers_say_so() {
         vec!["skipped: every waiver was superseded by a rework".to_string()]
     );
 }
+
+#[test]
+fn a_waived_approve_of_an_intake_job_posts_nothing() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.intake_issue = Some(7);
+            Ok(())
+        })
+        .expect("intake issue");
+    record_waiver(&job_dir(&fx), two_blockers()).expect("record");
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    let calls = t.calls();
+    for write in ["create", "comment", "close", "edit_labels"] {
+        assert!(!calls.iter().any(|c| c.starts_with(write)), "{calls:?}");
+    }
+    assert_eq!(read_waivers(&job_dir(&fx))[0].tickets, vec![None, None]);
+    let ledger = std::fs::read_to_string(job_dir(&fx).join("progress.md")).expect("ledger");
+    assert!(
+        ledger.contains("waiver tickets failed") && ledger.contains("refused for an intake job"),
+        "{ledger}"
+    );
+}

@@ -158,11 +158,14 @@ pub fn tickets_step(
             )));
         }
     }
+    if job.intake_issue.is_some() {
+        return Ok(report.skip(format!("job {id} is an intake job")));
+    }
     let refs = parse_issue_refs(&job.feature);
     if refs.is_empty() {
         return Ok(report.skip("the feature text has no issue references".to_string()));
     }
-    let tracker = driver.tracker();
+    let tracker = driver.tracker_for(&job);
     let repo = match tracker.repo_name() {
         Ok(name) => name,
         Err(e) => {

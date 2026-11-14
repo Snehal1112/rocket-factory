@@ -90,6 +90,92 @@ impl<T: Tracker + ?Sized> Tracker for Arc<T> {
     }
 }
 
+impl<T: Tracker + ?Sized> Tracker for &T {
+    fn repo_name(&self) -> Result<String, String> {
+        (**self).repo_name()
+    }
+    fn labels_of(&self, issue: u32) -> Result<Vec<String>, String> {
+        (**self).labels_of(issue)
+    }
+    fn is_closed(&self, issue: u32) -> Result<bool, String> {
+        (**self).is_closed(issue)
+    }
+    fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u32, String> {
+        (**self).create(title, body, labels)
+    }
+    fn find_created(&self, title: &str, footer: &str) -> Result<Option<u32>, String> {
+        (**self).find_created(title, footer)
+    }
+    fn comment(&self, issue: u32, body: &str) -> Result<(), String> {
+        (**self).comment(issue, body)
+    }
+    fn close(&self, issue: u32) -> Result<(), String> {
+        (**self).close(issue)
+    }
+    fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String> {
+        (**self).list_labelled(label)
+    }
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
+        (**self).labelled_by(issue, label)
+    }
+    fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
+        (**self).edit_labels(issue, add, remove)
+    }
+    fn current_user(&self) -> Result<String, String> {
+        (**self).current_user()
+    }
+}
+
+const REFUSED: &str = "refused for an intake job";
+
+/// A tracker that forwards the reading calls and refuses every write. Post-merge steps get it for an
+/// intake job, because only intake itself may create, comment on, close or relabel its issue.
+pub struct GuardedTracker<'a> {
+    inner: &'a dyn Tracker,
+}
+
+impl<'a> GuardedTracker<'a> {
+    pub fn new(inner: &'a dyn Tracker) -> GuardedTracker<'a> {
+        GuardedTracker { inner }
+    }
+}
+
+impl Tracker for GuardedTracker<'_> {
+    fn repo_name(&self) -> Result<String, String> {
+        self.inner.repo_name()
+    }
+    fn labels_of(&self, issue: u32) -> Result<Vec<String>, String> {
+        self.inner.labels_of(issue)
+    }
+    fn is_closed(&self, issue: u32) -> Result<bool, String> {
+        self.inner.is_closed(issue)
+    }
+    fn create(&self, _: &str, _: &str, _: &[String]) -> Result<u32, String> {
+        Err(REFUSED.to_string())
+    }
+    fn find_created(&self, title: &str, footer: &str) -> Result<Option<u32>, String> {
+        self.inner.find_created(title, footer)
+    }
+    fn comment(&self, _: u32, _: &str) -> Result<(), String> {
+        Err(REFUSED.to_string())
+    }
+    fn close(&self, _: u32) -> Result<(), String> {
+        Err(REFUSED.to_string())
+    }
+    fn list_labelled(&self, label: &str) -> Result<Vec<IssueInfo>, String> {
+        self.inner.list_labelled(label)
+    }
+    fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
+        self.inner.labelled_by(issue, label)
+    }
+    fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
+        Err(REFUSED.to_string())
+    }
+    fn current_user(&self) -> Result<String, String> {
+        self.inner.current_user()
+    }
+}
+
 pub(crate) fn view_args(issue: u32) -> Vec<String> {
     [
         "issue",
@@ -808,6 +894,94 @@ mod tests {
         let out = tracker.run(&strings(&["x"])).expect("run");
         assert_eq!(out.len(), 204800);
         assert!(start.elapsed() < Duration::from_secs(20));
+    }
+
+    /// A tracker that logs every call and answers each one with a fixed value.
+    #[derive(Default)]
+    struct Recording {
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Recording {
+        fn log(&self, call: &str) {
+            self.calls.lock().expect("lock").push(call.to_string());
+        }
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("lock").clone()
+        }
+    }
+
+    impl Tracker for Recording {
+        fn repo_name(&self) -> Result<String, String> {
+            self.log("repo_name");
+            Ok("o/r".to_string())
+        }
+        fn labels_of(&self, _: u32) -> Result<Vec<String>, String> {
+            self.log("labels_of");
+            Ok(vec![])
+        }
+        fn is_closed(&self, _: u32) -> Result<bool, String> {
+            self.log("is_closed");
+            Ok(false)
+        }
+        fn create(&self, _: &str, _: &str, _: &[String]) -> Result<u32, String> {
+            self.log("create");
+            Ok(1)
+        }
+        fn find_created(&self, _: &str, _: &str) -> Result<Option<u32>, String> {
+            self.log("find_created");
+            Ok(None)
+        }
+        fn comment(&self, _: u32, _: &str) -> Result<(), String> {
+            self.log("comment");
+            Ok(())
+        }
+        fn close(&self, _: u32) -> Result<(), String> {
+            self.log("close");
+            Ok(())
+        }
+        fn list_labelled(&self, _: &str) -> Result<Vec<IssueInfo>, String> {
+            self.log("list_labelled");
+            Ok(vec![])
+        }
+        fn labelled_by(&self, _: u32, _: &str) -> Result<Option<LabelEvent>, String> {
+            self.log("labelled_by");
+            Ok(None)
+        }
+        fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
+            self.log("edit_labels");
+            Ok(())
+        }
+        fn current_user(&self) -> Result<String, String> {
+            self.log("current_user");
+            Ok("me".to_string())
+        }
+    }
+
+    #[test]
+    fn guarded_tracker_refuses_every_write_and_forwards_reads() {
+        let inner = Recording::default();
+        let guard = GuardedTracker::new(&inner);
+        let errs = [
+            guard.create("t", "b", &[]).map(|_| ()).expect_err("create"),
+            guard.comment(7, "x").expect_err("comment"),
+            guard.close(7).expect_err("close"),
+            guard
+                .edit_labels(7, &strings(&["a"]), &[])
+                .expect_err("edit_labels"),
+        ];
+        for e in errs {
+            assert!(e.contains("refused for an intake job"), "{e}");
+        }
+        assert!(inner.calls().is_empty(), "{:?}", inner.calls());
+        assert_eq!(guard.repo_name().expect("repo"), "o/r");
+        guard.labels_of(7).expect("labels");
+        guard.is_closed(7).expect("closed");
+        guard.find_created("t", "f").expect("find");
+        assert_eq!(
+            inner.calls(),
+            strings(&["repo_name", "labels_of", "is_closed", "find_created"])
+        );
     }
 
     #[test]

@@ -134,3 +134,22 @@ fn a_tracker_failure_keeps_the_merge() {
     assert!(!report.failed, "{report:?}");
     assert!(minors_file(&fx).exists());
 }
+
+#[test]
+fn the_minor_ticket_step_skips_an_intake_job() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    with_review(&fx, REVIEW);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.intake_issue = Some(7);
+            Ok(())
+        })
+        .expect("intake issue");
+    merge(&fx);
+    let report = minor_tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.skipped && !report.failed, "{report:?}");
+    assert_eq!(t.count("create"), 0);
+    assert!(!minors_file(&fx).exists());
+}

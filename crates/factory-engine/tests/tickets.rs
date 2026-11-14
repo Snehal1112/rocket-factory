@@ -765,3 +765,48 @@ fn two_follow_ups_with_the_same_title_file_two_tickets() {
         s.comments[0].1
     );
 }
+
+fn set_intake_issue(fx: &MergeFixture, issue: u32) {
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.intake_issue = Some(issue);
+            Ok(())
+        })
+        .expect("intake issue");
+}
+
+#[test]
+fn tracker_for_returns_the_raw_tracker_without_a_marker() {
+    let t = tracker();
+    let fx = with_tracker(approved_job(), t.clone());
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.intake_issue, None);
+    let number = fx
+        .driver
+        .tracker_for(&job)
+        .create("t", "b", &[])
+        .expect("create");
+    assert_eq!(number, 201);
+    assert_eq!(t.count("create"), 1);
+}
+
+#[test]
+fn the_ticket_step_skips_an_intake_job() {
+    let t = tracker().with_labels(7, &["bug"]);
+    let fx = approved_with_hook(true, Some(SPEC_WITH_TWO), &t);
+    set_feature(&fx, "fix the thing #7", None);
+    set_intake_issue(&fx, 7);
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(report.skipped && !report.failed, "{report:?}");
+    let calls = t.calls();
+    for write in ["create", "comment", "close"] {
+        assert!(!calls.iter().any(|c| c.starts_with(write)), "{calls:?}");
+    }
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert!(!fx.driver.job_dir(&job).join("tickets.json").exists());
+}
