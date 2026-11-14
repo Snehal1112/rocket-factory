@@ -248,6 +248,74 @@ impl Repo {
         Ok(self.branch_commit(branch)?.id().to_string())
     }
 
+    /// Writes the tracked regular files of a branch tip into `dest`.
+    ///
+    /// Symlinks, submodules and `.git` entries are skipped. A `dest` that holds anything is refused.
+    pub fn export_tree(&self, branch: &str, dest: &Path) -> Result<()> {
+        let tree = self.branch_commit(branch)?.tree()?;
+        match std::fs::read_dir(dest) {
+            Ok(mut entries) => {
+                if entries.next().is_some() {
+                    return Err(GitError::Refused(format!(
+                        "export folder {} is not empty",
+                        dest.display()
+                    )));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        std::fs::create_dir_all(dest)?;
+        let mut failure: Option<GitError> = None;
+        let walked = tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            match self.export_entry(dest, root, entry) {
+                Ok(result) => result,
+                Err(e) => {
+                    failure = Some(e);
+                    git2::TreeWalkResult::Abort
+                }
+            }
+        });
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        Ok(walked?)
+    }
+
+    /// Writes one tree entry below `dest` and tells the walk whether to descend.
+    fn export_entry(
+        &self,
+        dest: &Path,
+        root: &str,
+        entry: &git2::TreeEntry<'_>,
+    ) -> Result<git2::TreeWalkResult> {
+        let name = entry
+            .name()
+            .ok_or_else(|| GitError::BadInput(format!("a path under {root:?} is not UTF-8")))?;
+        if name == ".git" {
+            return Ok(git2::TreeWalkResult::Skip);
+        }
+        if matches!(name, "" | "." | "..") {
+            return Err(GitError::BadInput(format!(
+                "unsafe path component {name:?} under {root:?}"
+            )));
+        }
+        let path = dest.join(root).join(name);
+        match entry.filemode() {
+            0o040000 => std::fs::create_dir_all(&path)?,
+            mode @ (0o100644 | 0o100755) => {
+                let blob = self.inner.find_blob(entry.id())?;
+                std::fs::write(&path, blob.content())?;
+                if mode == 0o100755 {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+                }
+            }
+            _ => {}
+        }
+        Ok(git2::TreeWalkResult::Ok)
+    }
+
     /// The commits in `base..head` as `<short sha> <subject>` lines, oldest first.
     pub fn log_oneline(&self, base: &str, head: &str) -> Result<Vec<String>> {
         let mut walk = self.inner.revwalk()?;
