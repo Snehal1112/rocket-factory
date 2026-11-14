@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use factory_agent::{AgentRun, AgentRunner, AgentSpec, StopReason};
-use factory_core::{Config, Stage};
+use factory_core::{AgentFile, Config, Stage};
 use factory_engine::{
     create_job, run_intake, run_series, IntakeOutcome, IssueInfo, STATE_DONE, STATE_NEEDS_HUMAN,
     STATE_RUNNING,
@@ -430,10 +430,98 @@ fn stalled() -> AgentRun {
     }
 }
 
+fn failed() -> AgentRun {
+    AgentRun {
+        stop_reason: StopReason::Failed,
+        ..AgentRun::done("")
+    }
+}
+
+fn turn_limit() -> AgentRun {
+    AgentRun {
+        stop_reason: StopReason::TurnLimit,
+        ..AgentRun::done("partial")
+    }
+}
+
+fn secret() -> AgentRun {
+    AgentRun::done("SECRET-MARKER")
+}
+
+#[test]
+fn a_drafter_that_cannot_start_fails_with_the_drafter_failed_code() {
+    for reply in [failed as DrafterReply, stalled] {
+        let it = setup_full(
+            config(),
+            vec![issue(7)],
+            |_| {},
+            "x",
+            "fine\nVERDICT: APPROVE",
+            reply,
+        );
+        assert_eq!(
+            pass(&it),
+            IntakeOutcome::Failed {
+                issue: 7,
+                reason: "drafter-failed".to_string()
+            }
+        );
+        assert!(it.driver.store().load().expect("board").jobs.is_empty());
+        let said = comments(&it);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(
+            said[0].1.contains("reason: drafter-failed"),
+            "{}",
+            said[0].1
+        );
+    }
+}
+
+#[test]
+fn a_drafter_that_hits_the_turn_limit_is_draft_invalid() {
+    let it = setup_full(
+        config(),
+        vec![issue(7)],
+        |_| {},
+        "x",
+        "fine\nVERDICT: APPROVE",
+        turn_limit,
+    );
+    assert_eq!(
+        pass(&it),
+        IntakeOutcome::Failed {
+            issue: 7,
+            reason: "draft-invalid".to_string()
+        }
+    );
+}
+
+#[test]
+fn an_empty_draft_failure_comment_never_holds_the_last_message() {
+    let it = setup_full(
+        config(),
+        vec![issue(7)],
+        |_| {},
+        "x",
+        "fine\nVERDICT: APPROVE",
+        secret,
+    );
+    assert_eq!(
+        pass(&it),
+        IntakeOutcome::Failed {
+            issue: 7,
+            reason: "draft-invalid".to_string()
+        }
+    );
+    let said = comments(&it);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(!said[0].1.contains("SECRET-MARKER"), "{}", said[0].1);
+}
+
 #[test]
 fn a_drafter_that_stops_early_fails_the_issue_with_no_job() {
     let cases: [(DrafterReply, &str); 2] =
-        [(over_budget, "over-budget"), (stalled, "draft-invalid")];
+        [(over_budget, "over-budget"), (stalled, "drafter-failed")];
     for (reply, reason) in cases {
         let it = setup_full(
             config(),
@@ -477,6 +565,55 @@ fn a_drafter_run_adds_a_usage_line() {
         serde_json::from_str(log.lines().next().expect("line")).expect("json");
     assert_eq!(line["role"], "intake-drafter");
     assert_eq!(line["job"], "intake");
+}
+
+/// Gives the driver of `it` agent files with the given names.
+fn with_agent_files(it: Intake, names: &[&str]) -> Intake {
+    Intake {
+        driver: it.driver.with_agent_files(
+            names
+                .iter()
+                .map(|n| AgentFile {
+                    name: n.to_string(),
+                    content: "x".to_string(),
+                })
+                .collect(),
+        ),
+        ..it
+    }
+}
+
+#[test]
+fn intake_refuses_when_the_drafter_agent_file_is_missing() {
+    let it = with_agent_files(
+        setup_with(config(), vec![issue(7)], one_plan, "x"),
+        &["factory-builder.md"],
+    );
+    for dry_run in [false, true] {
+        let err = run_intake(&it.driver, &it.tracker, dry_run).expect_err("missing agent file");
+        let text = err.to_string();
+        assert!(text.contains("factory presets refresh"), "{text}");
+        assert!(text.contains("factory-intake-drafter.md"), "{text}");
+        assert_eq!(it.tracker.count("edit_labels"), 0);
+        assert_eq!(it.tracker.count("comment"), 0);
+        assert!(it.script.drafter_specs.lock().expect("specs").is_empty());
+    }
+}
+
+#[test]
+fn intake_accepts_the_drafter_agent_file_with_or_without_md() {
+    for name in ["factory-intake-drafter.md", "factory-intake-drafter"] {
+        let it = with_agent_files(setup_with(config(), vec![issue(7)], one_plan, "x"), &[name]);
+        let out = run_intake(&it.driver, &it.tracker, true).expect("dry run");
+        assert!(matches!(out, IntakeOutcome::DryRun { .. }), "{name}");
+    }
+}
+
+#[test]
+fn intake_does_not_check_the_agent_file_when_the_driver_has_none() {
+    let it = setup(one_plan);
+    let out = run_intake(&it.driver, &it.tracker, true).expect("dry run");
+    assert!(matches!(out, IntakeOutcome::DryRun { .. }));
 }
 
 #[test]

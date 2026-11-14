@@ -300,6 +300,38 @@ fn project_show_ignores_security_when_it_is_not_enabled() {
     assert!(!out.contains("factory-security-reviewer.md"), "{out}");
 }
 
+/// Shows a demo project with the drafter agent file removed from its preset and `intake` set as given.
+fn show_without_drafter_agent(intake: Option<bool>) -> String {
+    let e = env();
+    add_demo(&e);
+    if let Some(on) = intake {
+        set_plan_rules(&e, &format!("intake = {on}\n"));
+    }
+    let agent = e
+        .home
+        .presets_dir()
+        .join("rust/agents/factory-intake-drafter.md");
+    std::fs::remove_file(&agent).expect("remove the drafter agent");
+    run(&e, &["show", "demo"]).expect("show")
+}
+
+#[test]
+fn project_show_reports_a_missing_drafter_agent_file_when_intake_is_on() {
+    let out = show_without_drafter_agent(Some(true));
+    assert!(
+        out.contains(
+            "intake is on but factory-intake-drafter.md was not found; run factory presets refresh"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn project_show_has_no_intake_problem_when_intake_is_off() {
+    let out = show_without_drafter_agent(None);
+    assert!(!out.contains("intake is on"), "{out}");
+}
+
 #[test]
 fn show_prints_nothing_extra_without_plan_rules() {
     let e = env();
