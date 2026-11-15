@@ -180,6 +180,11 @@ pub struct ScriptedRunner {
 }
 
 impl ScriptedRunner {
+    /// How many times the runner was called.
+    pub fn call_count(&self) -> usize {
+        self.calls.lock().expect("calls").len()
+    }
+
     /// Every spec the runner was called with for one role, in order.
     pub fn specs_for(&self, role: &str) -> Vec<AgentSpec> {
         self.calls

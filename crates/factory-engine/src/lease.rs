@@ -1,6 +1,6 @@
 use factory_core::Job;
 
-use crate::lease_owner_dead;
+use crate::lease_held;
 use crate::{BoardStore, StoreError};
 
 pub use factory_core::Lease;
@@ -16,7 +16,7 @@ pub enum LeaseError {
 pub fn lease_is_live(job: &Job, now: f64) -> bool {
     job.lease
         .as_ref()
-        .is_some_and(|l| l.expires > now && !lease_owner_dead(&l.owner))
+        .is_some_and(|l| lease_held(&l.owner, l.expires, now))
 }
 
 fn check_free(job: &Job, owner: &str, now: f64) -> Result<(), LeaseError> {
@@ -60,4 +60,19 @@ pub fn release_lease(
             job.lease = None;
         }))
     })?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lease_is_live_for_an_expired_lease_of_a_live_owner() {
+        let mut job = Job::new("001", "d", "s", "2026-01-01", "f", 0.0);
+        job.lease = Some(Lease {
+            owner: format!("driver-{}-1", std::process::id()),
+            expires: 1.0,
+        });
+        assert!(lease_is_live(&job, 1000.0));
+    }
 }

@@ -710,7 +710,7 @@ fn run_job_inner(
     let limit = rounds as usize * 4 + 12 + task_calls;
     for _ in 0..limit {
         if guard.lost() {
-            return Err(EngineError::Msg("project is busy: another owner holds the project lease (the lease was taken over), this run stops".into()));
+            return Err(driver.lost_error());
         }
         // A live lease of another driver stops this one here, before any stage work.
         driver.renew_lease(id)?;

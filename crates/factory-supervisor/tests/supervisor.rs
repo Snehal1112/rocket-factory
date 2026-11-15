@@ -364,6 +364,21 @@ fn a_human_lease_makes_the_request_wait() {
 }
 
 #[test]
+fn an_unreadable_lease_makes_queued_runs_wait() {
+    let e = env();
+    e.add_project("p");
+    let state = e.state_dir("p");
+    std::fs::create_dir_all(&state).expect("state dir");
+    std::fs::write(state.join("project.lease"), b"\x00\xff garbage").expect("corrupt lease");
+    e.enqueue("p", "1", "merged");
+    let mut s = e.supervisor(2);
+    let r = s.tick().expect("tick");
+    assert!(r.started.is_empty(), "{:?}", r.started);
+    assert!(r.orphans.is_empty(), "{:?}", r.orphans);
+    assert_eq!(e.runs("p", "1"), 0);
+}
+
+#[test]
 fn the_loop_ends_without_killing_a_running_child() {
     let e = env();
     e.add_project("p");

@@ -64,7 +64,10 @@ pub use commit::{
     committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef,
     COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
 };
-pub use compat::{Driver, JobGuard, ProjectGuard, RunnerFactory, HEARTBEAT_SECS, LEASE_TTL_SECS};
+pub use compat::{
+    Driver, JobGuard, LostFlag, LostReason, ProjectGuard, RunnerFactory, HEARTBEAT_SECS,
+    LEASE_TTL_SECS,
+};
 pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
 pub use decide::{decide, risk_summary, DecideInput, Decision};
 pub use drafts::{find_draft, remove_draft, set_draft_stage, start_draft};
@@ -89,9 +92,9 @@ pub use planlint::{lint_plan, PlanLint};
 pub use ports::{resume_logged, set_stage_logged};
 pub use probe::{run_probe, unique_stamp, Delivery};
 pub use project_lease::{
-    acquire_project_lease, force_release_project_lease, lease_owner_dead, owner_pid, process_gone,
-    project_lease_status, release_project_lease, LeaseTake, ProjectLease, ProjectLeaseError,
-    ProjectLeaseStatus,
+    acquire_project_lease, force_release_project_lease, lease_held, owner_pid, owner_state,
+    process_start_secs, project_lease_status, release_project_lease, LeaseTake, OwnerState,
+    ProjectLease, ProjectLeaseError, ProjectLeaseStatus, START_SLACK_SECS,
 };
 pub use repo_lock::{lock_repo_merge, MERGE_LOCK_FILE, MERGE_LOCK_WAIT};
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome, ReviewRun};
@@ -181,6 +184,8 @@ pub struct Engine<'a> {
     /// Set once the job's provider matches the config, so later calls skip the board read.
     /// An engine lives for one driver call and its config never changes, so it cannot go stale.
     pub provider_synced: std::cell::Cell<bool>,
+    /// The driver's lost flag. While it is set, no agent starts. None for an engine with no driver.
+    pub lost: Option<std::sync::Arc<LostFlag>>,
 }
 
 impl<'a> Engine<'a> {
@@ -210,7 +215,19 @@ impl<'a> Engine<'a> {
             agent_files: Vec::new(),
             codex_skill_roots: Vec::new(),
             provider_synced: std::cell::Cell::new(false),
+            lost: None,
         })
+    }
+
+    /// Shares the driver's lost flag with this engine.
+    pub fn with_lost(mut self, flag: std::sync::Arc<LostFlag>) -> Self {
+        self.lost = Some(flag);
+        self
+    }
+
+    /// True when the lease of the run was lost.
+    pub fn lost(&self) -> bool {
+        self.lost.as_ref().is_some_and(|flag| flag.is_set())
     }
 
     /// Changes how long board writes wait for the lock.

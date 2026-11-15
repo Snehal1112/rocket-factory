@@ -432,7 +432,11 @@ fn a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends() {
     let mut stranger = sleeper();
     let state = e.state_dir("p");
     std::fs::create_dir_all(&state).expect("state");
-    let owner = format!("driver-{}-1", stranger.id());
+    let owner = format!(
+        "driver-{}-{}",
+        stranger.id(),
+        factory_engine::process_start_secs(stranger.id()).expect("start")
+    );
     let now = now_ms() as f64 / 1000.0;
     acquire_project_lease(
         &state,

@@ -88,8 +88,8 @@ pub struct Driver {
     heartbeat: Duration,
     /// The jobs the heartbeat renews. The heartbeat thread gets a clone of this, never the driver.
     shared: Arc<Mutex<Held>>,
-    /// Set by the heartbeat when another owner holds a lease.
-    lost: Arc<AtomicBool>,
+    /// Set by the heartbeat when the run lost a lease.
+    lost: Arc<LostFlag>,
     /// The running heartbeat, one for all nested guards.
     beat: Mutex<Option<Heartbeat>>,
     tracker: Box<dyn crate::Tracker>,
@@ -106,6 +106,51 @@ pub(crate) struct ReviewRecord {
     pub(crate) saved: bool,
     /// Why the run did not finish. Such a record has no text and no file on disk.
     pub(crate) failure: Option<String>,
+}
+
+/// Why a run lost its lease.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LostReason {
+    /// Another owner holds a lease.
+    TakenOver,
+    /// The project lease file is unreadable, with the message of the error.
+    Corrupt(String),
+}
+
+/// Set by the heartbeat when the run lost its lease. The run loop, the agent runs and the merge read it.
+#[derive(Default)]
+pub struct LostFlag {
+    reason: Mutex<Option<LostReason>>,
+}
+
+impl LostFlag {
+    pub fn new() -> LostFlag {
+        LostFlag::default()
+    }
+
+    pub fn set(&self, reason: LostReason) {
+        *self.reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
+    }
+
+    pub fn reset(&self) {
+        *self.reason.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.reason
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    /// The error that stops a run. An unset flag gives the taken-over text.
+    pub fn error(&self) -> EngineError {
+        let reason = self.reason.lock().unwrap_or_else(|e| e.into_inner());
+        match &*reason {
+            Some(LostReason::Corrupt(text)) => EngineError::Msg(text.clone()),
+            _ => EngineError::Msg("project is busy: another owner holds the project lease (the lease was taken over), this run stops".into()),
+        }
+    }
 }
 
 /// What the heartbeat renews right now.
@@ -205,7 +250,7 @@ struct BeatCtx {
     wait: Duration,
     heartbeat: Duration,
     shared: Arc<Mutex<Held>>,
-    lost: Arc<AtomicBool>,
+    lost: Arc<LostFlag>,
     stop: Arc<AtomicBool>,
 }
 
@@ -235,14 +280,21 @@ impl BeatCtx {
                 at,
                 self.wait,
             );
-            if matches!(project, Err(crate::ProjectLeaseError::Held { .. })) {
-                self.lost.store(true, Ordering::SeqCst);
-                return;
+            match &project {
+                Err(crate::ProjectLeaseError::Held { .. }) => {
+                    self.lost.set(LostReason::TakenOver);
+                    return;
+                }
+                Err(err @ crate::ProjectLeaseError::Corrupt { .. }) => {
+                    self.lost.set(LostReason::Corrupt(err.to_string()));
+                    return;
+                }
+                _ => {}
             }
             if let Some(job) = &held.job_lease {
                 let lease = crate::acquire_lease(&store, job, &self.owner, self.ttl, at);
                 if matches!(lease, Err(crate::LeaseError::Held { .. })) {
-                    self.lost.store(true, Ordering::SeqCst);
+                    self.lost.set(LostReason::TakenOver);
                     return;
                 }
             }
@@ -280,7 +332,7 @@ impl Driver {
             lease_ttl: LEASE_TTL_SECS,
             heartbeat: Duration::from_secs(HEARTBEAT_SECS),
             shared: Arc::new(Mutex::new(Held::default())),
-            lost: Arc::new(AtomicBool::new(false)),
+            lost: Arc::new(LostFlag::new()),
             beat: Mutex::new(None),
             tracker,
             last_review: Mutex::new(None),
@@ -360,7 +412,12 @@ impl Driver {
 
     /// True when the heartbeat found another owner holding a lease.
     pub fn lease_lost(&self) -> bool {
-        self.lost.load(Ordering::SeqCst)
+        self.lost.is_set()
+    }
+
+    /// The error that stops a run whose lease was lost.
+    pub fn lost_error(&self) -> EngineError {
+        self.lost.error()
     }
 
     /// Takes or renews the project lease and the job lease when this driver has an owner.
@@ -407,7 +464,7 @@ impl Driver {
         held.project_job = job.to_string();
         drop(held);
         if self.project_holds.fetch_add(1, Ordering::SeqCst) == 0 {
-            self.lost.store(false, Ordering::SeqCst);
+            self.lost.reset();
             if let Err(e) = self.start_heartbeat(owner) {
                 // No guard exists yet, so the hold is undone here.
                 self.project_holds.fetch_sub(1, Ordering::SeqCst);
@@ -567,6 +624,7 @@ impl Driver {
             &events,
         )?
         .with_lock_wait(self.lock_wait)
+        .with_lost(self.lost.clone())
         .with_agent_files(self.agent_files.clone())
         .with_codex_skill_roots(self.codex_skill_roots.clone());
         let engine = if self.layout.commit_context_file.exists() {
