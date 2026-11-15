@@ -1,0 +1,23 @@
+[package]
+name = "factory-procgroup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.191"
+signal-hook = "=0.4.6"
+
+[[bin]]
+name = "shutdown-demo"
+path = "src/bin/shutdown-demo.rs"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "=0.2.191"

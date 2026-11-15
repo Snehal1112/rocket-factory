@@ -9,6 +9,7 @@ members = [
     "crates/factory-cli",
     "crates/factory-supervisor",
     "crates/factory-telemetry",
+    "crates/factory-procgroup",
 ]
 
 [workspace.package]
