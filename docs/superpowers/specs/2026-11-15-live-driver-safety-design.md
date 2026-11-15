@@ -56,11 +56,11 @@ A hung driver that is alive keeps the lease for good. `factory cancel <id> --for
 
 ### 2. A corrupt project lease
 
-`acquire_project_lease` returns a new `ProjectLeaseError::Corrupt { path, reason }` for an unreadable or invalid file and writes nothing. The message names the file and says that `factory cancel <id> --force` for any job removes it, or the file can be deleted. `force_release_project_lease` removes a corrupt file as well and returns true. `project_lease_status` keeps `Unreadable`. The holder is not special: if the file turns corrupt while a driver runs, the heartbeat treats `Corrupt` like a lost lease (it sets the lost flag) and `renew_lease` fails the run with the `Corrupt` message (`EngineError::Msg`, `compat.rs:53-54`). Nothing rewrites the file.
+`acquire_project_lease` returns a new `ProjectLeaseError::Corrupt { path, reason }` for an unreadable or invalid file and writes nothing. The message names the file and says that `factory cancel <id> --force` for any job removes it, or the file can be deleted. `force_release_project_lease` removes a corrupt file as well and returns true. `project_lease_status` keeps `Unreadable`. The holder is not special: if the file turns corrupt while a driver runs, the heartbeat sets the lost flag with the reason `Corrupt`, and the run stops with the `Corrupt` message at the next lost check (`runloop.rs:712`, `Engine::run_agent`, or the merge). `release_project_lease` leaves a corrupt file in place (`project_lease.rs:151`, `Err(_) => false`), so a failed run does not delete it. Only `force_release_project_lease` removes a corrupt file.
 
 ### 3. Lost checks before an agent and before the merge
 
-`Engine` (`lib.rs:166`) gets an optional `lost: Option<Arc<AtomicBool>>`, set by `Driver::with_engine` (`compat.rs:~548`) from the driver's flag, and `Engine::with_lost` and `Engine::lost()` to match. `Engine::run_agent` (`ports.rs:250`) returns `EngineError::Msg` first thing when `self.lost()` holds, so no agent starts. `merge.rs` does the same next to the cancel check, right before `merge_no_ff` (`merge.rs:352-357`). The text is the one of `runloop.rs:713`, built by one function the three places share.
+The driver's lost flag becomes a shared `LostFlag` that holds the reason (`TakenOver`, or `Corrupt` with the message), and `LostFlag::error()` builds the one error text: the `runloop.rs:713` text for `TakenOver` and the `Corrupt` message otherwise. `Engine` (`lib.rs:166`) gets an optional `lost: Option<Arc<LostFlag>>`, set by `Driver::with_engine` (`compat.rs:~548`) from the driver's flag, and `Engine::with_lost` and `Engine::lost()` to match. `Engine::run_agent` (`ports.rs:250`) returns `EngineError::Msg` first thing when `self.lost()` holds, so no agent starts. `merge.rs` does the same next to the cancel check, right before `merge_no_ff` (`merge.rs:352-357`). The run loop, `run_agent` and the merge all return `LostFlag::error()`.
 
 ### 4. Process groups, registry, reaper and handler
 
@@ -88,7 +88,7 @@ pub fn reap_leftovers(
 
 ### 5. Other readers
 
-The supervisor adopts children and the CLI shows status through `project_lease_status` and `lease_is_live`, so they follow section 1 without a code change. Three existing tests encode the old rule and change with it. The third is `a_corrupt_lease_file_is_reported_and_replaced` (`factory-cli/tests/project_lease_cli.rs:131-142`): it becomes `a_corrupt_lease_file_is_refused_until_cancel_force` and expects `run 1` to fail with the `Corrupt` message and leave the file, then `cancel 1 --force` and `run 1` to merge. The other two are `a_live_owner_lease_stays_live` (`factory-engine/tests/lock_lease.rs:128-139`) ends with `lease_is_live(&job, 2600.0)` being true, because its owner is the test process, which is `Alive`; and `a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends` (`factory-supervisor/tests/recovery.rs:429-456`) builds its owner from the sleeper's pid and its real start secs, so the sleeper reads as `Alive`. Other tests that build `driver-<own pid>-1` stay `Alive`.
+The supervisor adopts children and the CLI shows status through `project_lease_status` and `lease_is_live`, so they follow section 1 without a code change, with one exception: `supervisor.rs:476-482` maps every status except `Held` to `Ready`, so an `Unreadable` (corrupt) lease would make factoryd start runs that are refused. It maps `Unreadable` to `ProjectState::LeaseHeld { owner: "unreadable lease file" }` instead, so queued runs wait until a person clears the file (`factory cancel <id> --force`). The name has no pid, so it is never reported as an orphan. Three existing tests encode the old rule and change with it. The third is `a_corrupt_lease_file_is_reported_and_replaced` (`factory-cli/tests/project_lease_cli.rs:131-142`): it becomes `a_corrupt_lease_file_is_refused_until_cancel_force` and expects `run 1` to fail with the `Corrupt` message and leave the file, then `cancel 1 --force` and `run 1` to merge. The other two are `a_live_owner_lease_stays_live` (`factory-engine/tests/lock_lease.rs:128-139`) ends with `lease_is_live(&job, 2600.0)` being true, because its owner is the test process, which is `Alive`; and `a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends` (`factory-supervisor/tests/recovery.rs:429-456`) builds its owner from the sleeper's pid and its real start secs, so the sleeper reads as `Alive`. Other tests that build `driver-<own pid>-1` stay `Alive`.
 
 ## Error handling and edge cases
 
@@ -101,7 +101,8 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 | Owner name without a pid | `Unknown`, expiry decides |
 | Project lease file not valid JSON | `Corrupt`, run refused, nothing written |
 | Forced cancel with a corrupt file | File removed, `project lease released` |
-| File turns corrupt while a driver runs | Heartbeat sets lost, the next renewal fails the run with the `Corrupt` message, the file is left |
+| File turns corrupt while a driver runs | Heartbeat sets lost with reason `Corrupt`, the run stops at the next lost check with the `Corrupt` message, the file is left |
+| Queued run in factoryd while the lease file is corrupt | The project is `LeaseHeld`, the run waits |
 | `lost()` set before an agent | `EngineError::Msg`, no agent starts |
 | `lost()` set before `merge_no_ff` | Same error, the branch is not merged |
 | SIGTERM, SIGINT or SIGHUP to the driver | Groups killed, exit `128 + signal` |
@@ -115,7 +116,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 
 ## Testing
 
-- `factory-engine/tests/project_lease.rs`: `an_expired_lease_of_a_live_owner_is_not_taken_over` (owner built from a running `sleep` and its start time), `a_lease_whose_pid_start_does_not_match_is_taken_over`, `a_zombie_owner_is_dead`, `an_owner_without_a_pid_still_expires`, `a_corrupt_project_lease_is_refused_and_untouched`, `a_forced_cancel_removes_a_corrupt_project_lease`, `project_lease_status_reports_a_live_expired_owner_as_held`, and in `lease_heartbeat.rs` `a_corrupt_lease_during_a_run_stops_the_run`. Update the existing `lease_owner_dead` assertions (`project_lease.rs:442-447`) to `owner_state`.
+- `factory-engine/tests/project_lease.rs`: `an_expired_lease_of_a_live_owner_is_not_taken_over` (owner built from a running `sleep` and its start time), `a_lease_whose_pid_start_does_not_match_is_taken_over`, `a_zombie_owner_is_dead`, `an_owner_without_a_pid_still_expires`, `a_corrupt_project_lease_is_refused_and_untouched`, `a_forced_cancel_removes_a_corrupt_project_lease`, `project_lease_status_reports_a_live_expired_owner_as_held`, and in `lease_heartbeat.rs` `a_corrupt_lease_during_a_run_stops_the_run`, `release_leaves_a_corrupt_file_in_place` in `project_lease.rs`, and in `factory-supervisor/tests/supervisor.rs` `an_unreadable_lease_makes_queued_runs_wait`. Update the existing `lease_owner_dead` assertions (`project_lease.rs:442-447`) to `owner_state`.
 - `factory-engine/tests/lease.rs` or the existing lease tests: `lease_is_live_for_an_expired_lease_of_a_live_owner`.
 - `factory-engine/tests/build_checks.rs`: `a_lost_engine_starts_no_agent` (`Engine::with_lost` set, `build_stage` fails, the scripted runner has zero calls). `factory-engine/tests/lease_heartbeat.rs`, next to `another_owner_in_the_lease_sets_lost_and_stops_the_run` (line 142): `a_lost_lease_stops_before_the_merge_commit` (branch not merged).
 - `factory-procgroup` unit tests: `a_child_runs_in_its_own_group`, `killing_a_group_child_ends_its_grandchild` (a shell that starts `sleep`), `dropping_a_group_child_kills_it`, `the_registry_lists_a_spawned_child_and_drops_it_on_exit`, `a_fresh_take_reaps_a_dead_owners_group`, `reap_kills_a_matching_leftover`, `reap_leaves_a_start_time_mismatch_alone`, `reap_kills_nothing_when_the_start_time_is_unknown`.
@@ -126,6 +127,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 ## Files changed
 
 - `crates/factory-engine/src/project_lease.rs`, `lease.rs`, `lib.rs`, `compat.rs`, `ports.rs`, `merge.rs`, `runloop.rs`
+- `crates/factory-supervisor/src/supervisor.rs`
 - `crates/factory-core/src/layout.rs` (`Layout::children_file`)
 - `crates/factory-agent/src/child.rs`, `crates/factory-checks/src/run.rs`
 - `crates/factory-procgroup/` (new crate), the root `Cargo.toml` workspace members, `crates/factory-agent/Cargo.toml`, `crates/factory-checks/Cargo.toml`, `crates/factory-engine/Cargo.toml`, `crates/factory-cli/Cargo.toml`
@@ -175,3 +177,4 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 - Where does the registry live? Options: one file per project, one file per job folder. Chosen: `children.json` in the state folder through `Layout`, one file per project because one driver holds the project lease at a time. Decided by: user
 - Where is the lost check added? Options: agent starts and the merge only, also commits and checks. Chosen: in `Engine::run_agent` and before `merge_no_ff`, because the loop top already checks once per stage; the driver's own commits and check runs are not guarded. Decided by: user
 - Is the heartbeat killed mid-stage when the lease is lost? Options: stop at the next check, kill the group at once. Chosen: no, the next agent or merge check stops the run. Decided by: user
+- What does factoryd do with a project whose lease file is corrupt? Options: start the run and let it fail, queue it as held. Chosen: queue it as held, so runs wait until a person clears the file. Decided by: call
