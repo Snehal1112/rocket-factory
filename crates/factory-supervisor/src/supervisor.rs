@@ -479,6 +479,9 @@ impl Supervisor {
                         {
                             ProjectState::LeaseHeld { owner }
                         }
+                        ProjectLeaseStatus::Unreadable(_) => ProjectState::LeaseHeld {
+                            owner: "unreadable lease file".into(),
+                        },
                         _ => ProjectState::Ready,
                     },
                 },

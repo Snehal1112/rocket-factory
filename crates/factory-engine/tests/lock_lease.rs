@@ -125,7 +125,7 @@ fn a_dead_owner_lease_is_not_live() {
 }
 
 #[test]
-fn a_live_owner_lease_stays_live() {
+fn a_live_owner_lease_stays_live_past_expiry() {
     let (_d, store) = store_with_job();
     let owner = format!("driver-{}-1", std::process::id());
     acquire_lease(&store, "001", &owner, 1500.0, 1000.0).expect("own pid");
@@ -135,7 +135,7 @@ fn a_live_owner_lease_stays_live() {
         acquire_lease(&store, "001", "driver-1111-2", 60.0, 1010.0),
         Err(LeaseError::Held { .. })
     ));
-    assert!(!lease_is_live(&job, 2600.0));
+    assert!(lease_is_live(&job, 2600.0));
 }
 
 #[test]

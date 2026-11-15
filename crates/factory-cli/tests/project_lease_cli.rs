@@ -129,16 +129,32 @@ fn an_expired_lease_does_not_block_and_status_says_stale() {
 }
 
 #[test]
-fn a_corrupt_lease_file_is_reported_and_replaced() {
+fn a_corrupt_lease_file_is_refused_until_cancel_force() {
     let fx = Fixture::new();
     new_job(&fx);
-    std::fs::write(fx.root.join(".superpowers/factory/project.lease"), b"").expect("write");
+    let lease = fx.root.join(".superpowers/factory/project.lease");
+    std::fs::write(&lease, b"").expect("write");
     let status = fx.run(&["status"]).expect("status");
     assert!(
         status.starts_with("project: lease file unreadable: "),
         "{status}"
     );
-    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    let e = fx.run(&["run", "1"]).expect_err("refused");
+    assert!(e.to_string().contains("project.lease"), "{e}");
+    assert_eq!(std::fs::read(&lease).expect("read"), b"");
+    fx.run(&["cancel", "1", "--force"]).expect("cancel");
+    assert!(!lease.exists());
+    // The cancelled job is not runnable, so a second job takes its place.
+    let plans = fx.write_plan("plan-01-again.md", 1, "none");
+    fx.run(&[
+        "new",
+        "again",
+        "say hello again",
+        "--plans",
+        plans.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    assert_eq!(fx.run(&["run", "2"]).expect("run"), "merged");
 }
 
 #[test]

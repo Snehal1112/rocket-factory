@@ -6,6 +6,7 @@ use std::time::Duration;
 use factory_core::{write_atomic, PROJECT_LEASE_FILE};
 use serde::{Deserialize, Serialize};
 
+use crate::procinfo::ProcState;
 use crate::{lock_board, now_secs, StoreError};
 
 /// The content of the project lease file.
@@ -35,6 +36,11 @@ pub enum ProjectLeaseError {
         job: String,
         secs_left: u64,
     },
+    #[error(
+        "project lease file {path} is unreadable ({reason}). Nothing was changed. \
+         `factory cancel <id> --force` removes it and gives up that job, or delete the file to clear it"
+    )]
+    Corrupt { path: String, reason: String },
     #[error("project lease lock: {0}")]
     Lock(#[from] StoreError),
     #[error("project lease io: {0}")]
@@ -59,21 +65,60 @@ pub enum ProjectLeaseStatus {
 
 /// The pid in an owner of the form `driver-<pid>-<secs>`. Any other owner has none.
 pub fn owner_pid(owner: &str) -> Option<u32> {
+    owner_parts(owner).map(|(pid, _)| pid)
+}
+
+fn owner_parts(owner: &str) -> Option<(u32, u64)> {
     let rest = owner.strip_prefix("driver-")?;
     let (pid, secs) = rest.split_once('-')?;
-    secs.parse::<u64>().ok()?;
-    pid.parse().ok()
+    Some((pid.parse().ok()?, secs.parse().ok()?))
 }
 
-/// True only when this machine says no process has `pid`. This process is never gone.
-pub fn process_gone(pid: u32) -> bool {
-    pid != std::process::id() && !crate::procinfo::pid_exists(pid)
+/// How far the start time of a pid may differ from the seconds in the owner name.
+pub const START_SLACK_SECS: u64 = 10;
+
+/// What this machine says about the process behind a lease owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerState {
+    /// The driver process runs and started when its name says.
+    Alive,
+    /// The pid is gone, a zombie, or reused by another process.
+    Dead,
+    /// The owner has no pid, or this machine cannot say when the pid started.
+    Unknown,
 }
 
-/// A lease whose owner is a driver process that no longer runs on this machine.
-/// True when the owner is a driver process that no longer runs on this machine. Other owners are never dead.
-pub fn lease_owner_dead(owner: &str) -> bool {
-    owner_pid(owner).is_some_and(process_gone)
+/// The state of the owner of a lease. Only an owner of the form `driver-<pid>-<secs>` can be judged.
+pub fn owner_state(owner: &str) -> OwnerState {
+    let Some((pid, secs)) = owner_parts(owner) else {
+        return OwnerState::Unknown;
+    };
+    if pid == std::process::id() {
+        return OwnerState::Alive;
+    }
+    match crate::procinfo::process_state(pid) {
+        ProcState::Gone | ProcState::Zombie => OwnerState::Dead,
+        ProcState::Running => match process_start_secs(pid) {
+            None => OwnerState::Unknown,
+            Some(start) if start.abs_diff(secs) <= START_SLACK_SECS => OwnerState::Alive,
+            Some(_) => OwnerState::Dead,
+        },
+    }
+}
+
+/// True when a lease is still held: a live owner holds it past expiry, a dead one never, and an owner
+/// that cannot be judged holds it until it expires.
+pub fn lease_held(owner: &str, expires: f64, now: f64) -> bool {
+    match owner_state(owner) {
+        OwnerState::Alive => true,
+        OwnerState::Dead => false,
+        OwnerState::Unknown => expires > now,
+    }
+}
+
+/// When the pid started, in whole seconds since the epoch. None when this machine does not say.
+pub fn process_start_secs(pid: u32) -> Option<u64> {
+    crate::procinfo::process_start_ms(pid).map(|ms| ms / 1000)
 }
 
 fn lease_path(state_dir: &Path) -> PathBuf {
@@ -95,7 +140,7 @@ fn read_lease(path: &Path) -> Result<Option<ProjectLease>, String> {
     }
 }
 
-/// Takes or renews the lease. A lease that is free, expired, corrupt or ours can be taken.
+/// Takes or renews the lease. A lease that is free, ours, or no longer held can be taken. A corrupt file is refused.
 pub fn acquire_project_lease(
     state_dir: &Path,
     job: &str,
@@ -109,7 +154,7 @@ pub fn acquire_project_lease(
     let take = match read_lease(&path) {
         Ok(None) => LeaseTake::Fresh,
         Ok(Some(l)) if l.owner == owner => LeaseTake::Renewed,
-        Ok(Some(l)) if l.expires <= now || lease_owner_dead(&l.owner) => LeaseTake::TookOverStale {
+        Ok(Some(l)) if !lease_held(&l.owner, l.expires, now) => LeaseTake::TookOverStale {
             owner: l.owner,
             job: l.job,
         },
@@ -120,11 +165,13 @@ pub fn acquire_project_lease(
                 secs_left: (l.expires - now) as u64,
             });
         }
-        // A corrupt file must never block the project for good.
-        Err(_) => LeaseTake::TookOverStale {
-            owner: "unknown".into(),
-            job: "unknown".into(),
-        },
+        // A corrupt file is never replaced silently: a person decides who held it.
+        Err(reason) => {
+            return Err(ProjectLeaseError::Corrupt {
+                path: path.display().to_string(),
+                reason,
+            });
+        }
     };
     let lease = ProjectLease {
         owner: owner.to_string(),
@@ -137,7 +184,8 @@ pub fn acquire_project_lease(
     Ok(take)
 }
 
-/// Removes the lease when it is ours, expired or corrupt. A live lease of another owner is left alone.
+/// Removes the lease when it is ours, expired or its owner is dead. A live lease of another owner is left
+/// alone, and so is an unreadable file: only a forced cancel or a person removes that.
 pub fn release_project_lease(
     state_dir: &Path,
     owner: &str,
@@ -147,8 +195,8 @@ pub fn release_project_lease(
     let path = lease_path(state_dir);
     let removable = match read_lease(&path) {
         Ok(None) => return Ok(()),
-        Ok(Some(l)) => l.owner == owner || l.expires <= now_secs() || lease_owner_dead(&l.owner),
-        Err(_) => true,
+        Ok(Some(l)) => l.owner == owner || !lease_held(&l.owner, l.expires, now_secs()),
+        Err(_) => false,
     };
     if removable {
         remove_lease_file(&path)?;
@@ -165,8 +213,9 @@ fn remove_lease_file(path: &Path) -> Result<(), ProjectLeaseError> {
     }
 }
 
-/// Removes the lease when it belongs to `job`, whoever the owner is. Used when a job is cancelled with
-/// force, because the process that held the lease may be gone. Returns true when a lease was removed.
+/// Removes the lease when it belongs to `job`, whoever the owner is, and removes an unreadable file too.
+/// Used when a job is cancelled with force, because the process that held the lease may be gone.
+/// Returns true when a lease was removed.
 pub fn force_release_project_lease(
     state_dir: &Path,
     job: &str,
@@ -175,11 +224,12 @@ pub fn force_release_project_lease(
     let _lock = lock_board(&lock_path(state_dir), wait)?;
     let path = lease_path(state_dir);
     match read_lease(&path) {
-        Ok(Some(l)) if l.job == job => {
+        Ok(None) => Ok(false),
+        Ok(Some(l)) if l.job != job => Ok(false),
+        Ok(Some(_)) | Err(_) => {
             remove_lease_file(&path)?;
             Ok(true)
         }
-        _ => Ok(false),
     }
 }
 
@@ -187,7 +237,7 @@ pub fn force_release_project_lease(
 pub fn project_lease_status(state_dir: &Path, now: f64) -> ProjectLeaseStatus {
     match read_lease(&lease_path(state_dir)) {
         Ok(None) => ProjectLeaseStatus::Free,
-        Ok(Some(l)) if l.expires > now && !lease_owner_dead(&l.owner) => ProjectLeaseStatus::Held {
+        Ok(Some(l)) if lease_held(&l.owner, l.expires, now) => ProjectLeaseStatus::Held {
             owner: l.owner,
             job: l.job,
             secs_left: (l.expires - now) as u64,

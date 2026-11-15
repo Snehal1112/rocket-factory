@@ -248,6 +248,9 @@ impl Engine<'_> {
 
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
     pub(crate) fn run_agent(&self, mut spec: AgentSpec) -> Result<AgentRun, EngineError> {
+        if let Some(flag) = self.lost.as_ref().filter(|flag| flag.is_set()) {
+            return Err(flag.error());
+        }
         self.sync_provider()?;
         if let Some(model) = self.job_model() {
             spec.model = Some(model);

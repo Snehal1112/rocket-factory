@@ -6,9 +6,9 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
 use factory_engine::{
-    acquire_project_lease, create_job, force_release_project_lease, project_lease_status,
-    release_project_lease, run_job, run_series, LeaseTake, ProjectLease, ProjectLeaseError,
-    ProjectLeaseStatus,
+    acquire_project_lease, create_job, force_release_project_lease, lease_held, owner_state,
+    project_lease_status, release_project_lease, run_job, run_series, LeaseTake, OwnerState,
+    ProjectLease, ProjectLeaseError, ProjectLeaseStatus,
 };
 
 const WAIT: Duration = Duration::from_secs(2);
@@ -83,25 +83,143 @@ fn an_expired_lease_is_taken_over() {
     );
 }
 
+const CORRUPT: [&[u8]; 2] = [b"\x00\xff\x13garbage", b""];
+
 #[test]
-fn a_corrupt_or_empty_file_is_replaced() {
-    for bytes in [&b"\x00\xff\x13garbage"[..], &b""[..]] {
+fn a_corrupt_project_lease_is_refused_and_untouched() {
+    for bytes in CORRUPT {
         let d = tempfile::tempdir().expect("tmp");
         std::fs::write(lease_file(d.path()), bytes).expect("write");
         assert!(matches!(
             project_lease_status(d.path(), 1.0),
             ProjectLeaseStatus::Unreadable(_)
         ));
-        let take = acquire_project_lease(d.path(), "001", "a", 100.0, 1.0, WAIT).expect("take");
-        assert_eq!(
-            take,
-            LeaseTake::TookOverStale {
-                owner: "unknown".into(),
-                job: "unknown".into()
-            }
+        let err =
+            acquire_project_lease(d.path(), "001", "a", 100.0, 1.0, WAIT).expect_err("corrupt");
+        assert!(matches!(err, ProjectLeaseError::Corrupt { .. }), "{err}");
+        let text = err.to_string();
+        assert!(
+            text.contains(&lease_file(d.path()).display().to_string())
+                && text.contains("factory cancel"),
+            "{text}"
         );
-        assert_eq!(read(d.path()).owner, "a");
+        assert_eq!(std::fs::read(lease_file(d.path())).expect("read"), bytes);
     }
+}
+
+#[test]
+fn a_forced_cancel_removes_a_corrupt_project_lease() {
+    let d = tempfile::tempdir().expect("tmp");
+    std::fs::write(lease_file(d.path()), CORRUPT[0]).expect("write");
+    assert!(force_release_project_lease(d.path(), "001", WAIT).expect("force"));
+    assert!(!lease_file(d.path()).exists());
+}
+
+#[test]
+fn release_leaves_a_corrupt_file_in_place() {
+    let d = tempfile::tempdir().expect("tmp");
+    std::fs::write(lease_file(d.path()), CORRUPT[0]).expect("write");
+    release_project_lease(d.path(), "a", WAIT).expect("release");
+    assert_eq!(
+        std::fs::read(lease_file(d.path())).expect("read"),
+        CORRUPT[0]
+    );
+}
+
+/// A `sleep 60` child, its owner name with the true start second, and that second.
+fn sleeper_owner() -> (std::process::Child, String, u64) {
+    let child = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("sleep");
+    let secs = factory_engine::process_start_secs(child.id()).expect("start secs");
+    let owner = format!("driver-{}-{secs}", child.id());
+    (child, owner, secs)
+}
+
+fn end(mut child: std::process::Child) {
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+}
+
+#[test]
+fn an_expired_lease_of_a_live_owner_is_not_taken_over() {
+    let d = tempfile::tempdir().expect("tmp");
+    let (child, owner, _) = sleeper_owner();
+    acquire_project_lease(d.path(), "001", &owner, 100.0, 1000.0, WAIT).expect("fresh");
+    let err = acquire_project_lease(d.path(), "002", "b", 100.0, 5000.0, WAIT).expect_err("held");
+    assert!(matches!(err, ProjectLeaseError::Held { .. }), "{err}");
+    assert!(matches!(
+        project_lease_status(d.path(), 5000.0),
+        ProjectLeaseStatus::Held { .. }
+    ));
+    end(child);
+}
+
+#[test]
+fn project_lease_status_reports_a_live_expired_owner_as_held() {
+    let d = tempfile::tempdir().expect("tmp");
+    let (child, owner, _) = sleeper_owner();
+    acquire_project_lease(d.path(), "001", &owner, 100.0, 1000.0, WAIT).expect("fresh");
+    assert!(matches!(
+        project_lease_status(d.path(), 5000.0),
+        ProjectLeaseStatus::Held { .. }
+    ));
+    end(child);
+}
+
+#[test]
+fn a_lease_whose_pid_start_does_not_match_is_taken_over() {
+    let d = tempfile::tempdir().expect("tmp");
+    let (child, _, secs) = sleeper_owner();
+    let owner = format!("driver-{}-{}", child.id(), secs + 3600);
+    acquire_project_lease(d.path(), "001", &owner, 100.0, 1000.0, WAIT).expect("fresh");
+    let take = acquire_project_lease(d.path(), "002", "b", 100.0, 1010.0, WAIT).expect("take");
+    assert!(matches!(take, LeaseTake::TookOverStale { .. }), "{take:?}");
+    end(child);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_zombie_owner_is_dead() {
+    use factory_engine::procinfo::{process_state, ProcState};
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("sh");
+    let stop = std::time::Instant::now() + Duration::from_secs(2);
+    while process_state(child.id()) == ProcState::Running {
+        assert!(std::time::Instant::now() < stop, "never became a zombie");
+        std::thread::yield_now();
+    }
+    let owner = format!(
+        "driver-{}-{}",
+        child.id(),
+        factory_engine::now_secs() as u64
+    );
+    assert_eq!(factory_engine::owner_state(&owner), OwnerState::Dead);
+    child.wait().expect("wait");
+}
+
+#[test]
+fn an_owner_without_a_pid_still_expires() {
+    for owner in ["tester", "driver-x-1"] {
+        assert_eq!(owner_state(owner), OwnerState::Unknown, "{owner}");
+        assert!(!lease_held(owner, 990.0, 1000.0), "{owner}");
+        assert!(!lease_held(owner, 1000.0, 1000.0), "{owner}");
+        assert!(lease_held(owner, 1010.0, 1000.0), "{owner}");
+    }
+}
+
+#[test]
+fn an_owner_state_table() {
+    assert_eq!(
+        owner_state(&format!("driver-{}-1", std::process::id())),
+        OwnerState::Alive
+    );
+    #[cfg(target_os = "linux")]
+    assert_eq!(owner_state(DEAD_OWNER), OwnerState::Dead);
+    assert_eq!(owner_state("driver-4294967000"), OwnerState::Unknown);
 }
 
 #[test]
@@ -434,17 +552,14 @@ fn force_release_removes_only_the_lease_of_that_job() {
 
 #[test]
 fn the_pid_helpers_are_public() {
-    assert!(!factory_engine::process_gone(std::process::id()));
-    #[cfg(target_os = "linux")]
-    assert!(factory_engine::process_gone(4294967000));
     assert_eq!(factory_engine::owner_pid("driver-12-3"), Some(12));
     assert_eq!(factory_engine::owner_pid("tester"), None);
-    assert!(!factory_engine::lease_owner_dead(&format!(
-        "driver-{}-1",
-        std::process::id()
-    )));
-    assert!(!factory_engine::lease_owner_dead("tester"));
-    assert!(!factory_engine::lease_owner_dead("driver-4294967000"));
+    assert_eq!(
+        owner_state(&format!("driver-{}-1", std::process::id())),
+        OwnerState::Alive
+    );
+    assert_eq!(owner_state("tester"), OwnerState::Unknown);
+    assert_eq!(owner_state("driver-4294967000"), OwnerState::Unknown);
     #[cfg(target_os = "linux")]
-    assert!(factory_engine::lease_owner_dead(DEAD_OWNER));
+    assert_eq!(owner_state(DEAD_OWNER), OwnerState::Dead);
 }

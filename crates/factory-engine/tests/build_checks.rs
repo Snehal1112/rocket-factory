@@ -2835,3 +2835,55 @@ fn the_simplify_line_says_not_to_skip_it() {
         spec.prompt
     );
 }
+
+#[test]
+fn a_lost_engine_starts_no_agent() {
+    use factory_engine::{LostFlag, LostReason};
+    let fx = committing_fixture();
+    let runner = scripted(vec![]);
+    let flag = std::sync::Arc::new(LostFlag::new());
+    flag.set(LostReason::TakenOver);
+    let e = fx.engine(&runner).with_lost(flag);
+    let err = e.build_stage().expect_err("lost");
+    assert!(
+        err.to_string().contains("(the lease was taken over)"),
+        "{err}"
+    );
+    assert_eq!(runner.call_count(), 0);
+}
+
+#[test]
+fn a_lost_engine_starts_no_reviewer() {
+    use factory_engine::{LostFlag, LostReason};
+    let fx = committing_fixture();
+    let runner = built(&fx);
+    let calls = runner.call_count();
+    let flag = std::sync::Arc::new(LostFlag::new());
+    flag.set(LostReason::TakenOver);
+    let e = fx.engine(&runner).with_lost(flag);
+    let Err(err) = e.review_stage() else {
+        panic!("review must fail for a lost engine");
+    };
+    assert!(
+        err.to_string().contains("(the lease was taken over)"),
+        "{err}"
+    );
+    assert_eq!(runner.call_count(), calls);
+}
+
+#[test]
+fn an_engine_without_a_flag_is_never_lost() {
+    let fx = committing_fixture();
+    let runner = scripted(vec![]);
+    assert!(!fx.engine(&runner).lost());
+}
+
+#[test]
+fn a_corrupt_reason_gives_the_corrupt_message() {
+    use factory_engine::{LostFlag, LostReason};
+    let flag = LostFlag::new();
+    flag.set(LostReason::Corrupt("project.lease is not valid".into()));
+    let text = flag.error().to_string();
+    assert!(text.contains("project.lease"), "{text}");
+    assert!(!text.contains("taken over"), "{text}");
+}

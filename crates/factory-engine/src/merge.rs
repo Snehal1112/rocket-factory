@@ -354,6 +354,10 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         if driver.job(id)?.cancelled {
             return Err(EngineError::Cancelled);
         }
+        // The lease can be lost during the message run, and then another driver may own the project.
+        if driver.lease_lost() {
+            return Err(driver.lost_error());
+        }
         return match git_op("merge_no_ff", || {
             repo.merge_no_ff(&job.branch, &head, &message)
         })? {
