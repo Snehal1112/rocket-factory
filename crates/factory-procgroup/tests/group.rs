@@ -103,6 +103,18 @@ fn the_registry_lists_a_spawned_child_and_drops_it_on_exit() {
 }
 
 #[test]
+fn an_owner_outside_the_allowed_set_keeps_no_registry() {
+    let _turn = serial();
+    let dir = tempfile::tempdir().expect("dir");
+    set_registry(dir.path().to_path_buf(), "a/b".into(), |_| Some(1000));
+    let mut child = spawn(Command::new("sleep").arg("30")).expect("spawn");
+    let files = std::fs::read_dir(dir.path()).expect("read dir").count();
+    assert_eq!(files, 0);
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+}
+
+#[test]
 fn two_threads_spawning_both_reach_the_registry() {
     let _turn = serial();
     let dir = tempfile::tempdir().expect("dir");
