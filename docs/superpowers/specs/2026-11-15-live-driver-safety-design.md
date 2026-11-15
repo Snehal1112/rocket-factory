@@ -1,0 +1,166 @@
+# Live driver safety design
+
+## Goal
+
+A driver whose process is alive keeps its lease even when the lease has expired, a corrupt project lease is never taken over silently, a run that lost its lease stops before it starts an agent or merges, and the agent and check children of a driver end when the driver is killed.
+
+## Overview
+
+Issue #87 (audit of 2026-11-15, state integrity) names four holes. All were re-read in the code:
+
+- Expiry alone lets a second driver take a live driver's lease. `acquire_project_lease` takes over when `l.expires <= now` whatever the owner process does (`project_lease.rs:112`). The TTL is 1800 s and the heartbeat is 60 s (`compat.rs`, `LEASE_TTL_SECS`, `HEARTBEAT_SECS`). A laptop sleep or a clock jump over 30 minutes expires a live lease, so two drivers can write to one worktree.
+- Liveness is the pid alone. `lease_owner_dead` asks `procinfo::pid_exists` (`project_lease.rs:75`), which counts a zombie as alive and never compares the start time in the owner name with the process. A reused pid keeps a dead lease looking live until the TTL ends. `procinfo::process_start_ms` and `pid_is_zombie` exist and nothing outside `procinfo.rs` uses them.
+- A corrupt lease file is taken over as owner `unknown` (`project_lease.rs:124`).
+- Children are plain `Command::spawn` calls without a process group: `claude -p` (`factory-agent/src/child.rs:93`) and check commands (`factory-checks/src/run.rs:152`). Only `child.kill()` on a stop or a timeout ends them. After SIGKILL or SIGTERM of the driver the agent keeps running in the worktree, and a new driver may start on it at once because the owner pid is dead.
+
+The run loop checks `guard.lost()` once per stage (`runloop.rs:712`). The agent runs and the merge commit do not check it.
+
+## Current state
+
+| Piece | Today | Gap |
+|---|---|---|
+| Job lease live test (`lease.rs:16`) | `expires > now && !lease_owner_dead(owner)` | An expired lease of a live owner is free |
+| Project lease takeover (`project_lease.rs:99-128`) | free, ours, `expires <= now`, owner dead or corrupt | Same, and corrupt takes over |
+| Owner liveness (`project_lease.rs:61-77`) | owner `driver-<pid>-<secs>`, `process_gone(pid)` | No start time, a zombie is alive |
+| Status readers (`project_lease_status`, `project_lease.rs:187`; supervisor `supervisor.rs:477`) | use the same rule | Change with it |
+| Forced cancel (`commands.rs:846-887`, `force_release_project_lease` `project_lease.rs:170`) | removes a lease it can parse and that names the job | A corrupt file stays |
+| Lost checks | loop top only (`runloop.rs:712`) | Not before an agent run, not before `merge_no_ff` (`merge.rs:357`) |
+| Children | no group, no handler, no record | Survive a killed driver |
+
+## Non-goals
+
+- Making force-cancel stop a live driver's agent: issue #113. It reuses the group kill built here.
+- A monotonic clock for the lease age: with the new rule a live owner keeps its lease whatever the wall clock does.
+- Windows. Linux and macOS only.
+- Leases shared between machines. The owner name holds no host name, so a pid is always read on this machine.
+
+## Design
+
+Flow: a driver starts, takes the project lease, and registers every child it spawns in `children.json`. Another driver reads the lease: live owner means refuse, dead owner means take over and reap the leftovers of that owner. A killed driver's children die with the driver's signal handler, or with the next driver's reaper.
+
+### 1. One liveness rule
+
+New in `project_lease.rs`:
+
+```rust
+pub enum OwnerState { Alive, Dead, Unknown }
+pub fn owner_state(owner: &str) -> OwnerState;
+pub fn lease_held(owner: &str, expires: f64, now: f64) -> bool;
+```
+
+`owner_state`: no pid in the name gives `Unknown`. The own pid gives `Alive`. `procinfo` says `Gone` or `Zombie` gives `Dead`. `Running` with no known start time gives `Unknown`. `Running` with a start time gives `Alive` when `|start_ms / 1000 - secs| <= START_SLACK_SECS` (10) and `Dead` otherwise, because the pid was reused. `lease_held`: `Alive` is true, `Dead` is false, `Unknown` is `expires > now`. `lease_owner_dead` and `process_gone` are replaced by these, with the same callers: `lease_is_live` (`lease.rs:16`), `acquire_project_lease`, `release_project_lease`, `project_lease_status`. Owners that are not of the form `driver-<pid>-<secs>`, such as test owners, keep today's rule through `Unknown`.
+
+Example: owner `driver-4242-1000`, pid 4242 runs and started at 1003 s: held although `expires` passed. Pid 4242 started at 2000 s: dead, taken over at once.
+
+A hung driver that is alive keeps the lease for good. `factory cancel <id> --force` clears it, as today.
+
+### 2. A corrupt project lease
+
+`acquire_project_lease` returns a new `ProjectLeaseError::Corrupt { path, reason }` for an unreadable or invalid file and writes nothing. The message names the file and says that `factory cancel <id> --force` for any job removes it, or the file can be deleted. `force_release_project_lease` removes a corrupt file as well and returns true. `project_lease_status` keeps `Unreadable`.
+
+### 3. Lost checks before an agent and before the merge
+
+`Engine::run_agent` (`ports.rs:250`) returns `EngineError::Msg` first thing when `self.lost()` holds, so no agent starts. `merge.rs` does the same next to the cancel check, right before `merge_no_ff` (`merge.rs:352-357`). The text is the one of `runloop.rs:713`, built by one function the three places share.
+
+### 4. Process groups, registry, reaper and handler
+
+A new crate `factory-procgroup` (deps: `libc`, a signal crate; both pinned exactly, see Constraints). Unix only, other systems get plain spawns.
+
+```rust
+pub fn spawn(cmd: &mut std::process::Command) -> std::io::Result<GroupChild>;
+pub fn set_registry(file: std::path::PathBuf, owner: String);
+pub fn kill_all();
+pub fn install_shutdown_handler();
+pub fn reap_leftovers(file: &std::path::Path, dead_owner: &str) -> Vec<String>;
+```
+
+- `spawn` sets `process_group(0)`, spawns, adds the child to an in-process set of groups, and writes `{pid, start_ms, owner}` into the registry file (an atomic rewrite under a mutex). `GroupChild` gives access to `std::process::Child` (stdin, stdout, `try_wait`, `wait`). `GroupChild::kill` and its drop send SIGKILL to the whole group (`killpg`) and remove the entry. Both spawn sites above use it.
+- `set_registry` is called where the driver gets its owner (`Driver::with_lease_owner`, `compat.rs:349`), with the path from `Layout::children_file()` (`children.json` in the state folder). Without a registry the spawn still groups and kills, and records nothing.
+- `install_shutdown_handler` starts a thread that waits for SIGTERM, SIGINT and SIGHUP, calls `kill_all`, and exits with `128 + signal`. `factory run` and `factory intake` call it once before they run anything. A killed driver cannot run it, which is what the reaper is for.
+- `reap_leftovers` runs when `Driver::take_project` returns `LeaseTake::TookOverStale { owner, .. }`. It reads the registry and handles only entries whose owner is `dead_owner`. It kills an entry's group only when all hold: the pid runs, `getpgid(pid) == pid`, and `procinfo::process_start_ms(pid)` equals `start_ms` to the second. An unknown start time kills nothing. It removes each handled entry and returns one line per entry (killed, left alone with the reason). The driver writes the lines to the ledger, the events log and stderr, and never fails the lease take because of them.
+
+### 5. Other readers
+
+The supervisor adopts children and the CLI shows status through `project_lease_status` and `lease_is_live`, so they follow section 1 without a change of their own.
+
+## Error handling and edge cases
+
+| Case | Behaviour |
+|---|---|
+| Lease past TTL, owner `Alive` | Held, `ProjectLeaseError::Held`, `secs_left` is 0 |
+| Pid reused, start time off by more than 10 s | Dead, taken over |
+| Owner zombie | Dead |
+| Start time unknown on this system | `Unknown`, expiry decides |
+| Owner name without a pid | `Unknown`, expiry decides |
+| Project lease file not valid JSON | `Corrupt`, run refused, nothing written |
+| Forced cancel with a corrupt file | File removed, `project lease released` |
+| `lost()` set before an agent | `EngineError::Msg`, no agent starts |
+| `lost()` set before `merge_no_ff` | Same error, the branch is not merged |
+| SIGTERM, SIGINT or SIGHUP to the driver | Groups killed, exit `128 + signal` |
+| SIGKILL of the driver | Children live until the next driver reaps them |
+| Reaper: pid reused or not group leader | Left alone, line written |
+| Reaper: registry missing or unreadable | Nothing killed, line written |
+| `killpg` returns ESRCH | Treated as already gone |
+| Non-Unix system | Plain spawn, no handler, no reaper |
+
+## Testing
+
+- `factory-engine/tests/project_lease.rs`: `an_expired_lease_of_a_live_owner_is_not_taken_over` (owner built from a running `sleep` and its start time), `a_lease_whose_pid_start_does_not_match_is_taken_over`, `a_zombie_owner_is_dead`, `an_owner_without_a_pid_still_expires`, `a_corrupt_project_lease_is_refused_and_untouched`, `a_forced_cancel_removes_a_corrupt_project_lease`, `project_lease_status_reports_a_live_expired_owner_as_held`. Update the existing `lease_owner_dead` assertions (`project_lease.rs:442-447`) to `owner_state`.
+- `factory-engine/tests/lease.rs` or the existing lease tests: `lease_is_live_for_an_expired_lease_of_a_live_owner`.
+- `factory-engine/tests/lease_heartbeat.rs`, next to `another_owner_in_the_lease_sets_lost_and_stops_the_run` (line 142): `a_lost_lease_starts_no_agent` (the fake runner counts zero calls), `a_lost_lease_stops_before_the_merge_commit` (branch not merged).
+- `factory-procgroup` unit tests: `a_child_runs_in_its_own_group`, `killing_a_group_child_ends_its_grandchild` (a shell that starts `sleep`), `dropping_a_group_child_kills_it`, `the_registry_lists_a_spawned_child_and_drops_it_on_exit`, `reap_kills_a_matching_leftover`, `reap_leaves_a_start_time_mismatch_alone`, `reap_kills_nothing_when_the_start_time_is_unknown`.
+- `factory-agent/tests/runner.rs`: `killing_the_driver_ends_the_fake_claude_child` (a test process that runs the runner with `fake-claude` and is killed with SIGTERM through the handler, then the child pid is gone).
+- `factory-cli/tests/no_hardcoded_paths.rs` and `agent_lint.rs` stay green.
+- Commands: `cargo test -j4 -p factory-procgroup`, `-p factory-agent`, `-p factory-checks`, `-p factory-engine`, `-p factory-cli`, `-p factory-supervisor`. Then `cargo clippy -j4 -p <crate> --all-targets -- -D warnings` and `cargo fmt -p <crate> -- --check` for each.
+
+## Files changed
+
+- `crates/factory-engine/src/project_lease.rs`, `lease.rs`, `lib.rs`, `compat.rs`, `ports.rs`, `merge.rs`, `runloop.rs`
+- `crates/factory-core/src/layout.rs` (`Layout::children_file`)
+- `crates/factory-agent/src/child.rs`, `crates/factory-checks/src/run.rs`
+- `crates/factory-procgroup/` (new crate), the root `Cargo.toml` workspace members, `crates/factory-agent/Cargo.toml`, `crates/factory-checks/Cargo.toml`, `crates/factory-engine/Cargo.toml`, `crates/factory-cli/Cargo.toml`
+- `crates/factory-cli/src/commands.rs` (handler call, corrupt message)
+- Tests above, `CLAUDE.md` crate layering list, `docs/reference/software-factory.md` (leases and children), `README.md` lease section
+
+## Constraints
+
+- No new `/proc` read. Process facts come from `procinfo.rs` only. The new crate may call `libc` for `killpg` and `getpgid` and nothing else about other processes.
+- Both new dependencies are pinned with `=` to a version at least two weeks old. `libc` uses the version in `Cargo.lock` (0.2.191).
+- Board JSON is unchanged. `children.json` is a new file in the state folder, read only by the driver.
+- A failed registry write, a failed kill or a reaper line never changes a lease or merge result.
+- Paths go through `Layout`. Never shell out to `git`.
+
+## Acceptance criteria
+
+- An expired lease whose owner pid runs, is not a zombie and matches the start time is not taken over.
+- A lease whose pid is gone, a zombie, or reused with another start time is taken over at once.
+- An owner without a pid, or a system without start times, keeps today's expiry rule.
+- A corrupt project lease is refused and left on disk, and `factory cancel <id> --force` removes it.
+- A driver whose lease was lost starts no agent and does not run `merge_no_ff`.
+- Agent and check children run in their own process group, and the whole group ends on drop and on SIGTERM, SIGINT and SIGHUP of the driver.
+- After a SIGKILL of the driver, the next driver that takes over its lease kills the registered group when pid, group leader and start time match, and kills nothing otherwise.
+- `no_hardcoded_paths.rs` passes, no `/proc` read is added, and the crate tests and clippy are clean.
+
+## Out of scope
+
+- Stopping a live driver's agent on `cancel --force` (#113).
+- Leases across machines or containers.
+- Killing grandchildren that left the process group on their own.
+
+## Follow-ups
+
+- Stop a live driver's agent and check processes when a job is force-cancelled, using the group kill (issue #113, already filed).
+
+## Decisions
+
+- What does this spec cover? Options: all four problems with #113 separate, lease only, all four plus #113. Chosen: all four problems, #113 separate. Decided by: user
+- How does a second driver tell that an owner is alive? Options: pid, no zombie and matching start time; pid only; alive plus a hard cap. Chosen: pid runs, no zombie, start matches the name, unknown falls back to expiry. Decided by: user
+- What happens to a corrupt project lease? Options: refuse and let cancel --force clear it; refuse and delete by hand; keep the takeover with a warning. Chosen: refuse and let cancel --force clear it. Decided by: user
+- How do children end when the driver is killed? Options: group, guard, signal handler and reaper; group, guard and handler; group and Linux PDEATHSIG. Chosen: group, guard, handler and reaper. Decided by: user
+- What must hold before the reaper kills, and what if the start time is unknown? Options: verified match else skip; also kill when unknown; never kill. Chosen: kill only on a verified match, else skip. Decided by: user
+- Is the lease age measured on a monotonic clock? Chosen: no, the liveness rule makes the wall clock irrelevant for a live owner. Decided by: call
+- Where do the process-group helpers live? Chosen: a new crate `factory-procgroup`, because `factory-agent` and `factory-checks` both need it and neither depends on the other. Decided by: call
+- How far may a start time differ from the owner name? Chosen: 10 seconds, because `env_owner` reads the clock a moment after the process starts and `sysinfo` reports whole seconds. Decided by: call
+- Where does the registry live? Chosen: `children.json` in the state folder through `Layout`, one file per project because one driver runs per project. Decided by: call
+- Where is the lost check added? Chosen: in `Engine::run_agent` and before `merge_no_ff`, because the loop top already checks once per stage. Decided by: call
+- Is the heartbeat killed mid-stage when the lease is lost? Chosen: no, the next agent or merge check stops the run. Decided by: call
