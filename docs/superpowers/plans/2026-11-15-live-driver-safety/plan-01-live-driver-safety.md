@@ -40,7 +40,7 @@
 
 **Files:**
 - Modify: `crates/factory-engine/src/project_lease.rs`, `crates/factory-engine/src/lease.rs`, `crates/factory-engine/src/lib.rs` (lines 76 and 92, the exports)
-- Test: `crates/factory-engine/tests/project_lease.rs`
+- Test: `crates/factory-engine/tests/project_lease.rs`, `crates/factory-engine/tests/lock_lease.rs`, `crates/factory-supervisor/tests/recovery.rs`
 
 **Interfaces:**
 - Consumes: `procinfo::process_state`, `procinfo::process_start_ms`, `ProcState` (`procinfo.rs`), `owner_pid`.
@@ -61,6 +61,8 @@
   - `a_corrupt_project_lease_is_refused_and_untouched`: for bytes `b"\x00\xff\x13garbage"` and `b""` write the lease file, call `acquire_project_lease(...)`, `expect_err` matches `ProjectLeaseError::Corrupt`, the message names the file path and contains `factory cancel`, and the file bytes are unchanged. This replaces `a_corrupt_or_empty_file_is_replaced`, which is deleted.
   - `a_forced_cancel_removes_a_corrupt_project_lease`: write a corrupt file, `force_release_project_lease(dir, "001", WAIT).expect("force")` is true and the file is gone.
   - `project_lease_status_reports_a_live_expired_owner_as_held`: same lease as the first test, `project_lease_status(dir, 5000.0)` is `ProjectLeaseStatus::Held { .. }`.
+  - In `tests/lock_lease.rs`, change the last assertion of `a_live_owner_lease_stays_live` from `!lease_is_live(&job, 2600.0)` to `lease_is_live(&job, 2600.0)`, and its name to `a_live_owner_lease_stays_live_past_expiry`.
+  - In `crates/factory-supervisor/tests/recovery.rs`, in `a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends`, build the owner as `format!("driver-{}-{}", stranger.id(), factory_engine::process_start_secs(stranger.id()).expect("start"))` so the sleeper is `Alive`.
   - Change `the_pid_helpers_are_public` to assert `owner_state` as in the table and drop the `lease_owner_dead` and `process_gone` lines.
   - In `lease.rs` add a unit test `lease_is_live_for_an_expired_lease_of_a_live_owner`: a `Job` whose `lease` is `Lease { owner: "driver-<own pid>-1", expires: 1.0 }` is live at `now = 1000.0`; build the job as the tests in `crates/factory-engine/src/lease.rs`' neighbours do, or with `factory_core::Job::new` if no helper exists.
 - [ ] **Step 3: Run** `cargo test -j4 -p factory-engine --test project_lease`. Expected: compile errors `cannot find function owner_state`, `no variant Corrupt`, `cannot find value OwnerState`.

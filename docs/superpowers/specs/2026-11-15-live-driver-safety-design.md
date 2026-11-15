@@ -88,7 +88,7 @@ pub fn reap_leftovers(
 
 ### 5. Other readers
 
-The supervisor adopts children and the CLI shows status through `project_lease_status` and `lease_is_live`, so they follow section 1 without a change of their own.
+The supervisor adopts children and the CLI shows status through `project_lease_status` and `lease_is_live`, so they follow section 1 without a code change. Two existing tests encode the old rule and change with it: `a_live_owner_lease_stays_live` (`factory-engine/tests/lock_lease.rs:128-139`) ends with `lease_is_live(&job, 2600.0)` being true, because its owner is the test process, which is `Alive`; and `a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends` (`factory-supervisor/tests/recovery.rs:429-456`) builds its owner from the sleeper's pid and its real start secs, so the sleeper reads as `Alive`. Other tests that build `driver-<own pid>-1` stay `Alive`.
 
 ## Error handling and edge cases
 
@@ -167,7 +167,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 - What must hold before the reaper kills, and what if the start time is unknown? Options: verified match else skip; also kill when unknown; never kill. Chosen: kill only on a verified match, else skip. Decided by: user
 - Is the lease age measured on a monotonic clock? Chosen: no, the liveness rule makes the wall clock irrelevant for a live owner. Decided by: call
 - Where do the process-group helpers live? Chosen: a new crate `factory-procgroup`, because `factory-agent` and `factory-checks` both need it and neither depends on the other. Decided by: call
-- How far may a start time differ from the owner name? Chosen: 10 seconds, because `env_owner` reads the clock a moment after the process starts and `sysinfo` reports whole seconds. Decided by: call
+- How far may a start time differ from the owner name? Options: 10 seconds, 60 seconds, 3 seconds. Chosen: 10 seconds, because `env_owner` reads the clock a moment after the process starts and `sysinfo` reports whole seconds. Decided by: user
 - Where does the registry live? Chosen: `children.json` in the state folder through `Layout`, one file per project because one driver runs per project. Decided by: call
 - Where is the lost check added? Chosen: in `Engine::run_agent` and before `merge_no_ff`, because the loop top already checks once per stage. Decided by: call
-- Is the heartbeat killed mid-stage when the lease is lost? Chosen: no, the next agent or merge check stops the run. Decided by: call
+- Is the heartbeat killed mid-stage when the lease is lost? Options: stop at the next check, kill the group at once. Chosen: no, the next agent or merge check stops the run. Decided by: user
