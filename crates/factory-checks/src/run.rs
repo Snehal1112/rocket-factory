@@ -442,8 +442,14 @@ mod tests {
     #[test]
     fn a_timed_out_check_kills_its_grandchild() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_script(dir.path(), "sleep 60 &\necho $!\nwait");
+        // The grandchild drops the pipes, so the run returns as soon as `sh` dies.
+        write_script(dir.path(), "sleep 60 >/dev/null 2>&1 &\necho $!\nwait");
+        let started = Instant::now();
         let r = run_checks(dir.path(), &plan(&["sh check.sh"], 1));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the run waited for the grandchild"
+        );
         assert!(!r.results[0].passed);
         assert!(
             r.results[0].summary.contains("timed out"),
