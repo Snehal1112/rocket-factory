@@ -105,8 +105,7 @@ pub(crate) fn drive<S: AgentStream>(
     for (var, value) in &cfg.set_env {
         command.env(var, &value.0);
     }
-    let mut child = command
-        .spawn()
+    let mut child = factory_procgroup::spawn(&mut command)
         .map_err(|e| AgentError::Spawn(cfg.program.to_string_lossy().into_owned(), e))?;
     let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
     let (Some(stdout), Some(stderr)) = (stdout, stderr) else {

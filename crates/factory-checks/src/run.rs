@@ -149,14 +149,13 @@ fn run_one(worktree: &Path, command: &str, timeout: Duration) -> CheckResult {
             String::new(),
         );
     };
-    let mut child = match Command::new(program)
-        .args(tokens)
+    let mut cmd = Command::new(program);
+    cmd.args(tokens)
         .current_dir(worktree)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    let mut child = match factory_procgroup::spawn(&mut cmd) {
         Ok(c) => c,
         Err(e) => return failed(command, format!("could not start: {e}"), String::new()),
     };
@@ -418,5 +417,52 @@ mod tests {
         write_checks_md(&path, &ChecksReport { results: vec![] }).expect("write");
         let text = std::fs::read_to_string(&path).expect("read");
         assert!(text.contains("PASS none (no check is mapped to the changed paths)"));
+    }
+
+    /// Writes an executable `check.sh` into `dir`.
+    #[cfg(unix)]
+    fn write_script(dir: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("check.sh");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_check_command_runs_in_its_own_group() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_script(dir.path(), "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"");
+        let r = run_checks(dir.path(), &plan(&["./check.sh"], 10));
+        assert!(r.results[0].passed, "{:?}", r.results[0]);
+        let nums: Vec<&str> = r.results[0].summary.split_whitespace().collect();
+        assert_eq!(nums.len(), 2, "{}", r.results[0].summary);
+        assert_eq!(nums[0], nums[1], "the check is not a group leader");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_timed_out_check_kills_its_grandchild() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_script(dir.path(), "sleep 60 &\necho $!\nwait");
+        let r = run_checks(dir.path(), &plan(&["./check.sh"], 1));
+        assert!(!r.results[0].passed);
+        assert!(r.results[0].summary.contains("timed out"));
+        let pid: i32 = r.results[0]
+            .tail
+            .trim()
+            .parse()
+            .expect("the tail holds the grandchild pid");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            // SAFETY: signal 0 only checks that the pid exists.
+            let gone = unsafe { libc::kill(pid, 0) } != 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            if gone {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the grandchild survived");
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 }
