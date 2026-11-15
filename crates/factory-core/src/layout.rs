@@ -89,6 +89,9 @@ pub fn agents_file(dir: &Path) -> PathBuf {
 /// The file name of the project lease, inside the state folder.
 pub const PROJECT_LEASE_FILE: &str = "project.lease";
 
+/// The start of the name of a driver's child registry, `children-<owner>.json`.
+pub const CHILDREN_PREFIX: &str = "children-";
+
 /// The slice of a repo a subfolder project owns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scope {
@@ -183,6 +186,12 @@ impl Layout {
         self.state_dir.join(PROJECT_LEASE_FILE)
     }
 
+    /// The registry of the agent and check children of one driver. Only that driver writes it.
+    pub fn children_file(&self, owner: &str) -> PathBuf {
+        self.state_dir
+            .join(format!("{CHILDREN_PREFIX}{owner}.json"))
+    }
+
     pub fn job_dir(&self, dir: &str) -> PathBuf {
         self.jobs_dir.join(dir)
     }
@@ -272,6 +281,14 @@ mod tests {
             l.draft_spec_file("2026-10-18", "cards"),
             PathBuf::from("/r/docs/superpowers/specs/2026-10-18-cards-design.md")
         );
+    }
+
+    #[test]
+    fn children_file_is_in_the_state_folder() {
+        let l = Layout::in_repo(Path::new("/r"));
+        let file = l.children_file("driver-1-2");
+        assert!(file.ends_with("children-driver-1-2.json"));
+        assert_eq!(file.parent(), Some(l.state_dir.as_path()));
     }
 
     #[test]

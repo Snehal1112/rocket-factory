@@ -403,11 +403,23 @@ At most one job is active per project. A running `run` or `approve` holds a leas
 folder and renews it while it works. `factory status` starts with `project: free`, or with
 `project: busy, job <id> (owner <who>, <n> s left)` while another process holds it. The busy message means that
 process owns the project for about that many more seconds: wait for it, or stop it. A lease of a crashed process
-expires on its own (after up to 30 minutes), and an expired or corrupt lease file is taken over. A lease whose
-owner is a `driver-<pid>-<secs>` process that no longer runs on this machine counts as stale at once (Linux and macOS).
-If the process that held it is gone and the lease is still shown as busy, `factory cancel <id> --force` releases
-the lease of that job, or delete `<state folder>/project.lease`. `project remove` refuses while the lease is held,
-`--force` included.
+expires on its own (after up to 30 minutes), and an expired lease file is taken over. A lease whose
+owner is a `driver-<pid>-<secs>` process that runs on this machine, with the start time its name says, stays held
+even after it expired. One whose process is gone, a zombie or reused by another process counts as stale at once
+(Linux and macOS). An owner without a pid keeps the expiry rule.
+A corrupt lease file is refused and left in place, and a failed run does not delete it. Delete
+`<state folder>/project.lease` to clear it. `factory cancel <id> --force` also removes it, but it gives up the job it
+names first (needs-human and cancelled).
+If the process that held the lease is gone and the lease is still shown as busy, `factory cancel <id> --force`
+releases the lease of that job, or delete `<state folder>/project.lease`. `project remove` refuses while the lease
+is held, `--force` included.
+
+The agent and check children of a driver run in their own process group. The group ends when the driver drops it
+and when the driver gets SIGTERM, SIGINT or SIGHUP. Each driver lists its children in
+`<state folder>/children-<owner>.json`. After a SIGKILL of a driver, the next driver that takes over the lease, or
+takes a free one, reads the files of dead owners and kills a registered group only when the pid runs, leads its
+group and has the recorded start time. Anything else is left alone and reported as one line in the ledger, the
+log and stderr.
 
 A running driver renews both the project lease and the job lease every 60 seconds from a background thread, so a
 long agent step does not let them expire. If a renewal finds another owner holding the lease, the run stops at the

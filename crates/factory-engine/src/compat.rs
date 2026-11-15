@@ -435,14 +435,48 @@ impl Driver {
     }
 
     fn take_project(&self, id: &str, owner: &str) -> Result<crate::LeaseTake, EngineError> {
-        Ok(crate::acquire_project_lease(
+        let take = crate::acquire_project_lease(
             &self.layout.state_dir,
             id,
             owner,
             self.lease_ttl,
             crate::now_secs(),
             self.lock_wait,
-        )?)
+        )?;
+        match &take {
+            crate::LeaseTake::Fresh => self.reap_children(id, None),
+            crate::LeaseTake::TookOverStale { owner: taken, .. } => {
+                self.reap_children(id, Some(taken.as_str()).filter(|o| *o != "unknown"));
+            }
+            crate::LeaseTake::Renewed => {}
+        }
+        Ok(take)
+    }
+
+    /// Kills the registered children that dead owners left behind and reports each outcome. A failure
+    /// here never changes the lease take: the lines go to the ledger of job `id`, the log and stderr.
+    fn reap_children(&self, id: &str, taken: Option<&str>) {
+        let running =
+            |pid| crate::procinfo::process_state(pid) == crate::procinfo::ProcState::Running;
+        let is_dead =
+            |o: &str| Some(o) == taken || crate::owner_state(o) == crate::OwnerState::Dead;
+        let lines = factory_procgroup::reap_leftovers(
+            &self.layout.state_dir,
+            &is_dead,
+            &running,
+            crate::procinfo::process_start_ms,
+        );
+        if lines.is_empty() {
+            return;
+        }
+        let ledger = self.job(id).ok().map(|job| self.ledger(&job));
+        for line in lines {
+            tracing::warn!(event = "children.reap", msg = %line);
+            eprintln!("factory: {line}");
+            if let Some(Err(e)) = ledger.as_ref().map(|l| l.ruling(&line)) {
+                tracing::warn!(event = "children.reap", msg = %format!("ledger note error: {e}"));
+            }
+        }
     }
 
     fn release_project(&self) {
