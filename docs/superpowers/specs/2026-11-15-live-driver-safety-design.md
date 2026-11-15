@@ -60,7 +60,7 @@ A hung driver that is alive keeps the lease for good. `factory cancel <id> --for
 
 ### 3. Lost checks before an agent and before the merge
 
-`Engine::run_agent` (`ports.rs:250`) returns `EngineError::Msg` first thing when `self.lost()` holds, so no agent starts. `merge.rs` does the same next to the cancel check, right before `merge_no_ff` (`merge.rs:352-357`). The text is the one of `runloop.rs:713`, built by one function the three places share.
+`Engine` (`lib.rs:166`) gets an optional `lost: Option<Arc<AtomicBool>>`, set by `Driver::with_engine` (`compat.rs:~548`) from the driver's flag, and `Engine::with_lost` and `Engine::lost()` to match. `Engine::run_agent` (`ports.rs:250`) returns `EngineError::Msg` first thing when `self.lost()` holds, so no agent starts. `merge.rs` does the same next to the cancel check, right before `merge_no_ff` (`merge.rs:352-357`). The text is the one of `runloop.rs:713`, built by one function the three places share.
 
 ### 4. Process groups, registry, reaper and handler
 
@@ -68,14 +68,21 @@ A new crate `factory-procgroup` (deps: `libc`, a signal crate; both pinned exact
 
 ```rust
 pub fn spawn(cmd: &mut std::process::Command) -> std::io::Result<GroupChild>;
-pub fn set_registry(file: std::path::PathBuf, owner: String);
+pub type StartFn = fn(u32) -> Option<u64>;
+pub fn set_registry(file: std::path::PathBuf, owner: String, start_of: StartFn);
 pub fn kill_all();
 pub fn install_shutdown_handler();
-pub fn reap_leftovers(file: &std::path::Path, dead_owner: &str) -> Vec<String>;
+pub fn reap_leftovers(
+    file: &std::path::Path,
+    dead_owner: &str,
+    running: &dyn Fn(u32) -> bool,
+    start_of: StartFn,
+) -> Vec<String>;
 ```
 
 - `spawn` sets `process_group(0)`, spawns, adds the child to an in-process set of groups, and writes `{pid, start_ms, owner}` into the registry file (an atomic rewrite under a mutex). `GroupChild` gives access to `std::process::Child` (stdin, stdout, `try_wait`, `wait`). `GroupChild::kill` and its drop send SIGKILL to the whole group (`killpg`) and remove the entry. Both spawn sites above use it.
-- `set_registry` is called where the driver gets its owner (`Driver::with_lease_owner`, `compat.rs:349`), with the path from `Layout::children_file()` (`children.json` in the state folder). Without a registry the spawn still groups and kills, and records nothing.
+- The crate reads no process facts itself. The engine passes `procinfo::process_start_ms` as `start_of` and `procinfo::pid_exists`-based liveness as `running`, so `procinfo.rs` stays the only place that reads them.
+- `set_registry` is called by `factory run` and `factory intake` (`commands.rs`, next to the handler call) with the path from `Layout::children_file()` (`children.json` in the state folder), the driver's owner and `procinfo::process_start_ms`. Without a registry the spawn still groups and kills, and records nothing. Tests that build a driver do not set one.
 - `install_shutdown_handler` starts a thread that waits for SIGTERM, SIGINT and SIGHUP, calls `kill_all`, and exits with `128 + signal`. `factory run` and `factory intake` call it once before they run anything. A killed driver cannot run it, which is what the reaper is for.
 - `reap_leftovers` runs when `Driver::take_project` returns `LeaseTake::TookOverStale { owner, .. }`. It reads the registry and handles only entries whose owner is `dead_owner`. It kills an entry's group only when all hold: the pid runs, `getpgid(pid) == pid`, and `procinfo::process_start_ms(pid)` equals `start_ms` to the second. An unknown start time kills nothing. It removes each handled entry and returns one line per entry (killed, left alone with the reason). The driver writes the lines to the ledger, the events log and stderr, and never fails the lease take because of them.
 
@@ -107,9 +114,9 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 
 - `factory-engine/tests/project_lease.rs`: `an_expired_lease_of_a_live_owner_is_not_taken_over` (owner built from a running `sleep` and its start time), `a_lease_whose_pid_start_does_not_match_is_taken_over`, `a_zombie_owner_is_dead`, `an_owner_without_a_pid_still_expires`, `a_corrupt_project_lease_is_refused_and_untouched`, `a_forced_cancel_removes_a_corrupt_project_lease`, `project_lease_status_reports_a_live_expired_owner_as_held`. Update the existing `lease_owner_dead` assertions (`project_lease.rs:442-447`) to `owner_state`.
 - `factory-engine/tests/lease.rs` or the existing lease tests: `lease_is_live_for_an_expired_lease_of_a_live_owner`.
-- `factory-engine/tests/lease_heartbeat.rs`, next to `another_owner_in_the_lease_sets_lost_and_stops_the_run` (line 142): `a_lost_lease_starts_no_agent` (the fake runner counts zero calls), `a_lost_lease_stops_before_the_merge_commit` (branch not merged).
+- `factory-engine/tests/build_checks.rs`: `a_lost_engine_starts_no_agent` (`Engine::with_lost` set, `build_stage` fails, the scripted runner has zero calls). `factory-engine/tests/lease_heartbeat.rs`, next to `another_owner_in_the_lease_sets_lost_and_stops_the_run` (line 142): `a_lost_lease_stops_before_the_merge_commit` (branch not merged).
 - `factory-procgroup` unit tests: `a_child_runs_in_its_own_group`, `killing_a_group_child_ends_its_grandchild` (a shell that starts `sleep`), `dropping_a_group_child_kills_it`, `the_registry_lists_a_spawned_child_and_drops_it_on_exit`, `reap_kills_a_matching_leftover`, `reap_leaves_a_start_time_mismatch_alone`, `reap_kills_nothing_when_the_start_time_is_unknown`.
-- `factory-agent/tests/runner.rs`: `killing_the_driver_ends_the_fake_claude_child` (a test process that runs the runner with `fake-claude` and is killed with SIGTERM through the handler, then the child pid is gone).
+- `factory-procgroup/tests/shutdown.rs`, with a small demo binary that installs the handler and spawns `sleep`: `sigterm_to_the_driver_ends_its_child` and `sigkill_then_reap_ends_the_child`. They replace the `fake-claude` test of the issue, because the new crate cannot depend on `factory-agent`. `factory-agent/tests/runner.rs` gets `an_agent_child_is_a_group_leader` (a script that prints its pid and process group).
 - `factory-cli/tests/no_hardcoded_paths.rs` and `agent_lint.rs` stay green.
 - Commands: `cargo test -j4 -p factory-procgroup`, `-p factory-agent`, `-p factory-checks`, `-p factory-engine`, `-p factory-cli`, `-p factory-supervisor`. Then `cargo clippy -j4 -p <crate> --all-targets -- -D warnings` and `cargo fmt -p <crate> -- --check` for each.
 
