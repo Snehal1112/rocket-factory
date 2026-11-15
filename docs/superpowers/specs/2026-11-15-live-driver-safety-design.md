@@ -37,7 +37,7 @@ The run loop checks `guard.lost()` once per stage (`runloop.rs:712`). The agent 
 
 ## Design
 
-Flow: a driver starts, takes the project lease, and registers every child it spawns in `children.json`. Another driver reads the lease: live owner means refuse, dead owner means take over and reap the leftovers of that owner. A killed driver's children die with the driver's signal handler, or with the next driver's reaper.
+Flow: a driver starts, takes the project lease, and registers every child it spawns in its own registry file `children-<owner>.json`. Another driver reads the lease: live owner means refuse, dead owner means take over and reap the leftovers of that owner. A killed driver's children die with the driver's signal handler, or with the next driver's reaper.
 
 ### 1. One liveness rule
 
@@ -70,22 +70,22 @@ A new crate `factory-procgroup` (deps: `libc`, a signal crate; both pinned exact
 ```rust
 pub fn spawn(cmd: &mut std::process::Command) -> std::io::Result<GroupChild>;
 pub type StartFn = fn(u32) -> Option<u64>;
-pub fn set_registry(file: std::path::PathBuf, owner: String, start_of: StartFn);
+pub fn set_registry(dir: std::path::PathBuf, owner: String, start_of: StartFn);
 pub fn kill_all();
 pub fn install_shutdown_handler();
 pub fn reap_leftovers(
-    file: &std::path::Path,
+    dir: &std::path::Path,
     is_dead: &dyn Fn(&str) -> bool,
     running: &dyn Fn(u32) -> bool,
     start_of: StartFn,
 ) -> Vec<String>;
 ```
 
-- `spawn` sets `process_group(0)`, spawns, adds the child to an in-process set of groups, and writes `{pid, start_ms, owner}` into the registry file (an atomic rewrite under a mutex). `GroupChild` gives access to `std::process::Child` (stdin, stdout, `try_wait`, `wait`). `GroupChild::kill` and its drop send SIGKILL to the whole group (`killpg`) and remove the entry. Both spawn sites above use it.
+- `spawn` sets `process_group(0)`, spawns, adds the child to an in-process set of groups, and writes `{pid, start_ms}` into this process's registry file `<dir>/children-<owner>.json` (an atomic rewrite under a mutex; only this process writes that file, so no lock between processes is needed). The owner must match `[A-Za-z0-9_-]+`, otherwise no registry is kept. The file is deleted when its last entry goes. `GroupChild` gives access to `std::process::Child` (stdin, stdout, `try_wait`, `wait`). `GroupChild::kill` and its drop send SIGKILL to the whole group (`killpg`) and remove the entry. Both spawn sites above use it.
 - The crate reads no process facts itself. The engine passes `procinfo::process_start_ms` as `start_of` and `procinfo::pid_exists`-based liveness as `running`, so `procinfo.rs` stays the only place that reads them.
-- `set_registry` is called once in `main.rs`, right after `main.rs` has built the context in either way (`CliCtx::for_project` with `--project`, `CliCtx::from_env` without), so every command that builds a driver is covered (`run`, `intake`, `approve`, `sync`, KB refresh). It gets the path from `Layout::children_file()` (`children.json` in the state folder), the driver's owner and `procinfo::process_start_ms`. Without a registry the spawn still groups and kills, and records nothing. Tests that build a driver do not set one.
+- `set_registry` is called once in `main.rs`, right after `main.rs` has built the context in either way (`CliCtx::for_project` with `--project`, `CliCtx::from_env` without), so every command that builds a driver is covered (`run`, `intake`, `approve`, `sync`, KB refresh). It gets the state folder, the driver's owner and `procinfo::process_start_ms`. `Layout::children_file(owner)` names the file. Without a registry the spawn still groups and kills, and records nothing. Tests that build a driver do not set one.
 - `install_shutdown_handler` starts a thread that waits for SIGTERM, SIGINT and SIGHUP, calls `kill_all`, and exits with `128 + signal`. `main.rs` calls it next to `set_registry`. A killed driver cannot run it, which is what the reaper is for.
-- `reap_leftovers` runs in `Driver::take_project` when the take is `Fresh` or `TookOverStale { owner, .. }`. It reads the registry and handles only entries whose owner `is_dead` accepts. The driver passes `|o| o == taken_owner || owner_state(o) == OwnerState::Dead`, with no taken owner on a `Fresh` take or when the taken owner is `unknown`. So a forced cancel, which deletes the lease file and makes the next take `Fresh`, still gets its leftovers reaped. An entry's group is killed only when all hold: the pid runs, `getpgid(pid) == pid`, and `procinfo::process_start_ms(pid)` equals `start_ms` to the second. An unknown start time kills nothing. Each handled entry is removed and one line comes back (killed, left alone with the reason). The driver writes the lines to the ledger, the events log and stderr, and never fails the lease take because of them.
+- `reap_leftovers` runs in `Driver::take_project` when the take is `Fresh` or `TookOverStale { owner, .. }`. It scans the state folder for `children-<owner>.json` and handles only the files whose owner `is_dead` accepts. The driver passes `|o| o == taken_owner || owner_state(o) == OwnerState::Dead`, with no taken owner on a `Fresh` take or when the taken owner is `unknown`. So a forced cancel, which deletes the lease file and makes the next take `Fresh`, still gets its leftovers reaped. An entry's group is killed only when all hold: the pid runs, `getpgid(pid) == pid`, and `procinfo::process_start_ms(pid)` equals `start_ms` to the second. An unknown start time kills nothing. Each handled file is deleted and one line comes back per entry (killed, left alone with the reason). A file that cannot be read is left in place with one `left alone: registry` line. The driver writes the lines to the ledger, the events log and stderr, and never fails the lease take because of them.
 
 ### 5. Other readers
 
@@ -120,7 +120,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 - `factory-engine/tests/project_lease.rs`: `an_expired_lease_of_a_live_owner_is_not_taken_over` (owner built from a running `sleep` and its start time), `a_lease_whose_pid_start_does_not_match_is_taken_over`, `a_zombie_owner_is_dead`, `an_owner_without_a_pid_still_expires`, `a_corrupt_project_lease_is_refused_and_untouched`, `a_forced_cancel_removes_a_corrupt_project_lease`, `project_lease_status_reports_a_live_expired_owner_as_held`, and in `lease_heartbeat.rs` `a_corrupt_lease_during_a_run_stops_the_run`, `release_leaves_a_corrupt_file_in_place` in `project_lease.rs`, and in `factory-supervisor/tests/supervisor.rs` `an_unreadable_lease_makes_queued_runs_wait`. Update the existing `lease_owner_dead` assertions (`project_lease.rs:442-447`) to `owner_state`.
 - `factory-engine/tests/lease.rs` or the existing lease tests: `lease_is_live_for_an_expired_lease_of_a_live_owner`.
 - `factory-engine/tests/build_checks.rs`: `a_lost_engine_starts_no_agent` (`Engine::with_lost` set, `build_stage` fails, the scripted runner has zero calls). `factory-engine/tests/lease_heartbeat.rs`, next to `another_owner_in_the_lease_sets_lost_and_stops_the_run` (line 142): `a_lost_lease_stops_before_the_merge_commit` (branch not merged).
-- `factory-procgroup` unit tests: `a_child_runs_in_its_own_group`, `killing_a_group_child_ends_its_grandchild` (a shell that starts `sleep`), `dropping_a_group_child_kills_it`, `the_registry_lists_a_spawned_child_and_drops_it_on_exit`, `a_fresh_take_reaps_a_dead_owners_group`, `reap_kills_a_matching_leftover`, `reap_leaves_a_start_time_mismatch_alone`, `reap_kills_nothing_when_the_start_time_is_unknown`.
+- `factory-procgroup` unit tests: `a_child_runs_in_its_own_group`, `killing_a_group_child_ends_its_grandchild` (a shell that starts `sleep`), `dropping_a_group_child_kills_it`, `the_registry_lists_a_spawned_child_and_drops_it_on_exit`, `two_processes_registering_at_once_both_survive`, `a_fresh_take_reaps_a_dead_owners_group`, `reap_kills_a_matching_leftover`, `reap_leaves_a_start_time_mismatch_alone`, `reap_kills_nothing_when_the_start_time_is_unknown`.
 - `factory-procgroup/tests/shutdown.rs`, with a small demo binary that installs the handler and spawns `sleep`: `sigterm_to_the_driver_ends_its_child` and `sigkill_then_reap_ends_the_child`. They replace the `fake-claude` test of the issue, because the new crate cannot depend on `factory-agent`. `factory-cli` gets `guard_children_registers_children` and `main_guards_children_for_every_project_command`. `factory-agent/tests/runner.rs` gets `an_agent_child_is_a_group_leader` (a script that prints its pid and process group).
 - `factory-cli/tests/no_hardcoded_paths.rs` and `agent_lint.rs` stay green.
 - Commands: `cargo test -j4 -p factory-procgroup`, `-p factory-agent`, `-p factory-checks`, `-p factory-engine`, `-p factory-cli`, `-p factory-supervisor`. Then `cargo clippy -j4 -p <crate> --all-targets -- -D warnings` and `cargo fmt -p <crate> -- --check` for each.
@@ -129,7 +129,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 
 - `crates/factory-engine/src/project_lease.rs`, `lease.rs`, `lib.rs`, `compat.rs`, `ports.rs`, `merge.rs`, `runloop.rs`
 - `crates/factory-supervisor/src/supervisor.rs`
-- `crates/factory-core/src/layout.rs` (`Layout::children_file`)
+- `crates/factory-core/src/layout.rs` (`Layout::children_file(owner)`)
 - `crates/factory-agent/src/child.rs`, `crates/factory-checks/src/run.rs`
 - `crates/factory-procgroup/` (new crate), the root `Cargo.toml` workspace members, `crates/factory-agent/Cargo.toml`, `crates/factory-checks/Cargo.toml`, `crates/factory-engine/Cargo.toml`, `crates/factory-cli/Cargo.toml`
 - `crates/factory-cli/src/main.rs` and `commands.rs` (`guard_children` call, corrupt message)
@@ -139,7 +139,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 
 - No new `/proc` read. Process facts come from `procinfo.rs` only. The new crate may call `libc` for `killpg` and `getpgid` and nothing else about other processes.
 - Both new dependencies are pinned with `=` to a version at least two weeks old. `libc` uses the version in `Cargo.lock` (0.2.191).
-- Board JSON is unchanged. `children.json` is a new file in the state folder, read only by the driver.
+- Board JSON is unchanged. `children-<owner>.json` is a new file kind in the state folder, written only by the process it names and read by the reaper.
 - A failed registry write, a failed kill or a reaper line never changes a lease or merge result.
 - Paths go through `Layout`. Never shell out to `git`.
 
@@ -175,7 +175,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 - Is the lease age measured on a monotonic clock? Options: monotonic clock, wall clock with the liveness rule. Chosen: no monotonic clock, the liveness rule makes the wall clock irrelevant for a live owner. Decided by: user
 - Where do the process-group helpers live? Chosen: a new crate `factory-procgroup`, because `factory-agent` and `factory-checks` both need it and neither depends on the other. Decided by: call
 - How far may a start time differ from the owner name? Options: 10 seconds, 60 seconds, 3 seconds. Chosen: 10 seconds, because `env_owner` reads the clock a moment after the process starts and `sysinfo` reports whole seconds. Decided by: user
-- Where does the registry live? Options: one file per project, one file per job folder. Chosen: `children.json` in the state folder through `Layout`, one file per project because one driver holds the project lease at a time. Decided by: user
+- Where does the registry live, and how is it protected from two processes? Options: one shared `children.json` with a file lock, one file per process. Chosen: one file per process, `children-<owner>.json` in the state folder through `Layout`, because commands such as `factory new` spawn agents without the project lease, so a shared file could lose entries. Decided by: user
 - Where is the lost check added? Options: agent starts and the merge only, also commits and checks. Chosen: in `Engine::run_agent` and before `merge_no_ff`, because the loop top already checks once per stage; the driver's own commits and check runs are not guarded. Decided by: user
 - Is the heartbeat killed mid-stage when the lease is lost? Options: stop at the next check, kill the group at once. Chosen: no, the next agent or merge check stops the run. Decided by: user
 - What does factoryd do with a project whose lease file is corrupt? Options: queue the run as held until cleared, let each run start and fail. Chosen: queue it as held, so runs wait until a person clears the file. Decided by: user
