@@ -16,8 +16,8 @@ pub mod upgrade;
 
 pub use cli::{Cli, Command, PluginCmd, PresetsCmd, ProjectCmd, SpecCmd};
 pub use commands::{
-    check_home, dispatch, env_lock_wait, env_owner, open_home, validate_rework_note, CliCtx,
-    CliError,
+    check_home, dispatch, env_lock_wait, env_owner, guard_children, open_home,
+    validate_rework_note, CliCtx, CliError,
 };
 pub use costs::{estimate_lines, format_estimate, render_costs, render_trend};
 pub use log::run_log;

@@ -312,6 +312,17 @@ pub fn env_owner() -> String {
     format!("driver-{}-{}", std::process::id(), now_secs() as u64)
 }
 
+/// Registers the agent and check children of this process in the state folder and kills them when
+/// the process gets SIGTERM, SIGINT or SIGHUP. The binary calls it once for every command.
+pub fn guard_children(ctx: &CliCtx) {
+    factory_procgroup::set_registry(
+        ctx.layout.state_dir.clone(),
+        ctx.owner.clone(),
+        factory_engine::procinfo::process_start_ms,
+    );
+    factory_procgroup::install_shutdown_handler();
+}
+
 /// `FACTORY_LOCK_WAIT` (seconds), or the default.
 pub fn env_lock_wait() -> Duration {
     std::env::var("FACTORY_LOCK_WAIT")

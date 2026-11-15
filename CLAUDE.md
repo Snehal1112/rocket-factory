@@ -27,6 +27,7 @@ cargo run -j4 --manifest-path dashboard/Cargo.toml -- --home ~/.factory --port 8
 factory-core    pure rules: board, ledger, config, risk, verdict, budget (no I/O deps)
 factory-git     git2 layer: worktrees, diffs, no-ff merge (never shell out to git)
 factory-telemetry  structured logging: tracing layers, redaction, rotating log file (no factory deps)
+factory-procgroup  process groups for agent and check children, the `children-<owner>.json` registry, the leftover reaper and the shutdown signal handler (deps `libc`, `signal-hook`)
 factory-agent   runs `claude -p` headless, parses the stream, writes usage and events
 factory-checks  maps changed paths to check commands and runs them
 factory-engine  the run loop: build, checks, review, decide, merge, sync, series (uses all five)

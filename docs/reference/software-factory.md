@@ -242,6 +242,13 @@ The driver merges the reviewed sha only: it checks the branch tip equals the rec
 - A job parked mid-task keeps the old path: `rework-note.md` is used, `round` and `rework_base` stay, and it prints `job <id> back to build, same task`.
 - The next review reads `last_review.file` as the previous findings, which can be a sync review file.
 
+## Lease and children
+
+- A live owner keeps the project lease past its expiry. An owner whose pid is gone, a zombie or reused is taken over at once, and an owner without a pid keeps the expiry rule.
+- A corrupt project lease is refused and left on disk, and a failed run does not delete it. Deleting the file clears it. `factory cancel <id> --force` also removes it, but it gives up that job first.
+- Agent and check children run in their own process group (`factory-procgroup`). The group ends on drop and on SIGTERM, SIGINT or SIGHUP of the driver.
+- Each driver registers its children in `children-<owner>.json` in the state folder. After a SIGKILL, the next driver that takes the lease reaps the files of dead owners. It kills a group only when the pid runs, leads its group and has the recorded start time, and reports every entry as a ledger line.
+
 ## Monorepos
 
 A folder inside a git repo can be its own project (`factory project add <repo>/apps/web`, stored as `subpath`). A repo holds one top-folder project or disjoint subfolder projects, never both. Their builds, checks and reviews run side by side. The builder, fix builder and reviewer start in the project folder of the job worktree, for `claude` and for `codex`. Risk paths and check mappings are relative to that folder, and check commands run in it.

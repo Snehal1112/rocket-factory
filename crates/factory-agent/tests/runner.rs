@@ -570,3 +570,63 @@ fn the_runner_debug_output_holds_no_key() {
     let r = runner(EventSink::null("001")).with_api_key_source(ApiKeySource::File(path));
     assert!(!format!("{r:?}").contains("sk-secret-value"));
 }
+
+/// Writes an executable shell script and returns a runner that starts it.
+#[cfg(unix)]
+fn script_runner(dir: &std::path::Path, body: &str) -> ClaudeRunner {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("agent.sh");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    ClaudeRunner::new(
+        path,
+        Caps {
+            agent: true,
+            max_turns: false,
+            append_system_prompt: true,
+            agents_file: true,
+        },
+        EventSink::null("001"),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn an_agent_child_is_a_group_leader() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let body = "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\" > pids.txt\n\
+        echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"fake-1\"}'";
+    let run = script_runner(tmp.path(), body).run(&spec("ok", tmp.path()));
+    assert_eq!(run.stop_reason, StopReason::Done);
+    let text = std::fs::read_to_string(tmp.path().join("pids.txt")).expect("pids");
+    let nums: Vec<&str> = text.split_whitespace().collect();
+    assert_eq!(nums.len(), 2, "{text}");
+    assert_eq!(nums[0], nums[1], "the child is not a group leader");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stopped_agent_group_is_killed() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let body = "sleep 60 &\necho $! > grandchild.txt\nwait";
+    let mut s = spec("ok", tmp.path());
+    s.stall_after = Some(Duration::from_millis(400));
+    let run = script_runner(tmp.path(), body).run(&s);
+    assert_eq!(run.stop_reason, StopReason::Stalled);
+    let pid: i32 = std::fs::read_to_string(tmp.path().join("grandchild.txt"))
+        .expect("grandchild")
+        .trim()
+        .parse()
+        .expect("pid");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        // SAFETY: signal 0 only checks that the pid exists.
+        let gone = unsafe { libc::kill(pid, 0) } != 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        if gone {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the grandchild survived");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

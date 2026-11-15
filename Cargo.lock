@@ -213,6 +213,8 @@ name = "factory-agent"
 version = "0.3.0"
 dependencies = [
  "factory-core",
+ "factory-procgroup",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -224,6 +226,8 @@ name = "factory-checks"
 version = "0.3.0"
 dependencies = [
  "factory-core",
+ "factory-procgroup",
+ "libc",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -239,6 +243,7 @@ dependencies = [
  "factory-core",
  "factory-engine",
  "factory-git",
+ "factory-procgroup",
  "factory-supervisor",
  "factory-telemetry",
  "git2",
@@ -269,9 +274,11 @@ dependencies = [
  "factory-checks",
  "factory-core",
  "factory-git",
+ "factory-procgroup",
  "factory-telemetry",
  "fs2",
  "git2",
+ "libc",
  "serde",
  "serde_json",
  "sha2",

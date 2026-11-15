@@ -16,6 +16,7 @@ factory-engine = { path = "../factory-engine" }
 factory-checks = { path = "../factory-checks" }
 factory-telemetry = { path = "../factory-telemetry" }
 factory-supervisor = { path = "../factory-supervisor" }
+factory-procgroup = { path = "../factory-procgroup" }
 tracing.workspace = true
 clap.workspace = true
 serde_json.workspace = true

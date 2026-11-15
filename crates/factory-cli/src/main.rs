@@ -91,6 +91,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    factory_cli::guard_children(&ctx);
     // The log is installed once the context exists. Reading the log never writes to it.
     let _log_guard = if matches!(cli.command, Command::Log { .. }) {
         None
