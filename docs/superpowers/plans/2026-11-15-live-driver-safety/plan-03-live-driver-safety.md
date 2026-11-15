@@ -3,9 +3,9 @@
 > **Spec:** docs/superpowers/specs/2026-11-15-live-driver-safety-design.md
 > **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.
 
-**Goal:** Agent and check children run in their own process group, `factory run` and `factory intake` register them and kill them on a shutdown signal, and a lease takeover of a dead owner reaps its leftover group.
+**Goal:** Agent and check children run in their own process group, every command that builds a driver registers them and kills them on a shutdown signal, and a lease take reaps the leftover groups of dead owners.
 
-**Architecture:** `factory-agent` and `factory-checks` spawn through `factory_procgroup::spawn`. The CLI sets the registry and the handler. The engine reads `children.json` through `Layout` and calls `reap_leftovers` when `Driver::take_project` takes over a dead owner.
+**Architecture:** `factory-agent` and `factory-checks` spawn through `factory_procgroup::spawn`. `main.rs` sets the registry and the handler once, so every project command is covered. The engine reads `children.json` through `Layout` and calls `reap_leftovers` when `Driver::take_project` makes a fresh take or takes over a stale owner.
 
 **Tech Stack:** Rust, factory-procgroup (plan 2), factory-agent, factory-checks, factory-core, factory-engine, factory-cli.
 
@@ -23,6 +23,7 @@
 2. An agent run stopped by the driver (stall or budget): the agent's children end too. Pinned by `a_stopped_agent_group_is_killed`.
 3. A takeover of an owner that is not dead, or of owner `unknown`: nothing is reaped. Pinned by `a_takeover_of_an_unknown_owner_reaps_nothing`.
 4. A leftover entry whose pid now belongs to another process: left alone, reported. Pinned by `a_takeover_leaves_a_mismatched_entry_alone`.
+   A forced cancel before the next run (fresh take): leftovers of dead owners are still reaped. Pinned by `a_fresh_take_reaps_a_dead_owners_group`.
 5. A project with no `children.json`: the takeover works and says nothing. Pinned by `a_takeover_without_a_registry_still_takes_over`.
 
 ## File Structure
@@ -31,9 +32,9 @@
 - `crates/factory-checks/src/run.rs`, `Cargo.toml`: the same.
 - `crates/factory-core/src/layout.rs`, `lib.rs`: `CHILDREN_FILE`, `Layout::children_file()`.
 - `crates/factory-engine/src/compat.rs`, `Cargo.toml`: reap on takeover.
-- `crates/factory-cli/src/commands.rs`, `Cargo.toml`: registry and handler in `run` and `intake`.
+- `crates/factory-cli/src/main.rs`, `src/commands.rs`, `Cargo.toml`: `guard_children`, called from `main.rs`.
 - Docs: `CLAUDE.md`, `docs/reference/software-factory.md`, `README.md`.
-- Tests: `crates/factory-agent/tests/runner.rs`, `crates/factory-checks/src/run.rs` (unit tests), `crates/factory-core/src/layout.rs` (unit test), `crates/factory-engine/tests/reap_on_takeover.rs`.
+- Tests: `crates/factory-agent/tests/runner.rs`, `crates/factory-checks/src/run.rs` (unit tests), `crates/factory-core/src/layout.rs` (unit test), `crates/factory-engine/tests/reap_on_takeover.rs`, `crates/factory-cli/tests/guard_children.rs`.
 
 ---
 
@@ -59,14 +60,14 @@
 ### Task 2: Registry, handler, reaper on takeover, and docs
 
 **Files:**
-- Modify: `crates/factory-core/src/layout.rs` (next to `project_lease_file`, line ~181) and `lib.rs` (line 74), `crates/factory-engine/src/compat.rs` (`take_project`, line ~380), `crates/factory-engine/Cargo.toml`, `crates/factory-cli/src/commands.rs` (`run`, line 613, and the intake handler), `crates/factory-cli/Cargo.toml`, `CLAUDE.md`, `docs/reference/software-factory.md`, `README.md`
+- Modify: `crates/factory-core/src/layout.rs` (next to `project_lease_file`, line ~181) and `lib.rs` (line 74), `crates/factory-engine/src/compat.rs` (`take_project`, line ~380), `crates/factory-engine/Cargo.toml`, `crates/factory-cli/src/main.rs` (after `CliCtx::for_project`, line ~79), `crates/factory-cli/src/commands.rs`, `crates/factory-cli/Cargo.toml`, `CLAUDE.md`, `docs/reference/software-factory.md`, `README.md`
 - Test: `crates/factory-core/src/layout.rs` (unit), `crates/factory-engine/tests/reap_on_takeover.rs` (new)
 
 **Interfaces:**
 - Consumes: `factory_procgroup::{set_registry, install_shutdown_handler, reap_leftovers}`, `factory_engine::procinfo::{process_start_ms, process_state, ProcState}`, `LeaseTake::TookOverStale { owner, job }`.
-- Produces: `pub const CHILDREN_FILE: &str = "children.json"` and `Layout::children_file(&self) -> PathBuf` (`state_dir.join(CHILDREN_FILE)`); `Driver::take_project` calls `reap_leftovers(&self.layout.children_file(), &owner, &running, procinfo::process_start_ms)` after a take over of a stale owner other than `"unknown"` and reports each returned line; a private `fn guard_children(ctx: &CliCtx)` in the CLI that calls `set_registry(ctx.layout.children_file(), ctx.owner.clone(), procinfo::process_start_ms)` and `install_shutdown_handler()`.
+- Produces: `pub const CHILDREN_FILE: &str = "children.json"` and `Layout::children_file(&self) -> PathBuf` (`state_dir.join(CHILDREN_FILE)`); `Driver::take_project` calls `reap_leftovers(&self.layout.children_file(), &|o| Some(o) == taken.as_deref() || owner_state(o) == OwnerState::Dead, &running, procinfo::process_start_ms)` after a `Fresh` take or a take over of a stale owner (`taken` is that owner unless it is `"unknown"`, and `None` on a fresh take) and reports each returned line; `pub fn guard_children(ctx: &CliCtx)` in `commands.rs` that calls `set_registry(ctx.layout.children_file(), ctx.owner.clone(), procinfo::process_start_ms)` and `install_shutdown_handler()`, called once from `main.rs` right after `CliCtx::for_project` for every project command.
 
-- [ ] **Step 1: Read** `layout.rs` (`project_lease_file`, the tests at the bottom), `compat.rs` `take_project` and `renew_lease`, `runloop.rs` `note_failure` (the ledger line pattern), `commands.rs` lines 100-120, 250-265 and 613, the `run` and `intake` handlers, and `tests/lease_heartbeat.rs` for `SeriesFixture::owned`.
+- [ ] **Step 1: Read** `layout.rs` (`project_lease_file`, the tests at the bottom), `compat.rs` `take_project` and `renew_lease`, `runloop.rs` `note_failure` (the ledger line pattern), `commands.rs` lines 100-120 and 250-265, `main.rs` lines 70-95, and `tests/lease_heartbeat.rs` for `SeriesFixture::owned`.
 - [ ] **Step 2: Write the failing tests.**
   - `layout.rs` unit test `children_file_is_in_the_state_folder`: `Layout::in_repo(dir).children_file()` ends with `children.json` and its parent is `state_dir`.
   - `tests/reap_on_takeover.rs` (`mod common;`, Linux only for the dead pid, `#[cfg(target_os = "linux")]`), each test seeds the state folder before `run_job`: a lease file held by `driver-4294967000-1` (job `009`, far-future `expires`) and a `children.json` entry for a real group leader spawned through `factory_procgroup::spawn(sleep 60)` (add `factory-procgroup` as a dev-dependency):
@@ -74,6 +75,8 @@
     - `a_takeover_leaves_a_mismatched_entry_alone`: `start_ms` is `Some(1)`; the sleeper still runs and `progress.md` contains `left alone`.
     - `a_takeover_of_an_unknown_owner_reaps_nothing`: the corrupt-free lease owner is `"driver-4294967000"` (no secs, `Unknown`) with `expires` in the past; the sleeper still runs and `progress.md` has neither line.
     - `a_takeover_without_a_registry_still_takes_over`: no `children.json`; `run_job` succeeds.
+    - `a_fresh_take_reaps_a_dead_owners_group`: no lease file at all (as after a forced cancel), the registry entry is owned by `driver-4294967000-1` with a matching start; after `run_job` the sleeper is gone and `progress.md` contains `killed`.
+  - `crates/factory-cli/tests/guard_children.rs`: `guard_children_registers_children` (build a `CliCtx` as another CLI test does, call `guard_children(&ctx)`, spawn `sleep 30` through `factory_procgroup::spawn`, the file `ctx.layout.children_file()` lists its pid, kill it) and `main_guards_children_for_every_project_command` (read `src/main.rs` with `include_str!`, assert it contains `guard_children(` exactly once and that the call comes after `CliCtx::for_project`).
     Kill any surviving sleeper at the end of each test.
 - [ ] **Step 3: Run** `cargo test -j4 -p factory-core children_file` and `cargo test -j4 -p factory-engine --test reap_on_takeover`. Expected: `no method named children_file`, then the reap tests fail (sleeper survives, no ledger line).
 - [ ] **Step 4: Implement** the signatures above. In `take_project`, after `acquire_project_lease` returns `LeaseTake::TookOverStale { owner, .. }` and `owner != "unknown"`, build `running = |pid| procinfo::process_state(pid) == ProcState::Running`, call `reap_leftovers`, then for each line write a ledger ruling for job `id` (as `note_failure` does), `tracing::warn!(event = "children.reap", msg = %line)` and `eprintln!`. Never return an error from this step. In the CLI, call `guard_children(ctx)` first thing in `run` and in the intake handler. Docs: add `factory-procgroup` to the crate layering list in `CLAUDE.md` (process groups, registry, reaper, handler, deps `libc` and a signal crate), describe in `docs/reference/software-factory.md` and the lease section of `README.md` that a live owner keeps its lease past expiry, that a corrupt project lease is refused and `factory cancel <id> --force` clears it, that children run in their own group and die with a SIGTERM, SIGINT or SIGHUP of the driver, and that after a SIGKILL the next driver reaps the leftovers when pid, group leader and start time match.

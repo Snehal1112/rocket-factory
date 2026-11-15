@@ -74,7 +74,7 @@
 **Interfaces:**
 - Consumes: The first task's `Entry`, `read`, `write`, `StartFn`, `kill_all`.
 - Produces:
-  - `pub fn reap_leftovers(file: &std::path::Path, dead_owner: &str, running: &dyn Fn(u32) -> bool, start_of: StartFn) -> Vec<String>`: handles only entries whose owner equals `dead_owner`; kills the group of an entry only when `running(pid)`, `libc::getpgid(pid) == pid` and `start_of(pid) == entry.start_ms` with both `Some`; removes every handled entry from the file; returns one line per entry beginning `killed` or `left alone`, and one line beginning `left alone: registry` when the file is unreadable (and then kills nothing).
+  - `pub fn reap_leftovers(file: &std::path::Path, is_dead: &dyn Fn(&str) -> bool, running: &dyn Fn(u32) -> bool, start_of: StartFn) -> Vec<String>`: handles only entries whose owner `is_dead` accepts; kills the group of an entry only when `running(pid)`, `libc::getpgid(pid) == pid` and `start_of(pid) == entry.start_ms` with both `Some`; removes every handled entry from the file; returns one line per entry beginning `killed` or `left alone`, and one line beginning `left alone: registry` when the file is unreadable (and then kills nothing).
   - `pub fn install_shutdown_handler()`: starts one thread (idempotent) that waits for SIGTERM, SIGINT and SIGHUP, calls `kill_all()`, and exits the process with `128 + signal`.
   - Test helper binary `shutdown-demo`: arguments `<registry file> <owner>`; it calls `set_registry` with a `start_of` that returns `Some(7000)`, installs the handler, spawns `sleep 60`, prints the child pid and a newline to stdout, flushes, then sleeps.
 
@@ -85,11 +85,11 @@
     - `reap_leaves_a_start_time_mismatch_alone`: `start_of = |_| Some(9999)`; the sleeper still runs, the line starts with `left alone`.
     - `reap_kills_nothing_when_the_start_time_is_unknown`: `start_of = |_| None`; the sleeper still runs.
     - `reap_leaves_a_non_leader_alone`: the entry names a pid that is not its own group leader (a child of a `sh` started without a group: use `sh -c 'sleep 60 & echo $!; wait'` spawned plainly through `std::process::Command`, entry pid is the printed grandchild pid); it still runs afterwards.
-    - `reap_ignores_entries_of_other_owners`: an entry of owner `live` stays in the file and its sleeper runs.
+    - `reap_ignores_entries_of_other_owners`: with `is_dead = |o| o == "dead"`, an entry of owner `live` stays in the file and its sleeper runs.
     - `reap_with_a_missing_or_corrupt_registry_kills_nothing`: a missing file, then a file with `not json`; both return one line starting `left alone: registry`, and the corrupt file is left on disk.
   - `tests/shutdown.rs`, using `env!("CARGO_BIN_EXE_shutdown-demo")`:
     - `sigterm_to_the_driver_ends_its_child`: spawn the demo with stdout piped, read the child pid line, `libc::kill(demo, SIGTERM)`, `wait()`: exit status code is 143 (`128 + 15`), and the child pid is gone within 2 s.
-    - `sigkill_then_reap_ends_the_child`: spawn the demo, read the child pid, `libc::kill(demo, SIGKILL)`, `wait()`; the child still runs; then `reap_leftovers(file, owner, &|_| true, |_| Some(7000))` returns a line starting `killed`, and the child pid is gone within 2 s.
+    - `sigkill_then_reap_ends_the_child`: spawn the demo, read the child pid, `libc::kill(demo, SIGKILL)`, `wait()`; the child still runs; then `reap_leftovers(file, &|o| o == owner, &|_| true, |_| Some(7000))` returns a line starting `killed`, and the child pid is gone within 2 s.
 - [ ] **Step 3: Run** `cargo test -j4 -p factory-procgroup --test reap --test shutdown -- --test-threads=1`. Expected: `cannot find function reap_leftovers`, then `cannot find function install_shutdown_handler`.
 - [ ] **Step 4: Implement** the signatures above. `reap_leftovers` follows the rules in its Produces line. `ESRCH` while killing counts as already gone. `install_shutdown_handler` uses `signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP])` on a named thread `procgroup-shutdown`, guarded by a `std::sync::Once`. Add the pinned `libc` and signal crate to `Cargo.toml`, with `[[bin]] name = "shutdown-demo"` pointing at the demo.
 - [ ] **Step 5: Run** `cargo test -j4 -p factory-procgroup -- --test-threads=1`. Expected: 15 passed (7 + 6 + 2), 0 failed. Then `cargo clippy -j4 -p factory-procgroup --all-targets -- -D warnings` and `cargo fmt -p factory-procgroup -- --check`.
