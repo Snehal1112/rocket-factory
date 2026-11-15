@@ -3,9 +3,17 @@
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use factory_procgroup::{kill_all, set_registry, spawn};
+
+/// The registry and the group set are process-wide, and `kill_all` ends every
+/// group, so the tests of this file take turns.
+fn serial() -> MutexGuard<'static, ()> {
+    static TURN: Mutex<()> = Mutex::new(());
+    TURN.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// True once the pid no longer exists, polled for up to two seconds.
 fn gone_soon(pid: i32) -> bool {
@@ -29,6 +37,7 @@ fn entries(dir: &Path, owner: &str) -> Vec<serde_json::Value> {
 
 #[test]
 fn a_child_runs_in_its_own_group() {
+    let _turn = serial();
     let mut child = spawn(Command::new("sleep").arg("30")).expect("spawn");
     let pid = child.id() as i32;
     // SAFETY: getpgid only reads process facts.
@@ -42,6 +51,7 @@ fn a_child_runs_in_its_own_group() {
 
 #[test]
 fn killing_a_group_child_ends_its_grandchild() {
+    let _turn = serial();
     let mut child = spawn(
         Command::new("sh")
             .arg("-c")
@@ -60,6 +70,7 @@ fn killing_a_group_child_ends_its_grandchild() {
 
 #[test]
 fn dropping_a_group_child_kills_it() {
+    let _turn = serial();
     let child = spawn(Command::new("sleep").arg("30")).expect("spawn");
     let pid = child.id() as i32;
     drop(child);
@@ -68,6 +79,7 @@ fn dropping_a_group_child_kills_it() {
 
 #[test]
 fn killing_an_exited_child_is_quiet() {
+    let _turn = serial();
     let mut child = spawn(&mut Command::new("true")).expect("spawn");
     child.wait().expect("wait");
     child.kill().expect("quiet");
@@ -75,6 +87,7 @@ fn killing_an_exited_child_is_quiet() {
 
 #[test]
 fn the_registry_lists_a_spawned_child_and_drops_it_on_exit() {
+    let _turn = serial();
     let dir = tempfile::tempdir().expect("dir");
     set_registry(dir.path().to_path_buf(), "driver-1-1".into(), |_| {
         Some(5000)
@@ -91,6 +104,7 @@ fn the_registry_lists_a_spawned_child_and_drops_it_on_exit() {
 
 #[test]
 fn two_threads_spawning_both_reach_the_registry() {
+    let _turn = serial();
     let dir = tempfile::tempdir().expect("dir");
     set_registry(dir.path().to_path_buf(), "driver-2-2".into(), |_| {
         Some(1000)
@@ -108,6 +122,7 @@ fn two_threads_spawning_both_reach_the_registry() {
 
 #[test]
 fn kill_all_ends_every_registered_group() {
+    let _turn = serial();
     let dir = tempfile::tempdir().expect("dir");
     set_registry(dir.path().to_path_buf(), "driver-3-3".into(), |_| {
         Some(1000)
