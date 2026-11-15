@@ -23,7 +23,8 @@ The run loop checks `guard.lost()` once per stage (`runloop.rs:712`). The agent 
 | Project lease takeover (`project_lease.rs:99-128`) | free, ours, `expires <= now`, owner dead or corrupt | Same, and corrupt takes over |
 | Owner liveness (`project_lease.rs:61-77`) | owner `driver-<pid>-<secs>`, `process_gone(pid)` | No start time, a zombie is alive |
 | Status readers (`project_lease_status`, `project_lease.rs:187`; supervisor `supervisor.rs:477`) | use the same rule | Change with it |
-| Forced cancel (`commands.rs:846-887`, `force_release_project_lease` `project_lease.rs:170`) | removes a lease it can parse and that names the job | A corrupt file stays |
+| Forced cancel (`commands.rs:846-887`, `force_release_project_lease` `project_lease.rs:170`) | removes a lease it can parse and that names the job | A corrupt file stays, and the cancel gives up the job |
+| Release (`project_lease.rs:140-151`) | removes the file when it is ours, expired or corrupt | A failed run deletes a corrupt file without anyone seeing it |
 | Lost checks | loop top only (`runloop.rs:712`) | Not before an agent run, not before `merge_no_ff` (`merge.rs:357`) |
 | Children | no group, no handler, no record | Survive a killed driver |
 
@@ -56,7 +57,7 @@ A hung driver that is alive keeps the lease for good. `factory cancel <id> --for
 
 ### 2. A corrupt project lease
 
-`acquire_project_lease` returns a new `ProjectLeaseError::Corrupt { path, reason }` for an unreadable or invalid file and writes nothing. The message names the file and says that `factory cancel <id> --force` for any job removes it, or the file can be deleted. `force_release_project_lease` removes a corrupt file as well and returns true. `project_lease_status` keeps `Unreadable`. The holder is not special: if the file turns corrupt while a driver runs, the heartbeat sets the lost flag with the reason `Corrupt`, and the run stops with the `Corrupt` message at the next lost check (`runloop.rs:712`, `Engine::run_agent`, or the merge). `release_project_lease` leaves a corrupt file in place (`project_lease.rs:151`, `Err(_) => false`), so a failed run does not delete it. Only `force_release_project_lease` removes a corrupt file.
+`acquire_project_lease` returns a new `ProjectLeaseError::Corrupt { path, reason }` for an unreadable or invalid file and writes nothing. The message names the file and says to delete it. A person clears it by deleting the file, as the existing `Held` message already says. `factory cancel <id> --force` also removes a corrupt file (`force_release_project_lease` returns true), but it first marks that job needs-human and cancelled (`commands.rs:850-867`), so the message and the docs say plainly that this gives up the named job. `project_lease_status` keeps `Unreadable`. The holder is not special: if the file turns corrupt while a driver runs, the heartbeat sets the lost flag with the reason `Corrupt`, and the run stops with the `Corrupt` message at the next lost check (`runloop.rs:712`, `Engine::run_agent`, or the merge). `release_project_lease` changes: today it removes a corrupt file (`project_lease.rs:140,151`, `Err(_) => true`); it will leave it in place (`Err(_) => false`), so a failed run does not delete it. Only `force_release_project_lease` removes a corrupt file.
 
 ### 3. Lost checks before an agent and before the merge
 
@@ -100,7 +101,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 | Start time unknown on this system | `Unknown`, expiry decides |
 | Owner name without a pid | `Unknown`, expiry decides |
 | Project lease file not valid JSON | `Corrupt`, run refused, nothing written |
-| Forced cancel with a corrupt file | File removed, `project lease released` |
+| Forced cancel with a corrupt file | File removed, `project lease released`, and the named job is cancelled |
 | File turns corrupt while a driver runs | Heartbeat sets lost with reason `Corrupt`, the run stops at the next lost check with the `Corrupt` message, the file is left |
 | Queued run in factoryd while the lease file is corrupt | The project is `LeaseHeld`, the run waits |
 | `lost()` set before an agent | `EngineError::Msg`, no agent starts |
@@ -147,7 +148,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 - An expired lease whose owner pid runs, is not a zombie and matches the start time is not taken over.
 - A lease whose pid is gone, a zombie, or reused with another start time is taken over at once.
 - An owner without a pid, or a system without start times, keeps today's expiry rule.
-- A corrupt project lease is refused and left on disk, and `factory cancel <id> --force` removes it.
+- A corrupt project lease is refused and left on disk, a failed run does not delete it, and deleting the file clears it. `factory cancel <id> --force` also removes it and says it gives up that job.
 - A driver whose lease was lost starts no agent and does not run `merge_no_ff`.
 - Agent and check children run in their own process group, and the whole group ends on drop and on SIGTERM, SIGINT and SIGHUP of the driver.
 - After a SIGKILL of the driver, the next driver that takes over its lease kills the registered group when pid, group leader and start time match, and kills nothing otherwise.
@@ -177,4 +178,5 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 - Where does the registry live? Options: one file per project, one file per job folder. Chosen: `children.json` in the state folder through `Layout`, one file per project because one driver holds the project lease at a time. Decided by: user
 - Where is the lost check added? Options: agent starts and the merge only, also commits and checks. Chosen: in `Engine::run_agent` and before `merge_no_ff`, because the loop top already checks once per stage; the driver's own commits and check runs are not guarded. Decided by: user
 - Is the heartbeat killed mid-stage when the lease is lost? Options: stop at the next check, kill the group at once. Chosen: no, the next agent or merge check stops the run. Decided by: user
-- What does factoryd do with a project whose lease file is corrupt? Options: start the run and let it fail, queue it as held. Chosen: queue it as held, so runs wait until a person clears the file. Decided by: call
+- What does factoryd do with a project whose lease file is corrupt? Options: queue the run as held until cleared, let each run start and fail. Chosen: queue it as held, so runs wait until a person clears the file. Decided by: user
+- How does a person clear a corrupt project lease? Options: delete the file by hand and let cancel --force also work, add `factory lease clear`, only cancel --force. Chosen: delete the file by hand, and cancel --force also works and says it gives up the job. Decided by: user
