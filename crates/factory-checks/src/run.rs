@@ -419,13 +419,11 @@ mod tests {
         assert!(text.contains("PASS none (no check is mapped to the changed paths)"));
     }
 
-    /// Writes an executable `check.sh` into `dir`.
+    /// Writes `check.sh` into `dir`. Tests run it as `sh check.sh`, because executing a file that a
+    /// parallel test may still hold open for writing can fail with "Text file busy".
     #[cfg(unix)]
     fn write_script(dir: &Path, body: &str) {
-        use std::os::unix::fs::PermissionsExt;
-        let path = dir.join("check.sh");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::fs::write(dir.join("check.sh"), format!("{body}\n")).expect("write script");
     }
 
     #[cfg(unix)]
@@ -433,7 +431,7 @@ mod tests {
     fn a_check_command_runs_in_its_own_group() {
         let dir = tempfile::tempdir().expect("tempdir");
         write_script(dir.path(), "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"");
-        let r = run_checks(dir.path(), &plan(&["./check.sh"], 10));
+        let r = run_checks(dir.path(), &plan(&["sh check.sh"], 10));
         assert!(r.results[0].passed, "{:?}", r.results[0]);
         let nums: Vec<&str> = r.results[0].summary.split_whitespace().collect();
         assert_eq!(nums.len(), 2, "{}", r.results[0].summary);
@@ -445,9 +443,13 @@ mod tests {
     fn a_timed_out_check_kills_its_grandchild() {
         let dir = tempfile::tempdir().expect("tempdir");
         write_script(dir.path(), "sleep 60 &\necho $!\nwait");
-        let r = run_checks(dir.path(), &plan(&["./check.sh"], 1));
+        let r = run_checks(dir.path(), &plan(&["sh check.sh"], 1));
         assert!(!r.results[0].passed);
-        assert!(r.results[0].summary.contains("timed out"));
+        assert!(
+            r.results[0].summary.contains("timed out"),
+            "{:?}",
+            r.results[0]
+        );
         let pid: i32 = r.results[0]
             .tail
             .trim()
