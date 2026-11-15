@@ -56,7 +56,7 @@ A hung driver that is alive keeps the lease for good. `factory cancel <id> --for
 
 ### 2. A corrupt project lease
 
-`acquire_project_lease` returns a new `ProjectLeaseError::Corrupt { path, reason }` for an unreadable or invalid file and writes nothing. The message names the file and says that `factory cancel <id> --force` for any job removes it, or the file can be deleted. `force_release_project_lease` removes a corrupt file as well and returns true. `project_lease_status` keeps `Unreadable`.
+`acquire_project_lease` returns a new `ProjectLeaseError::Corrupt { path, reason }` for an unreadable or invalid file and writes nothing. The message names the file and says that `factory cancel <id> --force` for any job removes it, or the file can be deleted. `force_release_project_lease` removes a corrupt file as well and returns true. `project_lease_status` keeps `Unreadable`. The holder is not special: if the file turns corrupt while a driver runs, the heartbeat treats `Corrupt` like a lost lease (it sets the lost flag) and `renew_lease` fails the run with the `Corrupt` message (`EngineError::Msg`, `compat.rs:53-54`). Nothing rewrites the file.
 
 ### 3. Lost checks before an agent and before the merge
 
@@ -88,7 +88,7 @@ pub fn reap_leftovers(
 
 ### 5. Other readers
 
-The supervisor adopts children and the CLI shows status through `project_lease_status` and `lease_is_live`, so they follow section 1 without a code change. Two existing tests encode the old rule and change with it: `a_live_owner_lease_stays_live` (`factory-engine/tests/lock_lease.rs:128-139`) ends with `lease_is_live(&job, 2600.0)` being true, because its owner is the test process, which is `Alive`; and `a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends` (`factory-supervisor/tests/recovery.rs:429-456`) builds its owner from the sleeper's pid and its real start secs, so the sleeper reads as `Alive`. Other tests that build `driver-<own pid>-1` stay `Alive`.
+The supervisor adopts children and the CLI shows status through `project_lease_status` and `lease_is_live`, so they follow section 1 without a code change. Three existing tests encode the old rule and change with it. The third is `a_corrupt_lease_file_is_reported_and_replaced` (`factory-cli/tests/project_lease_cli.rs:131-142`): it becomes `a_corrupt_lease_file_is_refused_until_cancel_force` and expects `run 1` to fail with the `Corrupt` message and leave the file, then `cancel 1 --force` and `run 1` to merge. The other two are `a_live_owner_lease_stays_live` (`factory-engine/tests/lock_lease.rs:128-139`) ends with `lease_is_live(&job, 2600.0)` being true, because its owner is the test process, which is `Alive`; and `a_live_lease_owner_without_a_child_record_is_an_orphan_until_it_ends` (`factory-supervisor/tests/recovery.rs:429-456`) builds its owner from the sleeper's pid and its real start secs, so the sleeper reads as `Alive`. Other tests that build `driver-<own pid>-1` stay `Alive`.
 
 ## Error handling and edge cases
 
@@ -101,6 +101,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 | Owner name without a pid | `Unknown`, expiry decides |
 | Project lease file not valid JSON | `Corrupt`, run refused, nothing written |
 | Forced cancel with a corrupt file | File removed, `project lease released` |
+| File turns corrupt while a driver runs | Heartbeat sets lost, the next renewal fails the run with the `Corrupt` message, the file is left |
 | `lost()` set before an agent | `EngineError::Msg`, no agent starts |
 | `lost()` set before `merge_no_ff` | Same error, the branch is not merged |
 | SIGTERM, SIGINT or SIGHUP to the driver | Groups killed, exit `128 + signal` |
@@ -114,7 +115,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 
 ## Testing
 
-- `factory-engine/tests/project_lease.rs`: `an_expired_lease_of_a_live_owner_is_not_taken_over` (owner built from a running `sleep` and its start time), `a_lease_whose_pid_start_does_not_match_is_taken_over`, `a_zombie_owner_is_dead`, `an_owner_without_a_pid_still_expires`, `a_corrupt_project_lease_is_refused_and_untouched`, `a_forced_cancel_removes_a_corrupt_project_lease`, `project_lease_status_reports_a_live_expired_owner_as_held`. Update the existing `lease_owner_dead` assertions (`project_lease.rs:442-447`) to `owner_state`.
+- `factory-engine/tests/project_lease.rs`: `an_expired_lease_of_a_live_owner_is_not_taken_over` (owner built from a running `sleep` and its start time), `a_lease_whose_pid_start_does_not_match_is_taken_over`, `a_zombie_owner_is_dead`, `an_owner_without_a_pid_still_expires`, `a_corrupt_project_lease_is_refused_and_untouched`, `a_forced_cancel_removes_a_corrupt_project_lease`, `project_lease_status_reports_a_live_expired_owner_as_held`, and in `lease_heartbeat.rs` `a_corrupt_lease_during_a_run_stops_the_run`. Update the existing `lease_owner_dead` assertions (`project_lease.rs:442-447`) to `owner_state`.
 - `factory-engine/tests/lease.rs` or the existing lease tests: `lease_is_live_for_an_expired_lease_of_a_live_owner`.
 - `factory-engine/tests/build_checks.rs`: `a_lost_engine_starts_no_agent` (`Engine::with_lost` set, `build_stage` fails, the scripted runner has zero calls). `factory-engine/tests/lease_heartbeat.rs`, next to `another_owner_in_the_lease_sets_lost_and_stops_the_run` (line 142): `a_lost_lease_stops_before_the_merge_commit` (branch not merged).
 - `factory-procgroup` unit tests: `a_child_runs_in_its_own_group`, `killing_a_group_child_ends_its_grandchild` (a shell that starts `sleep`), `dropping_a_group_child_kills_it`, `the_registry_lists_a_spawned_child_and_drops_it_on_exit`, `a_fresh_take_reaps_a_dead_owners_group`, `reap_kills_a_matching_leftover`, `reap_leaves_a_start_time_mismatch_alone`, `reap_kills_nothing_when_the_start_time_is_unknown`.
@@ -162,6 +163,7 @@ The supervisor adopts children and the CLI shows status through `project_lease_s
 
 ## Decisions
 
+- What does a running driver do when its own project lease file turns corrupt? Options: stop the run with a clear error, rewrite its own lease. Chosen: stop the run with a clear error. Decided by: user
 - What does this spec cover? Options: all four problems with #113 separate, lease only, all four plus #113. Chosen: all four problems, #113 separate. Decided by: user
 - How does a second driver tell that an owner is alive? Options: pid, no zombie and matching start time; pid only; alive plus a hard cap. Chosen: pid runs, no zombie, start matches the name, unknown falls back to expiry. Decided by: user
 - What happens to a corrupt project lease? Options: refuse and let cancel --force clear it; refuse and delete by hand; keep the takeover with a warning. Chosen: refuse and let cancel --force clear it. Decided by: user
