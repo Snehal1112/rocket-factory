@@ -21,7 +21,7 @@
 
 1. A check command that times out: its whole group dies, not only the shell. Pinned by `a_timed_out_check_kills_its_grandchild`.
 2. An agent run stopped by the driver (stall or budget): the agent's children end too. Pinned by `a_stopped_agent_group_is_killed`.
-3. A takeover of an owner that is not dead, or of owner `unknown`: nothing is reaped. Pinned by `a_takeover_of_an_unknown_owner_reaps_nothing`.
+3. An entry is killed only on a verified pid, group-leader and start-time match. A taken-over owner without a pid (state `Unknown`) with an unverified entry kills nothing and says `left alone`. Pinned by `a_takeover_never_kills_an_unverified_entry`.
 4. A leftover entry whose pid now belongs to another process: left alone, reported. Pinned by `a_takeover_leaves_a_mismatched_entry_alone`.
    A forced cancel before the next run (fresh take): leftovers of dead owners are still reaped. Pinned by `a_fresh_take_reaps_a_dead_owners_group`.
 5. A project with no `children-*.json` file: the takeover works and says nothing. Pinned by `a_takeover_without_a_registry_still_takes_over`.
@@ -73,7 +73,7 @@
   - `tests/reap_on_takeover.rs` (`mod common;`, Linux only for the dead pid, `#[cfg(target_os = "linux")]`), each test seeds the state folder before `run_job`: a lease file held by `driver-4294967000-1` (job `009`, far-future `expires`) and a `children-driver-4294967000-1.json` file with one entry for a real group leader spawned through `factory_procgroup::spawn(sleep 60)` (add `factory-procgroup` as a dev-dependency):
     - `a_takeover_of_a_dead_owner_reaps_its_registered_group`: entry `{pid, start_ms: process_start_ms(pid), owner: "driver-4294967000-1"}`; after `run_job(&fx.driver, &job.id)` finishes, the sleeper is gone (poll up to 2 s) and the job's `progress.md` contains `killed`.
     - `a_takeover_leaves_a_mismatched_entry_alone`: `start_ms` is `Some(1)`; the sleeper still runs and `progress.md` contains `left alone`.
-    - `a_takeover_of_an_unknown_owner_reaps_nothing`: the corrupt-free lease owner is `"driver-4294967000"` (no secs, `Unknown`) with `expires` in the past; the sleeper still runs and `progress.md` has neither line.
+    - `a_takeover_never_kills_an_unverified_entry`: the lease owner is `"driver-4294967000"` (no secs, state `Unknown`) with `expires` in the past, and this test seeds its registry under that owner (`children-driver-4294967000.json`, not the dead-owner file of the other tests) with `start_ms: Some(1)`; the sleeper still runs, `progress.md` contains `left alone` and does not contain `killed`.
     - `a_takeover_without_a_registry_still_takes_over`: no `children-*.json` file; `run_job` succeeds.
     - `a_fresh_take_reaps_a_dead_owners_group`: no lease file at all (as after a forced cancel), the registry entry is owned by `driver-4294967000-1` with a matching start; after `run_job` the sleeper is gone and `progress.md` contains `killed`.
   - `crates/factory-cli/tests/guard_children.rs`: `guard_children_registers_children` (build a `CliCtx` as another CLI test does, call `guard_children(&ctx)`, spawn `sleep 30` through `factory_procgroup::spawn`, the file `ctx.layout.children_file(&ctx.owner)` lists its pid, kill it) and `main_guards_children_for_every_project_command` (read `src/main.rs` with `include_str!`, assert it contains `guard_children(` exactly once and that the call comes after the `let ctx = match built` block, so both the `from_env` and the `for_project` branch are covered).
