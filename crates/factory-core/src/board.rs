@@ -464,7 +464,13 @@ impl Job {
 }
 
 /// The stages a draft card moves through before it becomes a job.
-pub const DRAFT_STAGES: [&str; 3] = ["interviewing", "writing-spec", "writing-plans"];
+pub const DRAFT_STAGES: [&str; 5] = [
+    "interviewing",
+    "writing-spec",
+    "writing-plans",
+    "drafting-from-issue",
+    "draft-failed",
+];
 
 /// A feature that is still being specified. It has no job yet. New in the draft cards series.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -477,6 +483,12 @@ pub struct Draft {
     pub spec_file: Option<String>,
     pub created: String,
     pub updated_at: f64,
+    /// The issue an intake pass is drafting. Only intake cards have it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<u32>,
+    /// The reason code of a failed draft, such as `draft-refused`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

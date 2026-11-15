@@ -78,6 +78,8 @@ fn drafts_round_trip_with_every_field() {
             spec_file: Some("docs/superpowers/specs/2026-10-18-cards-design.md".to_string()),
             created: "2026-10-18".to_string(),
             updated_at: 12.5,
+            issue: Some(7),
+            note: Some("draft-refused".to_string()),
         }],
         ..Default::default()
     };
@@ -86,12 +88,21 @@ fn drafts_round_trip_with_every_field() {
     assert_eq!(back, board);
     let mut bare = board.clone();
     bare.drafts[0].spec_file = None;
-    assert!(!serde_json::to_string(&bare)
-        .expect("json")
-        .contains("spec_file"));
+    bare.drafts[0].issue = None;
+    bare.drafts[0].note = None;
+    let text = serde_json::to_string(&bare).expect("json");
+    for key in ["spec_file", "\"issue\"", "\"note\""] {
+        assert!(!text.contains(key), "{key} in {text}");
+    }
     assert_eq!(
         factory_core::DRAFT_STAGES,
-        ["interviewing", "writing-spec", "writing-plans"]
+        [
+            "interviewing",
+            "writing-spec",
+            "writing-plans",
+            "drafting-from-issue",
+            "draft-failed"
+        ]
     );
 }
 

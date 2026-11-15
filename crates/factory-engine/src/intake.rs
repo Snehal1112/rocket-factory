@@ -249,6 +249,16 @@ pub fn run_intake(
             std::slice::from_ref(&cfg.intake_label),
         )
         .map_err(|e| tracker_err("cannot claim the issue", e))?;
+    let now = crate::clock::now_secs();
+    if let Err(e) = crate::drafts::start_intake_draft(
+        driver,
+        number,
+        &issue_feature(&issue),
+        &crate::clock::today(),
+        now,
+    ) {
+        tracing::warn!(event = "intake.card", issue = number, msg = %e);
+    }
     let draft = driver
         .layout()
         .intake_dir()
@@ -256,7 +266,7 @@ pub fn run_intake(
         .join("draft");
     let jobs = match draft_jobs(driver, &issue) {
         Ok(jobs) => jobs,
-        Err(f) => return settle_failure(tracker, number, &f, &draft),
+        Err(f) => return settle_failure(driver, tracker, number, &f, &draft),
     };
     let ids = jobs.join(", ");
     tracker
@@ -292,7 +302,7 @@ pub fn run_intake(
     };
     let mut f = failure("build-failed", number, cause);
     f.job = Some(first_unmerged(driver, &jobs));
-    settle_failure(tracker, number, &f, &draft)
+    settle_failure(driver, tracker, number, &f, &draft)
 }
 
 /// The fixed line of the merged comment about the follow-ups: issue numbers and fixed words only.
@@ -333,11 +343,20 @@ fn first_unmerged(driver: &Driver, jobs: &[String]) -> String {
 /// Swaps `factory: running` for `factory: needs-human` and posts the fixed comment: the reason
 /// code, the job when one exists and the draft folder. Agent text never goes into it.
 fn settle_failure(
+    driver: &Driver,
     tracker: &dyn Tracker,
     issue: u32,
     f: &Failure,
     draft: &Path,
 ) -> Result<IntakeOutcome, EngineError> {
+    // With a job, its card shows the failure. Without one, the draft card does.
+    if f.job.is_none() {
+        let marked =
+            crate::drafts::fail_intake_draft(driver, issue, f.code, crate::clock::now_secs());
+        if let Err(e) = marked {
+            tracing::warn!(event = "intake.card", issue, msg = %e);
+        }
+    }
     tracker
         .edit_labels(
             issue,
@@ -451,16 +470,7 @@ fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure
     repo.export_tree(repo.base_branch(), &tree)
         .map_err(|e| invalid(&e))?;
     let slug = format!("issue-{n}");
-    // No `#` in the title, so it cannot carry an issue reference into a commit message.
-    let feature = format!(
-        "{}, #{n}",
-        issue
-            .title
-            .replace('#', "")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
+    let feature = issue_feature(issue);
     let mut findings: Option<String> = None;
     let mut attempt = 1;
     let first = loop {
@@ -528,6 +538,21 @@ fn draft_jobs(driver: &Driver, issue: &IssueInfo) -> Result<Vec<String>, Failure
         }
     };
     mark_series(driver, &first, n).map_err(|e| invalid(&e))
+}
+
+/// The feature text of an issue: its title and the issue number. The title has no `#`, so it
+/// cannot carry an issue reference into a commit message.
+fn issue_feature(issue: &IssueInfo) -> String {
+    format!(
+        "{}, #{}",
+        issue
+            .title
+            .replace('#', "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        issue.number
+    )
 }
 
 /// Marks every job of the series of `first` with the issue and returns their ids. The issue list is

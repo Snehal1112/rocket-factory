@@ -48,9 +48,61 @@ pub fn start_draft(
             spec_file: Some(spec_file),
             created: date.to_string(),
             updated_at: now,
+            issue: None,
+            note: None,
         };
         board.drafts.push(draft.clone());
         Ok(draft)
+    })?;
+    Ok(draft)
+}
+
+/// Adds the card of an intake pass at stage `drafting-from-issue`. A card left by an earlier pass
+/// of the same issue is replaced, so a relabelled issue gets a fresh one.
+pub(crate) fn start_intake_draft(
+    driver: &Driver,
+    issue: u32,
+    feature: &str,
+    date: &str,
+    now: f64,
+) -> Result<Draft, EngineError> {
+    let slug = format!("issue-{issue}");
+    let draft = driver.store().update(|board| {
+        board.drafts.retain(|d| d.slug != slug);
+        let draft = Draft {
+            slug: slug.clone(),
+            feature: feature.to_string(),
+            stage: "drafting-from-issue".to_string(),
+            spec_file: None,
+            created: date.to_string(),
+            updated_at: now,
+            issue: Some(issue),
+            note: None,
+        };
+        board.drafts.push(draft.clone());
+        Ok(draft)
+    })?;
+    Ok(draft)
+}
+
+/// Marks the card of an intake pass as failed, with the reason code of the issue comment.
+pub(crate) fn fail_intake_draft(
+    driver: &Driver,
+    issue: u32,
+    code: &str,
+    now: f64,
+) -> Result<Draft, EngineError> {
+    let slug = format!("issue-{issue}");
+    let draft = driver.store().update(|board| {
+        let draft = board
+            .drafts
+            .iter_mut()
+            .find(|d| d.slug == slug)
+            .ok_or_else(|| StoreError::Other(format!("no draft named {slug}")))?;
+        draft.stage = "draft-failed".to_string();
+        draft.note = Some(code.to_string());
+        draft.updated_at = now;
+        Ok(draft.clone())
     })?;
     Ok(draft)
 }

@@ -919,3 +919,83 @@ fn a_spec_review_refusal_redrafts_once_then_fails() {
         assert!(!body.contains("FINDING-ONE"), "{body}");
     }
 }
+
+fn drafts(it: &Intake) -> Vec<factory_core::Draft> {
+    it.driver.store().load().expect("board").drafts
+}
+
+fn refuse(draft: &Path) {
+    std::fs::write(draft.join("refused.md"), "too big").expect("refused");
+}
+
+#[test]
+fn the_claim_adds_a_draft_card_while_the_drafter_runs() {
+    let seen = Arc::new(Mutex::new(String::new()));
+    let capture = seen.clone();
+    let it = setup(move |draft| {
+        let board = draft.parent().and_then(Path::parent).and_then(Path::parent);
+        let file = board.expect("state dir").join("board.json");
+        *capture.lock().expect("lock") = std::fs::read_to_string(file).expect("board file");
+        one_plan(draft);
+    });
+    pass(&it);
+    let text = seen.lock().expect("lock").clone();
+    let board: factory_core::Board = serde_json::from_str(&text).expect("board json");
+    assert!(board.jobs.is_empty(), "{text}");
+    assert_eq!(board.drafts.len(), 1, "{text}");
+    let card = &board.drafts[0];
+    assert_eq!(card.slug, "issue-7");
+    assert_eq!(card.stage, "drafting-from-issue");
+    assert_eq!(card.issue, Some(7));
+    assert_eq!(card.feature, "Fix thing 7, #7");
+}
+
+#[test]
+fn a_merged_issue_leaves_no_draft_card() {
+    let it = setup(one_plan);
+    pass(&it);
+    let board = it.driver.store().load().expect("board");
+    assert!(board.drafts.is_empty(), "{:?}", board.drafts);
+    assert_eq!(board.jobs.len(), 1);
+    assert_eq!(board.jobs[0].intake_issue, Some(7));
+}
+
+#[test]
+fn a_refused_draft_leaves_a_failed_card_with_the_reason_code() {
+    let it = setup(refuse);
+    pass(&it);
+    let cards = drafts(&it);
+    assert_eq!(cards.len(), 1, "{cards:?}");
+    assert_eq!(cards[0].slug, "issue-7");
+    assert_eq!(cards[0].stage, "draft-failed");
+    assert_eq!(cards[0].note.as_deref(), Some("draft-refused"));
+    assert_eq!(cards[0].issue, Some(7));
+}
+
+#[test]
+fn a_second_pass_replaces_the_failed_card() {
+    let it = setup(refuse);
+    pass(&it);
+    let first = drafts(&it)[0].updated_at;
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    pass(&it);
+    let cards = drafts(&it);
+    assert_eq!(cards.len(), 1, "{cards:?}");
+    assert_eq!(cards[0].stage, "draft-failed");
+    assert!(
+        cards[0].updated_at > first,
+        "{} vs {first}",
+        cards[0].updated_at
+    );
+}
+
+#[test]
+fn a_build_failure_leaves_no_draft_card() {
+    let cfg = Config {
+        fix_rounds: 0,
+        ..config()
+    };
+    let it = setup_changes_for("002", cfg);
+    pass(&it);
+    assert!(drafts(&it).is_empty(), "{:?}", drafts(&it));
+}
