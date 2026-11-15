@@ -271,6 +271,8 @@
     interviewing: "Interviewing",
     "writing-spec": "Writing the spec",
     "writing-plans": "Writing plans",
+    "drafting-from-issue": "Drafting from issue",
+    "draft-failed": "Draft failed",
   };
 
   // One card for an interview draft. It shows copyable commands only: the page never acts on a draft.
@@ -281,14 +283,18 @@
       : escapeHtml(draft.stage);
     const stale = draft.stale === true ? `<span class="chip chip-warn">stale</span>` : "";
     const specFile = draft.spec_file ? copyChip(draft.spec_file) : "";
+    const fromIssue = Number.isInteger(draft.issue) && draft.issue > 0;
+    const issue = fromIssue ? `<span class="chip chip-issue">issue #${draft.issue}</span>` : "";
+    const note = draft.note ? `<span class="draft-note">${escapeHtml(draft.note)}</span>` : "";
+    const resume = fromIssue ? "" : copyChip(`factory spec resume ${draft.slug}`);
     return (
       `<article class="card card-spec card-draft" data-draft="${slug}">` +
-      `<header class="card-head"><span class="job-id">${slug}</span><span class="card-stage">Draft</span>${stale}` +
+      `<header class="card-head"><span class="job-id">${slug}</span><span class="card-stage">Draft</span>${issue}${stale}` +
       `<time class="job-date" title="Last change">${escapeHtml(formatStamp(draft.updated_at) || draft.created)}</time></header>` +
       `<p class="feature">${escapeHtml(draft.feature)}</p>` +
-      `<div class="meta"><span class="draft-stage">${stage}</span>` +
+      `<div class="meta"><span class="draft-stage">${stage}</span>${note}` +
       `<span class="age">${formatAge(draft.seconds_since_update)} since the last change</span></div>` +
-      `<p class="hint">${copyChip(`factory spec resume ${draft.slug}`)}${copyChip(`factory cancel ${draft.slug}`)}${specFile}</p>` +
+      `<p class="hint">${resume}${copyChip(`factory cancel ${draft.slug}`)}${specFile}</p>` +
       `</article>`
     );
   }
@@ -326,6 +332,12 @@
   function providerChip(provider) {
     if (typeof provider !== "string" || provider === "") return "";
     return `<span class="chip chip-provider" title="Agent CLI">${escapeHtml(provider)}</span>`;
+  }
+
+  // Names the issue an intake pass made the job from. A missing or bad value shows nothing.
+  function issueChip(issue) {
+    if (!Number.isInteger(issue) || issue <= 0) return "";
+    return `<span class="chip chip-issue" title="Made from this issue">issue #${issue}</span>`;
   }
 
   // Says which spec a plan belongs to. Jobs made before series ids, and one-plan series, have none.
@@ -749,6 +761,7 @@
       `<span class="card-stage">${escapeHtml(stageTitle)}</span>` +
       seriesChip(job.series) +
       providerChip(job.provider) +
+      issueChip(job.intake_issue) +
       specChip(job.series, specs) +
       `<time class="job-date" title="Last stage change">${escapeHtml(formatStamp(job.stage_since) || job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
@@ -954,6 +967,7 @@
     parkButton,
     seriesChip,
     providerChip,
+    issueChip,
     specChip,
     durationsLine,
     tokensBar,

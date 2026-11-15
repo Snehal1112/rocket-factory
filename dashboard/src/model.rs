@@ -190,6 +190,13 @@ pub struct Job {
         skip_serializing_if = "Option::is_none"
     )]
     pub estimate: Option<Estimate>,
+    /// The issue an intake pass made this job from. A bad value is dropped.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub intake_issue: Option<u32>,
     /// A warning the driver wrote when the job was made from a draft. A bad value is dropped.
     #[serde(
         default,
@@ -243,6 +250,20 @@ pub struct Draft {
     pub spec_file: Option<String>,
     pub created: String,
     pub updated_at: f64,
+    /// The issue an intake pass is drafting. A bad value is dropped.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue: Option<u32>,
+    /// The reason code of a failed draft. A bad value is dropped.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub note: Option<String>,
 }
 
 /// Bad draft entries are dropped one by one, and a non-array value gives an empty list.
@@ -343,5 +364,18 @@ mod tests {
     fn a_bad_provider_value_is_dropped() {
         let job = job_with(serde_json::json!({ "provider": 5 }));
         assert_eq!(job.provider, None);
+    }
+
+    #[test]
+    fn a_job_carries_intake_issue_and_drops_a_bad_value() {
+        assert_eq!(
+            job_with(serde_json::json!({ "intake_issue": 7 })).intake_issue,
+            Some(7)
+        );
+        assert_eq!(
+            job_with(serde_json::json!({ "intake_issue": "x" })).intake_issue,
+            None
+        );
+        assert_eq!(job_with(serde_json::json!({})).intake_issue, None);
     }
 }

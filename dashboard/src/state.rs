@@ -384,6 +384,7 @@ mod tests {
             tokens: None,
             budget_weighted: None,
             cancelled: None,
+            intake_issue: None,
             park_kind: None,
             park_at: None,
             park_summary: None,
@@ -1063,6 +1064,33 @@ mod tests {
         let behind = build_draft_cards(&board.drafts, 50.0, DEFAULT_DRAFT_STALE_SECS);
         assert_eq!(behind[0].seconds_since_update, 0.0);
         assert!(!behind[0].stale);
+        Ok(())
+    }
+
+    #[test]
+    fn a_draft_with_issue_and_note_carries_them_into_the_state_json() -> TestResult {
+        let mut draft = draft_json("issue-7", 4.0);
+        draft["issue"] = serde_json::json!(7);
+        draft["note"] = serde_json::json!("draft-refused");
+        let board: Board = serde_json::from_value(serde_json::json!({ "drafts": [draft] }))?;
+        let cards = build_draft_cards(&board.drafts, 10.0, DEFAULT_DRAFT_STALE_SECS);
+        let json = serde_json::to_value(&cards)?;
+        assert_eq!(json[0]["issue"], 7);
+        assert_eq!(json[0]["note"], "draft-refused");
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrong_typed_issue_or_note_is_dropped_not_the_card() -> TestResult {
+        let mut draft = draft_json("issue-7", 4.0);
+        draft["issue"] = serde_json::json!("x");
+        draft["note"] = serde_json::json!(5);
+        let board: Board = serde_json::from_value(serde_json::json!({ "drafts": [draft] }))?;
+        assert_eq!(board.drafts.len(), 1);
+        assert_eq!(
+            (board.drafts[0].issue, board.drafts[0].note.clone()),
+            (None, None)
+        );
         Ok(())
     }
 

@@ -1109,3 +1109,35 @@ test("the summary notes drafts and stale drafts", () => {
   assert.match(html, /1 stale/);
   assert.doesNotMatch(board.renderSummary(makeState([])), /draft/);
 });
+
+test("an intake draft card shows the issue and no resume chip", () => {
+  const html = board.renderDraftCard(
+    makeDraft({ slug: "issue-7", stage: "drafting-from-issue", issue: 7, feature: "Fix it, #7", spec_file: undefined }),
+  );
+  assert.match(html, /Drafting from issue/);
+  assert.match(html, /issue #7/);
+  assert.match(html, /data-copy="factory cancel issue-7"/);
+  assert.doesNotMatch(html, /factory spec resume/);
+});
+
+test("a failed intake draft shows its stage and reason code", () => {
+  const html = board.renderDraftCard(
+    makeDraft({ slug: "issue-7", stage: "draft-failed", issue: 7, note: "draft-refused" }),
+  );
+  assert.match(html, /Draft failed/);
+  assert.match(html, /draft-refused/);
+});
+
+test("a draft note and an unknown stage are escaped", () => {
+  const html = board.renderDraftCard(makeDraft({ note: "<img src=x>", stage: "<b>" }));
+  assert.match(html, /&lt;img/);
+  assert.match(html, /&lt;b&gt;/);
+  assert.doesNotMatch(html, /<img/);
+  assert.doesNotMatch(html, /<b>/);
+});
+
+test("a job card shows an issue chip only when intake_issue is set", () => {
+  assert.match(board.renderCard(makeJob({ intake_issue: 7 })), /chip-issue[^>]*>issue #7</);
+  assert.doesNotMatch(board.renderCard(makeJob({})), /chip-issue/);
+  assert.equal(board.issueChip("x"), "");
+});
