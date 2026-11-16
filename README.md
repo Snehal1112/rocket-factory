@@ -28,15 +28,15 @@ The processes behind a job:
 
 ![Who talks to whom](docs/assets/images/factory-processes.svg)
 
-How the driver starts one agent (`claude -p`), the five ways a run ends and the five roles it starts. Only the builder and the KB refresher can start subagents, and the builder's limit of 2 helpers is a line in its prompt, not driver code:
+How the driver starts one agent (`claude -p`), the five ways a run ends and the six roles it starts. Only the builder and the KB refresher can start subagents, and the builder's limit of 2 helpers is a line in its prompt, not driver code:
 
 ![How an agent is started](docs/assets/images/factory-agents.svg)
 
-The agent runs of one job in order: a fresh builder per task, one batch commit, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. With 3 tasks and the defaults the worst case is 16 agent runs, 18 with a sync message, and the job budget stops a run before that:
+The agent runs of one job in order: a fresh builder per task, one batch commit, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. With 3 tasks and the defaults the worst case is 16 agent runs, 19 with one sync message and 22 with two, plus 1 for the spec review at `factory new`. The job budget stops a run before that:
 
 ![Agent turns in one job](docs/assets/images/factory-turns.svg)
 
-The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a private Claude artifact, so only its owner can open it). The page source is `docs/assets/factory-workflow.html` and the images are in `docs/assets/images/`.
+The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a Claude artifact shared with its owner's organization). The page source is `docs/assets/factory-workflow.html` and the images are in `docs/assets/images/`.
 
 ## Features ported from Rocket
 
@@ -126,6 +126,7 @@ A draft card tracks a spec that is still being written, before any job exists. I
 - `factory spec resume <slug>` prints the `draft`, `stage` and `file <spec path> (exists|missing)` lines.
 - `factory cancel <slug>` removes the card and keeps the spec file. A numeric argument still means a job.
 - `factory status` lists the cards in a `drafts:` block.
+- `factory intake` also uses a card. It sits at `drafting-from-issue` with the issue number while the spec is drafted from the GitHub issue, and moves to `draft-failed` with a note when drafting fails. The dashboard shows it in the Spec column like any other draft, with an issue chip.
 - `factory new` adopts the draft with the same slug and removes it. When no list item of the spec's `## Decisions` section says `Decided by: user`, or the spec has no `## Decisions` section at all, it prints `warning: no decision in this spec was answered by the user` after `created job ...`. The job still runs. A single plan file with no spec text gets no warning.
 - The dashboard shows each draft in the Spec column. A card not updated for 24 hours gets a stale marker (dashboard `--draft-stale-hours`, factoryd `draft_stale_hours`).
 - An older `factory` binary that rewrites the board drops `drafts`.
