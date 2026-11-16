@@ -71,11 +71,12 @@ for arg in "$@"; do
     esac
 done
 
-# The working tree must be clean. A signed release tag should capture exactly
+# Tracked files must be clean. A signed release tag should capture exactly
 # what is committed. The version bump below is the one commit made on top.
-if [[ -n "$(git status --porcelain)" ]]; then
-    echo -e "${RED}Working tree has uncommitted changes. Commit or stash before releasing.${NC}"
-    git status --short
+# Untracked files are ignored, because the bump commit only adds named paths.
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+    echo -e "${RED}Tracked files have uncommitted changes. Commit or stash before releasing.${NC}"
+    git status --short --untracked-files=no
     exit 1
 fi
 
