@@ -43,7 +43,7 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 ## Ticket hygiene
 
-- `factory tickets <id> [--dry-run]` and the setting `tickets_on_merge` (default false, a valid `Config` key) are documented in `README.md` (Ticket hygiene). Logic lives in `factory-engine/src/tickets.rs`, the `Tracker` port and the `gh` implementation in `tracker.rs`; `factory-core/src/commitmsg.rs` parses issue refs.
+- `factory tickets <id> [--dry-run]` and the setting `tickets_on_merge` (default true, a valid `Config` key) are documented in `README.md` (Ticket hygiene). Logic lives in `factory-engine/src/tickets.rs`, the `Tracker` port and the `gh` implementation in `tracker.rs`; `factory-core/src/commitmsg.rs` parses issue refs.
 - The step runs after a merge in `merge.rs` and must never change the merge result: report failures to the ledger, stderr and events. Rocket's real `config.toml` is a test fixture in `factory-core/tests/fixtures/`; refresh it when Rocket's changes.
 - Only `git` may not be shelled out to. `gh` is allowed, behind the port.
 
