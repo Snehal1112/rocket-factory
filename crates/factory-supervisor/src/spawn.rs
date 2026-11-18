@@ -99,6 +99,10 @@ fn args_of(req: &Request) -> Vec<String> {
                 args.push(format!("--waive={reason}"));
             }
         }
+        Action::Retry => {
+            args.push("retry".to_string());
+            args.push(req.job.clone());
+        }
         Action::Intake => {
             args.push("intake".to_string());
             args.push("--once".to_string());
@@ -241,6 +245,14 @@ pub(crate) mod tests {
 
     fn req(action: Action, series: bool) -> Request {
         Request::new("p", action, "7", series, 1).expect("request")
+    }
+
+    #[test]
+    fn retry_child_args() {
+        assert_eq!(
+            args_of(&req(Action::Retry, false)),
+            ["--project", "p", "retry", "7"]
+        );
     }
 
     #[test]

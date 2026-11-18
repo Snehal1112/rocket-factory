@@ -1153,7 +1153,7 @@ factoryd enqueue --project my-app --job 028 --approve
 
 ### 7.6 The daily budget
 
-Set `daily_budget_weighted` in `~/.factory/config.toml`. When the day's tokens are used up, new run requests wait. Approvals still start. Running jobs are never stopped. `factoryd status` shows the figure. The `/factory` fallback that runs `factory` directly does not check this budget.
+Set `daily_budget_weighted` in `~/.factory/config.toml`. When the day's tokens are used up, new run and retry requests wait, even a retry that only merges. Approvals still start. Running jobs are never stopped. `factoryd status` shows the figure. The `/factory` fallback that runs `factory` directly does not check this budget.
 
 ### 7.7 The local API
 

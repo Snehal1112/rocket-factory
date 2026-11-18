@@ -1,4 +1,4 @@
-//! A request to run or approve a job. Request files are same-user writable, so nothing here is trusted.
+//! A request to run, approve or retry a job. Request files are same-user writable, so nothing here is trusted.
 
 use factory_core::project::validate_name;
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,8 @@ pub enum RequestError {
 pub enum Action {
     Run,
     Approve,
+    /// Continue a parked job at the stage that parked it.
+    Retry,
     /// One intake pass for a project. It has no job, so the job field holds `INTAKE_JOB`.
     Intake,
 }
@@ -283,6 +285,35 @@ mod tests {
             Request::new("p", Action::Intake, "1", false, 1),
             Err(RequestError::Job("1".to_string()))
         );
+    }
+
+    #[test]
+    fn retry_request_round_trips() {
+        let r = Request::new("p", Action::Retry, "1", false, 1).expect("retry");
+        let json = serde_json::to_string(&r).expect("json");
+        assert!(json.contains("\"action\":\"retry\""), "{json}");
+        let back: Request = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn retry_refuses_series_and_approve_flags() {
+        assert_eq!(
+            Request::new("p", Action::Retry, "1", true, 1),
+            Err(RequestError::SeriesNotAllowed)
+        );
+        let ok = Request::new("p", Action::Retry, "1", false, 1).expect("retry");
+        assert_eq!(
+            ok.clone().without_review(),
+            Err(RequestError::WithoutReviewNotAllowed)
+        );
+        assert_eq!(ok.waive("x"), Err(RequestError::WaiveNotAllowed));
+    }
+
+    #[test]
+    fn an_unknown_action_word_is_rejected() {
+        let bad = GOOD_JSON.replace("\"run\"", "\"explode\"");
+        assert!(serde_json::from_str::<Request>(&bad).is_err());
     }
 
     #[test]

@@ -1,13 +1,13 @@
-//! The write endpoints: create a job, approve it, send a rework note, cancel it.
+//! The write endpoints: create a job, approve it, retry it, send a rework note, cancel it.
 //!
 //! A request body is untrusted. Everything is checked before a process starts or a request is queued.
-//! The stage rules stay in factory-cli, which runs as a child. Only the approve pre-check reads the board.
+//! The stage rules stay in factory-cli, which runs as a child. Only the approve and retry pre-checks read the board.
 
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use factory_core::project::{self, ProjectFile};
-use factory_core::{normalize_id, slugify, Board, Config, Home, Layout, Stage};
+use factory_core::{normalize_id, slugify, Board, Config, Home, Layout, ResumeAt, Stage};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -39,7 +39,13 @@ struct CreateBody {
 #[serde(deny_unknown_fields)]
 struct ReworkBody {
     note: String,
+    force: Option<bool>,
 }
+
+/// A retry takes no fields. The empty struct still refuses unknown ones.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetryBody {}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -440,6 +446,82 @@ fn approve_inner(
     })
 }
 
+/// `POST /projects/{p}/jobs/{id}/retry`.
+pub fn retry(home: &Home, deps: &ApiDeps, name: &str, id: &str, body: &[u8]) -> ApiResponse {
+    match retry_inner(home, deps, name, id, body) {
+        Ok(r) | Err(r) => r,
+    }
+}
+
+fn retry_inner(
+    home: &Home,
+    deps: &ApiDeps,
+    name: &str,
+    id: &str,
+    body: &[u8],
+) -> Result<ApiResponse, ApiResponse> {
+    let layout = enabled(home, name)?;
+    let id = job_id(id)?;
+    // No body at all means the defaults.
+    if !body.is_empty() {
+        parse::<RetryBody>(body)?;
+    }
+    let board = Board::load(&layout.board_file()).map_err(|e| {
+        error_response(
+            500,
+            "failed",
+            &format!("the board of this project cannot be read: {e}"),
+        )
+    })?;
+    let job = board.jobs.iter().find(|j| j.id == id).ok_or_else(|| {
+        error_response(404, "not_found", &format!("no job {id} in project {name}"))
+    })?;
+    let conflict = |why: &str| error_response(409, "conflict", why);
+    if job.cancelled {
+        return Err(conflict(&format!("job {id} was cancelled")));
+    }
+    if job.stage != Stage::NeedsHuman {
+        return Err(conflict(&format!(
+            "job {id} is in stage {}, retry needs needs-human",
+            job.stage
+        )));
+    }
+    if job.batch_snapshot.is_some() {
+        return Err(conflict(&format!(
+            "job {id} has a pending batch commit, use rework to finish it"
+        )));
+    }
+    let Some(resume) = job.park_resume else {
+        return Err(conflict(&format!(
+            "job {id} has no resume stage, see its park for the next command"
+        )));
+    };
+    // The child would refuse this, and nobody reads a child's refusal, so answer here. An approval
+    // given before the park carries over, as in the engine.
+    if matches!(resume, ResumeAt::Merge | ResumeAt::Sync)
+        && job.stage_before_park() != Some(Stage::Approve)
+    {
+        if let Some(why) = job.approve_refusal(false, false) {
+            return Err(conflict(&why));
+        }
+    }
+    // The queue entry stays until the child finishes, so this also covers a running request.
+    let twice = queue::list(home).iter().any(|item| {
+        matches!(item, queue::QueueItem::Ok(r)
+            if r.project == name && r.job == id && matches!(r.action, Action::Approve | Action::Retry))
+    });
+    if twice {
+        return Err(conflict(&format!(
+            "job {id} already has an approve or retry queued"
+        )));
+    }
+    let request_id = enqueue(home, deps, name, Action::Retry, &id, false, false, None)?;
+    Ok(ApiResponse {
+        status: 202,
+        body: json!({"requestId": request_id}),
+    })
+}
+
 /// `POST /projects/{p}/jobs/{id}/rework`.
 pub fn rework(home: &Home, deps: &ApiDeps, name: &str, id: &str, body: &[u8]) -> ApiResponse {
     match rework_inner(home, deps, name, id, body) {
@@ -459,7 +541,11 @@ fn rework_inner(
     let b: ReworkBody = parse(body)?;
     one_line(&b.note, "rework note")?;
     // After `--` the note cannot pass for an option, even when it starts with a dash.
-    let args = vec!["rework".to_string(), "--".to_string(), id, b.note];
+    let mut args = vec!["rework".to_string()];
+    if b.force.unwrap_or(false) {
+        args.push("--force".to_string());
+    }
+    args.extend(["--".to_string(), id, b.note]);
     let out = finished(deps.cli.run(name, &args), true)?;
     Ok(ApiResponse::ok(json!({"output": out.stdout})))
 }
@@ -1180,6 +1266,222 @@ mod tests {
         );
         // Only the create call has its own time limit.
         assert_eq!(f.cli.timeouts(), vec![None]);
+    }
+
+    #[test]
+    fn forced_rework_passes_force_before_the_separator() {
+        let f = fx();
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/rework",
+            br#"{"note":"n","force":true}"#,
+        );
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(
+            f.cli.calls()[0].1,
+            ["rework", "--force", "--", "001", "n"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn unforced_rework_args_are_unchanged() {
+        let f = fx();
+        let r = post(&f, "/projects/good/jobs/1/rework", br#"{"note":"n"}"#);
+        assert_eq!(r.status, 200);
+        assert_eq!(
+            f.cli.calls()[0].1,
+            ["rework", "--", "001", "n"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn rework_with_force_false_is_unforced() {
+        let f = fx();
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/rework",
+            br#"{"note":"n","force":false}"#,
+        );
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(
+            f.cli.calls()[0].1,
+            ["rework", "--", "001", "n"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn forced_rework_keeps_the_note_after_the_separator() {
+        let f = fx();
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/rework",
+            br#"{"note":"-x","force":true}"#,
+        );
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(
+            f.cli.calls()[0].1,
+            ["rework", "--force", "--", "001", "-x"].map(String::from)
+        );
+    }
+
+    #[test]
+    fn a_non_boolean_force_is_400() {
+        let f = fx();
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/rework",
+            br#"{"note":"n","force":"yes"}"#,
+        );
+        assert_eq!(code(&r), (400, "bad_request".to_string()));
+        assert!(f.cli.calls().is_empty());
+    }
+
+    /// A parked job on the board. `extra` is added after the stage, `stage` replaces `build`.
+    fn parked(f: &Fx, stage: &str, extra: &str) {
+        let job = job_json("001", "001-first").replace(
+            r#""stage":"build""#,
+            &format!(r#""stage":"{stage}",{extra}"#),
+        );
+        write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
+    }
+
+    const RESUME_MERGE: &str = r#""park_resume":"merge","park_kind":"other","stage_history":[{"stage":"approve","at":1.0},{"stage":"needs-human","at":2.0}]"#;
+
+    #[test]
+    fn retry_queues_a_request() {
+        let f = fx();
+        parked(&f, "needs-human", RESUME_MERGE);
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(r.status, 202, "{}", r.body);
+        assert_eq!(queued(&f), 1);
+        match &crate::queue::list(&f.home)[0] {
+            crate::QueueItem::Ok(req) => {
+                assert_eq!((req.action, req.job.as_str()), (Action::Retry, "001"));
+                assert!(!req.series && !req.without_review && req.waive_reason.is_none());
+                assert_eq!(r.body["requestId"], req.id.as_str());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn retry_without_resume_is_409_and_queues_nothing() {
+        let f = fx();
+        parked(&f, "needs-human", r#""park_kind":"other""#);
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()));
+        assert_eq!(
+            r.body["error"]["message"],
+            "job 001 has no resume stage, see its park for the next command"
+        );
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn retry_of_a_cancelled_job_is_409() {
+        let f = fx();
+        parked(
+            &f,
+            "needs-human",
+            &format!(r#""cancelled":true,{RESUME_MERGE}"#),
+        );
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()));
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn retry_outside_needs_human_is_409() {
+        let f = fx();
+        parked(&f, "build", RESUME_MERGE);
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()));
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn retry_of_an_unknown_job_is_404() {
+        let f = fx();
+        parked(&f, "needs-human", RESUME_MERGE);
+        let r = post(&f, "/projects/good/jobs/9/retry", b"");
+        assert_eq!(code(&r), (404, "not_found".to_string()));
+    }
+
+    #[test]
+    fn retry_refuses_unknown_body_fields() {
+        let f = fx();
+        parked(&f, "needs-human", RESUME_MERGE);
+        let r = post(&f, "/projects/good/jobs/1/retry", br#"{"x":1}"#);
+        assert_eq!(code(&r), (400, "bad_request".to_string()));
+        assert_eq!(queued(&f), 0);
+        assert_eq!(post(&f, "/projects/good/jobs/1/retry", b"{}").status, 202);
+    }
+
+    #[test]
+    fn retry_with_a_pending_batch_commit_is_409() {
+        let f = fx();
+        let snap = r#","batch_snapshot":"abc123""#;
+        parked(&f, "needs-human", &format!("{RESUME_MERGE}{snap}"));
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn a_merge_retry_without_an_earlier_approval_and_open_changes_is_409() {
+        let f = fx();
+        let review = r#""last_review":{"round":1,"verdict":"changes","blockers":1,"file":"review-code-r1.md","source":"review"}"#;
+        parked(
+            &f,
+            "needs-human",
+            &format!(r#""park_resume":"merge","park_kind":"other",{review}"#),
+        );
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn a_second_retry_while_an_approve_is_queued_is_409() {
+        let f = fx();
+        parked(&f, "needs-human", RESUME_MERGE);
+        let first = crate::Request::new("good", Action::Approve, "001", false, 1).expect("req");
+        crate::queue::enqueue(&f.home, &first).expect("enqueue");
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()));
+        assert_eq!(queued(&f), 1);
+    }
+
+    #[test]
+    fn a_second_retry_while_a_retry_is_queued_is_409() {
+        let f = fx();
+        parked(&f, "needs-human", RESUME_MERGE);
+        let first = crate::Request::new("good", Action::Retry, "001", false, 1).expect("req");
+        crate::queue::enqueue(&f.home, &first).expect("enqueue");
+        let r = post(&f, "/projects/good/jobs/1/retry", b"");
+        assert_eq!(code(&r), (409, "conflict".to_string()));
+        assert_eq!(queued(&f), 1);
+    }
+
+    #[test]
+    fn retry_route_never_calls_cancel() {
+        let f = fx();
+        parked(&f, "needs-human", RESUME_MERGE);
+        post(&f, "/projects/good/jobs/1/retry", b"");
+        assert!(f
+            .cli
+            .calls()
+            .iter()
+            .all(|c| c.1.first().map(String::as_str) != Some("cancel")));
+        assert!(f.cli.calls().is_empty());
+    }
+
+    #[test]
+    fn an_unknown_job_action_is_not_found() {
+        let f = fx();
+        let r = post(&f, "/projects/good/jobs/1/explode", b"");
+        assert_eq!(code(&r), (404, "not_found".to_string()));
+        assert!(f.cli.calls().is_empty());
     }
 
     #[test]

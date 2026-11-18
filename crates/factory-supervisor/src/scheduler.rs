@@ -17,7 +17,7 @@ pub struct SchedulerInput {
     pub queue: Vec<Request>,
     pub running_projects: Vec<String>,
     pub project_states: BTreeMap<String, ProjectState>,
-    /// True when the daily budget is used up. A `Run` request then waits in the queue, an `Approve` still starts.
+    /// True when the daily budget is used up. A `Run` or `Retry` request then waits in the queue, an `Approve` still starts.
     pub daily_exhausted: bool,
 }
 
@@ -29,7 +29,7 @@ pub enum Decision {
 
 /// One ordered pass over the queue (by `ts_ms`, then id).
 /// A request waits, with no decision, when its project is busy, its lease is held or there is
-/// no free slot. With the daily budget used up a `Run` waits too, without using a slot or blocking a later
+/// no free slot. With the daily budget used up a `Run` or `Retry` waits too, without using a slot or blocking a later
 /// request. A rejection never uses a slot and never blocks a later request.
 pub fn decide(input: &SchedulerInput) -> Vec<Decision> {
     let mut queue: Vec<&Request> = input.queue.iter().collect();
@@ -49,8 +49,8 @@ pub fn decide(input: &SchedulerInput) -> Vec<Decision> {
             }),
             Some(ProjectState::LeaseHeld { .. }) => {}
             Some(ProjectState::Ready) => {
-                let held =
-                    input.daily_exhausted && matches!(req.action, Action::Run | Action::Intake);
+                let held = input.daily_exhausted
+                    && matches!(req.action, Action::Run | Action::Retry | Action::Intake);
                 if !held && free > 0 && !busy.contains(req.project.as_str()) {
                     free -= 1;
                     busy.insert(req.project.as_str());
@@ -253,6 +253,20 @@ mod tests {
     fn an_exhausted_budget_holds_a_run() {
         let d = decide(&exhausted(input(2, vec![req("a", 1)], &[], &ready(&["a"]))));
         assert!(d.is_empty());
+    }
+
+    #[test]
+    fn retry_is_held_by_the_daily_budget() {
+        let retry = Request::new("a", Action::Retry, "1", false, 1).expect("request");
+        let d = decide(&exhausted(input(
+            2,
+            vec![retry.clone()],
+            &[],
+            &ready(&["a"]),
+        )));
+        assert!(d.is_empty());
+        let d = decide(&input(2, vec![retry], &[], &ready(&["a"])));
+        assert_eq!(started(&d), ["a"]);
     }
 
     #[test]

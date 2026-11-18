@@ -99,7 +99,7 @@ pub fn route(
     let allowed: &[&str] = match segments.as_slice() {
         ["projects"] | ["usage"] | ["version"] => &["GET"],
         ["projects", _, "jobs"] => &["GET", "POST"],
-        ["projects", _, "jobs", _, "approve" | "rework" | "cancel"] => &["POST"],
+        ["projects", _, "jobs", _, "approve" | "retry" | "rework" | "cancel"] => &["POST"],
         _ => return error_response(404, "not_found", "no such endpoint"),
     };
     if !allowed.contains(&method) {
@@ -118,7 +118,9 @@ pub fn route(
             write::approve(home, deps, name, id, body)
         }
         (_, ["projects", name, "jobs", id, "rework"]) => write::rework(home, deps, name, id, body),
-        (_, ["projects", name, "jobs", id, _]) => write::cancel(home, deps, name, id, body),
+        (_, ["projects", name, "jobs", id, "retry"]) => write::retry(home, deps, name, id, body),
+        (_, ["projects", name, "jobs", id, "cancel"]) => write::cancel(home, deps, name, id, body),
+        (_, ["projects", _, "jobs", _, _]) => error_response(404, "not_found", "no such endpoint"),
         _ => usage::report(home, deps, query),
     }
 }

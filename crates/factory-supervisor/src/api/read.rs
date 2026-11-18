@@ -140,6 +140,7 @@ pub fn jobs(home: &Home, deps: &ApiDeps, name: &str) -> ApiResponse {
                 "tokens": j.tokens.weighted(),
                 "series": j.series.as_ref().map(|s| json!({"id": s.id, "index": s.index, "total": s.total})),
                 "cancelled": j.cancelled,
+                "parkResume": j.park_resume.map(|r| r.as_str()),
             })
         })
         .collect();
@@ -301,9 +302,23 @@ mod tests {
         assert_eq!(job["tokens"], 25);
         assert_eq!(job["cancelled"], false);
         assert!(job["series"].is_null());
+        assert!(job["parkResume"].is_null());
         assert_eq!(r.body["queued"][0]["job"], "002");
         assert_eq!(r.body["lastResults"][0]["job"], "001");
         assert_eq!(r.body["lastResults"][0]["outcome"]["kind"], "merged");
+    }
+
+    #[test]
+    fn jobs_read_includes_park_resume() {
+        let (_t, home) = fixture();
+        let job = job_json("001", "001-first").replace(
+            r#""stage":"build""#,
+            r#""stage":"needs-human","park_resume":"rereview""#,
+        );
+        write_board(&home, &format!(r#"{{"jobs":[{job}]}}"#));
+        let r = get(&home, "/projects/good/jobs");
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(r.body["jobs"][0]["parkResume"], "rereview");
     }
 
     #[test]
