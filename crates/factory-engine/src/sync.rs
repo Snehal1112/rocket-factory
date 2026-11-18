@@ -217,6 +217,14 @@ fn sync_with(
         )),
         Decision::NeedsHuman { kind, reason: why } => {
             let text = format!("after sync: {why}");
+            // A failed review parks here with the resume stage `Rereview`, like a risky diff parks.
+            if *kind == ParkKind::ReviewFailed {
+                let parked = driver.apply(id, &outcome);
+                return Ok(SyncOutcome::Parked(
+                    crate::park::sync_park_text(parked, &text),
+                    None,
+                ));
+            }
             if *kind != ParkKind::RiskyDiff {
                 return Ok(SyncOutcome::Parked(text, Some(*kind)));
             }

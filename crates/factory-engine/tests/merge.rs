@@ -690,3 +690,29 @@ fn a_merge_conflict_parks_without_resume() {
     );
     assert_resume(&fx, None);
 }
+
+#[test]
+fn a_failed_auto_sync_review_parks_with_resume_rereview() {
+    let inner = common::approving_runner(3);
+    let failing = common::RoleFailing::new(
+        "reviewer",
+        factory_agent::StopReason::Failed,
+        1,
+        inner.clone(),
+    );
+    let fx = common::approved_job_dyn(
+        std::sync::Arc::new(failing),
+        inner,
+        false,
+        factory_core::Config::default(),
+    );
+    common::commit_file(&fx.main, "other.md", "o");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("review failed")),
+        "got {r:?}"
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.park_kind.as_deref(), Some("review-failed"));
+    assert_resume(&fx, Some(factory_core::ResumeAt::Rereview));
+}

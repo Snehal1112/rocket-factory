@@ -283,6 +283,22 @@ impl Engine<'_> {
                 parts.push(ParkPart::new("Why it stopped", "driver", reason));
                 parts
             }
+            ParkKind::ReviewFailed => {
+                let mut parts = vec![ParkPart::new("Why it stopped", "driver", reason)];
+                // The review file of this round holds each failed role's `run failed (...)` line.
+                if let Ok(job) = self.job() {
+                    let current = job.last_review.filter(|l| l.round == job.round);
+                    if let Some((last, path)) =
+                        current.and_then(|l| l.path_in(&self.job_dir).map(|p| (l, p)))
+                    {
+                        if let Ok(text) = std::fs::read_to_string(&path) {
+                            parts.push(ParkPart::new("Review reply", &last.file, &text));
+                        }
+                    }
+                }
+                parts.extend(self.review_part());
+                parts
+            }
             ParkKind::BudgetStopped => {
                 let text = format!(
                     "{} weighted tokens used against a budget of {}",

@@ -734,3 +734,40 @@ fn a_sync_review_that_asks_for_changes_sets_last_review() {
     assert_eq!(last.source, "sync");
     assert_eq!(last.file, "review-code-r1-sync1.md");
 }
+
+#[test]
+fn a_failed_requested_sync_review_parks_with_resume_rereview() {
+    let inner = Arc::new(scripted(vec![reply(APPROVE)]));
+    let failing = common::RoleFailing::new(
+        "reviewer",
+        factory_agent::StopReason::Failed,
+        1,
+        inner.clone(),
+    );
+    let fx = common::approved_job_dyn(
+        Arc::new(failing),
+        inner,
+        true,
+        factory_core::Config::default(),
+    );
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.round = 1;
+            Ok(())
+        })
+        .expect("round");
+    common::commit_file(&fx.main, "other.md", "o");
+    let outcome = sync_requested(&fx.driver, &fx.id).expect("sync");
+    assert!(
+        matches!(&outcome, SyncOutcome::Parked(m, None) if m.contains("review failed")),
+        "{outcome:?}"
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+    assert_eq!(job.park_kind.as_deref(), Some("review-failed"));
+    assert_eq!(job.park_resume, Some(factory_core::ResumeAt::Rereview));
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.kind, factory_core::ParkKind::ReviewFailed);
+    assert_eq!(rec.resume, Some(factory_core::ResumeAt::Rereview));
+}

@@ -1,10 +1,15 @@
 mod common;
 
-use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture, ScriptedRunner};
+use common::{
+    committing_fixture, scripted, scripted_auto, Effect, Fixture, RoleFailing, ScriptedRunner,
+};
+use factory_agent::{AgentRunner, StopReason};
 use factory_core::{
-    parse_verdict, AgentFile, Board, CheckRule, Config, Job, ParkKind, ReviewState, Stage, Verdict,
+    parse_verdict, AgentFile, Board, CheckRule, Config, Job, ParkKind, ResumeAt, ReviewState,
+    Stage, Verdict,
 };
 use factory_engine::{Decision, ReviewRun, ReviewerExtra};
+use std::sync::Arc;
 
 /// A builder that writes one file and leaves it uncommitted.
 fn change_effect() -> Effect {
@@ -44,7 +49,7 @@ fn reply(text: &'static str) -> Effect {
 }
 
 /// An engine that holds the security agent file, so the review stage may run that role.
-fn engine<'a>(fx: &'a Fixture, runner: &'a ScriptedRunner) -> factory_engine::Engine<'a> {
+fn engine<'a>(fx: &'a Fixture, runner: &'a dyn AgentRunner) -> factory_engine::Engine<'a> {
     fx.engine(runner).with_agent_files(vec![AgentFile {
         name: "factory-security-reviewer.md".to_string(),
         content: "agent".to_string(),
@@ -264,14 +269,15 @@ fn security_usage_is_logged_under_its_own_role() {
 }
 
 #[test]
-fn a_missing_security_agent_parks_with_a_clear_reason() {
+fn a_missing_security_agent_parks_as_review_failed() {
     let fx = reviewed_fixture(&["code", "security"]);
     let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_OK)]);
     let outcome = fx.engine(&runner).review_stage().expect("review");
     assert_eq!(agent_calls(&runner), 0);
+    assert_eq!(outcome.resume, Some(ResumeAt::Review));
     match outcome.decision {
         Decision::NeedsHuman { kind, reason } => {
-            assert_eq!(kind, ParkKind::Other);
+            assert_eq!(kind, ParkKind::ReviewFailed);
             assert!(
                 reason.contains("factory-security-reviewer.md not found"),
                 "{reason}"
@@ -403,4 +409,48 @@ fn the_final_checks_record_the_gates_again() {
     let job = fx.job();
     assert_eq!(job.reviews.get("format"), Some(&ReviewState::Pass));
     assert_eq!(job.reviews.get("lint"), Some(&ReviewState::Pass));
+}
+
+#[test]
+fn a_failed_role_with_real_findings_starts_a_fix_round() {
+    let fx = reviewed_fixture(&["code", "security"]);
+    let inner = Arc::new(scripted(vec![reply(
+        "- [blocker] bad at a.txt:1\nVERDICT: CHANGES",
+    )]));
+    let failing = RoleFailing::new("security-review", StopReason::Failed, 1, inner);
+    let e = engine(&fx, &failing);
+    let outcome = e.review_stage().expect("review");
+    assert_eq!(outcome.verdict, Verdict::Changes);
+    assert!(matches!(outcome.decision, Decision::FixRound));
+    assert_eq!(outcome.resume, None);
+    e.apply_decision(&outcome).expect("apply");
+    assert_eq!(fx.job().round, 2);
+    let file = std::fs::read_to_string(&outcome.review_path).expect("file");
+    assert!(
+        file.contains("run failed (failed): Invalid API key"),
+        "{file}"
+    );
+}
+
+#[test]
+fn a_failed_role_with_an_approving_role_parks() {
+    let fx = reviewed_fixture(&["code", "security"]);
+    let inner = Arc::new(scripted(vec![reply(CODE_OK)]));
+    let failing = RoleFailing::new("security-review", StopReason::Stalled, 1, inner);
+    let round = fx.job().round;
+    let e = engine(&fx, &failing);
+    let outcome = e.review_stage().expect("review");
+    assert_eq!(outcome.verdict, Verdict::Missing);
+    assert_eq!(outcome.resume, Some(ResumeAt::Review));
+    match &outcome.decision {
+        Decision::NeedsHuman { kind, .. } => assert_eq!(*kind, ParkKind::ReviewFailed),
+        other => panic!("unexpected {other:?}"),
+    }
+    e.apply_decision(&outcome).expect("apply");
+    let job = fx.job();
+    assert_eq!(job.park_kind.as_deref(), Some("review-failed"));
+    assert_eq!(job.park_resume, Some(ResumeAt::Review));
+    assert_eq!(job.round, round);
+    let file = std::fs::read_to_string(&outcome.review_path).expect("file");
+    assert!(file.contains("run failed (stalled)"), "{file}");
 }

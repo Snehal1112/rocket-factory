@@ -21,6 +21,8 @@ pub struct DecideInput<'a> {
     pub fix_rounds: u32,
     /// The round count at the last rework, so a rework gets fresh fix rounds.
     pub rework_base: u32,
+    /// True when a reviewer run ended failed or stalled, so its reply is missing for an environment reason.
+    pub role_failed: bool,
 }
 
 /// Implements the decision order of the review-findings spec. The order of the checks matters.
@@ -60,6 +62,11 @@ pub fn decide(i: &DecideInput) -> Decision {
             reason: format!("risky diff: {}", i.risky_summary),
         },
         Verdict::Approve => Decision::AutoMerge,
+        // A reviewer that never finished says nothing about the diff, so a fix round cannot help.
+        Verdict::Missing if i.role_failed => Decision::NeedsHuman {
+            kind: ParkKind::ReviewFailed,
+            reason: "review failed: a reviewer run did not finish".into(),
+        },
         // A missing verdict is never a pass.
         Verdict::Changes | Verdict::Missing => {
             if rounds_left {
@@ -99,4 +106,58 @@ pub fn risk_summary(paths: &[String], cfg: &Config) -> String {
         shown.join(", "),
         tail
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(verdict: &Verdict) -> DecideInput<'_> {
+        DecideInput {
+            checks_ok: true,
+            verdict,
+            class: DiffClass::Normal,
+            risky_summary: String::new(),
+            diff_lines: 100,
+            diff_cap: 4000,
+            budget: BudgetState::Ok,
+            round: 1,
+            fix_rounds: 2,
+            rework_base: 0,
+            role_failed: true,
+        }
+    }
+
+    #[test]
+    fn a_failed_role_with_missing_verdict_parks_review_failed() {
+        match decide(&input(&Verdict::Missing)) {
+            Decision::NeedsHuman { kind, reason } => {
+                assert_eq!(kind, ParkKind::ReviewFailed);
+                assert!(reason.starts_with("review failed"), "{reason}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_review_on_failing_checks_still_starts_a_fix_round() {
+        let mut i = input(&Verdict::Missing);
+        i.checks_ok = false;
+        assert_eq!(decide(&i), Decision::FixRound);
+    }
+
+    #[test]
+    fn budget_stop_wins_over_a_failed_review() {
+        let mut i = input(&Verdict::Missing);
+        i.budget = BudgetState::Stop;
+        match decide(&i) {
+            Decision::NeedsHuman { kind, .. } => assert_eq!(kind, ParkKind::BudgetStopped),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_changes_verdict_with_a_failed_role_starts_a_fix_round() {
+        assert_eq!(decide(&input(&Verdict::Changes)), Decision::FixRound);
+    }
 }

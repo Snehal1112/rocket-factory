@@ -1,8 +1,12 @@
 mod common;
 
-use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture, ScriptedRunner};
-use factory_core::{BudgetState, DiffClass, Stage, Verdict};
+use common::{
+    committing_fixture, scripted, scripted_auto, Effect, Fixture, RoleFailing, ScriptedRunner,
+};
+use factory_agent::StopReason;
+use factory_core::{BudgetState, DiffClass, ResumeAt, Stage, Verdict};
 use factory_engine::{decide, DecideInput, Decision, ReviewerExtra, StageOutcome};
+use std::sync::Arc;
 
 fn input(verdict: &Verdict) -> DecideInput<'_> {
     DecideInput {
@@ -16,6 +20,7 @@ fn input(verdict: &Verdict) -> DecideInput<'_> {
         round: 1,
         fix_rounds: 2,
         rework_base: 0,
+        role_failed: false,
     }
 }
 
@@ -1196,4 +1201,82 @@ fn a_round_two_gate_park_shows_the_round_one_review() {
         "{}",
         rec.parts[0].text
     );
+}
+
+/// A reviewer run that ends `reason` once, over a fixture that built and passed its checks.
+fn failed_review(reason: StopReason) -> (Fixture, Arc<ScriptedRunner>, StageOutcome) {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let inner = Arc::new(reviewer("fine\nVERDICT: APPROVE"));
+    let failing = RoleFailing::new("reviewer", reason, 1, inner.clone());
+    let e = fx.engine(&failing);
+    let out = e.review_stage().expect("review");
+    assert_eq!(out.resume, Some(ResumeAt::Review));
+    let parked = e.apply_decision(&out).expect("apply");
+    (fx, inner, parked)
+}
+
+fn assert_parked_review_failed(fx: &Fixture, inner: &ScriptedRunner, parked: &StageOutcome) {
+    assert!(matches!(parked, StageOutcome::NeedsHuman(_)), "{parked:?}");
+    let job = fx.job();
+    assert_eq!(job.stage, Stage::NeedsHuman);
+    assert_eq!(job.park_kind.as_deref(), Some("review-failed"));
+    assert_eq!(job.park_resume, Some(ResumeAt::Review));
+    // The round is the one the review ran in, so no fix round started.
+    let reviewed = job.last_review.as_ref().expect("last review").round;
+    assert!(job.round <= reviewed, "round {}", job.round);
+    assert!(!fx
+        .job_dir
+        .join(format!("changes-r{}.md", reviewed + 1))
+        .exists());
+    assert!(inner.specs_for("builder").is_empty());
+    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert!(
+        rec.parts.iter().any(|p| p.text.contains("Invalid API key")),
+        "{:?}",
+        rec.parts
+    );
+    let summary = job.park_summary.expect("summary");
+    assert!(summary.starts_with("review failed"), "{summary}");
+}
+
+#[test]
+fn a_failed_reviewer_parks_as_review_failed() {
+    let (fx, inner, parked) = failed_review(StopReason::Failed);
+    assert_parked_review_failed(&fx, &inner, &parked);
+}
+
+#[test]
+fn a_stalled_reviewer_parks_as_review_failed() {
+    let (fx, inner, parked) = failed_review(StopReason::Stalled);
+    assert_parked_review_failed(&fx, &inner, &parked);
+}
+
+#[test]
+fn a_turn_limit_review_is_not_review_failed() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let inner = Arc::new(reviewer("fine\nVERDICT: APPROVE"));
+    let failing = RoleFailing::new("reviewer", StopReason::TurnLimit, 1, inner);
+    let e = fx.engine(&failing);
+    let out = e.review_stage().expect("review");
+    assert_eq!(out.decision, Decision::FixRound);
+    assert_eq!(out.resume, None);
+    assert_eq!(
+        e.apply_decision(&out).expect("apply"),
+        StageOutcome::Advanced(Stage::Build)
+    );
+    assert_eq!(fx.job().round, 2);
+}
+
+#[test]
+fn a_real_changes_verdict_still_starts_a_fix_round() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let rr = reviewer("1. [blocker] src/a.rs:3 bad\nVERDICT: CHANGES");
+    let e = fx.engine(&rr);
+    let out = e.review_stage().expect("review");
+    assert_eq!(out.decision, Decision::FixRound);
+    assert_eq!(out.resume, None);
+    assert_eq!(fx.job().park_kind, None);
 }

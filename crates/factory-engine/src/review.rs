@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use factory_checks::ChecksReport;
 use factory_core::{
     budget_state, classify_paths, combine_verdicts, open_blockers, parse_verdict, DiffClass,
-    LastReview, ParkKind, ReviewState, Stage, Verdict, REVIEW_ROLES,
+    LastReview, ParkKind, ResumeAt, ReviewState, Stage, Verdict, REVIEW_ROLES,
 };
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
@@ -25,6 +25,16 @@ pub struct ReviewOutcome {
     pub verdict: Verdict,
     pub review_path: PathBuf,
     pub decision: Decision,
+    /// Where a retry of a review-failed park starts. `None` for every other decision.
+    pub resume: Option<ResumeAt>,
+}
+
+/// The resume stage of a review-failed park for this kind of run.
+fn failed_resume(run_kind: ReviewRun) -> ResumeAt {
+    match run_kind {
+        ReviewRun::Round => ResumeAt::Review,
+        ReviewRun::Sync | ReviewRun::Rebase => ResumeAt::Rereview,
+    }
 }
 
 impl Engine<'_> {
@@ -161,15 +171,17 @@ impl Engine<'_> {
                 verdict: Verdict::Missing,
                 review_path,
                 decision: Decision::NeedsHuman {
-                    kind: ParkKind::Other,
+                    kind: ParkKind::ReviewFailed,
                     reason,
                 },
+                resume: Some(failed_resume(run_kind)),
             });
         }
 
         let multi = to_run.len() > 1;
         let mut parts: Vec<RolePart> = Vec::new();
         let mut verdicts: Vec<Verdict> = Vec::new();
+        let mut role_failed = false;
         for role in to_run {
             let spec = if role == "security" {
                 self.security_spec_with_model(
@@ -204,6 +216,22 @@ impl Engine<'_> {
                 let raw = self.job_dir.join(format!("review-{role}-{stem}.raw.md"));
                 std::fs::write(raw, &run.result_text).map_err(io_err)?;
             }
+            // A failed or stalled run is an environment problem, so its text carries the error.
+            let failed = matches!(
+                run.stop_reason,
+                factory_agent::StopReason::Failed | factory_agent::StopReason::Stalled
+            );
+            role_failed |= failed;
+            let role_text = if failed {
+                format!(
+                    "run failed ({}): {}\n{}",
+                    run.stop_reason.as_str(),
+                    run.error.as_deref().unwrap_or("no error text"),
+                    run.result_text
+                )
+            } else {
+                run.result_text.clone()
+            };
             let role_verdict = if run.stop_reason == factory_agent::StopReason::Done {
                 parse_verdict(&run.result_text)
             } else {
@@ -221,7 +249,7 @@ impl Engine<'_> {
             verdicts.push(role_verdict);
             parts.push(RolePart {
                 role,
-                text: run.result_text,
+                text: role_text,
                 verdict: role_verdict,
             });
         }
@@ -270,6 +298,7 @@ impl Engine<'_> {
             round: job.round,
             fix_rounds: self.config.fix_rounds_for(class == DiffClass::Risky),
             rework_base: job.rework_base,
+            role_failed,
         };
         let decision = decide(&input);
         let choice = match &decision {
@@ -284,10 +313,18 @@ impl Engine<'_> {
             verdict = verdict.as_word(),
             risky = risky
         );
+        let resume = match &decision {
+            Decision::NeedsHuman {
+                kind: ParkKind::ReviewFailed,
+                ..
+            } => Some(failed_resume(run_kind)),
+            _ => None,
+        };
         Ok(ReviewOutcome {
             verdict,
             review_path,
             decision,
+            resume,
         })
     }
 
@@ -321,7 +358,7 @@ impl Engine<'_> {
                     }
                 }
                 let parts = self.decision_parts(*kind, reason);
-                self.park_with(*kind, reason.clone(), parts)
+                self.park_with_resume(*kind, reason.clone(), parts, outcome.resume)
             }
             Decision::FixRound => {
                 let text = std::fs::read_to_string(&outcome.review_path).map_err(io_err)?;

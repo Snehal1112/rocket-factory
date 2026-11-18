@@ -2,9 +2,10 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use factory_agent::{AgentRun, AgentRunner, AgentSpec, EventSink};
+use factory_agent::{AgentRun, AgentRunner, AgentSpec, EventSink, StopReason};
 use factory_core::{Board, CheckRule, Config, Job};
 use factory_engine::Engine;
 use factory_git::Repo;
@@ -226,6 +227,48 @@ impl AgentRunner for ScriptedRunner {
     }
 }
 
+/// Fails the first runs of one role with an environment error, then hands every run to `inner`.
+pub struct RoleFailing {
+    pub spec_role: &'static str,
+    pub reason: StopReason,
+    pub fails_left: AtomicU32,
+    pub inner: Arc<ScriptedRunner>,
+}
+
+impl RoleFailing {
+    pub fn new(
+        spec_role: &'static str,
+        reason: StopReason,
+        fails: u32,
+        inner: Arc<ScriptedRunner>,
+    ) -> RoleFailing {
+        RoleFailing {
+            spec_role,
+            reason,
+            fails_left: AtomicU32::new(fails),
+            inner,
+        }
+    }
+}
+
+impl AgentRunner for RoleFailing {
+    fn run(&self, spec: &AgentSpec) -> AgentRun {
+        if spec.role == self.spec_role {
+            let took = self
+                .fails_left
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+            if took.is_ok() {
+                return AgentRun {
+                    stop_reason: self.reason,
+                    error: Some("Invalid API key".into()),
+                    ..AgentRun::done("")
+                };
+            }
+        }
+        self.inner.run(spec)
+    }
+}
+
 /// Gives each builder call its own session id and a fixed end context.
 pub struct Tagged {
     pub inner: ScriptedRunner,
@@ -330,6 +373,17 @@ pub fn approved_job_with(runner: Arc<ScriptedRunner>, with_context: bool) -> Mer
 pub fn approved_job_config(
     runner: Arc<ScriptedRunner>,
     with_context: bool,
+    config: Config,
+) -> MergeFixture {
+    approved_job_dyn(runner.clone(), runner, with_context, config)
+}
+
+/// Like `approved_job_config`, with the driver's runner apart from the scripted runner the fixture exposes.
+/// A test wraps the scripted runner in `RoleFailing` and passes the wrapper as `runner`.
+pub fn approved_job_dyn(
+    runner: Arc<dyn AgentRunner>,
+    scripted: Arc<ScriptedRunner>,
+    with_context: bool,
     mut config: Config,
 ) -> MergeFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -355,7 +409,9 @@ pub fn approved_job_config(
         // The real repo ignores `.superpowers/`, and the KB run's tamper check relies on it.
         commit_file(&main, ".gitignore", ".superpowers/\n");
     }
-    let driver = driver_for(&main, runner.clone(), config);
+    let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
+    let driver = factory_engine::Driver::new(factory_core::Layout::in_repo(&main), config, factory)
+        .expect("driver");
     let wt = driver
         .repo()
         .create_worktree(&factory_git::JobRef {
@@ -394,7 +450,7 @@ pub fn approved_job_config(
         tmp,
         main,
         driver,
-        runner,
+        runner: scripted,
         id: "001".into(),
         head,
     }
