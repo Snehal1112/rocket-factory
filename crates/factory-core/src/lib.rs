@@ -74,7 +74,9 @@ pub use layout::{
     plugin_rel_files, Layout, Scope, CHILDREN_PREFIX, MARKETPLACE_REL_FILE, PROJECT_LEASE_FILE,
 };
 pub use ledger::{Ledger, TaskState};
-pub use park::{park_summary, ParkKind, ParkPart, ParkRecord, PARK_FILE, PART_CAP};
+pub use park::{
+    next_with_resume, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt, PARK_FILE, PART_CAP,
+};
 pub use probe::{
     allowed_skill_entries, evaluate, expected_channels, parse_probe_answer, probe_prompt, Channel,
     Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe, KNOWN_BUILTIN_SKILLS,

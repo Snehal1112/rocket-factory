@@ -117,6 +117,9 @@ pub struct Job {
     /// One line that says why the job parked, at most 160 characters. New in the park reasons series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub park_summary: Option<String>,
+    /// The stage a retry continues from while parked. New in the retry-at-parked-stage series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park_resume: Option<crate::park::ResumeAt>,
     /// The tip of the snapshot commits while the batch commit of the job is pending. New in the cost reduction series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_snapshot: Option<String>,
@@ -277,6 +280,7 @@ impl Job {
             park_kind: None,
             park_at: None,
             park_summary: None,
+            park_resume: None,
             batch_snapshot: None,
             estimate: None,
             fix_source: None,
@@ -430,6 +434,20 @@ impl Job {
         Ok(())
     }
 
+    /// The stage the job was in before its last park, from `stage_history`. `None` when the job
+    /// is not in needs-human or has no earlier entry. It reports the stage, not who approved,
+    /// because an auto-merge decision also reaches `approve`.
+    pub fn stage_before_park(&self) -> Option<Stage> {
+        if self.stage != Stage::NeedsHuman {
+            return None;
+        }
+        let at = self
+            .stage_history
+            .iter()
+            .rposition(|e| e.stage == Stage::NeedsHuman)?;
+        at.checked_sub(1).map(|i| self.stage_history[i].stage)
+    }
+
     fn apply_move(&mut self, to: Stage, reason: Option<&str>, now: f64) {
         if self.stage != to {
             self.stage = to;
@@ -445,6 +463,7 @@ impl Job {
             self.park_kind = None;
             self.park_at = None;
             self.park_summary = None;
+            self.park_resume = None;
         }
     }
 
@@ -698,6 +717,44 @@ mod tests {
         job.set_stage(Stage::Build, None, true, 4.0).expect("back");
         assert_eq!(job.park_kind, None);
         assert_eq!(job.park_at, None);
+    }
+
+    #[test]
+    fn an_old_job_loads_without_park_resume() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        let json = serde_json::to_string(&job).expect("json");
+        assert!(!json.contains("park_resume"), "{json}");
+        let back: Job = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back.park_resume, None);
+        job.park_resume = Some(crate::park::ResumeAt::Merge);
+        let json = serde_json::to_string(&job).expect("json");
+        assert!(json.contains("\"park_resume\":\"merge\""), "{json}");
+    }
+
+    #[test]
+    fn leaving_needs_human_clears_park_resume() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        job.set_stage(Stage::NeedsHuman, Some("why"), false, 2.0)
+            .expect("park");
+        job.park_resume = Some(crate::park::ResumeAt::Merge);
+        job.resume(Stage::Approve, 3.0).expect("resume");
+        assert_eq!(job.park_resume, None);
+    }
+
+    #[test]
+    fn stage_before_park_reads_history() {
+        let mut job = Job::new("001", "d", "s", "2026-10-16", "f", 1.0);
+        assert_eq!(job.stage_before_park(), None);
+        job.set_stage(Stage::Build, None, false, 2.0)
+            .expect("build");
+        job.set_stage(Stage::Review, None, false, 3.0)
+            .expect("review");
+        job.set_stage(Stage::Approve, None, false, 4.0)
+            .expect("approve");
+        assert_eq!(job.stage_before_park(), None);
+        job.set_stage(Stage::NeedsHuman, Some("why"), false, 5.0)
+            .expect("park");
+        assert_eq!(job.stage_before_park(), Some(Stage::Approve));
     }
 
     #[test]

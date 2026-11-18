@@ -13,6 +13,50 @@ pub const PART_CAP: usize = 200 * 1024;
 /// The file name inside the job folder.
 pub const PARK_FILE: &str = "park.json";
 
+/// The stage a retry continues from after a park.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResumeAt {
+    Review,
+    Rereview,
+    Merge,
+    Sync,
+}
+
+impl ResumeAt {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResumeAt::Review => "review",
+            ResumeAt::Rereview => "rereview",
+            ResumeAt::Merge => "merge",
+            ResumeAt::Sync => "sync",
+        }
+    }
+}
+
+/// The commands for a park. With a resume stage, `factory retry` comes first and the
+/// `factory rework` and `factory retry` entries of the kind are dropped.
+pub fn next_with_resume(
+    kind: ParkKind,
+    id: &str,
+    review_missing: bool,
+    verdict: Option<&str>,
+    resume: Option<ResumeAt>,
+) -> Vec<String> {
+    let next = kind.next_for(id, review_missing, verdict);
+    if resume.is_none() {
+        return next;
+    }
+    let rework = format!("factory rework {id} ");
+    let retry = format!("factory retry {id}");
+    let mut out = vec![retry.clone()];
+    out.extend(
+        next.into_iter()
+            .filter(|n| !n.starts_with(&rework) && !n.starts_with(&retry)),
+    );
+    out
+}
+
 /// Why a job parked. The names are stable, the dashboard reads them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,6 +74,7 @@ pub enum ParkKind {
     CommitFailed,
     NoChecks,
     NoTests,
+    ReviewFailed,
     Other,
 }
 
@@ -49,7 +94,16 @@ impl ParkKind {
             ParkKind::CommitFailed => "commit-failed",
             ParkKind::NoChecks => "no-checks",
             ParkKind::NoTests => "no-tests",
+            ParkKind::ReviewFailed => "review-failed",
             ParkKind::Other => "other",
+        }
+    }
+
+    /// The stage a plain retry continues from, if this kind has one.
+    pub fn resume(self) -> Option<ResumeAt> {
+        match self {
+            ParkKind::ReviewFailed | ParkKind::NoChecks => Some(ResumeAt::Review),
+            _ => None,
         }
     }
 
@@ -101,6 +155,7 @@ impl ParkKind {
             | ParkKind::NoChecks
             | ParkKind::NoTests => vec![approve, rework],
             ParkKind::BudgetStopped => vec![approve, cancel],
+            ParkKind::ReviewFailed => vec![format!("factory retry {id}"), cancel],
             ParkKind::NothingChanged | ParkKind::BuilderTampered => vec![rework, cancel],
             ParkKind::Other => vec![approve, rework, cancel],
         }
@@ -153,6 +208,9 @@ pub struct ParkRecord {
     /// Whether the diff was risky at the park. New in the act-on-review-findings series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risky: Option<bool>,
+    /// The stage `factory retry` continues from. New in the retry-at-parked-stage series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<ResumeAt>,
 }
 
 impl ParkRecord {
@@ -173,6 +231,7 @@ impl ParkRecord {
             parts,
             verdict: None,
             risky: None,
+            resume: None,
         }
     }
 
@@ -500,5 +559,67 @@ mod tests {
         let file = dir.path().join("f");
         std::fs::write(&file, "x").expect("file");
         assert!(rec.write(&file.join("sub")).is_err());
+    }
+
+    #[test]
+    fn resume_at_round_trips() {
+        for (at, word) in [
+            (ResumeAt::Review, "review"),
+            (ResumeAt::Rereview, "rereview"),
+            (ResumeAt::Merge, "merge"),
+            (ResumeAt::Sync, "sync"),
+        ] {
+            let text = serde_json::to_string(&at).expect("serialize");
+            assert_eq!(text, format!("\"{word}\""));
+            assert_eq!(at.as_str(), word);
+            let back: ResumeAt = serde_json::from_str(&text).expect("parse");
+            assert_eq!(back, at);
+        }
+    }
+
+    #[test]
+    fn review_failed_kind_resumes_at_review() {
+        assert_eq!(ParkKind::ReviewFailed.as_str(), "review-failed");
+        assert_eq!(ParkKind::ReviewFailed.resume(), Some(ResumeAt::Review));
+        assert_eq!(ParkKind::NoChecks.resume(), Some(ResumeAt::Review));
+        assert_eq!(ParkKind::NoTests.resume(), None);
+        assert_eq!(ParkKind::ChecksFailed.resume(), None);
+    }
+
+    #[test]
+    fn next_with_resume_puts_retry_first_and_drops_rework() {
+        assert_eq!(
+            next_with_resume(
+                ParkKind::NoChecks,
+                "086",
+                false,
+                None,
+                Some(ResumeAt::Review)
+            ),
+            vec!["factory retry 086", "factory approve 086"]
+        );
+        assert_eq!(
+            next_with_resume(
+                ParkKind::ReviewFailed,
+                "001",
+                false,
+                None,
+                Some(ResumeAt::Review)
+            ),
+            vec!["factory retry 001", "factory cancel 001"]
+        );
+        assert_eq!(
+            next_with_resume(ParkKind::NoChecks, "086", false, None, None),
+            ParkKind::NoChecks.next_for("086", false, None)
+        );
+    }
+
+    #[test]
+    fn an_old_park_record_loads_without_resume() {
+        let json = r#"{"kind":"checks-failed","reason":"r","at":1,"round":1,"next":[],"parts":[]}"#;
+        let rec: ParkRecord = serde_json::from_str(json).expect("old record parses");
+        assert_eq!(rec.resume, None);
+        let text = serde_json::to_string(&rec).expect("serialize");
+        assert!(!text.contains("resume"), "{text}");
     }
 }
