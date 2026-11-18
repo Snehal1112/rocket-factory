@@ -69,7 +69,7 @@ ResumeAt = Review | Rereview | Merge | Sync
 - `Merge`: run the merge stage again with all its gates (`merge_stage`).
 - `Sync`: main moved more than `MAX_SYNCS` times. Allow one more automatic sync (`sync_stage`, review of the sync diff only) by resetting the job's `syncs` counter, then continue to the merge. (Call: the cheap sync-diff review, because the branch itself was already reviewed.)
 
-`ParkRecord` (park.json) gets `resume: Option<ResumeAt>`, serialized as `"review" | "merge" | "sync"`, skipped when `None`. The board's `Job` gets the same optional field next to `park_kind`, so the dashboard and `status` can offer `retry` without reading park.json. Both are cleared whenever the job leaves `needs-human`.
+`ParkRecord` (park.json) gets `resume: Option<ResumeAt>`, serialized as `"review" | "rereview" | "merge" | "sync"`, skipped when `None`. The board's `Job` gets the same optional field next to `park_kind`, so the dashboard and `status` can offer `retry` without reading park.json. Both are cleared whenever the job leaves `needs-human`.
 
 ### Which parks set it
 
@@ -127,7 +127,7 @@ It writes a ledger ruling (`retry at <stage>`) and a log event `operator.retry`.
 
 ### API and dashboard
 
-- factoryd: a new request action `Retry`, queued like `Approve`, with child command `factory --project <p> retry <id>`. The series continuation happens inside `retry`, so the request needs no `series` flag. A new endpoint `POST /projects/{p}/jobs/{id}/retry`, `202 {"requestId"}`, `409 conflict` when the job has no resume value. `POST .../rework` gains an optional `force` boolean.
+- factoryd: a new request action `Retry`, queued like `Approve` but held by the daily budget like `Run` (a retry can run reviewers, fix rounds and later plans), with child command `factory --project <p> retry <id>`. The series continuation happens inside `retry`, so the request needs no `series` flag. A new endpoint `POST /projects/{p}/jobs/{id}/retry`, `202 {"requestId"}`, `409 conflict` when the job has no resume value. `POST .../rework` gains an optional `force` boolean.
 - Dashboard: a `retry` action on a `needs-human` card whose job has a resume value, shown first.
 
 ### Docs
