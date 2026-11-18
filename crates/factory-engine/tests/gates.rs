@@ -564,3 +564,43 @@ fn top_folder_project_has_no_scope_check() {
     let out = fx.engine(&runner).checks_stage().expect("checks");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
 }
+
+#[test]
+fn no_checks_parks_with_resume_review() {
+    let mut fx = committing_fixture();
+    only_src_checks(&mut fx);
+    let runner = built(&fx, vec![("a.txt", "x\n")]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.resume, Some(factory_core::ResumeAt::Review));
+    assert_eq!(fx.job().park_resume, Some(factory_core::ResumeAt::Review));
+    assert_eq!(rec.next[0], "factory retry 001");
+}
+
+#[test]
+fn no_checks_at_the_final_gate_parks_with_resume_review() {
+    let mut fx = committing_fixture();
+    let runner = built(&fx, vec![("a.txt", "x\n")]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let review = fx.engine(&rr).review_stage().expect("review");
+    only_src_checks(&mut fx);
+    let out = fx.engine(&rr).apply_decision(&review).expect("apply");
+    assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::NoChecks);
+    assert_eq!(rec.resume, Some(factory_core::ResumeAt::Review));
+    assert_eq!(fx.job().park_resume, Some(factory_core::ResumeAt::Review));
+}
+
+#[test]
+fn no_tests_parks_without_resume() {
+    let mut fx = committing_fixture();
+    fx.config.require_tests = true;
+    let runner = built(&fx, vec![("a.txt", "x\n")]);
+    fx.engine(&runner).checks_stage().expect("checks");
+    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(rec.kind, ParkKind::NoTests);
+    assert_eq!(rec.resume, None);
+    assert_eq!(fx.job().park_resume, None);
+}

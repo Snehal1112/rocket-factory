@@ -611,3 +611,82 @@ fn a_root_job_does_not_park_no_checks_for_files_main_changed_after_a_sync() {
     assert!(matches!(r, MergeResult::Merged(_)), "got {r:?}");
     assert_eq!(fx.driver.job(&fx.id).expect("job").syncs, 1);
 }
+
+fn assert_resume(fx: &common::MergeFixture, want: Option<factory_core::ResumeAt>) {
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::NeedsHuman);
+    assert_eq!(job.park_resume, want, "board");
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.resume, want, "park.json");
+}
+
+#[test]
+fn main_busy_parks_with_resume_merge() {
+    let fx = common::approved_job();
+    std::fs::write(fx.main.join("README.md"), "dirty").expect("write");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Parked(_)), "got {r:?}");
+    assert_resume(&fx, Some(factory_core::ResumeAt::Merge));
+    let job = fx.driver.job(&fx.id).expect("job");
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.next[0], "factory retry 001");
+}
+
+#[test]
+fn merge_lock_busy_parks_with_resume_merge() {
+    let mut fx = common::approved_job();
+    fx.driver
+        .set_merge_lock_wait(std::time::Duration::from_millis(100));
+    let (handle, taken) = hold_merge_lock(&fx.main, std::time::Duration::from_millis(1500));
+    taken.recv().expect("lock taken");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("another project is merging")),
+        "got {r:?}"
+    );
+    assert_resume(&fx, Some(factory_core::ResumeAt::Merge));
+    handle.join().expect("holder");
+}
+
+#[test]
+fn tip_differs_parks_with_resume_rereview() {
+    let fx = common::approved_job();
+    common::commit_file(&common::worktree_of(&fx), "late.txt", "x");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Parked(_)), "got {r:?}");
+    assert_resume(&fx, Some(factory_core::ResumeAt::Rereview));
+}
+
+#[test]
+fn max_syncs_parks_with_resume_sync() {
+    let fx = common::approved_job();
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.syncs = factory_engine::MAX_SYNCS;
+            Ok(())
+        })
+        .expect("syncs");
+    common::commit_file(&fx.main, "other.md", "o");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("moved again after 2 syncs")),
+        "got {r:?}"
+    );
+    assert_resume(&fx, Some(factory_core::ResumeAt::Sync));
+}
+
+#[test]
+fn a_merge_conflict_parks_without_resume() {
+    let fx = common::approved_job();
+    let wt = common::worktree_of(&fx);
+    common::commit_file(&wt, "same.txt", "branch");
+    common::record_head(&fx, &common::branch_tip(&fx));
+    common::commit_file(&fx.main, "same.txt", "main");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.contains("conflict")),
+        "got {r:?}"
+    );
+    assert_resume(&fx, None);
+}

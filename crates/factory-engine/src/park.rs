@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use factory_core::{
-    classify_paths, open_blockers, park_summary, DiffClass, ParkKind, ParkPart, ParkRecord,
+    classify_paths, next_with_resume, open_blockers, park_summary, DiffClass, ParkKind, ParkPart,
+    ParkRecord, ResumeAt,
 };
 
 use crate::decide::risk_summary;
@@ -179,6 +180,17 @@ impl Engine<'_> {
         reason: String,
         parts: Vec<ParkPart>,
     ) -> Result<StageOutcome, EngineError> {
+        self.park_with_resume(kind, reason, parts, kind.resume())
+    }
+
+    /// Parks like `park_with`, and records the stage `factory retry` resumes at.
+    pub(crate) fn park_with_resume(
+        &self,
+        kind: ParkKind,
+        reason: String,
+        parts: Vec<ParkPart>,
+        resume: Option<ResumeAt>,
+    ) -> Result<StageOutcome, EngineError> {
         // A park must still happen when the board cannot be read, so a missing job falls back to round 1.
         let job = self.job().ok();
         let round = job.as_ref().map_or(1, |j| j.round);
@@ -191,7 +203,14 @@ impl Engine<'_> {
             .as_ref()
             .and_then(|j| j.last_review.as_ref())
             .map(|r| r.verdict.clone());
-        record.next = kind.next_for(&self.job_id, review_missing, record.verdict.as_deref());
+        record.resume = resume;
+        record.next = next_with_resume(
+            kind,
+            &self.job_id,
+            review_missing,
+            record.verdict.as_deref(),
+            resume,
+        );
         if kind == ParkKind::NothingChanged && job.as_ref().is_some_and(|j| self.was_rewritten(j)) {
             record
                 .next
@@ -206,6 +225,7 @@ impl Engine<'_> {
             || {
                 self.update(|j| {
                     j.park_kind = Some(kind.as_str().to_string());
+                    j.park_resume = resume;
                     j.park_at = Some(at);
                     j.park_summary = Some(summary);
                     Ok(())

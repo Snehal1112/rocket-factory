@@ -78,7 +78,9 @@ pub use intake::{
 pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
 pub use lock::{lock_board, BoardLock};
-pub use merge::{merge_stage, park, park_with_parts, MergeResult, MAX_SYNCS};
+pub use merge::{
+    merge_stage, park, park_with_parts, park_with_parts_resume, MergeResult, MAX_SYNCS,
+};
 pub use message::{
     fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS,
 };

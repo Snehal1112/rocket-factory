@@ -416,3 +416,49 @@ fn a_job_without_a_plan_names_the_missing_file() {
     assert!(part.text.starts_with("expected "), "{}", part.text);
     assert!(part.text.ends_with("plan.md"), "{}", part.text);
 }
+
+#[test]
+fn a_builder_park_has_no_resume() {
+    let fx = common::approved_job();
+    factory_engine::park_with_parts(
+        &fx.driver,
+        &fx.id,
+        "checks failed",
+        ParkKind::ChecksFailed,
+        Vec::new(),
+    )
+    .expect("park");
+    let rec = merge_record(&fx);
+    assert_eq!(rec.kind, ParkKind::ChecksFailed);
+    assert_eq!(rec.resume, None);
+    assert_eq!(fx.driver.job(&fx.id).expect("job").park_resume, None);
+}
+
+#[test]
+fn an_earlier_park_keeps_its_resume() {
+    use factory_core::ResumeAt;
+    let fx = common::approved_job();
+    factory_engine::park_with_parts_resume(
+        &fx.driver,
+        &fx.id,
+        "main busy",
+        ParkKind::Other,
+        Vec::new(),
+        Some(ResumeAt::Merge),
+    )
+    .expect("first park");
+    factory_engine::park_with_parts_resume(
+        &fx.driver,
+        &fx.id,
+        "moved again",
+        ParkKind::Other,
+        Vec::new(),
+        Some(ResumeAt::Sync),
+    )
+    .expect("second park");
+    assert_eq!(merge_record(&fx).resume, Some(ResumeAt::Merge));
+    assert_eq!(
+        fx.driver.job(&fx.id).expect("job").park_resume,
+        Some(ResumeAt::Merge)
+    );
+}

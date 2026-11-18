@@ -1,4 +1,6 @@
-use factory_core::{park_summary, ParkKind, ParkPart, ParkRecord, Stage};
+use factory_core::{
+    next_with_resume, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt, Stage,
+};
 use factory_git::{BaseState, MergeOutcome, Preflight};
 
 use crate::park::{evidence_or_reason, write_record};
@@ -17,13 +19,18 @@ pub enum MergeResult {
 
 enum Step {
     Merged(String),
-    Park(String, ParkKind, Vec<ParkPart>),
+    Park(String, ParkKind, Vec<ParkPart>, Option<ResumeAt>),
 }
 
 impl Step {
     /// A park of kind `Other` with no evidence of its own.
     fn plain(reason: impl Into<String>) -> Step {
-        Step::Park(reason.into(), ParkKind::Other, Vec::new())
+        Step::Park(reason.into(), ParkKind::Other, Vec::new(), None)
+    }
+
+    /// A park of kind `Other` that `factory retry` resumes at `resume`.
+    fn resume(reason: impl Into<String>, resume: ResumeAt) -> Step {
+        Step::Park(reason.into(), ParkKind::Other, Vec::new(), Some(resume))
     }
 }
 
@@ -40,6 +47,18 @@ pub fn park_with_parts(
     kind: ParkKind,
     parts: Vec<ParkPart>,
 ) -> Result<(), EngineError> {
+    park_with_parts_resume(driver, id, reason, kind, parts, kind.resume())
+}
+
+/// Parks like `park_with_parts`, and records the stage `factory retry` resumes at.
+pub fn park_with_parts_resume(
+    driver: &Driver,
+    id: &str,
+    reason: &str,
+    kind: ParkKind,
+    parts: Vec<ParkPart>,
+    resume: Option<ResumeAt>,
+) -> Result<(), EngineError> {
     let now = now_secs();
     let at = now.max(0.0) as u64;
     let parts = evidence_or_reason(parts, reason);
@@ -51,6 +70,7 @@ pub fn park_with_parts(
             job.park_kind = Some(kind.as_str().to_string());
             job.park_at = Some(at);
             job.park_summary = Some(summary.clone());
+            job.park_resume = resume;
         }
         crate::ports::set_stage_logged(job, Stage::NeedsHuman, Some(reason), false, now)?;
         Ok((job.clone(), already))
@@ -63,10 +83,13 @@ pub fn park_with_parts(
     crate::ports::log_park(id, reason);
     // Writing the record is best effort, the park already happened.
     let mut record = ParkRecord::new(kind, reason, id, job.round, at, parts);
-    record.next = kind.next_for(
+    record.resume = resume;
+    record.next = next_with_resume(
+        kind,
         id,
         job.review_missing(),
         job.last_review.as_ref().map(|r| r.verdict.as_str()),
+        resume,
     );
     write_record(&driver.job_dir(&job), &record);
     // The ledger takes one line, so the reason is folded into a single line.
@@ -199,8 +222,8 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
             }
             Ok(MergeResult::Merged(sha))
         }
-        Ok(Step::Park(reason, kind, parts)) => {
-            park_with_parts(driver, id, &reason, kind, parts)?;
+        Ok(Step::Park(reason, kind, parts, resume)) => {
+            park_with_parts_resume(driver, id, &reason, kind, parts, resume)?;
             Ok(MergeResult::Parked(reason))
         }
         // A cancelled job stays as the cancel left it, and the run ends as needs-human.
@@ -208,7 +231,14 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
         Err(err) => {
             let reason = format!("merge failed: {err}");
             let parts = vec![ParkPart::new("Merge error", "git", &err.to_string())];
-            park_with_parts(driver, id, &reason, ParkKind::Other, parts)?;
+            park_with_parts_resume(
+                driver,
+                id,
+                &reason,
+                ParkKind::Other,
+                parts,
+                Some(ResumeAt::Merge),
+            )?;
             Ok(MergeResult::Parked(reason))
         }
     }
@@ -294,13 +324,14 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
                 format!("branch tip {tip} differs from the reviewed head {head}"),
                 ParkKind::Other,
                 vec![ParkPart::new("Branch moved", "driver", &text)],
+                Some(ResumeAt::Rereview),
             ));
         }
         if let Preflight::Busy { .. } = git_op("preflight_main", || repo.preflight_main())? {
             // Another project may be mid-merge, which briefly dirties main. Look again under the lock.
             let lock = match take_merge_lock(driver) {
                 Ok(lock) => lock,
-                Err(reason) => return Ok(Step::plain(reason)),
+                Err(reason) => return Ok(Step::resume(reason, ResumeAt::Merge)),
             };
             let again = git_op("preflight_main", || repo.preflight_main())?;
             drop(lock);
@@ -322,10 +353,19 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
                     format!("{main} busy: {reason}"),
                     ParkKind::Other,
                     vec![ParkPart::new("Main checkout", "git status", &text)],
+                    Some(ResumeAt::Merge),
                 ));
             }
         }
         if check.state == BaseState::MainMoved {
+            if job.syncs >= MAX_SYNCS {
+                return Ok(Step::Park(
+                    format!("{main} moved again after {} syncs", job.syncs),
+                    ParkKind::Other,
+                    Vec::new(),
+                    Some(ResumeAt::Sync),
+                ));
+            }
             match sync_stage(driver, id)? {
                 SyncOutcome::Synced | SyncOutcome::UpToDate => continue,
                 SyncOutcome::Parked(reason, _) => return Ok(Step::plain(reason)),
@@ -336,7 +376,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         // end of this iteration, and a merge never runs without it.
         let _merge_lock = match take_merge_lock(driver) {
             Ok(lock) => lock,
-            Err(reason) => return Ok(Step::plain(reason)),
+            Err(reason) => return Ok(Step::resume(reason, ResumeAt::Merge)),
         };
         // The message run can take a while, so main is checked again before the merge.
         let again = git_op("base_state", || repo.base_state(&base, &head))?;
@@ -372,9 +412,10 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
             MergeOutcome::Refused { reason } => Ok(Step::plain(format!("merge refused: {reason}"))),
         };
     }
-    Ok(Step::plain(format!(
-        "{main} moved again after the maximum number of syncs"
-    )))
+    Ok(Step::resume(
+        format!("{main} moved again after the maximum number of syncs"),
+        ResumeAt::Sync,
+    ))
 }
 
 fn finish_merge(driver: &Driver, id: &str, sha: &str) -> Result<(), EngineError> {
