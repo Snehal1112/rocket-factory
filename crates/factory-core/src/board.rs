@@ -311,9 +311,24 @@ impl Job {
             .as_ref()
             .map_or((0, 0, ""), |r| (r.blockers, r.round, r.file.as_str()));
         format!(
-            "job {} has {blockers} open review blockers from round {round} ({file}): use rework, cancel, or approve --waive \"<reason>\" to merge anyway",
-            self.id
+            "job {} has {blockers} open review blockers from round {round} ({file}): use {}, cancel, or approve --waive \"<reason>\" to merge anyway",
+            self.id,
+            self.rework_hint()
         )
+    }
+
+    /// The command a refusal offers instead of a plain rework. A park with a resume stage is not
+    /// a builder problem, so retry or a forced rework replaces `rework`.
+    fn rework_hint(&self) -> String {
+        match self.park_resume {
+            None => "rework".to_string(),
+            Some(crate::park::ResumeAt::Review | crate::park::ResumeAt::Rereview) => {
+                format!("factory retry {}", self.id)
+            }
+            Some(crate::park::ResumeAt::Merge | crate::park::ResumeAt::Sync) => {
+                format!("factory rework {} --force <note>", self.id)
+            }
+        }
     }
 
     /// True when the latest review ended without a usable verdict.
@@ -338,8 +353,9 @@ impl Job {
             if self.last_review_missing() {
                 let round = self.last_review.as_ref().map_or(0, |r| r.round);
                 return Some(format!(
-                    "job {} review did not finish in round {round}: use rework, cancel, or approve --without-review to merge anyway",
-                    self.id
+                    "job {} review did not finish in round {round}: use {}, cancel, or approve --without-review to merge anyway",
+                    self.id,
+                    self.rework_hint()
                 ));
             }
             if self.review_missing() && !self.changes_open() {
@@ -352,9 +368,10 @@ impl Job {
     /// The refusal that approve gives for a needs-human job without a review verdict. CLI and API share it.
     pub fn review_missing_message(&self) -> String {
         format!(
-            "job {} has no {} review yet (the checks never passed or the reviewer never ran): use rework, or approve --without-review to merge anyway",
+            "job {} has no {} review yet (the checks never passed or the reviewer never ran): use {}, or approve --without-review to merge anyway",
             self.id,
-            self.missing_reviews().join(" and ")
+            self.missing_reviews().join(" and "),
+            self.rework_hint()
         )
     }
 
@@ -1036,6 +1053,55 @@ mod tests {
             source: "review".into(),
         });
         j
+    }
+
+    #[test]
+    fn approve_refusal_names_retry_on_a_review_resume_park() {
+        for resume in [
+            crate::park::ResumeAt::Review,
+            crate::park::ResumeAt::Rereview,
+        ] {
+            let mut j = with_last_review("changes");
+            j.set_review("code", ReviewState::Changes);
+            j.park_resume = Some(resume);
+            let m = j.approve_refusal(false, false).expect("refused");
+            assert!(m.contains("use factory retry 001, cancel"), "{m}");
+            let mut j = with_last_review("missing");
+            j.set_review("code", ReviewState::Changes);
+            j.park_resume = Some(resume);
+            let m = j.approve_refusal(false, false).expect("refused");
+            assert!(m.contains("use factory retry 001, cancel"), "{m}");
+            let mut j = job();
+            j.stage = Stage::NeedsHuman;
+            j.set_review("code", ReviewState::Pending);
+            j.park_resume = Some(resume);
+            let m = j.approve_refusal(false, false).expect("refused");
+            assert!(m.contains("use factory retry 001, or approve"), "{m}");
+        }
+    }
+
+    #[test]
+    fn approve_refusal_names_forced_rework_on_a_merge_resume_park() {
+        for resume in [crate::park::ResumeAt::Merge, crate::park::ResumeAt::Sync] {
+            let mut j = with_last_review("changes");
+            j.set_review("code", ReviewState::Changes);
+            j.park_resume = Some(resume);
+            let m = j.approve_refusal(false, false).expect("refused");
+            assert!(
+                m.contains("use factory rework 001 --force <note>, cancel"),
+                "{m}"
+            );
+            assert!(!m.contains("factory retry"), "{m}");
+            let mut j = job();
+            j.stage = Stage::NeedsHuman;
+            j.set_review("code", ReviewState::Pending);
+            j.park_resume = Some(resume);
+            let m = j.approve_refusal(false, false).expect("refused");
+            assert!(
+                m.contains("use factory rework 001 --force <note>, or approve"),
+                "{m}"
+            );
+        }
     }
 
     #[test]

@@ -685,7 +685,7 @@ pub fn run_job(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
 }
 
 /// The reason a cancelled job was parked with, or `cancelled` when it has none.
-fn cancel_reason(driver: &Driver, id: &str) -> String {
+pub(crate) fn cancel_reason(driver: &Driver, id: &str) -> String {
     driver
         .job(id)
         .ok()

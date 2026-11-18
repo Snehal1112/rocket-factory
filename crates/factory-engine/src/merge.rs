@@ -316,7 +316,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         let tip = git_op("tip", || repo.tip(&job.branch))?;
         if tip != head {
             let text = format!(
-                "reviewed head {head}\nbranch tip {tip}\n\nSomething was committed on the job branch after the review. Run factory rework {id} <note> so it is reviewed, or reset the branch to the reviewed head."
+                "reviewed head {head}\nbranch tip {tip}\n\nSomething was committed on the job branch after the review. Run factory retry {id} to review the new tip, or reset the branch to the reviewed head."
             );
             return Ok(Step::Park(
                 format!("branch tip {tip} differs from the reviewed head {head}"),

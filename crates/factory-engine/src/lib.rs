@@ -31,6 +31,7 @@ mod probe;
 pub mod procinfo;
 mod project_lease;
 mod repo_lock;
+mod retry;
 mod review;
 mod rework;
 mod runloop;
@@ -99,6 +100,7 @@ pub use project_lease::{
     ProjectLease, ProjectLeaseError, ProjectLeaseStatus, START_SLACK_SECS,
 };
 pub use repo_lock::{lock_repo_merge, MERGE_LOCK_FILE, MERGE_LOCK_WAIT};
+pub use retry::retry_job;
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome, ReviewRun};
 pub use rework::ReworkKind;
 pub use runloop::{

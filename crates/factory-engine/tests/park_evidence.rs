@@ -331,7 +331,7 @@ fn a_moved_branch_names_both_shas() {
     assert_eq!(part.title, "Branch moved");
     assert!(part.text.contains(&fx.head), "{}", part.text);
     assert!(part.text.contains(&tip), "{}", part.text);
-    assert!(part.text.contains("factory rework"), "{}", part.text);
+    assert!(part.text.contains("factory retry 001"), "{}", part.text);
 }
 
 #[test]
