@@ -319,7 +319,7 @@ One project, read only, no `factoryd` needed:
 ~/data/rocket/rocket-factory/dashboard/target/debug/factory-server --root /path/to/your/repo --port 8765
 ```
 
-Open http://127.0.0.1:8765/ in your browser. It listens on your own machine only. In `--home` mode you can start a job and approve, rework or cancel from the page. The page never sees the API token. The server reads it from `~/.factory/api.token`, which `factoryd run` creates on first start with mode 0600. Do not paste that token anywhere.
+Open http://127.0.0.1:8765/ in your browser. It listens on your own machine only. In `--home` mode you can start a job and approve, rework, retry or cancel from the page. A parked job that has a resume stage shows Retry first. The page never sees the API token. The server reads it from `~/.factory/api.token`, which `factoryd run` creates on first start with mode 0600. Do not paste that token anywhere.
 
 ## 11. Daily use
 

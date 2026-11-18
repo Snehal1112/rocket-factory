@@ -22,7 +22,7 @@ used together, and `--api` (default `127.0.0.1:8766`) must be a loopback `host:p
 reply body, a header or a log line. The page title is "Rocket Factory" and there is a tab per project. A project
 the API marks `disabled` shows its reason and an empty board. The board, events, costs and job folders come from the
 API's `stateDir` and `jobsDir`; a missing file shows empty, never an error. The page can create a job and approve,
-rework or cancel one. Errors show as a banner with the stable code (`unauthorized`, `bad_request`, `not_found`,
+rework, retry or cancel one. A parked job with a resume stage shows Retry first and no Rework. Errors show as a banner with the stable code (`unauthorized`, `bad_request`, `not_found`,
 `method_not_allowed`, `project_disabled`, `conflict`, `failed`, `unavailable`), plus these from the dashboard itself:
 `token_missing`, `token_rejected` (the API answered 401), `api_unreachable`, `api_timeout` (a write got no answer within 70 seconds and may still have completed, so check the job list before trying again; the page never retries by itself), `api_error`, `forbidden` (Origin),
 `unsupported_media_type`.
@@ -60,7 +60,7 @@ It never writes any of these files. If it is not running, the factory works the 
 | `GET /api/projects/{p}/jobs/{id}/park` | home mode: park details of a job |
 | `GET /api/usage` | home mode only (404 with `--root`): factoryd `GET /usage?days=14`, token added server-side, same error codes as the other routes. The page reads `dailyBudget` (`{limit, used, resetsAt}`) from it |
 | `POST /api/projects/{p}/jobs` | home mode: create a job, forwarded to factoryd (body: `spec`, `plans`, `model?`, `slug?`, `run`, `series`) |
-| `POST /api/projects/{p}/jobs/{id}/approve`, `rework`, `cancel` | home mode: forwarded to factoryd unchanged |
+| `POST /api/projects/{p}/jobs/{id}/approve`, `rework`, `cancel`, `retry` | home mode: forwarded to factoryd unchanged |
 
 Reads wait 5 seconds for factoryd and writes 70 seconds, because factoryd allows `factory new|rework|cancel` 60 seconds. Without `--home` only `GET` is accepted. In home mode a write also needs an `Origin` header equal to `http://<Host>` and `Content-Type: application/json`; a refused write (403 or 415) never reaches factoryd, and a body over 64 KiB gets 413. Only `127.0.0.1` is bound, and a `Host` header other than `127.0.0.1:<port>` or `localhost:<port>` gets 403. The CSP has `default-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'` and `form-action 'none'`.
 

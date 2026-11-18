@@ -386,6 +386,7 @@ mod tests {
             cancelled: None,
             intake_issue: None,
             park_kind: None,
+            park_resume: None,
             park_at: None,
             park_summary: None,
             estimate: None,

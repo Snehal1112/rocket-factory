@@ -470,6 +470,10 @@
     const path = FactoryProjects.jobPathFor(project, id, kind);
     if (!path) return;
     const waive = kind === "approve" && button && button.getAttribute("data-act-waive") === "1";
+    if (kind === "retry") {
+      runWrite(button, () => postApi(path), () => `Queued a retry of job ${id}`);
+      return;
+    }
     if (kind === "approve" && !waive) {
       runWrite(button, () => postApi(path), () => `Approved job ${id}`);
       return;

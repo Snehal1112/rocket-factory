@@ -505,7 +505,9 @@ pub fn route(home: &HomeState, request: &Request, path: &str, now: f64) -> Optio
                 wrong_method()
             }
         }
-        [_, "jobs", id, action @ ("approve" | "rework" | "cancel")] if valid_job_id(id) => {
+        [_, "jobs", id, action @ ("approve" | "rework" | "cancel" | "retry")]
+            if valid_job_id(id) =>
+        {
             if is_post {
                 forward_write(
                     home,
@@ -994,11 +996,12 @@ mod tests {
         assert_eq!(calls[0].method, "POST");
         assert_eq!(calls[0].url, "/projects/alpha/jobs");
         assert_eq!(calls[0].body.as_bytes(), body);
-        for action in ["approve", "rework", "cancel"] {
+        for action in ["approve", "rework", "cancel", "retry"] {
             let url = format!("/api/projects/alpha/jobs/003/{action}");
             assert_eq!(good_post(&s.app, &url, br#"{"note":"x"}"#).status, 201);
         }
         let urls: Vec<String> = s.fake.calls().iter().map(|c| c.url.clone()).collect();
+        assert!(urls.contains(&"/projects/alpha/jobs/003/retry".to_string()));
         assert!(urls.contains(&"/projects/alpha/jobs/003/rework".to_string()));
         Ok(())
     }

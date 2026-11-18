@@ -1187,7 +1187,7 @@ nohup factoryd run >> ~/.factory/factoryd.log 2>&1 &
 dashboard/target/debug/factory-server --home ~/.factory --port 8765
 ```
 
-Open http://127.0.0.1:8765/. You see a tab for each project. From the page you can create a job and approve, rework or cancel one.
+Open http://127.0.0.1:8765/. You see a tab for each project. From the page you can create a job and approve, rework, retry or cancel one. A parked job that has a resume stage shows Retry first and no Rework button. Retry continues the job from the stage that parked it.
 
 **Old single-folder mode.**
 

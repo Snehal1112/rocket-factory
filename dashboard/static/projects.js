@@ -104,6 +104,7 @@
   // The buttons a job card shows, in order.
   function jobActions(job) {
     if (!job || job.cancelled === true) return [];
+    if (job.stage === "needs-human" && typeof job.park_resume === "string" && job.park_resume !== "") return ["retry", "approve", "cancel"];
     if (job.stage === "needs-human") return ["approve", "rework", "cancel"];
     if (job.stage === "approve") return ["approve", "cancel"];
     if (job.stage === "merged") return [];
@@ -125,7 +126,7 @@
   function jobPathFor(project, id, action) {
     if (typeof project !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(project) || project === "." || project === "..") return null;
     if (!isSafeId(id)) return null;
-    if (action !== "approve" && action !== "rework" && action !== "cancel") return null;
+    if (action !== "approve" && action !== "retry" && action !== "rework" && action !== "cancel") return null;
     return `/api/projects/${encodeURIComponent(project)}/jobs/${id}/${action}`;
   }
 

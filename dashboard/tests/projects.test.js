@@ -100,6 +100,10 @@ test("jobActions follows the stage and the cancelled flag", () => {
   assert.deepEqual(projects.jobActions({ stage: "build" }), ["cancel"]);
   assert.deepEqual(projects.jobActions({ stage: "merged" }), []);
   assert.deepEqual(projects.jobActions({ stage: "needs-human", cancelled: true }), []);
+  assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "review" }), ["retry", "approve", "cancel"]);
+  assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "" }), ["approve", "rework", "cancel"]);
+  assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: 5 }), ["approve", "rework", "cancel"]);
+  assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "sync", cancelled: true }), []);
 });
 
 test("a reply for a stale project is dropped", () => {
@@ -110,6 +114,7 @@ test("a reply for a stale project is dropped", () => {
 });
 
 test("jobPathFor builds the path from the button's own project", () => {
+  assert.equal(projects.jobPathFor("p", "001", "retry"), "/api/projects/p/jobs/001/retry");
   assert.equal(projects.jobPathFor("alpha", "003", "approve"), "/api/projects/alpha/jobs/003/approve");
   assert.equal(projects.jobPathFor("beta", "003", "cancel"), "/api/projects/beta/jobs/003/cancel");
   // A job id of project alpha is never built against another project: the project argument decides.

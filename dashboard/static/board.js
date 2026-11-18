@@ -38,6 +38,11 @@
     return reviewMissing(job) ? `factory approve ${job.id} --without-review` : `factory approve ${job.id}`;
   }
 
+  // True when a retry can resume the parked job. A cancelled job has none.
+  function canRetry(job) {
+    return job.cancelled !== true && typeof job.park_resume === "string" && job.park_resume !== "";
+  }
+
   // The sentence under a needs-human card with open changes.
   function changesNotice(job) {
     const count = Number(job.last_review.blockers) || 0;
@@ -407,6 +412,7 @@
     "commit-failed": "Commit failed",
     "no-checks": "No checks ran",
     "no-tests": "No tests added",
+    "review-failed": "Review failed",
     other: "Needs a human",
   };
   const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "builder-tampered", "commit-failed"];
@@ -697,7 +703,7 @@
     );
   }
 
-  const ACTION_LABELS = { approve: "Approve", rework: "Rework", cancel: "Cancel" };
+  const ACTION_LABELS = { retry: "Retry", approve: "Approve", rework: "Rework", cancel: "Cancel" };
 
   // Buttons for home mode. The page sets job.actions; without it a card has no buttons.
   function actionButtons(job) {
@@ -739,7 +745,7 @@
             : reviewMissing(job)
               ? `<p class="review-missing">The review has not run.</p>`
               : "") +
-          `<p class="hint">${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
+          `<p class="hint">${canRetry(job) ? copyChip(`factory retry ${job.id}`) + copyChip(approveCommand(job)) : copyChip(approveCommand(job)) + copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
     const warning = job.spec_warning
       ? `<details class="spec-warning"${job.stage === "needs-human" ? " open" : ""}><summary>Spec warnings (${String(job.spec_warning).split("; ").filter((part) => part.trim() !== "").length})</summary><p class="reason">${escapeHtml(job.spec_warning)}</p></details>`
@@ -864,7 +870,9 @@
     const actions =
       job.cancelled === true
         ? copyChip(`factory cleanup ${job.id}`)
-        : `${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}`;
+        : canRetry(job)
+          ? `${copyChip(`factory retry ${job.id}`)}${copyChip(approveCommand(job))}`
+          : `${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}`;
     return (
       `<li><span class="job-id">${id}</span>` +
       `<span class="summary-feature">${escapeHtml(job.feature)}</span>` +

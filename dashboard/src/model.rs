@@ -169,6 +169,13 @@ pub struct Job {
         skip_serializing_if = "Option::is_none"
     )]
     pub park_kind: Option<String>,
+    /// The stage a retry resumes at, written by the driver. A bad value is dropped.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub park_resume: Option<String>,
     /// Unix seconds the job parked. A bad value is dropped.
     #[serde(
         default,
@@ -328,6 +335,26 @@ mod tests {
         assert_eq!(with.provider.as_deref(), Some("codex"));
         let without = job_with(serde_json::json!({}));
         assert_eq!(without.provider, None);
+    }
+
+    #[test]
+    fn park_resume_is_optional_and_round_trips() {
+        let with = job_with(serde_json::json!({ "park_resume": "rereview" }));
+        assert_eq!(with.park_resume.as_deref(), Some("rereview"));
+        let json = serde_json::to_string(&with).expect("job serializes");
+        assert!(json.contains("\"park_resume\":\"rereview\""), "{json}");
+        let without = job_with(serde_json::json!({}));
+        assert_eq!(without.park_resume, None);
+        let json = serde_json::to_string(&without).expect("job serializes");
+        assert!(!json.contains("park_resume"), "{json}");
+    }
+
+    #[test]
+    fn a_non_string_park_resume_loads_as_none() {
+        assert_eq!(
+            job_with(serde_json::json!({ "park_resume": 5 })).park_resume,
+            None
+        );
     }
 
     #[test]

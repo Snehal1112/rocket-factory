@@ -1141,3 +1141,36 @@ test("a job card shows an issue chip only when intake_issue is set", () => {
   assert.doesNotMatch(board.renderCard(makeJob({})), /chip-issue/);
   assert.equal(board.issueChip("x"), "");
 });
+
+test("a parked card with a resume stage offers retry first and drops rework", () => {
+  const html = board.renderCard(
+    makeJob({ id: "001", stage: "needs-human", project: "p", park_resume: "review", actions: ["retry", "approve", "cancel"] }),
+  );
+  const buttons = [...html.matchAll(/data-act="(\w+)"/g)].map((m) => m[1]);
+  assert.equal(buttons[0], "retry");
+  assert.match(html, /data-copy="factory retry 001"/);
+  assert.ok(html.indexOf("factory retry 001") < html.indexOf("factory approve 001"));
+  assert.match(html, /factory cancel 001/);
+  assert.doesNotMatch(html, /factory rework/);
+});
+
+test("the summary shows the retry command for a job with a resume stage", () => {
+  const html = board.renderSummary(makeState([makeJob({ id: "001", stage: "needs-human", park_resume: "merge" })]));
+  assert.match(html, /factory retry 001/);
+  assert.match(html, /factory approve 001/);
+  assert.doesNotMatch(html, /factory rework/);
+});
+
+test("a cancelled card with a resume stage shows no retry command", () => {
+  const html = board.renderCard(makeJob({ id: "001", stage: "needs-human", cancelled: true, park_resume: "review" }));
+  assert.doesNotMatch(html, /factory retry/);
+  const summary = board.renderSummary(makeState([makeJob({ id: "001", stage: "needs-human", cancelled: true, park_resume: "review" })]));
+  assert.doesNotMatch(summary, /factory retry/);
+});
+
+test("a review-failed park shows the Review failed label", () => {
+  assert.equal(board.parkKindLabel("review-failed"), "Review failed");
+  assert.equal(board.parkKindClass("review-failed"), "chip-warn");
+  const html = board.renderCard(makeJob({ stage: "needs-human", park_kind: "review-failed" }));
+  assert.match(html, /Review failed/);
+});
