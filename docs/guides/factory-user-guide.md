@@ -1239,7 +1239,7 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 | `main busy: the main checkout is not on <base>` | Your checkout is on another branch. | Switch to the base branch, then `retry` (or `approve`). |
 | `another project is merging into this repository, approve again to retry` | Two projects share one repository. | Run `retry` (or `approve` again). |
 | `merge conflict in <paths>` or `sync conflict in <paths>` | The base branch moved and the change conflicts. | Look at the job's worktree, or `rework` with a note. |
-| `main moved again after 2 syncs` | The base branch kept changing during the merge. | Run `approve` again. |
+| `main moved again after 2 syncs` | The base branch kept changing during the merge. | Run `retry`. It allows one more automatic sync. |
 | `the job changed files outside <subfolder>` | Monorepo only. The change left its folder. | `rework`, so the builder removes those changes. |
 | `no plan.md in the job folder` | The job has no plan. | Put `plan.md` in the job folder, then `run` again. |
 | `run loop did not settle, see the ledger` | The job looped too many times. | Read the ledger (`progress.md` in the job folder), then `rework` or `cancel`. |

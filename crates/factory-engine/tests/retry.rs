@@ -58,6 +58,9 @@ fn retry_after_a_failed_review_reviews_the_same_head() {
     assert_eq!(end, RunEnd::Merged);
     let job = fx.driver.job(&fx.id).expect("job");
     assert_eq!(job.round, before.round);
+    // The retry reviews the head recorded at the park, it does not build a new one.
+    assert!(before.head.is_some());
+    assert_eq!(job.head, before.head);
     assert!(fx.runner.specs_for("builder").is_empty());
     assert!(ledger(&fx).contains("retry at review"), "{}", ledger(&fx));
 }
@@ -81,15 +84,6 @@ fn a_review_retry_with_changes_starts_a_fix_round() {
 
 #[test]
 fn retry_after_no_checks_runs_the_checks() {
-    let covering = Config {
-        checks: vec![CheckRule {
-            paths: vec!["src/**".into()],
-            commands: vec!["true".into()],
-            ..CheckRule::default()
-        }],
-        code_paths: vec!["**".into()],
-        ..Config::default()
-    };
     let uncovered = Config {
         checks: vec![CheckRule {
             paths: vec!["nothing/**".into()],
@@ -108,11 +102,21 @@ fn retry_after_no_checks_runs_the_checks() {
     assert_eq!(job.park_kind.as_deref(), Some("no-checks"));
     assert_eq!(job.park_resume, Some(ResumeAt::Review));
     // A second driver on the same repo maps the changed path, as a config fix would.
-    let mut with_mapping = covering;
-    with_mapping.checks[0].paths = vec!["docs/**".into()];
+    let with_mapping = Config {
+        checks: vec![CheckRule {
+            paths: vec!["docs/**".into()],
+            commands: vec!["true".into()],
+            ..CheckRule::default()
+        }],
+        code_paths: vec!["**".into()],
+        ..Config::default()
+    };
     let second = driver_for(&fx.main, runner, with_mapping);
     let end = retry_job(&second, &fx.id).expect("retry");
     assert_eq!(end, RunEnd::Merged);
+    // The mapped check ran and left its output file.
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert!(fx.driver.job_dir(&job).join("checks.md").exists());
 }
 
 #[test]

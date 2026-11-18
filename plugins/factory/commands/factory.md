@@ -32,7 +32,7 @@ Match by exact shape only, on the whole argument string:
 - `rework <digits> --force <note>` with a non-empty note
 - `rework <digits> <note>` with a non-empty note that does not start with `--force`
 
-Anything else is a feature text, for example `next button for pagination`, `status page for jobs`, `approve button for forms` or `cancel dialog 12 layout`. A feature may start or end with the single token `--one-job`: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`. See the `Model option` note. If the argument is `rework <digits>` with no note, print `rework needs a note: /factory rework <id> <note>` and stop without calling `<factory>`. If the argument is empty, print the argument hint and stop.
+Anything else is a feature text, for example `next button for pagination`, `status page for jobs`, `approve button for forms` or `cancel dialog 12 layout`. A feature may start or end with the single token `--one-job`: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`. See the `Model option` note. If the argument is `rework <digits>` or `rework <digits> --force` with no note, print `rework needs a note: /factory rework <id> <note>` and stop without calling `<factory>`. If the argument is empty, print the argument hint and stop.
 
 ## Other subcommands
 

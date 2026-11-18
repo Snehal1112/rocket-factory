@@ -35,7 +35,8 @@ impl ResumeAt {
 }
 
 /// The commands for a park. With a resume stage, `factory retry` comes first and the
-/// `factory rework` and `factory retry` entries of the kind are dropped.
+/// `factory rework` and `factory retry` entries of the kind are dropped. A sync park also
+/// drops `factory approve`, which cannot clear it.
 pub fn next_with_resume(
     kind: ParkKind,
     id: &str,
@@ -49,11 +50,14 @@ pub fn next_with_resume(
     }
     let rework = format!("factory rework {id} ");
     let retry = format!("factory retry {id}");
+    let approve = format!("factory approve {id}");
+    let drop_approve = resume == Some(ResumeAt::Sync);
     let mut out = vec![retry.clone()];
-    out.extend(
-        next.into_iter()
-            .filter(|n| !n.starts_with(&rework) && !n.starts_with(&retry)),
-    );
+    out.extend(next.into_iter().filter(|n| {
+        !n.starts_with(&rework)
+            && !n.starts_with(&retry)
+            && !(drop_approve && n.starts_with(&approve))
+    }));
     out
 }
 
@@ -611,6 +615,14 @@ mod tests {
         assert_eq!(
             next_with_resume(ParkKind::NoChecks, "086", false, None, None),
             ParkKind::NoChecks.next_for("086", false, None)
+        );
+    }
+
+    #[test]
+    fn next_with_resume_drops_approve_for_a_sync_park() {
+        assert_eq!(
+            next_with_resume(ParkKind::Other, "007", false, None, Some(ResumeAt::Sync)),
+            vec!["factory retry 007", "factory cancel 007"]
         );
     }
 

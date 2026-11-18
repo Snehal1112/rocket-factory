@@ -269,7 +269,7 @@ A folder inside a git repo can be its own project (`factory project add <repo>/a
 
 - Scope: the driver lists the job's own changes (from the merge base with the base branch) after the builder and every fix round. Any path outside the folder, including either side of a cross-boundary rename, parks the job as `needs-human` with the paths named. It never auto-merges, `factory approve` refuses it, and the driver never reverts files. `factory rework` makes the builder remove them.
 - Lock: merges into the base branch take a per-repo lock in the git common dir. A sync runs in the job worktree, outside the lock. The wait is 30 seconds, then the job parks with `another project is merging into this repository, approve again to retry`. Main is re-checked under the lock before a busy main parks the job. The OS releases the lock if its holder dies.
-- Contention: while other projects merge, main moves more often, so a job can use more of the sync cap (`MAX_SYNCS`, 2) and park with `<main> moved again after the maximum number of syncs` (from the merge step) or `<main> moved again after N syncs` (from the sync stage). Run `factory retry <id>` for a sync park (one more automatic sync is allowed), or approve it again.
+- Contention: while other projects merge, main moves more often, so a job can use more of the sync cap (`MAX_SYNCS`, 2) and park with `<main> moved again after the maximum number of syncs` (from the merge step) or `<main> moved again after N syncs` (from the sync stage). Run `factory retry <id>` for a sync park (one more automatic sync is allowed). `approve` does not reset the sync count, so it parks again at once.
 
 ## How to run
 
