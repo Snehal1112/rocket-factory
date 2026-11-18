@@ -231,14 +231,12 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
         Err(err) => {
             let reason = format!("merge failed: {err}");
             let parts = vec![ParkPart::new("Merge error", "git", &err.to_string())];
-            park_with_parts_resume(
-                driver,
-                id,
-                &reason,
-                ParkKind::Other,
-                parts,
-                Some(ResumeAt::Merge),
-            )?;
+            // An automatic sync moves the head and the stage to Review, so that head needs a new review.
+            let resume = match driver.job(id) {
+                Ok(job) if job.stage != Stage::Approve => ResumeAt::Rereview,
+                _ => ResumeAt::Merge,
+            };
+            park_with_parts_resume(driver, id, &reason, ParkKind::Other, parts, Some(resume))?;
             Ok(MergeResult::Parked(reason))
         }
     }

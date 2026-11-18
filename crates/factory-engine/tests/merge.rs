@@ -677,7 +677,7 @@ fn max_syncs_parks_with_resume_sync() {
 }
 
 #[test]
-fn a_merge_conflict_parks_without_resume() {
+fn a_sync_conflict_in_the_merge_stage_parks_without_resume() {
     let fx = common::approved_job();
     let wt = common::worktree_of(&fx);
     common::commit_file(&wt, "same.txt", "branch");
@@ -714,5 +714,50 @@ fn a_failed_auto_sync_review_parks_with_resume_rereview() {
     );
     let job = fx.driver.job(&fx.id).expect("job");
     assert_eq!(job.park_kind.as_deref(), Some("review-failed"));
+    assert_resume(&fx, Some(factory_core::ResumeAt::Rereview));
+}
+
+/// Runs the inner runner, but first blocks the sync review file so that writing it fails.
+struct BlockSyncReviewFile {
+    dir: std::sync::Mutex<Option<std::path::PathBuf>>,
+    inner: std::sync::Arc<common::ScriptedRunner>,
+}
+
+impl factory_agent::AgentRunner for BlockSyncReviewFile {
+    fn run(&self, spec: &factory_agent::AgentSpec) -> factory_agent::AgentRun {
+        if spec.role == "reviewer" {
+            if let Some(dir) = self.dir.lock().expect("dir").as_ref() {
+                // A directory where the review file belongs makes the write fail.
+                for round in 0..=3 {
+                    let _ = std::fs::create_dir(dir.join(format!("review-code-r{round}-sync1.md")));
+                }
+            }
+        }
+        self.inner.run(spec)
+    }
+}
+
+#[test]
+fn an_error_after_an_auto_sync_parks_with_resume_rereview() {
+    let inner = common::approving_runner(3);
+    let blocker = std::sync::Arc::new(BlockSyncReviewFile {
+        dir: std::sync::Mutex::new(None),
+        inner: inner.clone(),
+    });
+    let fx = common::approved_job_dyn(
+        blocker.clone(),
+        inner,
+        false,
+        factory_core::Config::default(),
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    *blocker.dir.lock().expect("dir") = Some(fx.driver.job_dir(&job));
+    common::commit_file(&fx.main, "other.md", "o");
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(
+        matches!(&r, MergeResult::Parked(m) if m.starts_with("merge failed")),
+        "got {r:?}"
+    );
+    // The head moved in the sync and was never reviewed, so a retry must not merge it.
     assert_resume(&fx, Some(factory_core::ResumeAt::Rereview));
 }

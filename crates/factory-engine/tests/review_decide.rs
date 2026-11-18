@@ -1204,19 +1204,21 @@ fn a_round_two_gate_park_shows_the_round_one_review() {
 }
 
 /// A reviewer run that ends `reason` once, over a fixture that built and passed its checks.
-fn failed_review(reason: StopReason) -> (Fixture, Arc<ScriptedRunner>, StageOutcome) {
+fn failed_review(reason: StopReason) -> (Fixture, StageOutcome, u32) {
     let fx = committing_fixture();
     build_and_pass_checks(&fx, &["a.txt"]);
     let inner = Arc::new(reviewer("fine\nVERDICT: APPROVE"));
     let failing = RoleFailing::new("reviewer", reason, 1, inner.clone());
     let e = fx.engine(&failing);
+    let before = fx.job().round;
     let out = e.review_stage().expect("review");
+    assert_eq!(fx.job().round, before);
     assert_eq!(out.resume, Some(ResumeAt::Review));
     let parked = e.apply_decision(&out).expect("apply");
-    (fx, inner, parked)
+    (fx, parked, before)
 }
 
-fn assert_parked_review_failed(fx: &Fixture, inner: &ScriptedRunner, parked: &StageOutcome) {
+fn assert_parked_review_failed(fx: &Fixture, parked: &StageOutcome, before: u32) {
     assert!(matches!(parked, StageOutcome::NeedsHuman(_)), "{parked:?}");
     let job = fx.job();
     assert_eq!(job.stage, Stage::NeedsHuman);
@@ -1224,12 +1226,11 @@ fn assert_parked_review_failed(fx: &Fixture, inner: &ScriptedRunner, parked: &St
     assert_eq!(job.park_resume, Some(ResumeAt::Review));
     // The round is the one the review ran in, so no fix round started.
     let reviewed = job.last_review.as_ref().expect("last review").round;
-    assert!(job.round <= reviewed, "round {}", job.round);
+    assert_eq!(job.round, before);
     assert!(!fx
         .job_dir
         .join(format!("changes-r{}.md", reviewed + 1))
         .exists());
-    assert!(inner.specs_for("builder").is_empty());
     let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
     assert!(
         rec.parts.iter().any(|p| p.text.contains("Invalid API key")),
@@ -1242,14 +1243,40 @@ fn assert_parked_review_failed(fx: &Fixture, inner: &ScriptedRunner, parked: &St
 
 #[test]
 fn a_failed_reviewer_parks_as_review_failed() {
-    let (fx, inner, parked) = failed_review(StopReason::Failed);
-    assert_parked_review_failed(&fx, &inner, &parked);
+    let (fx, parked, before) = failed_review(StopReason::Failed);
+    assert_parked_review_failed(&fx, &parked, before);
 }
 
 #[test]
 fn a_stalled_reviewer_parks_as_review_failed() {
-    let (fx, inner, parked) = failed_review(StopReason::Stalled);
-    assert_parked_review_failed(&fx, &inner, &parked);
+    let (fx, parked, before) = failed_review(StopReason::Stalled);
+    assert_parked_review_failed(&fx, &parked, before);
+}
+
+/// Ends every reviewer run `Failed` but keeps the reply text, as a Codex run can.
+struct FailedWithText(&'static str);
+
+impl factory_agent::AgentRunner for FailedWithText {
+    fn run(&self, _spec: &factory_agent::AgentSpec) -> factory_agent::AgentRun {
+        factory_agent::AgentRun {
+            stop_reason: StopReason::Failed,
+            error: Some("exit after result".into()),
+            ..factory_agent::AgentRun::done(self.0)
+        }
+    }
+}
+
+#[test]
+fn a_failed_run_with_a_verdict_is_not_review_failed() {
+    let fx = committing_fixture();
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let e = fx.engine(&FailedWithText("fine\nVERDICT: APPROVE"));
+    let out = e.review_stage().expect("review");
+    assert_eq!(out.verdict, Verdict::Approve);
+    assert_eq!(out.resume, None);
+    assert_eq!(out.decision, Decision::AutoMerge);
+    let last = fx.job().last_review.expect("last review");
+    assert_eq!(last.verdict, "approve");
 }
 
 #[test]

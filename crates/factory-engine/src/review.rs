@@ -217,10 +217,12 @@ impl Engine<'_> {
                 std::fs::write(raw, &run.result_text).map_err(io_err)?;
             }
             // A failed or stalled run is an environment problem, so its text carries the error.
+            // A reply that holds a verdict is never a failure, even when the run ended badly.
+            let parsed = parse_verdict(&run.result_text);
             let failed = matches!(
                 run.stop_reason,
                 factory_agent::StopReason::Failed | factory_agent::StopReason::Stalled
-            );
+            ) && parsed == Verdict::Missing;
             role_failed |= failed;
             let role_text = if failed {
                 format!(
@@ -232,8 +234,12 @@ impl Engine<'_> {
             } else {
                 run.result_text.clone()
             };
-            let role_verdict = if run.stop_reason == factory_agent::StopReason::Done {
-                parse_verdict(&run.result_text)
+            let role_verdict = if run.stop_reason == factory_agent::StopReason::Done
+                || matches!(
+                    run.stop_reason,
+                    factory_agent::StopReason::Failed | factory_agent::StopReason::Stalled
+                ) {
+                parsed
             } else {
                 Verdict::Missing
             };

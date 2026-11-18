@@ -285,6 +285,10 @@ impl Engine<'_> {
             }
             ParkKind::ReviewFailed => {
                 let mut parts = vec![ParkPart::new("Why it stopped", "driver", reason)];
+                // A missing security agent stops the review before any run, so no review file is new.
+                if reason.contains(&format!("{}.md not found", crate::specs::SECURITY_AGENT)) {
+                    return parts;
+                }
                 // The review file of this round holds each failed role's `run failed (...)` line.
                 if let Ok(job) = self.job() {
                     let current = job.last_review.filter(|l| l.round == job.round);
@@ -296,7 +300,6 @@ impl Engine<'_> {
                         }
                     }
                 }
-                parts.extend(self.review_part());
                 parts
             }
             ParkKind::BudgetStopped => {

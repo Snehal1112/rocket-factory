@@ -220,6 +220,9 @@ fn sync_with(
             // A failed review parks here with the resume stage `Rereview`, like a risky diff parks.
             if *kind == ParkKind::ReviewFailed {
                 let parked = driver.apply(id, &outcome);
+                if let Err(err) = &parked {
+                    tracing::error!(event = "park.error", msg = %format!("park after sync failed for job {id}: {err}"));
+                }
                 return Ok(SyncOutcome::Parked(
                     crate::park::sync_park_text(parked, &text),
                     None,
