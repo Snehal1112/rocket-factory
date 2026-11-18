@@ -21,9 +21,16 @@ pub enum SyncKind {
     Requested,
 }
 
+/// Who runs a requested sync. A retry also lets a fix round continue the job and never re-parks a pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncCaller {
+    Command,
+    Retry,
+}
+
 /// Merges main into the job worktree, reruns checks, and runs one reviewer pass on the sync diff.
 pub fn sync_stage(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError> {
-    sync_with(driver, id, SyncKind::Auto, false)
+    sync_with(driver, id, SyncKind::Auto, false, SyncCaller::Command)
 }
 
 /// The worktree of a job, or the error that a job without one cannot sync.
@@ -44,6 +51,17 @@ fn job_worktree(driver: &Driver, job: &Job) -> Result<Worktree, EngineError> {
 /// other case resets the reviews and the floor, merges main when the branch is behind, then runs
 /// the whole-branch review.
 pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineError> {
+    sync_requested_by(driver, id, SyncCaller::Command)
+}
+
+/// Like `sync_requested`. A retry always runs the checks and the whole-branch review, and a fix
+/// round that starts from them ends the sync as `Synced`.
+pub fn sync_requested_by(
+    driver: &Driver,
+    id: &str,
+    by: SyncCaller,
+) -> Result<SyncOutcome, EngineError> {
+    let retry = by == SyncCaller::Retry;
     let job = driver.job(id)?;
     if job.cancelled {
         return Err(EngineError::Refused(format!("job {id} is cancelled")));
@@ -73,11 +91,11 @@ pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineEr
     let behind = !crate::merge::git_op("is_ancestor", || {
         driver.repo().is_ancestor(driver.repo().base_branch(), &tip)
     })?;
-    if tip == head && !behind {
+    if tip == head && !behind && !retry {
         return Ok(SyncOutcome::UpToDate);
     }
     // Only an approved head keeps its reviewed floor. Any other case reviews the whole branch.
-    let whole_branch = tip != head || job.stage != Stage::Approve;
+    let whole_branch = retry || tip != head || job.stage != Stage::Approve;
     if whole_branch {
         // The ruling comes first, so a crash leaves a ruling without a change and not the reverse.
         driver.ledger(&job).ruling(&format!(
@@ -92,13 +110,13 @@ pub fn sync_requested(driver: &Driver, id: &str) -> Result<SyncOutcome, EngineEr
             crate::ports::set_stage_logged(j, Stage::Review, None, true, now)
         })?;
     }
-    let outcome = sync_with(driver, id, SyncKind::Requested, whole_branch)?;
+    let outcome = sync_with(driver, id, SyncKind::Requested, whole_branch, by)?;
     // Nobody else parks a requested sync, so the job must not stay in review with a park message.
     // A park that `park_after_sync` already wrote keeps its own kind and evidence.
     if let SyncOutcome::Parked(reason, kind) = &outcome {
         let kind = kind.unwrap_or(ParkKind::Other);
         crate::merge::park_with_parts(driver, id, reason, kind, Vec::new())?;
-    } else if job.stage == Stage::NeedsHuman && driver.job(id)?.stage == Stage::Approve {
+    } else if !retry && job.stage == Stage::NeedsHuman && driver.job(id)?.stage == Stage::Approve {
         // The parked job was held for a reason the review does not recheck, so a person releases it.
         let reason = format!("sync review passed, run factory approve {id}");
         crate::merge::park_with_parts(driver, id, &reason, ParkKind::Other, Vec::new())?;
@@ -113,7 +131,9 @@ fn sync_with(
     id: &str,
     kind: SyncKind,
     rewritten: bool,
+    by: SyncCaller,
 ) -> Result<SyncOutcome, EngineError> {
+    let retry = by == SyncCaller::Retry;
     let job = driver.job(id)?;
     if kind == SyncKind::Auto && job.syncs >= MAX_SYNCS {
         return Ok(SyncOutcome::Parked(
@@ -184,6 +204,8 @@ fn sync_with(
     // The checks and one reviewer pass run on the sync diff (prev_head..head), or on base..head after a rewrite.
     match driver.checks(id)? {
         StageOutcome::Advanced(Stage::Review) => {}
+        // A retry lets the fix round that the checks started carry on.
+        StageOutcome::Advanced(Stage::Build) if retry => return Ok(SyncOutcome::Synced),
         StageOutcome::Advanced(_) => {
             return Ok(SyncOutcome::Parked("checks failed after sync".into(), None))
         }
@@ -206,11 +228,16 @@ fn sync_with(
     match &outcome.decision {
         Decision::AutoMerge => match driver.apply(id, &outcome)? {
             StageOutcome::Advanced(Stage::Approve) => Ok(SyncOutcome::Synced),
+            StageOutcome::Advanced(Stage::Build) if retry => Ok(SyncOutcome::Synced),
             _ => Ok(SyncOutcome::Parked(
                 "final checks failed after sync".into(),
                 None,
             )),
         },
+        Decision::FixRound if retry => Ok(match driver.apply(id, &outcome)? {
+            StageOutcome::NeedsHuman(why) => SyncOutcome::Parked(why, None),
+            _ => SyncOutcome::Synced,
+        }),
         Decision::FixRound => Ok(SyncOutcome::Parked(
             "sync review asked for changes".into(),
             None,

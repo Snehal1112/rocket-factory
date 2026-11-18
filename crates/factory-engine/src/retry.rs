@@ -3,7 +3,7 @@
 use factory_core::{Job, ParkKind, ParkRecord, ResumeAt, Stage};
 
 use crate::runloop::{cancel_reason, run_series, RunEnd};
-use crate::{now_secs, Driver, EngineError};
+use crate::{now_secs, sync_requested_by, Driver, EngineError, SyncCaller, SyncOutcome, MAX_SYNCS};
 
 /// The commands the park of a job without a resume stage offers, joined for a refusal.
 fn park_commands(driver: &Driver, job: &Job) -> String {
@@ -76,10 +76,33 @@ fn retry_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                 .store()
                 .update_job(id, |j| crate::resume_logged(j, Stage::Approve, now))?;
         }
-        ResumeAt::Rereview | ResumeAt::Sync => {
-            return Err(EngineError::Refused(format!(
-                "retry at {word} is not supported yet"
-            )));
+        ResumeAt::Rereview => {
+            // The sync writes its own ruling for the whole-branch review, so this one only marks the retry.
+            driver.ledger(&job).ruling(&format!("retry at {word}"))?;
+            let outcome = sync_requested_by(driver, id, SyncCaller::Retry)?;
+            tracing::info!(
+                event = "operator.retry",
+                resume = word,
+                msg = "retry at the parked stage"
+            );
+            if let SyncOutcome::Parked(reason, _) = outcome {
+                return Ok(RunEnd::NeedsHuman(reason));
+            }
+            return run_series(driver, id);
+        }
+        ResumeAt::Sync => {
+            if job.stage_before_park() != Some(Stage::Approve) {
+                if let Some(refusal) = job.approve_refusal(false, false) {
+                    return Err(EngineError::Refused(refusal));
+                }
+            }
+            driver.ledger(&job).ruling(&format!("retry at {word}"))?;
+            let now = now_secs();
+            // One more automatic sync is allowed, so the count drops to one below the cap.
+            driver.store().update_job(id, |j| {
+                j.syncs = j.syncs.min(MAX_SYNCS - 1);
+                crate::resume_logged(j, Stage::Approve, now)
+            })?;
         }
     }
     tracing::info!(
