@@ -260,7 +260,7 @@ fn take_merge_lock(driver: &Driver) -> Result<crate::BoardLock, String> {
     match crate::lock_repo_merge(driver.repo(), driver.merge_lock_wait()) {
         Ok(lock) => Ok(lock),
         Err(StoreError::Locked) => Err(
-            "another project is merging into this repository, approve again to retry".to_string(),
+            "another project is merging into this repository, run factory retry <id>".to_string(),
         ),
         Err(err) => Err(format!("cannot take the merge lock: {err}")),
     }

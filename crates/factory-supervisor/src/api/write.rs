@@ -372,6 +372,23 @@ fn create_inner(
     })
 }
 
+/// Answers 409 when an approve or retry request for the job is already queued or running.
+fn refuse_if_queued(home: &Home, name: &str, id: &str) -> Result<(), ApiResponse> {
+    // The queue entry stays until the child finishes, so this also covers a running request.
+    let twice = queue::list(home).iter().any(|item| {
+        matches!(item, queue::QueueItem::Ok(r)
+            if r.project == name && r.job == id && matches!(r.action, Action::Approve | Action::Retry))
+    });
+    if twice {
+        return Err(error_response(
+            409,
+            "conflict",
+            &format!("job {id} already has an approve or retry queued"),
+        ));
+    }
+    Ok(())
+}
+
 /// `POST /projects/{p}/jobs/{id}/approve`.
 pub fn approve(home: &Home, deps: &ApiDeps, name: &str, id: &str, body: &[u8]) -> ApiResponse {
     match approve_inner(home, deps, name, id, body) {
@@ -430,6 +447,7 @@ fn approve_inner(
     if let Some(why) = job.approve_refusal(without_review, b.waive_reason.is_some()) {
         return Err(error_response(409, "conflict", &why));
     }
+    refuse_if_queued(home, name, &id)?;
     let request_id = enqueue(
         home,
         deps,
@@ -505,16 +523,7 @@ fn retry_inner(
             return Err(conflict(&why));
         }
     }
-    // The queue entry stays until the child finishes, so this also covers a running request.
-    let twice = queue::list(home).iter().any(|item| {
-        matches!(item, queue::QueueItem::Ok(r)
-            if r.project == name && r.job == id && matches!(r.action, Action::Approve | Action::Retry))
-    });
-    if twice {
-        return Err(conflict(&format!(
-            "job {id} already has an approve or retry queued"
-        )));
-    }
+    refuse_if_queued(home, name, &id)?;
     let request_id = enqueue(home, deps, name, Action::Retry, &id, false, false, None)?;
     Ok(ApiResponse {
         status: 202,
@@ -1460,6 +1469,21 @@ mod tests {
         crate::queue::enqueue(&f.home, &first).expect("enqueue");
         let r = post(&f, "/projects/good/jobs/1/retry", b"");
         assert_eq!(code(&r), (409, "conflict".to_string()));
+        assert_eq!(queued(&f), 1);
+    }
+
+    #[test]
+    fn an_approve_while_a_retry_is_queued_is_409() {
+        let f = fx();
+        parked(&f, "needs-human", RESUME_MERGE);
+        let first = crate::Request::new("good", Action::Retry, "001", false, 1).expect("req");
+        crate::queue::enqueue(&f.home, &first).expect("enqueue");
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            br#"{"without_review":true}"#,
+        );
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
         assert_eq!(queued(&f), 1);
     }
 
