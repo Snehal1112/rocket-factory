@@ -46,6 +46,23 @@ fn rework_logs_the_note() -> TestResult {
 }
 
 #[test]
+fn retry_logs_operator_retry() -> TestResult {
+    let sc = parked()?;
+    // Dirty main, so the approve parks with a merge resume value.
+    std::fs::write(sc.root.join("README.md"), "dirty")?;
+    sc.run(&["approve", "1"])?;
+    assert_eq!(sc.stage("001")?, "needs-human");
+    std::fs::write(sc.root.join("README.md"), "demo\n")?;
+    let (out, lines) = factory_telemetry::capture("info", || sc.run(&["retry", "1"]));
+    out?;
+    let found = events(&lines, "operator.retry");
+    assert_eq!(found.len(), 1, "{lines:?}");
+    assert_eq!(found[0]["resume"], "merge");
+    assert_eq!(found[0]["job_id"], "001");
+    Ok(())
+}
+
+#[test]
 fn cancel_logs_reason_and_force() -> TestResult {
     let sc = parked()?;
     let (out, lines) = factory_telemetry::capture("info", || {

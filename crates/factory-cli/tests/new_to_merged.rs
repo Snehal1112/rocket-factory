@@ -1000,7 +1000,7 @@ fn a_rework_supersedes_a_waiver_that_never_merged() -> TestResult {
     // A stale rework note must not shadow the round's findings.
     std::fs::write(job_file(&sc, "rework-note.md"), "stale")?;
     assert_eq!(
-        sc.run(&["rework", "1", "fix the helper"])?,
+        sc.run(&["rework", "--force", "--", "1", "fix the helper"])?,
         "job 001 back to build, round 2"
     );
     assert!(!job_file(&sc, "rework-note.md").exists());

@@ -85,10 +85,17 @@ pub enum Command {
         #[arg(long, conflicts_with = "without_review")]
         waive: Option<String>,
     },
+    /// Continue a parked job at the stage that parked it, then drive it like run.
+    Retry {
+        id: String,
+    },
     /// Send a one-line note to the builder as the next round, or to the running task.
     Rework {
         id: String,
         note: String,
+        /// Send a job to the builder even though its park has a retry stage.
+        #[arg(long)]
+        force: bool,
     },
     Cancel {
         id: String,

@@ -409,7 +409,8 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             without_review,
             waive,
         } => approve(ctx, &norm(&id)?, without_review, waive.as_deref()),
-        Command::Rework { id, note } => rework(ctx, &norm(&id)?, &note),
+        Command::Retry { id } => retry(ctx, &norm(&id)?),
+        Command::Rework { id, note, force } => rework(ctx, &norm(&id)?, &note, force),
         Command::Cancel { id, reason, force } => match factory_core::normalize_id(&id) {
             Ok(id) => cancel(ctx, &id, &reason, force),
             Err(_) => cancel_draft(ctx, &id),
@@ -645,6 +646,27 @@ fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
     })
 }
 
+fn retry(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
+    ctx.runnable()?;
+    let _span = factory_engine::job_span(id).entered();
+    let d = ctx.driver()?;
+    // The project lease and the job lease are held until the command returns, as `run` does.
+    let _project = d.hold_project(id)?;
+    d.renew_lease(id)?;
+    let _guard = LeaseGuard {
+        driver: &d,
+        id: id.to_string(),
+    };
+    let end = match factory_engine::retry_job(&d, id) {
+        Err(factory_engine::EngineError::Refused(text)) => return Err(CliError::Refused(text)),
+        other => other?,
+    };
+    Ok(match end {
+        RunEnd::Merged => outcome_lines::merged_line(None),
+        RunEnd::NeedsHuman(reason) => outcome_lines::needs_human_line(&reason),
+    })
+}
+
 fn sync(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
     ctx.runnable()?;
     let _span = factory_engine::job_span(id).entered();
@@ -785,7 +807,7 @@ fn approve(
     })
 }
 
-fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
+fn rework(ctx: &CliCtx, id: &str, note: &str, force: bool) -> Result<String, CliError> {
     validate_rework_note(note)?;
     let _span = factory_engine::job_span(id).entered();
     let d = ctx.driver()?;
@@ -794,6 +816,17 @@ fn rework(ctx: &CliCtx, id: &str, note: &str) -> Result<String, CliError> {
         return Err(CliError::Refused(format!(
             "job {id} is in stage {}, rework needs needs-human",
             job.stage
+        )));
+    }
+    // A park the driver can resume goes to retry. A cancelled job is revived by rework as before.
+    if !force && !job.cancelled && job.park_resume.is_some() {
+        let why = job
+            .reason
+            .as_deref()
+            .or(job.park_summary.as_deref())
+            .unwrap_or("no reason recorded");
+        return Err(CliError::Refused(format!(
+            "job {id} parked outside the builder ({why}); run factory retry {id}, or factory rework {id} --force <note> to send it to the builder anyway"
         )));
     }
     let kind = d.rework_kind(id)?;

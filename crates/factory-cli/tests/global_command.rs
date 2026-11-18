@@ -425,7 +425,7 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "`approve <digits> --without-review`",
         "<factory> --project <name> approve <id> --without-review",
         "refuses a `needs-human` job whose code review has not run",
-        "argument-hint: \"<feature> [--opus] [--one-job] | status | approve <id> | rework <id> <note> | cancel <id|slug> | cleanup <id> | tickets <id>\"",
+        "argument-hint: \"<feature> [--opus] [--one-job] | status | approve <id> | retry <id> | rework <id> [--force] <note> | cancel <id|slug> | cleanup <id> | tickets <id>\"",
         // The overrides of the brainstorming skill.
         "Every question, the first one included, carries your recommended answer and two or three alternatives, so the user can pick one or answer in their own words.",
         "two or three alternatives",

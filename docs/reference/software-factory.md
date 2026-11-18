@@ -20,10 +20,10 @@ factory run (no LLM tokens):
                  +------------------------------+
   main moved -> merge main in, re-run checks and a sync review (review-code-r<N>-sync<K>.md, at most 2) -> merge
   APPROVE + no risk + under size cap + budget ok -> merge reviewed sha to local main -> next plan
-  otherwise                                      -> needs-human (factory approve | factory rework | factory cancel)
+  otherwise                                      -> needs-human (factory retry | factory approve | factory rework | factory cancel)
 ```
 
-A job in needs-human is left only through `rework`, `approve` or `sync`.
+A job in needs-human is left only through `retry`, `rework`, `approve` or `sync`.
 
 With `reviewers = ["code", "security"]` the review step runs the roles one after the other, `code` then `security`, and both run every round, so one fix round gets both sets of findings. The security role is skipped only when the round changed at least one path, the diff is not risky and every changed path is under `docs/**`. The review file `review-code-r<N>.md` then holds one `## code review` and one `## security review` section, each with a `Role verdict:` line, and ends with one combined `VERDICT:` line (`APPROVE` only when every role approves). The raw replies are kept as `review-code-r<N>.raw.md` and `review-security-r<N>.raw.md`. With only `code`, the file is the code reply as before. The security run is recorded in `usage.jsonl` under the role `security-review`, so `factory tokens` and `factory costs` show it.
 
@@ -44,7 +44,7 @@ A refusal ends with the hint to record the user's answer as a `Decided by: user`
 - `factory new` without `--plans` makes one job at `build` with no plan, so `plan.md` must be placed by hand in the job folder (`new` prints the path) before `run`. Without it the run parks the job at needs-human with `no plan.md in the job folder` and starts no agent.
 - `factory new --plans` makes one job per plan at once. Plan 1 starts at `build`. Plans 2 to N wait at `spec` and share a series id `S<n>` (`series.id` on the board). The spec file given with `--spec` (or `spec.md` beside the plans when `--spec` is left out) is checked and copied into every job's folder as `spec.md`, so every builder and the reviewer can read it. The check needs a `## Goal` of at least 8 words, an `## Acceptance criteria` section with at least one list item, and no `TBD`, `TODO`, `FIXME` or `???` outside code, else `new` creates no job. A section ends only at a level-1 or level-2 heading outside code fences, and only an exact `## Goal` line names the Goal. `--spec` needs `--plans`. Paths in a committed series are repo-relative, and so are the `Next plan:` lines. `run --series` runs the next waiting job when the plan before it merges, and `run <id>` on a waiting job moves it to `build`. A series with one plan has no id. A series made before this change has no id either, and its next job is created after the previous one merges. Cancelling one plan stops the series and leaves the later plans waiting at `spec`, so cancel each of them too if the series is dropped. Plans are copied into their job folders when `factory new` runs, so edit a plan's `plan.md` in its job folder, not the committed plan file, and do not change a `Next plan:` line after `new`.
 - `.superpowers/factory/board.json`: stage per job. Stages `spec`, `build`, `review`, `approve`, `merged`, `needs-human`. Same names and fields as v1, so the dashboard keeps working.
-- `park.json` (job folder, written by the driver when it parks a job): `kind`, `reason`, `at`, `round`, `next` (the commands to run) and `parts` (title, source, text, truncated; each text capped at 200 KB, keeping the end). Kinds: `checks-failed`, `changes-remain`, `risky-diff`, `diff-too-large`, `budget-stopped`, `builder-stopped`, `builder-blocked`, `builder-committed`, `nothing-changed`, `commit-failed`, `other`. The board job has `park_kind` and `park_at`, cleared when the job leaves needs-human. `factory status` prints the reason, the first 12 lines of the first part and the next commands for each parked job.
+- `park.json` (job folder, written by the driver when it parks a job): `kind`, `reason`, `at`, `round`, `next` (the commands to run) and `parts` (title, source, text, truncated; each text capped at 200 KB, keeping the end). Kinds: `checks-failed`, `changes-remain`, `risky-diff`, `diff-too-large`, `budget-stopped`, `builder-stopped`, `builder-blocked`, `builder-committed`, `nothing-changed`, `commit-failed`, `review-failed`, `other`. The board job has `park_kind` and `park_at`, cleared when the job leaves needs-human. `factory status` prints the reason, the first 12 lines of the first part and the next commands for each parked job.
 - `.superpowers/factory/events.jsonl`: events written by the driver, each with the job id.
 - Only the driver writes the ledger, board and events. Agents and the `/factory` command never do.
 - Config: `.claude/factory/config.toml` (`risk_paths`, `diff_cap_lines`, `budget_weighted`, `fix_rounds`, `stall_minutes`, `builder_model`, `reviewer_model`, `reviewer_model_large`, `reviewer_large_over_lines`, `commit_model`, `commit_subagents`, `commit_budget_weighted`, `commit_batch`, `builder_excerpt`, `builder_permissions`, `builder_allow`, `tickets_on_merge`, `cache_ttl`, `kb_path`, `kb_model`, `kb_budget_weighted`, `kb_auto_commit`, `[[checks]]`).
@@ -159,11 +159,11 @@ The driver and `factoryd` write one JSON line per event, next to `events.jsonl`,
 | `scope` | `cli` or `factoryd` |
 | `project` | omitted when the checkout is not registered |
 | `job_id`, `stage` | omitted outside a job |
-| `event` | dotted name: `job.created`, `stage.change`, `agent.start`, `agent.end`, `check.run`, `git.op` (debug), `task.start`, `task.end`, `commit.done`, `operator.approve`, `operator.rework`, `operator.cancel`, `decide`, `merge.done`, `park`, `step.error`, `sup.start`, `sup.finish`, `sup.reject`, `sup.notice`, `sup.warn`, `sup.error` |
+| `event` | dotted name: `job.created`, `stage.change`, `agent.start`, `agent.end`, `check.run`, `git.op` (debug), `task.start`, `task.end`, `commit.done`, `operator.approve`, `operator.retry`, `operator.rework`, `operator.cancel`, `decide`, `merge.done`, `park`, `step.error`, `sup.start`, `sup.finish`, `sup.reject`, `sup.notice`, `sup.warn`, `sup.error` |
 | `msg` | at most 300 characters |
 | other | event fields, such as `from`, `to`, `sha`, `role` |
 
-`agent.end` also carries `input`, `cache_creation`, `cache_read`, `output`, `turns`, `resumed`, `round`, `start_ctx`, `end_ctx` and `session_id`. `operator.approve` has `without_review`, `operator.rework` has `note` and `operator.cancel` has `reason` and `force`; they are logged only after the command succeeds.
+`agent.end` also carries `input`, `cache_creation`, `cache_read`, `output`, `turns`, `resumed`, `round`, `start_ctx`, `end_ctx` and `session_id`. `operator.approve` has `without_review`, `operator.retry` has `resume` (the stage word), `operator.rework` has `note` and `operator.cancel` has `reason` and `force`; they are logged only after the command succeeds.
 
 Rotation: a file over 10 MiB is renamed to `.1`, with `.1` and `.2` moved to `.2` and `.3`; the old `.3` is dropped. Writers append one line at a time, so concurrent processes lose no line.
 
@@ -210,7 +210,7 @@ A `[[checks]]` rule can also list `format` and `lint` commands, planned after `c
 
 - `no-checks`: a changed code path that no `[[checks]]` rule matches parks the job before the reviewer runs, even when other paths of the diff did run a check. The reason reads `no check covers N changed code paths: a, b (+k more)`. A path counts as covered only when a command was planned for it: a rule that matches but plans nothing (a `{crate}` rule for a path with no owning crate, or a `{dependents}` rule with no dependents under the cap) leaves the path uncovered, and the reason marks it `path (a rule matches but planned no command)`. A path is exempt when it matches `unchecked_paths`. The rust preset covers the root `Cargo.toml` and `Cargo.lock` with `cargo check -j4`. A diff of only `*.md`, `docs/**` or `.claude/**` paths is not code and is not parked. A risky diff is gated too: it parks as `no-checks` before `decide()` can end it as `risky-diff`, and the park carries the review and risk parts. With no config, or a broken one, every path counts as code.
 - `no-tests`: a code diff with no test path and no added test marker writes a ledger line and a note to the reviewer. With `require_tests = true` it parks as `no-tests` instead.
-- Where they run: in the checks stage, and again in the final re-run of the checks on the merge head (the `AutoMerge` arm), so a fix round that leaves a path with no mapped check still parks `no-checks`. Both park through `park_with`. A parked job offers `approve` (as `approve --without-review` when the review has not run) and `rework`.
+- Where they run: in the checks stage, and again in the final re-run of the checks on the merge head (the `AutoMerge` arm), so a fix round that leaves a path with no mapped check still parks `no-checks`. Both park through `park_with`. A parked job offers `retry` (after the check mapping is fixed), `approve` (as `approve --without-review` when the review has not run) and `rework`.
 - The settings are `code_paths`, `test_paths`, `test_markers` and `require_tests`, see `README.md`.
 - The ledger has one line `checks ran: <commands>` or `checks ran: none` before the `auto-merge approved` line.
 
@@ -235,10 +235,24 @@ A risky diff gets the same fix rounds as any other (`risky_fix_rounds`, default 
 
 The driver merges the reviewed sha only: it checks the branch tip equals the recorded head, preflights main (on `main`, clean, not mid-merge), makes a no-ff merge commit (the committer's message, or the fixed `chore(factory): merge job NNN <slug>` fallback), and verifies the second parent. If main moved it merges main into the job branch inside the worktree, re-runs checks and the reviewer on the sync diff (at most 2 syncs). A sync review is saved as `review-code-r<round>-sync<n>.md`, so the round review `review-code-r<round>.md` is never overwritten. It sets `last_review` with source `sync`, and the ledger line starts `sync review round <round> (sync)`. A conflict goes to `needs-human`. It never pushes and never rewrites history.
 
+## Retry
+
+`factory retry <id>` continues a parked job at the stage that parked it, without a builder run. It needs a job in `needs-human` that is not cancelled and whose park has a resume stage. The board field `park_resume` and the `resume` field of `park.json` hold it (`review`, `rereview`, `merge` or `sync`), and both are cleared when the job leaves `needs-human`. `retry` holds the project and job leases like `run`, writes the ledger ruling `retry at <stage>`, logs `operator.retry`, drives the job on until it merges or parks, and continues a series like `run --series`. It exits 75 like `run` and `approve` when the project lease is held. If the cause is still there, the job parks again with the same reason.
+
+| Park | Resume at | What retry does |
+|---|---|---|
+| `review-failed` (a reviewer run failed or stalled and no role asked for changes), security agent file not found, `no-checks` | `review` | Resets the reviews of the round and runs the checks and the reviewers on the same head. |
+| Branch tip differs from the reviewed head, or a failed sync review | `rereview` | Moves `head` to the tip and runs a whole-branch review. |
+| Main busy, merge lock busy | `merge` | Runs the merge step. An approval given before the park (also `--without-review` or `--waive`) carries over when the tip is unchanged. |
+| Main moved again after the maximum number of syncs | `sync` | Allows one more automatic sync, then merges. |
+
+A park that is not in the table has no resume stage: builder parks, `no-tests`, budget stop, risky diff, changes remain, merge conflict, sync conflict, base not on main, scope violation, missing plan. `retry` refuses them and names their own next commands. After the stage runs, the normal rules apply: a Changes verdict or failing checks start a fix round.
+
 ## Rework
 
 - A rework of a job that parked at a task boundary is the next round. It bumps `round`, sets `rework_base` to the new round minus one (a full new set of fix rounds) and writes `changes-r<N>.md` with the note first and then the open findings of the latest review. Earlier files (`review-code-r*.md`, `builder-r*.md`, `changes-r*.md`) are kept. It prints `job <id> back to build, round <N>`.
 - `factory rework` also saves the note alone as `user-note-r<N>.md` in the job folder (the new round for a next-round rework, the current round for a mid-task one), and the reviewer of that round is told where it is.
+- `rework` refuses a job whose park has a resume stage: `job <id> parked outside the builder (<reason>); run factory retry <id>, or factory rework <id> --force <note> to send it to the builder anyway`. `--force` keeps the behaviour below. A cancelled job is revived without `--force`.
 - A job parked mid-task keeps the old path: `rework-note.md` is used, `round` and `rework_base` stay, and it prints `job <id> back to build, same task`.
 - The next review reads `last_review.file` as the previous findings, which can be a sync review file.
 
@@ -255,7 +269,7 @@ A folder inside a git repo can be its own project (`factory project add <repo>/a
 
 - Scope: the driver lists the job's own changes (from the merge base with the base branch) after the builder and every fix round. Any path outside the folder, including either side of a cross-boundary rename, parks the job as `needs-human` with the paths named. It never auto-merges, `factory approve` refuses it, and the driver never reverts files. `factory rework` makes the builder remove them.
 - Lock: merges into the base branch take a per-repo lock in the git common dir. A sync runs in the job worktree, outside the lock. The wait is 30 seconds, then the job parks with `another project is merging into this repository, approve again to retry`. Main is re-checked under the lock before a busy main parks the job. The OS releases the lock if its holder dies.
-- Contention: while other projects merge, main moves more often, so a job can use more of the sync cap (`MAX_SYNCS`, 2) and park with `<main> moved again after the maximum number of syncs` (from the merge step) or `<main> moved again after N syncs` (from the sync stage). Approve it again.
+- Contention: while other projects merge, main moves more often, so a job can use more of the sync cap (`MAX_SYNCS`, 2) and park with `<main> moved again after the maximum number of syncs` (from the merge step) or `<main> moved again after N syncs` (from the sync stage). Run `factory retry <id>` for a sync park (one more automatic sync is allowed), or approve it again.
 
 ## How to run
 
@@ -266,7 +280,8 @@ Build once: `cargo build -j4 --manifest-path tools/factory/Cargo.toml -p factory
 | `/factory <feature> [--opus]` | Start a draft card, brainstorm and plan with the user, then `factory new` and `factory run <id> --series` in the background. |
 | `/factory status` | `factory status`. |
 | `/factory approve <id>` | Release a `needs-human` job to the merge step. Refused when the code review has not run, unless `--without-review` is given. |
-| `/factory rework <id> <note>` | Send a `needs-human` job back to the builder with a one-line note. |
+| `/factory retry <id>` | Continue a `needs-human` job at the stage that parked it (see "Retry"), then run it on like `run`. Refused for a park with no resume stage, and for a cancelled job. |
+| `/factory rework <id> <note>` | Send a `needs-human` job back to the builder with a one-line note. Refused for a park that `retry` can resume, unless `--force` is given. |
 | `/factory cancel <id>` | Stop and park a job. A running driver is not stopped: it ends at its next stage move as `needs-human: cancelled: <reason>`, and the job never reaches review, approve or merged. A cancel during the git merge itself (milliseconds) is a window it cannot stop: main gets the merge and the job stays cancelled. |
 | `/factory cleanup <id>` | Remove the worktree of a finished job. A cancelled job also loses its board card (not in a series with other jobs, not while leased); the job folder stays. |
 

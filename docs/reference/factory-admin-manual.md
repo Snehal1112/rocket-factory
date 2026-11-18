@@ -19,7 +19,7 @@ The binaries are `target/debug/factory` and `target/debug/factoryd`. Put them on
 1. Register the repository with `factory project add`, and select it with `--project` for later commands.
 2. Start a spec draft with `factory spec start`, complete its interview, and stage the approved spec and plans.
 3. Create jobs with `factory new`, then run a job directly or enqueue it through `factoryd`.
-4. Inspect `factory status` and `factory log`. Resolve a parked job with `factory rework`, `factory approve`, or `factory cancel`.
+4. Inspect `factory status` and `factory log`. Resolve a parked job with `factory retry`, `factory rework`, `factory approve`, or `factory cancel`.
 5. Inspect merged work and push the local base branch yourself.
 
 ```sh
@@ -93,7 +93,8 @@ Use `--accept-over-budget` only after inspecting the estimate. Its presence perm
 | Command | Supported arguments and flags | Example and result |
 |---|---|---|
 | `approve <id>` | `--without-review`; `--waive <reason>` | `factory --project rocket-api approve 001` approves an eligible parked job. `--without-review` permits a missing review; `--waive` permits open review changes and records the reason; other merge guards still apply. |
-| `rework <id> <note>` | No command-specific flags | `factory --project rocket-api rework 001 'Handle an empty query'` records a one-line builder note and returns the job to build. Run or enqueue it afterward. |
+| `retry <id>` | No command-specific flags | `factory --project rocket-api retry 001` continues a job parked with a resume stage (`review`, `rereview`, `merge` or `sync`) at that stage, then runs it on like `run` and continues a series. It takes the project and job leases and exits 75 when the project is busy. A park with no resume stage and a cancelled job are refused. |
+| `rework <id> <note>` | `--force` | `factory --project rocket-api rework 001 'Handle an empty query'` records a one-line builder note and returns the job to build. Run or enqueue it afterward. A park with a resume stage is refused with a pointer to `retry`; `--force` sends it to the builder anyway. |
 | `cancel <id-or-draft-slug>` | `--reason <text>`; `--force` | `factory --project rocket-api cancel 001 --reason 'Feature withdrawn'` cancels a job. `factory --project rocket-api cancel add-search` removes a draft card while retaining its spec file. |
 | `cleanup <id>` | `--discard-commits` | `factory --project rocket-api cleanup 001` removes a merged or cancelled job's worktree and branch when safe. |
 

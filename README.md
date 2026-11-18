@@ -398,6 +398,12 @@ that started from failed checks changes nothing, the driver runs the checks once
 to the reviewer, if they still fail it parks as `checks-failed`. The board field `fix_source` (`checks` or
 `review`) records what started the latest fix round.
 
+`factory retry <id>` continues a job parked by the driver at the stage that parked it, with no builder run: a
+failed review, a `no-checks` park, a changed branch tip, a busy main or a spent sync cap. It then drives the job like
+`run`, and continues a series. A park with no resume stage (builder parks, risky diff, changes remain) is refused
+with its own next commands. `factory rework` refuses a park that `retry` can resume, unless you add `--force`.
+Details are in `docs/reference/software-factory.md` (Retry).
+
 ### The project lease
 
 At most one job is active per project. A running `run` or `approve` holds a lease file in the project's state
@@ -484,7 +490,7 @@ by `factoryd`. Read the `.out` and `.err` logs and the job ledger, then run `fac
 enqueue a new request. A project whose lease belongs to a live driver that is not a child of `factoryd` (for
 example a manual `factory run`) is reported as busy and nothing starts for it until that process ends.
 
-`factory run` and `factory approve` exit with code 75 when the project lease is already held at the start, and
+`factory run`, `factory approve` and `factory retry` exit with code 75 when the project lease is already held at the start, and
 nothing was done. `factoryd` then keeps the request queued and starts it again once the lease is free, up to 20
 times, after which the request ends as `Failed`. The count is kept in memory, so a restart of `factoryd` begins
 again at 0. Their last stdout line (`merged`, `needs-human: <reason>`, `parked: <reason>`) is always one line: a

@@ -385,7 +385,7 @@ What to know:
 - The last line printed is `merged` or `needs-human: <reason>`.
 - It never asks questions. It can run for a long time and use many tokens.
 - It is resumable. The stage on the board is the only state, so you can run again after a stop.
-- Running a job that is already `needs-human` prints the old reason straight away. Use `approve` or `rework` first.
+- Running a job that is already `needs-human` prints the old reason straight away. Use `retry`, `approve` or `rework` first.
 - Running a job that is already `merged` prints `merged`.
 - It takes the project lease. If another run holds the project, you get exit code 75 and a message like `project is busy: job N is running ...`. Nothing is done.
 - A terminal run ends if you close the terminal. For runs that survive, see `factoryd enqueue` (section 7) or run it under `nohup` or `tmux`.
@@ -470,6 +470,19 @@ Refusals, each exiting with code 1:
 
 What it prints: `merged <sha>`, or `parked: <reason>`. A `parked:` result leaves the job in `needs-human` with the new reason, for example `main busy: ...`. It is safe to fix the cause and run `approve` again.
 
+### 6.5a `factory retry`: continue a parked job
+
+```
+factory retry <ID>
+```
+
+Continues a job parked by the driver at the stage that parked it, with no builder run. It works for a failed review (`review-failed`), a `no-checks` park, a branch tip that differs from the reviewed head, a busy main, a busy merge lock and a spent sync cap. Fix the cause first, for example map the changed paths to a check or clean your checkout, then retry. After the stage runs, the job continues like `run` and merges or parks again, and a series goes on with its next plan.
+
+- It refuses a job with no resume stage (builder parks, risky diff, changes remain, merge conflict) and prints that park's own next commands. It also refuses a cancelled job.
+- If the cause is still there, the job parks again with the same reason.
+- It takes the project lease and exits with code 75 when the project is busy, like `run`.
+- An approval you gave before the park (also `--without-review` or `--waive`) carries over when the branch tip has not changed.
+
 ### 6.6 `factory rework`: send the builder a note
 
 ```
@@ -485,6 +498,7 @@ factory rework 028 "Handle the empty list case and add a test for it"
 - The note must not be empty, must be one line, and must be at most 200 characters.
 - The job must be in `needs-human`.
 - It also revives a cancelled job.
+- A job whose park `retry` can resume is refused with `job N parked outside the builder (<reason>); run factory retry N, or factory rework N --force <note> to send it to the builder anyway`. Add `--force` to send it to the builder anyway: `factory rework --force N "<note>"`. A cancelled job is revived without `--force`.
 - It does not run the job. It prints `job N back to build, round <N>` for the next round, or `job N back to build, same task` for a job parked mid-task. You must run `factory run 028` afterwards.
 
 ### 6.7 `factory cancel`: give up on a job
@@ -1219,11 +1233,11 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 | `builder made no changes` or `task N changed nothing` | Nothing was produced. | `rework`, or `cancel`. |
 | `builder committed on its own ...` | The builder broke the "no commits" rule. | `rework`. |
 | `builder changed <file>` | The builder touched a protected file. | `rework`, or `cancel`. |
-| `no check covers N changed code path(s)` | A changed code path matches no check rule. | `approve` if you accept that, or `rework`. |
+| `no check covers N changed code path(s)` | A changed code path matches no check rule. | Map the paths to a check, then `retry`. Or `approve` if you accept that, or `rework --force`. |
 | `no test was added in ...` | `require_tests` is on and the change has no test. | `approve` or `rework`. |
-| `main busy: the main checkout has tracked changes` | Your own checkout has uncommitted edits to tracked files, so the merge cannot happen. | Commit or stash those changes, then `approve` again. Untracked files are fine. |
-| `main busy: the main checkout is not on <base>` | Your checkout is on another branch. | Switch to the base branch, then `approve`. |
-| `another project is merging into this repository, approve again to retry` | Two projects share one repository. | Run `approve` again. |
+| `main busy: the main checkout has tracked changes` | Your own checkout has uncommitted edits to tracked files, so the merge cannot happen. | Commit or stash those changes, then `retry` (or `approve` again). Untracked files are fine. |
+| `main busy: the main checkout is not on <base>` | Your checkout is on another branch. | Switch to the base branch, then `retry` (or `approve`). |
+| `another project is merging into this repository, approve again to retry` | Two projects share one repository. | Run `retry` (or `approve` again). |
 | `merge conflict in <paths>` or `sync conflict in <paths>` | The base branch moved and the change conflicts. | Look at the job's worktree, or `rework` with a note. |
 | `main moved again after 2 syncs` | The base branch kept changing during the merge. | Run `approve` again. |
 | `the job changed files outside <subfolder>` | Monorepo only. The change left its folder. | `rework`, so the builder removes those changes. |

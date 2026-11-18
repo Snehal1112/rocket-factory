@@ -1,6 +1,6 @@
 ---
 description: Run the software factory on the current project (brainstorm, plan, then the driver builds, checks, reviews and merges)
-argument-hint: "<feature> [--opus] [--one-job] | status | approve <id> | rework <id> <note> | cancel <id|slug> | cleanup <id> | tickets <id>"
+argument-hint: "<feature> [--opus] [--one-job] | status | approve <id> | retry <id> | rework <id> [--force] <note> | cancel <id|slug> | cleanup <id> | tickets <id>"
 ---
 
 # Factory
@@ -28,7 +28,9 @@ Match by exact shape only, on the whole argument string:
 - `cancel <slug>`: one kebab-case word, not only digits, that is the slug of a draft listed under `drafts:` by `<factory> --project <name> status` (run it to check). When no draft has that slug, the whole argument is a feature text.
 - `cleanup <digits>` (nothing after the digits)
 - `tickets <digits>` (nothing after the digits)
-- `rework <digits> <note>` with a non-empty note
+- `retry <digits>` (nothing after the digits)
+- `rework <digits> --force <note>` with a non-empty note
+- `rework <digits> <note>` with a non-empty note that does not start with `--force`
 
 Anything else is a feature text, for example `next button for pagination`, `status page for jobs`, `approve button for forms` or `cancel dialog 12 layout`. A feature may start or end with the single token `--one-job`: remove it from the feature text and from the slug, and pass `--one-job` to `<factory> --project <name> new`. See the `Model option` note. If the argument is `rework <digits>` with no note, print `rework needs a note: /factory rework <id> <note>` and stop without calling `<factory>`. If the argument is empty, print the argument hint and stop.
 
@@ -37,10 +39,12 @@ Anything else is a feature text, for example `next button for pagination`, `stat
 Each is one call and a one-line report of the output, nothing more:
 
 - `status`: `<factory> --project <name> status`
-- `approve <id>`: `<factory> --project <name> approve <id>`. The driver refuses a `needs-human` job whose code review has not run (the checks never passed or the reviewer never ran) and says so. Report that refusal as it is and offer `/factory rework <id> <note>`, or `/factory approve <id> --without-review` to merge unreviewed, which the user must ask for.
+- `approve <id>`: `<factory> --project <name> approve <id>`. The driver refuses a `needs-human` job whose code review has not run (the checks never passed or the reviewer never ran) and says so. Report that refusal as it is and offer `/factory rework <id> <note>`, or `/factory approve <id> --without-review` to merge unreviewed, which the user must ask for. When the refusal names `factory retry <id>`, offer `/factory retry <id>` first.
 - `approve <id> --without-review`: `<factory> --project <name> approve <id> --without-review`
 - `approve <id> --waive "<reason>"`: `<factory> --project <name> approve <id> --waive=<reason>`. Use the `=` form with the reason as one argument. The reason must be one line, not empty, at most 200 characters. The user must ask for it: it merges a job whose last review asked for changes, records the waiver and files a ticket for each waived blocker. It never combines with `--without-review`.
-- `rework <id> <note>`: `<factory> --project <name> rework <id> '<note>'` (the driver accepts a one-line note of at most 200 characters and refuses anything else)
+- `retry <id>`: `<factory> --project <name> retry <id>`. It continues a parked job at the stage that parked it and runs it on until it merges or parks again, so it can take as long as a run: use the `Shell and background runs` note. Report its last line.
+- `rework <id> <note>`: `<factory> --project <name> rework <id> '<note>'` (the driver accepts a one-line note of at most 200 characters and refuses anything else). The driver refuses a job whose park `retry` can resume and names `factory retry <id>`. Report that refusal and offer `/factory retry <id>`.
+- `rework <id> --force <note>`: `<factory> --project <name> rework --force -- <id> '<note>'`. The user must ask for it: it sends a job to the builder even though `retry` could resume it.
 - `cancel <id>`: `<factory> --project <name> cancel <id>`
 - `cancel <slug>`: `<factory> --project <name> cancel <slug>` (it removes the draft card and keeps its spec file)
 - `cleanup <id>`: `<factory> --project <name> cleanup <id>`
@@ -91,7 +95,7 @@ The driver validates the spec and the plans when it creates the job, so both mus
 
    With `--one-job` the driver combines the plans into one job. When the estimate is over the job budget, `new` creates nothing and exits non-zero. The command output shows a line starting `needs consent:` (on stderr) with the estimate and the budget. The non-zero exit is expected, not an error to fix. Then tell the user the estimate and the budget in one or two plain sentences, and ask whether to go ahead over the budget. Raising `budget_weighted` is the other way out. On a yes, re-run the same `new` call with `--accept-over-budget` added and handle its output as above (it prints a `warning:` line about the budget). On a no, or when the user wants another budget, stop without creating a job. Never edit `project.toml` yourself. Plans are still written with at most 3 tasks each, and step 3 still counts them.
 5. Start the run. First run `factoryd is-running`. If it exits 0, a supervisor is running: run `factoryd enqueue --project <name> --job <id> --series`, which prints a request id, then run `factoryd status` once. If the first line of that output contains `reached`, tell the user in one line that the run is queued as that request id and waits for the daily budget, giving the reset time from that line; otherwise tell the user in one line that the factory is running, with the request id. For any other exit code of `factoryd is-running` (including command not found) treat it as not running: start `<factory> --project <name> run <id> --series` as a long-running command, see the `Shell and background runs` note. If it returns a still-running session or process handle, keep the handle for harness notification when it finishes. Tell the user in one line that the factory is running. Then stop. Do not poll, do not sleep, do not read logs. If it returns a final exit/completion result, including a non-zero exit, continue to step 6 immediately. Do not report a completed or failed process as running.
-6. When the run ends (the command tool returns a final result, the harness notifies you that a live session ended, the user asks, or the dashboard shows it), run `<factory> --project <name> status` once and report the line for this job. If it is `needs-human`, add that the user can run `/factory approve <id>` or `/factory rework <id> <note>`. When the status line says the review has not run, the plain approve is refused, so name `/factory approve <id> --without-review` instead.
+6. When the run ends (the command tool returns a final result, the harness notifies you that a live session ended, the user asks, or the dashboard shows it), run `<factory> --project <name> status` once and report the line for this job. If it is `needs-human`, add that the user can run `/factory approve <id>` or `/factory rework <id> <note>`. When the status line lists `factory retry <id>`, name `/factory retry <id>` first. When the status line says the review has not run, the plain approve is refused, so name `/factory approve <id> --without-review` instead.
 
 The driver never asks questions during a run, so the plans must be complete before step 5. A blocker found by the builder moves the job to `needs-human`.
 
