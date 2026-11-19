@@ -581,6 +581,63 @@ fn docs_describe_the_new_design() -> TestResult {
 }
 
 #[test]
+fn no_doc_describes_the_committer_or_an_ignored_key() -> TestResult {
+    let docs = [
+        "docs/reference/software-factory.md",
+        "README.md",
+        "docs/guides/factory-user-guide.md",
+        "docs/guides/getting-started.md",
+        "docs/reference/project-toml-reference.md",
+        "docs/operations/rocket-registration.md",
+        "docs/operations/rocketvault-registration.md",
+    ];
+    let phrases = [
+        "committer agent",
+        "`factory-committer`",
+        "commit-context.md",
+        "commit_context_file",
+        "batch committer",
+        "message-only mode",
+        "the committer's message",
+        "committer 40",
+        "`committer` or `kb`",
+    ];
+    let keys = [
+        "commit_model",
+        "commit_subagents",
+        "commit_budget_weighted",
+        "commit_batch",
+        "commit_plugins",
+    ];
+    for rel in docs {
+        let doc = read(rel)?;
+        forbid_all(&doc, rel, &phrases)?;
+        if rel.ends_with("project-toml-reference.md") {
+            // Every key mention must sit in the Ignored settings section.
+            let mut inside = false;
+            for line in doc.lines() {
+                if line.starts_with('#') {
+                    inside = line == "### Ignored settings";
+                }
+                if !inside && keys.iter().any(|k| line.contains(k)) {
+                    return Err(format!(
+                        "{rel} mentions an ignored key outside its section: {line}"
+                    ));
+                }
+            }
+        } else {
+            forbid_all(&doc, rel, &keys)?;
+        }
+    }
+    let pipeline = read("docs/reference/software-factory.md")?;
+    require_all(
+        &pipeline,
+        "software-factory.md",
+        &["---BEGIN COMMIT---", "**Commit:**"],
+    )
+}
+
+#[test]
 fn docs_describe_the_per_project_api_key() -> TestResult {
     let reference = read("docs/reference/project-toml-reference.md")?;
     require_all(

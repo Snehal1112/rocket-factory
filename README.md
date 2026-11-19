@@ -32,7 +32,7 @@ How the driver starts one agent (`claude -p`), the five ways a run ends and the 
 
 ![How an agent is started](docs/assets/images/factory-agents.svg)
 
-The agent runs of one job in order: a fresh builder per task, one batch commit, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. With 3 tasks and the defaults the worst case is 16 agent runs, 19 with one sync message and 22 with two, plus 1 for the spec review at `factory new`. The job budget stops a run before that:
+The agent runs of one job in order: a fresh builder per task, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. The driver makes the commits and writes the merge message itself, so no agent run is spent on them (the diagram below may still show the older commit and message runs), plus 1 run for the spec review at `factory new`. The job budget stops a run before that:
 
 ![Agent turns in one job](docs/assets/images/factory-turns.svg)
 
@@ -42,7 +42,7 @@ The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/
 
 Rocket's factory gained these after the extraction. They are part of this driver now:
 
-- Batch committer: one committer run per job writes all the commits (`commit_batch`, default on), with recovery after a stop.
+- Driver-written commits: the builder ends its reply with a commit note, the driver makes `wip:` snapshot commits on the job branch and writes the merge message from the plan's `**Commit:**` line, its Goal and the notes, with `Fixes: #N` or `Relates to: #N` and `Factory-Job: <id>`. A missing or bad note uses a fallback and never parks the job.
 - Task excerpts: each task builder sees only its own task from the plan, and the spec goal, design, edge cases, decisions, scope and acceptance criteria within 8192 bytes (`builder_excerpt`, default on). A stale rework note stays out of fix rounds.
 - Ticket hygiene: the `factory tickets` command and the `tickets_on_merge` key, see below.
 - Live token bar: the dashboard card bar follows the running agent, so it moves while an agent works.
@@ -101,7 +101,7 @@ the `gh` CLI in the main checkout (the repo from `Layout`); tests use a fake.
   `https://github.com/<owner>/<repo>/issues/N` both count. A URL for another repository makes the step skip.
 - The remaining work is the `## Follow-ups` section of the job's `spec.md`, one ticket per bullet. A spec with
   follow-ups does not change the merge footer: the last plan of a job (and a single-plan job) ends with
-  `Fixes: #N`, every earlier plan with `Relates to: #N`, and builder, fix and sync commits with `Relates to`.
+  `Fixes: #N`, every earlier plan with `Relates to: #N`, and sync commits with `Relates to`.
   The step files the follow-ups first, then comments, then closes. `Fixes` also closes on push. A failed filing
   is a warning, and `factory tickets <id>` retries it. Follow-ups never carry `tracking`, the intake label or a
   `factory: ...` label.
@@ -159,7 +159,7 @@ after the spec's own warning, and the job still runs.
 
 ## Using Codex
 
-Factory agents load no MCP server and only their own role's Claude Code plugins. `builder_plugins` (default `["superpowers"]`), `reviewer_plugins` (default empty), `commit_plugins` (default `["dev-workflow-skills"]`) and `kb_plugins` (default empty) name them; every other installed plugin is turned off for the run with `--settings`. See `docs/reference/project-toml-reference.md` ("Plugins and MCP").
+Factory agents load no MCP server and only their own role's Claude Code plugins. `builder_plugins` (default `["superpowers"]`), `reviewer_plugins` (default empty) and `kb_plugins` (default empty) name them; every other installed plugin is turned off for the run with `--settings`. See `docs/reference/project-toml-reference.md` ("Plugins and MCP").
 
 `agent_cli = "codex"` in `project.toml` (or `factory project add <path> --agent-cli codex`) runs every agent through `codex exec --json`. Unset or `"claude"` changes nothing. The limits: no `max_turns`; no mid-run budget stop (the run total is added after the run); no `cache_ttl`; no cold-start data; `builder_permissions` and `builder_allow` are ignored in favour of a per-role sandbox (builders `workspace-write` with network, reviewers `read-only`); `builder_carry_session` is off; runs use `--ignore-user-config`. The provider shows in `factory tokens`, `tokens --cache`, `costs` and on the dashboard card. The real smoke test is `#[ignore]`. See `docs/reference/software-factory.md` ("Using Codex") and `docs/reference/project-toml-reference.md`.
 
@@ -201,7 +201,6 @@ The driver gets every path as a value. `Layout` holds them. `Layout::in_repo` gi
 - `jobs_dir`: one folder per job. Default is `.superpowers/sdd`.
 - `worktrees_dir`: one folder per job worktree. Default is `.claude/worktrees`.
 - `config_file`: the factory config. Default is `.claude/factory/config.toml`.
-- `commit_context_file`: the context the committer prompt reads. Default is `.claude/factory/commit-context.md`.
 
 The config key `base_branch` is the branch jobs start from and merge into. The default is `main`. A name that git would refuse makes the whole config invalid. So does a name that starts with `factory/`. The driver then falls back to the fail-closed config.
 
@@ -210,7 +209,7 @@ The config key `base_branch` is the branch jobs start from and merge into. The d
 The factory keeps its own files in a home folder: `$FACTORY_HOME`, or `~/.factory` when it is not set.
 
 ```
-<home>/presets/<preset>/{config.toml,commit-context.md,agents/}   seeded from the built-in presets (rust, go, ruby, csharp, node)
+<home>/presets/<preset>/{config.toml,agents/}   seeded from the built-in presets (rust, go, ruby, csharp, node)
 <home>/projects/<name>/{project.toml,agents/,state/,worktrees/}    one folder per registered project
 ```
 
@@ -253,8 +252,7 @@ Projects of one repo run side by side, and each has its own job ids.
   `factory/<project>/<id>-<slug>` and a worktree called `factory-<project>-<id>-<slug>`, so two projects never
   collide. A project only sees its own branches.
 - The agent starts in the project folder inside the job worktree (`<worktree>/apps/web`), for the builder, the
-  fix builder and the reviewer, with both `claude` and `codex`. The committer and the message writer keep the
-  worktree root. The KB refresher is unchanged (the main checkout, or the KB folder under Codex). Risk paths and check mappings are relative to the project folder, and check
+  fix builder and the reviewer, with both `claude` and `codex`. The KB refresher is unchanged (the main checkout, or the KB folder under Codex). Risk paths and check mappings are relative to the project folder, and check
   commands run there.
 - Scope rule. A job may change only files inside the project folder. After the builder and every fix round the
   driver compares the job's own changes (from the merge base with the base branch) with the folder. A path
@@ -638,4 +636,4 @@ Otherwise the driver uses the full prompts and writes one ledger line per job an
 
 `factory upgrade` refreshes agent files you have not edited. An edited file, or a repo file in `.factory/agents/` that
 shadows the shipped one, keeps working with the full prompt until you merge the new marker and rules by hand. The
-committer, message and KB prompts are unchanged.
+KB prompt is unchanged.

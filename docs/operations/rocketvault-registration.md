@@ -17,8 +17,8 @@ cd "$FACTORY"
    cp crates/factory-core/tests/fixtures/rocketvault-project.toml ~/.factory/projects/rocketvault/project.toml
    ```
 
-   Write `~/.factory/projects/rocketvault/commit-context.md` for RocketVault's commit style: short
-   imperative subject, no type prefix, a body that says why, footer `Fixes #N` or `Relates to: #N`.
+   The driver writes the commit messages. Give each plan a `**Commit:**` line for RocketVault's commit
+   style (a subject of at most 50 characters). The driver adds the `Fixes: #N` or `Relates to: #N` footer.
 
 2. Check the settings. No problems, base `v-4.0.0`, `tickets on merge: true`, the go preset's agents.
 

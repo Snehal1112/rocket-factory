@@ -33,12 +33,11 @@ cd "$FACTORY"
    cp crates/factory-core/tests/fixtures/rocket-project.toml ~/.factory/projects/rocket/project.toml
    ```
 
-4. Copy Rocket's own agent files and committer context into the project folder. The project's `agents` folder wins over the preset, so Rocket's copies replace the preset files for this project.
+4. Copy Rocket's own agent files into the project folder. The project's `agents` folder wins over the preset, so Rocket's copies replace the preset files for this project.
 
    ```bash
    mkdir -p ~/.factory/projects/rocket/agents ~/.factory/projects/rocket/state
    cp "$ROCKET"/.claude/agents/factory-*.md ~/.factory/projects/rocket/agents/
-   cp "$ROCKET"/.claude/factory/commit-context.md ~/.factory/projects/rocket/commit-context.md
    ```
 
 5. Copy the past job state (jobs 001 to 015).

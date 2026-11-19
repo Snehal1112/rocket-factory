@@ -57,7 +57,7 @@ Defaults come from `Config::default()` in `factory-core/src/config.rs`. A value 
 | `risky_fix_rounds` | integer | same as `fix_rounds` | Fix rounds a risky diff may use, for failing checks and for review findings, before it parks. 0 parks a risky diff at its first failing check or CHANGES verdict. |
 | `dependents_cap` | integer | 6 | Most direct dependents a `{dependents}` check command expands to. The rest are skipped, and `checks.md` names them. |
 | `unchecked_paths` | list of globs | `[]` | Paths that no check covers on purpose. They are never reported as uncovered. Doc paths are never reported either. Matching ignores case. The rust preset sets `LICENSE`, `LICENSE-*`, `LICENSE.txt`, `COPYING`, `COPYING.*`, `.gitignore`, `.gitattributes` and `.editorconfig`, which match at the repo root only. |
-| `stall_minutes` | integer | 10 | Minutes without any stream event before the driver kills the agent. Applies to builder, reviewer, committer, KB and message agents. The check is approximate. |
+| `stall_minutes` | integer | 10 | Minutes without any stream event before the driver kills the agent. Applies to builder, reviewer, spec reviewer and KB agents. The check is approximate. |
 
 Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factory-core/src/budget.rs`). When a builder is killed on budget it parks as `builder-stopped`. `budget-stopped` is only used when a reviewed round finds the budget gone.
 
@@ -65,7 +65,7 @@ Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factor
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `agent_cli` | `"claude"` or `"codex"` | unset, which means `"claude"` | The CLI that runs every agent of the project. `"codex"` runs them through `codex exec --json`, with the limits in "Using Codex" in `docs/reference/software-factory.md`. Any other value makes the config invalid. `factory project add <path> --agent-cli codex` writes it with `gpt-5.6-luna` for the five model keys (`builder_model`, `reviewer_model`, `reviewer_model_large`, `commit_model`, `kb_model`) and no `cache_ttl`. It does not seed `escalation_model`, so a Codex project without it does not escalate. |
+| `agent_cli` | `"claude"` or `"codex"` | unset, which means `"claude"` | The CLI that runs every agent of the project. `"codex"` runs them through `codex exec --json`, with the limits in "Using Codex" in `docs/reference/software-factory.md`. Any other value makes the config invalid. `factory project add <path> --agent-cli codex` writes it with `gpt-5.6-luna` for the four model keys (`builder_model`, `reviewer_model`, `reviewer_model_large`, `kb_model`) and no `cache_ttl`. It does not seed `escalation_model`, so a Codex project without it does not escalate. |
 | `allow_api_key` | bool | unset, which follows `FACTORY_ALLOW_API_KEY` | Whether this project's Claude agents may bill the API key in the environment. `true` passes `ANTHROPIC_API_KEY` through and fails the run when none is set. `false` always removes the key, even when `FACTORY_ALLOW_API_KEY=1`. Needs `agent_cli = "claude"`. |
 | `api_key_file` | path | unset | A file that holds the Anthropic API key for this project only, so projects can use different keys. Absolute or starting with `~/`. The driver reads it at the start of every agent run and sets `ANTHROPIC_API_KEY` for that run. It implies `allow_api_key = true` and conflicts with `allow_api_key = false` and with `agent_cli = "codex"`. The file holds one line, and group and others must not be able to read it (`chmod 600`). A missing, empty, multi-line or readable-by-others file fails the run; it never falls back to the login. The key is never stored in `project.toml`, the log, the events or the ledger. The file holds only the key, on one line, with mode 600; a shell file with `export ANTHROPIC_API_KEY=...` is refused. `factory project show` reads it the same way and lists a file the agents could not use under `problems`. |
 | `builder_model` | string | `"claude-sonnet-5-5"` | `--model` for every builder run. Not blank. |
@@ -74,20 +74,15 @@ Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factor
 | `reviewer_large_over_lines` | integer | 800 | The threshold above. It counts the round diff, not the whole job diff. Above 0. |
 | `escalation_model` | string | `"claude-opus-5-5"` | The builder model for a fix round once `escalate_after_fix_rounds` fix rounds were spent without fixing the job. The escalated round starts a fresh session. A job's own `--model` wins. A Codex project without the key does not escalate. To turn escalation off, set `escalate_after_fix_rounds` at or above `fix_rounds`; the key cannot be unset in TOML. Not blank. |
 | `escalate_after_fix_rounds` | integer | 1 | Fix rounds spent before the next one escalates. `0` escalates the first fix round. At or above `fix_rounds` it never escalates. |
-| `commit_model` | string | `"claude-sonnet-5-5"` | Committer and the merge and sync message agents. Not blank. |
 | `kb_model` | string | `"claude-sonnet-5-5"` | KB refresher. Not blank. |
 
-The defaults are full model IDs, not the `sonnet` and `opus` aliases, so a new model release does not change what the factory runs. A model name that contains `fable` (any case) in any of the six model keys (the five above and `escalation_model`) makes the config invalid, so the project fails closed. Every Claude run also sets `CLAUDE_CODE_SUBAGENT_MODEL` to its own model, so the helper agents a builder or a skill starts run on the same model.
+The defaults are full model IDs, not the `sonnet` and `opus` aliases, so a new model release does not change what the factory runs. A model name that contains `fable` (any case) in any of the five model keys (the four above and `escalation_model`) makes the config invalid, so the project fails closed. Every Claude run also sets `CLAUDE_CODE_SUBAGENT_MODEL` to its own model, so the helper agents a builder or a skill starts run on the same model.
 
 The choice of reviewer model is written to the ledger as `review model: ...`. Weighted tokens ignore the model, so a stronger model's extra cost does not show in `factory tokens`.
 
-### Commits
+### Ignored settings
 
-| Key | Type | Default | Effect |
-|---|---|---|---|
-| `commit_budget_weighted` | integer | 60000 | Cap on one committer run. The batch run gets double. Above 0. |
-| `commit_subagents` | bool | false | Changes only the committer prompt: use the skill's subagents, or work inline. |
-| `commit_batch` | bool | true | The driver makes a `wip:` snapshot commit per task, then one committer runs after the last task. `false` runs one committer per task. |
+The driver writes the commit messages, so `commit_model`, `commit_subagents`, `commit_budget_weighted`, `commit_batch` and `commit_plugins` have no effect. They still load, so an old `project.toml` stays valid, and `factory run` prints `warning: <key> has no effect, the driver writes commit messages` for each one a project file sets. Remove them when convenient.
 
 ### Builder prompt
 
@@ -216,7 +211,6 @@ A 1 hour write costs twice a plain input token and a 5 minute write costs 1.25 t
 |---|---|---|---|
 | `builder_plugins` | string list | `["superpowers"]` | Claude Code plugins every builder run loads. Under Codex the same list selects the skills the run sees (see Using Codex). |
 | `reviewer_plugins` | string list | `[]` | Plugins every reviewer run loads. Under Codex the same list selects the skills the run sees (see Using Codex). |
-| `commit_plugins` | string list | `["dev-workflow-skills"]` | Plugins the committer and the merge and sync message agents load. Under Codex the same list selects the skills the run sees (see Using Codex). |
 | `kb_plugins` | string list | `[]` | Plugins the KB refresher loads. Its `kb-refresh` skill is a user skill, not a plugin, so it needs none. Under Codex the same list selects the skills the run sees (see Using Codex). |
 
 A name is a plugin name such as `superpowers` or a full id such as `superpowers@claude-plugins-official`. Each entry is one non-empty word. Before the first Claude run, the driver reads the installed plugins once with `claude plugin list --json`. Each run then gets `--settings` with `enabledPlugins`, which turns on the role's plugins and turns off every other installed plugin, together with its skills. A plugin that is not installed is skipped, unless it is given as a full id. The defaults keep about 2.5k tokens of unused skill descriptions out of every session.
@@ -295,7 +289,6 @@ Any problem in the layers gives a config where every path is risky and `degraded
 ## Other files in the project folder
 
 - `agents/factory-*.md`: agent file overrides. Order is preset, then project, then the repo's `.factory/agents/`, later wins by file name. Names must be `factory-<a-z0-9->.md`.
-- `commit-context.md`: used for the committer, else the preset's copy.
 - `state/`, `worktrees/`: written by the driver. Do not edit.
 
 ## Not in project.toml
@@ -310,7 +303,7 @@ Any problem in the layers gives a config where every path is risky and `degraded
   | `draft_stale_hours` | 24 | above 0 |
 
 - Environment variables: `FACTORY_HOME`, `FACTORY_LOCK_WAIT` (seconds, default 15), `FACTORY_BIN` (the `factory` binary `factoryd` starts), `FACTORY_ALLOW_API_KEY=1` (let agents bill an API key instead of the login; the `allow_api_key` setting overrides it per project).
-- Fixed in code, not configurable: turn limits (builder 120, reviewer 40, committer 40, KB 80), the tool allowlists, the series cap of 6 plans, the lease timings (30 minute TTL, 60 second heartbeat).
+- Fixed in code, not configurable: turn limits (builder 120, reviewer 40, KB 80), the tool allowlists, the series cap of 6 plans, the lease timings (30 minute TTL, 60 second heartbeat).
 
 ## Examples
 
@@ -334,7 +327,7 @@ preset = "rust"
 base_branch = "main"
 cache_ttl = "5m"
 fix_rounds = 1
-commit_model = "haiku"
+builder_model = "haiku"
 ```
 
 ### Stronger review for big or risky diffs

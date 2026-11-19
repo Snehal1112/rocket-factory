@@ -196,6 +196,7 @@ Rules the factory checks before it accepts them (section 6.1 lists the exact err
 - Each plan has 1 to 3 tasks, written as `- [ ] Task 1: ...`.
 - The last line of each plan is `Next plan: <path>` or `Next plan: none`.
 - At most 6 plans in a chain.
+- Each plan header has a `**Commit:**` line next to `**Goal:**`: `**Commit:** <type>(<scope>): <subject>`, a lowercase Conventional Commits type, a one-word scope, at most 50 characters and no trailing period. It becomes the subject of the job's commit on the base branch. `factory new` refuses a broken line. With `--one-job` the spec carries one such line under its `# ` title.
 
 Commit the spec and plans.
 
@@ -344,7 +345,7 @@ needs consent: this job is estimated at E weighted tokens and the budget is B; r
 
 With a chain of only one plan, `--one-job` has no effect and prints `note: --one-job had no effect: the chain has one plan`.
 
-**Note on `--model`.** The value is stored on the job card and carried to the later jobs of a series. Every agent of the job runs on it: the builder and its fix rounds, the reviewer, the committer, the merge message, the KB refresher and the helper agents they start. It replaces `builder_model`, `reviewer_model` and the other role models from `project.toml` for this job only. The review ledger line then reads `review model: <name> (job model)`. `factory new` refuses a blank model (`--model must not be blank`), a Fable model (`--model must not be a Fable model`) and a Claude model on a Codex project (`--model <name> is a Claude model, but this project runs Codex`).
+**Note on `--model`.** The value is stored on the job card and carried to the later jobs of a series. Every agent of the job runs on it: the builder and its fix rounds, the reviewer, the KB refresher and the helper agents they start. It replaces `builder_model`, `reviewer_model` and the other role models from `project.toml` for this job only. The review ledger line then reads `review model: <name> (job model)`. `factory new` refuses a blank model (`--model must not be blank`), a Fable model (`--model must not be a Fable model`) and a Claude model on a Codex project (`--model <name> is a Claude model, but this project runs Codex`).
 
 **Common errors and what they mean:**
 
@@ -600,7 +601,7 @@ factory tokens --cache --days 7
 **One job.** It prints:
 
 - **totals:** `input`, `cache_creation`, `output`, `cache_read` and `weighted <n> (<pct>% of <budget>)`.
-- **by role:** builder, reviewer, committer, message and kb. Each has `runs`, `raw` and `weighted`.
+- **by role:** builder, reviewer and kb, plus `committer` and `message` for jobs of older versions. Each has `runs`, `raw` and `weighted`.
 - **runs:** one row per agent run, with the role, provider, round, turns and weighted tokens.
 
 `weighted = input + cache_creation + output + cache_read / 10`.
@@ -948,7 +949,7 @@ Asks each role's agent what reaches its context, and reports a pass or fail per 
 | Option | Meaning |
 |---|---|
 | `--harness <claude\|codex>` | The agent program to probe. Default: the project's `agent_cli`. |
-| `--role <ROLE>` | A role to probe: `builder`, `reviewer`, `spec-reviewer`, `committer` or `kb`. Repeat it for more than one. Default: all five. |
+| `--role <ROLE>` | A role to probe: `builder`, `reviewer`, `spec-reviewer` or `kb`. Repeat it for more than one. Default: all four. |
 | `--json` | Print the report as JSON and nothing else. |
 | `--delivery <agent\|append\|stdin>` | How the marker reaches Claude: a written agent file (`agent`, the default), `--append-system-prompt` (`append`) or the start of stdin (`stdin`). Codex ignores it. |
 
@@ -1342,7 +1343,7 @@ Project settings live in `~/.factory/projects/<name>/project.toml` under `[setti
 | `budget_weighted` | Token budget per job. The agent is stopped at the limit and a warning shows at 80%. | 1,000,000 |
 | `fix_rounds` | Fix rounds the builder gets after a failed check or review. | 2 |
 | `diff_cap_lines` | A change above this many lines never auto-merges. | 4000 |
-| `builder_model`, `reviewer_model`, `commit_model`, `kb_model` | The model each role uses. | `sonnet` |
+| `builder_model`, `reviewer_model`, `kb_model` | The model each role uses. | `sonnet` |
 | `risk_paths` | File patterns that always need your approval. | from the preset |
 | `checks` | Which commands run for which changed files. | from the preset |
 | `require_tests` | Park a change that adds no test. | false |

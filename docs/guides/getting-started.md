@@ -20,7 +20,7 @@ Three things to know up front:
 
 - The factory never pushes and never rewrites history. A merge lands on your local base branch only. You push yourself.
 - Your repository stays clean. Job worktrees, the board and the ledger live in the factory home (`~/.factory`), not in your repo.
-- Orchestration costs no model tokens. Only the builder, reviewer and committer agents use tokens.
+- Orchestration costs no model tokens. Only the builder, reviewer and KB agents use tokens. The driver writes the commit messages itself.
 
 Words used below:
 
@@ -45,7 +45,7 @@ The factory runs on Linux and macOS (see the note at the end). It is built from 
 | `git` | To clone this repo, and your repos are git repos. | `git --version` |
 | Claude Code, logged in | The factory runs `claude -p` for every agent. | `claude --version` |
 | The `superpowers` plugin for Claude Code (any recent version) | `/factory` uses `superpowers:brainstorming`, `superpowers:writing-plans` and the builder uses `superpowers:subagent-driven-development`. | In Claude Code, run `/plugin` and look for it. |
-| The `dev-workflow-skills` plugin | The committer agent writes commits with the `dev-workflow-skills:1-git-commit` skill. | In Claude Code, run `/plugin` and look for it. |
+| The `dev-workflow-skills` plugin | `/factory` uses `dev-workflow-skills:1-git-commit` when it commits the spec and plans (the driver writes the job's commit messages itself). | In Claude Code, run `/plugin` and look for it. |
 | `gh` (GitHub CLI) | For ticket hygiene, which runs after a merge by default (`tickets_on_merge`). Without `gh` the step reports a failure and the merge stays. Set `tickets_on_merge = false` if you do not use GitHub issues. | `gh --version` |
 | `cargo` on the machine, only for Rust projects | The `rust` preset checks run `cargo check` and `cargo test` in your project. | `cargo --version` |
 | `bundle` on the machine, only for Ruby projects | The `ruby` preset checks run `bundle exec rubocop` and `bundle exec rspec`. | `bundle --version` |
@@ -373,7 +373,7 @@ Keys you may want, with defaults:
 | `fix_rounds` | 2 | Fix rounds after a failed check or review. |
 | `diff_cap_lines` | 4000 | Bigger diffs park for you. |
 | `stall_minutes` | 10 | A silent agent counts as stalled after this long. |
-| `builder_model`, `reviewer_model`, `commit_model` | `claude-sonnet-5-5` | Models for each role. A Fable model is refused. |
+| `builder_model`, `reviewer_model`, `kb_model` | `claude-sonnet-5-5` | Models for each role. A Fable model is refused. |
 | `reviewer_model_large` | `claude-opus-5-5` | A stronger reviewer for risky or big diffs. Set it to the same name as `reviewer_model` to turn it off. |
 | `risk_paths` | from the preset | Globs that make a diff risky and force your review. |
 | `read_first` | `CLAUDE.md` | Files the builder reads first. |

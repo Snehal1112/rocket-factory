@@ -47,12 +47,12 @@ A refusal ends with the hint to record the user's answer as a `Decided by: user`
 - `park.json` (job folder, written by the driver when it parks a job): `kind`, `reason`, `at`, `round`, `next` (the commands to run) and `parts` (title, source, text, truncated; each text capped at 200 KB, keeping the end). Kinds: `checks-failed`, `changes-remain`, `risky-diff`, `diff-too-large`, `budget-stopped`, `builder-stopped`, `builder-blocked`, `builder-committed`, `nothing-changed`, `commit-failed`, `review-failed`, `other`. The board job has `park_kind` and `park_at`, cleared when the job leaves needs-human. `factory status` prints the reason, the first 12 lines of the first part and the next commands for each parked job.
 - `.superpowers/factory/events.jsonl`: events written by the driver, each with the job id.
 - Only the driver writes the ledger, board and events. Agents and the `/factory` command never do.
-- Config: `.claude/factory/config.toml` (`risk_paths`, `diff_cap_lines`, `budget_weighted`, `fix_rounds`, `stall_minutes`, `builder_model`, `reviewer_model`, `reviewer_model_large`, `reviewer_large_over_lines`, `commit_model`, `commit_subagents`, `commit_budget_weighted`, `commit_batch`, `builder_excerpt`, `builder_permissions`, `builder_allow`, `tickets_on_merge`, `cache_ttl`, `kb_path`, `kb_model`, `kb_budget_weighted`, `kb_auto_commit`, `[[checks]]`).
+- Config: `.claude/factory/config.toml` (`risk_paths`, `diff_cap_lines`, `budget_weighted`, `fix_rounds`, `stall_minutes`, `builder_model`, `reviewer_model`, `reviewer_model_large`, `reviewer_large_over_lines`, `builder_excerpt`, `builder_permissions`, `builder_allow`, `tickets_on_merge`, `cache_ttl`, `kb_path`, `kb_model`, `kb_budget_weighted`, `kb_auto_commit`, `[[checks]]`).
 
 ## Modes
 
 - Default: builder and reviewer run on Sonnet.
-- `/factory <feature> --opus`: this job uses Opus (`factory new --model claude-opus-5-5`). Every agent of the job runs on it: builders, fix rounds, the reviewer, the committer, the merge message and the KB refresher, and their helper agents. `factory new` refuses a blank or Fable model, and a Claude model on a Codex project. The model is never in the agent files, the driver passes it.
+- `/factory <feature> --opus`: this job uses Opus (`factory new --model claude-opus-5-5`). Every agent of the job runs on it: builders, fix rounds, the reviewer and the KB refresher, and their helper agents. `factory new` refuses a blank or Fable model, and a Claude model on a Codex project. The model is never in the agent files, the driver passes it.
 
 ## Agents
 
@@ -60,8 +60,7 @@ The agent files are the preset files in `crates/factory-core/presets/<preset>/ag
 
 | Agent | Tools | Duties |
 |---|---|---|
-| `factory-builder` | Bash, Read, Edit, Write, Grep, Glob, Skill, Agent (`BUILDER_TOOLS`) | Runs headless in the worktree. Follows the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), one fresh builder per task. It is the implementer, not the controller: no implementer or reviewer subagents and no per-task review (the driver does the ledger, commits and final review), with a `Rules in short` digest of TDD, systematic debugging and verification. Never commits, the driver does (see Commits). At most 2 helper agents per task, only to read or search code. The reply starts with `Status: DONE`, `DONE_WITH_CONCERNS`, `BLOCKED` or `NEEDS_CONTEXT` (a first-line `BLOCKED: <reason>` is still accepted), then at most five concern lines, then `Ruling: <what> — <why> — <cost if wrong>` lines. BLOCKED and NEEDS_CONTEXT park the job as `builder-blocked`. |
-| `factory-committer` | all | Runs headless in the worktree and makes the commits through `dev-workflow-skills:1-git-commit` (see Commits). Also runs in message-only mode (role `message`, tools `Read,Skill`) to write merge and sync messages. |
+| `factory-builder` | Bash, Read, Edit, Write, Grep, Glob, Skill, Agent (`BUILDER_TOOLS`) | Runs headless in the worktree. Follows the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), one fresh builder per task. It is the implementer, not the controller: no implementer or reviewer subagents and no per-task review (the driver does the ledger, commits and final review), with a `Rules in short` digest of TDD, systematic debugging and verification. Never commits, the driver does (see Commits). Its reply ends with a commit note between `---BEGIN COMMIT---` and `---END COMMIT---`. At most 2 helper agents per task, only to read or search code. The reply starts with `Status: DONE`, `DONE_WITH_CONCERNS`, `BLOCKED` or `NEEDS_CONTEXT` (a first-line `BLOCKED: <reason>` is still accepted), then at most five concern lines, then `Ruling: <what> — <why> — <cost if wrong>` lines. BLOCKED and NEEDS_CONTEXT park the job as `builder-blocked`. |
 | `factory-code-reviewer` | Read, Grep, Glob | Loaded by the driver with `--agent`. The prompt names the round diff, the plan, the spec and, from round 2, the earlier findings and the builder's reply to them. It also carries the plan's Review Focus, the builder's rulings and concerns recorded while building, and the plan outline. One combined review: correctness, DDD placement, serde, error handling, persistence compatibility, tests, and the hard rules (shadcn, lucide, SingleLineEditor vs Monaco, Zustand selectors, no unwrap, no git CLI). At most 60 lines, findings tagged `[blocker]` or `[minor]`, last line `VERDICT: APPROVE` or `VERDICT: CHANGES`. |
 | `factory-security-reviewer` | Read, Grep, Glob | Runs only when `reviewers` lists `security` (default `["code"]`, which must always hold `code`). Gets the same diff, plan, spec and notes as the code reviewer, plus the `security_rules` line, and reviews for security problems only. Same reply format, findings tagged `[blocker]` or `[minor]`, last line `VERDICT: APPROVE` or `VERDICT: CHANGES`. A missing agent file parks the job and shows under `problems:` in `factory project show`. |
 
@@ -69,13 +68,46 @@ The agent files are the preset files in `crates/factory-core/presets/<preset>/ag
 
 ## Commits
 
-- The builder never commits. The driver stages everything not ignored and runs the `factory-committer` agent (skill `dev-workflow-skills:1-git-commit`), once per job in a task plan (the batch committer, see below), once per round otherwise.
-- Batch commit (`commit_batch`, default on): after each task the driver makes a `wip: task N <title>` snapshot commit with git2 and no agent run. After the last task it records the snapshot tip in the board field `batch_snapshot`, soft-resets the branch to `base` and runs one committer (`Kind: batch`, floor `base`, cap `2 * commit_budget_weighted` because it sees the whole job diff). A pending `batch_snapshot` marks an unfinished batch: the next build call (after `factory rework`) finishes it without new builders, and `factory approve` refuses the job. If the committer fails twice, the fallback makes one `chore:` commit per snapshot. With `commit_batch = false` the driver runs one committer per task as before.
-- Floor: the job base in round 1, the previous head in a fix round. After a red-check round the floor is the unreviewed head, which is stricter and safe. The committer may amend or fixup above the floor and never at or below it.
-- Checks after each run: the floor is an ancestor, the tree is clean, at most 4 net-new commits, the subject is valid, HEAD is on the job branch. A failed run (no commit made, a dirty tree, BLOCKED, an unavailable skill) gets one retry by resuming, then a `chore: <task title>` fallback commit. After the retry, a validator or commit-count failure keeps the commits and writes a ruling, with no fallback commit. A message problem never parks the job.
-- Merge and sync messages come from the committer in message-only mode (role `message`, tools `Read,Skill`), with the fixed message as fallback (`chore(factory): merge job <id> <slug>`, `chore(factory): sync main into job <id> <slug>`). The fallback messages also get the driver footers, and `Factory-Job: <id>` is added even for a job with no issues.
-- Parks: `builder committed on its own (the branch was at <sha7> before the run)` (in a task plan `builder committed on its own in task N (the branch was at <sha7> before the run)`), `builder made no changes`, `task N changed nothing`, rewriting the floor, `committer moved HEAD off the job branch`, `the job branch is gone`, and `the committer left nothing to commit: <why>`. With `commit_batch` on, a builder that moved HEAD off the job branch parks with `builder moved HEAD off the job branch in task N ...` before the snapshot. The reason names the detached sha when known and tells the person to note it (`git rev-parse HEAD`), run `git checkout <branch>` in the worktree (uncommitted changes stay), then `factory rework <id>`. A rework note still on disk when a batch finishes is copied into a ledger ruling and removed, so a later fix round uses its findings file. A batch that finds the branch moved parks with `the branch moved during the batch commit; run `git reset --soft <base7>` in the job worktree, then `factory rework <id>``. If the branch holds the snapshot work as non-`wip:` commits with the same tree, the driver instead treats the batch as done (a ruling `batch commit already done`). To recover from the builder-committed parks, run `git reset --soft <sha7>` in the job worktree (the sha is in the park reason), then `factory rework <id>`.
-- Tokens: `factory tokens` shows the roles `committer` and `message`, each run capped by `commit_budget_weighted`.
+- The builder never commits. The driver stages everything not ignored and makes the commits itself with git2. No agent writes a commit message.
+- Commit note: every builder reply ends with a note between `---BEGIN COMMIT---` and `---END COMMIT---`: a subject of at most 50 characters in the imperative with no trailing period, a sentence on why, and one bullet per change. The note comes after the `Status:` line and any `Ruling:` lines. Example:
+
+```
+---BEGIN COMMIT---
+Add a retry endpoint for parked jobs
+
+The dashboard had no way to continue a parked job.
+
+- Add POST /projects/{p}/jobs/{id}/retry with 409 refusals
+- Refuse approve while a retry is queued
+---END COMMIT---
+```
+
+- The driver saves each note in the job folder under `commit-notes/`: `task-<N>.md` for a plan task, `round-<R>.md` for a fix or rework round, `build.md` for a job with no task list. A missing or bad note (no markers, an empty or long subject, a trailing period, an empty body) uses a fallback note built from the task title and the changed paths, and the ledger gets one line naming the problem. It never parks the job.
+- Snapshots: after each task the driver makes a `wip: task <N> <title>` commit on the job branch, after the plan builder of a job with no task list `wip: build the plan`, and after a fix round `wip: fix round <R>`. They are working commits on the job branch, carry no footer and are what review, the fix-round floor and `rework` build on.
+- The merge into the base branch is still a no-ff merge (the squash is a later phase). Its message is written by the driver, in this layout:
+
+```
+feat(retry): add a retry endpoint
+
+<the plan's Goal line, wrapped at 72>
+
+Add a retry endpoint for parked jobs:
+- Add POST /projects/{p}/jobs/{id}/retry with 409 refusals
+- Refuse approve while a retry is queued
+
+Review fixes:
+- <bullets of each fix round note>
+
+Fixes: #142
+Factory-Job: 042
+```
+
+- Subject: the plan's `**Commit:**` line, else `feat: <plan title>`. Then the plan's Goal as a paragraph, one section per task note (its subject, then its bullets), `Review fixes:` with the bullets of the round notes (left out with no fix rounds), then the footers. A job from an older version with no notes takes its sections from the subjects of its non-`wip:` commits.
+- Sync message: fixed text, `chore(factory): sync main into job <id> <slug>`, plus the same footers. If a merge message fails its checks, the fixed `chore(factory): merge job <id> <slug>` is used with the footers and a ledger line. `Factory-Job: <id>` is added even for a job with no issues.
+- The plan's `**Commit:**` line sits in the plan header next to `**Goal:**`: `**Commit:** <type>(<scope>): <subject>` (or `<type>: <subject>`), a lowercase Conventional Commits type (`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`), a one-word scope, at most 50 characters, no trailing period. `factory new` refuses a plan whose line breaks the rule. With `--one-job` the spec carries one such line under its `# ` title, and a spec with no line gives `feat: <spec title>`.
+- Parks: `builder committed on its own (the branch was at <sha7> before the run)` (in a task plan `builder committed on its own in task N (the branch was at <sha7> before the run)`), `builder made no changes`, `task N changed nothing`, and `the job branch is gone`. A builder that moved HEAD off the job branch parks with `builder moved HEAD off the job branch in task N ...`. The reason names the detached sha when known and tells the person to note it (`git rev-parse HEAD`), run `git checkout <branch>` in the worktree (uncommitted changes stay), then `factory rework <id>`. To recover from the builder-committed parks, run `git reset --soft <sha7>` in the job worktree (the sha is in the park reason), then `factory rework <id>`.
+- Floor: the job base in round 1, the previous head in a fix round. After a red-check round the floor is the unreviewed head, which is stricter and safe.
+- Tokens: `factory tokens` shows the roles `committer` and `message` only for jobs of older versions.
 
 ### Issue references
 
@@ -84,7 +116,7 @@ The agent files are the preset files in `crates/factory-core/presets/<preset>/ag
 
 | Commit | Footer lines |
 |---|---|
-| task, legacy and fix commits (written by the committer, checked by the driver) | `Relates to: #N` |
+| `wip:` snapshot commits on the job branch | none, they carry no footer |
 | merge message of the last plan, or of a single-plan job | `Fixes: #N`, then `Factory-Job: <id>` |
 | merge message of an earlier plan of a series | `Relates to: #N`, then `Factory-Job: <id>` |
 | sync message | `Relates to: #N`, then `Factory-Job: <id>` |
@@ -96,7 +128,7 @@ The agent files are the preset files in `crates/factory-core/presets/<preset>/ag
 ### Knowledge base (read side)
 
 - `kb_path` in `config.toml` is the Rocket KB folder, an absolute path or one that starts with `~/` (expanded with `HOME` when the refresh runs). A relative path, a `..` component and any character other than ASCII letters, digits and `/ . _ - ~` (so no spaces, commas, parentheses, backslashes or glob characters) fail the config load. A symlinked folder is resolved to its real path, which must follow the same rule. Unset turns the KB off. Builders and the reviewer get the folder as `--add-dir`, because it is outside the job worktree.
-- With it set, the builder (first, per-task, resume and fresh fix) and reviewer prompts get a line: read `README.md` in that folder first, then only the topic pages that apply, treat the KB as read-only, let the source and the spec win on a conflict, say in the reply when a page is stale, and skip it if the folder does not exist. The reviewer keeps `Read,Grep,Glob`. The committer prompt has no KB line.
+- With it set, the builder (first, per-task, resume and fresh fix) and reviewer prompts get a line: read `README.md` in that folder first, then only the topic pages that apply, treat the KB as read-only, let the source and the spec win on a conflict, say in the reply when a page is stale, and skip it if the folder does not exist. The reviewer keeps `Read,Grep,Glob`. 
 
 Whether headless agents can read the KB through `--add-dir` is not proven yet. The first real run verifies it.
 
@@ -110,7 +142,7 @@ Whether headless agents can read the KB through `--add-dir` is not proven yet. T
 - Failures never park or unmerge a job. A failed, over-budget or blocked run writes a ledger line `kb refresh failed, <reason>`. Success writes `kb refreshed, pages: ...` or `kb up to date`.
 - `factory tickets <id> [--dry-run]`: file follow-up tickets and close the parent tickets of a merged job (see Ticket hygiene).
 - `factory kb-refresh --job <id>` reruns it by hand. `--job` is required, the command refuses unless the job is in stage `merged`, and it refuses while the job's lease is live. Do not run it while a driver run is live.
-- Tokens: the run is logged with role `kb`, so `factory tokens <id>` shows a `kb` row (and a `message` row for commit messages).
+- Tokens: the run is logged with role `kb`, so `factory tokens <id>` shows a `kb` row.
 
 First real run checklist: after merge, set `kb_path = "~/data/rocket/Nl-knowledge-base/rocketapi"` and run `factory kb-refresh --job <a merged job id>` once. Check that:
 
@@ -233,7 +265,7 @@ A risky diff gets the same fix rounds as any other (`risky_fix_rounds`, default 
 
 `nothing-changed` after a review fix round, and `no-checks` or `no-tests` parks, put `Review` (and `Risk` when risky) before their other parts. `park.json` also records `verdict` and `risky`. In round 2 or later, before the new review runs, the Review part is the previous round's review, and its text names that round. After a sync, a risky diff that needs a human runs the final checks again and parks with the same parts plus `Checks`. A failing final check parks as `checks-failed` without a fix round, and a diff that cannot be read gives a `Risk` part that starts with `unknown:`.
 
-The driver merges the reviewed sha only: it checks the branch tip equals the recorded head, preflights main (on `main`, clean, not mid-merge), makes a no-ff merge commit (the committer's message, or the fixed `chore(factory): merge job NNN <slug>` fallback), and verifies the second parent. If main moved it merges main into the job branch inside the worktree, re-runs checks and the reviewer on the sync diff (at most 2 syncs). A sync review is saved as `review-code-r<round>-sync<n>.md`, so the round review `review-code-r<round>.md` is never overwritten. It sets `last_review` with source `sync`, and the ledger line starts `sync review round <round> (sync)`. A conflict goes to `needs-human`. It never pushes and never rewrites history.
+The driver merges the reviewed sha only: it checks the branch tip equals the recorded head, preflights main (on `main`, clean, not mid-merge), makes a no-ff merge commit (the driver-written message, or the fixed `chore(factory): merge job NNN <slug>` fallback), and verifies the second parent. If main moved it merges main into the job branch inside the worktree, re-runs checks and the reviewer on the sync diff (at most 2 syncs). A sync review is saved as `review-code-r<round>-sync<n>.md`, so the round review `review-code-r<round>.md` is never overwritten. It sets `last_review` with source `sync`, and the ledger line starts `sync review round <round> (sync)`. A conflict goes to `needs-human`. It never pushes and never rewrites history.
 
 ## Retry
 
@@ -312,7 +344,7 @@ Data flow: `factory driver -> .superpowers/factory/{board.json,events.jsonl} -> 
 ## Per-task builders
 
 - The driver runs one fresh `factory-builder` agent per `### Task N:` heading of `plan.md`, one after another, each as its own `claude -p --agent factory-builder` run (`--max-turns 120`). A plan with no task headings keeps the old whole-plan builder.
-- Each build call handles one task while the board field `task_index` is below the task count. The prompt names the plan, the spec, the base, the current tip, the earlier commit subjects and "Do only Task N". The builder leaves the commit to the driver (a `wip:` snapshot per task, then one batch committer after the last task when `commit_batch` is on, otherwise one committer per task). A task that changed nothing parks the job with `task N changed nothing`. With `commit_batch` on, `Task N: implementer done (<sha>)` records the `wip:` snapshot sha, which the batch commit replaces.
+- Each build call handles one task while the board field `task_index` is below the task count. The prompt names the plan, the spec, the base, the current tip, the earlier commit subjects and "Do only Task N". The builder leaves the commit to the driver (a `wip:` snapshot per task) and ends its reply with a commit note. A task that changed nothing parks the job with `task N changed nothing`. `Task N: implementer done (<sha>)` records the `wip:` snapshot sha.
 - Builder excerpt (`builder_excerpt`, default on): the task prompt carries the plan header, the task's own `### Task N:` section and the spec goal, design, edge cases, decisions, scope and acceptance criteria (the goal and the whole acceptance criteria always, the other sections while they fit under 8192 bytes, with a marker line where one was cut), and still names the full `plan.md` and `spec.md` for reference. The builder agent reads those files only for something the excerpt refers to outside itself. A plan with no `### Task N:` heading for the task (for example `- [ ] Task N:` checkboxes) falls back to the full prompt. Whole-plan builders, fix resumes and rework resumes are unchanged. `builder_excerpt = false` restores the old prompt.
 - Builder carry (`builder_carry_session`, default on, with `builder_carry_max_ctx`, default 45000): the builder of task N+1 resumes the session of task N when the previous builder ended less than the idle limit ago and its `end_ctx` is at most the cap. The idle limit follows `cache_ttl`: 3300 seconds for `"1h"`, 240 for `"5m"` or unset. Task 1, the whole-plan builder, a task with a rework note and a task with a saved crash session start fresh, and a failed carry gets one fresh builder. The carried run keeps the agent, tools, permissions and turn limit. The ledger line of a task ends with `continued` or `fresh (<reason>)`; with the setting off it stays `fresh`. Fix rounds are unchanged. `factory tokens --cache` shows the mean end context per role (AVG-END).
 - Ledger lines: `Ruling: per-task builders, <total> tasks` once, then `Task N: dispatched (BASE <sha>, <model>)` and `Task N: implementer done (<short sha>)` per task. `tick_plan` still writes `Task N: complete` after the merge.
@@ -323,7 +355,7 @@ Data flow: `factory driver -> .superpowers/factory/{board.json,events.jsonl} -> 
 
 ## Builder escalation and the fresh fix builder
 
-- Escalation: once `escalate_after_fix_rounds` (default 1) fix rounds were spent without fixing the job, the next fix round runs the builder on `escalation_model` (default `claude-opus-5-5`). The job keeps the model for its later rounds and the ledger says `escalated the builder to <model> (fix round N, <reason>)`. Only the builder escalates; the reviewer and the committer keep their models. A job's own `--model` never escalates. A Codex project without `escalation_model` does not escalate. To turn it off, set `escalate_after_fix_rounds` at or above `fix_rounds`.
+- Escalation: once `escalate_after_fix_rounds` (default 1) fix rounds were spent without fixing the job, the next fix round runs the builder on `escalation_model` (default `claude-opus-5-5`). The job keeps the model for its later rounds and the ledger says `escalated the builder to <model> (fix round N, <reason>)`. Only the builder escalates; the reviewer keeps its model. A job's own `--model` never escalates. A Codex project without `escalation_model` does not escalate. To turn it off, set `escalate_after_fix_rounds` at or above `fix_rounds`.
 - The first escalated round, and a `rework` of an escalated job, cannot resume a session from the cheaper model, so the builder starts fresh. Later rounds on the same model resume that session. A provider switch clears the escalated model and writes a ruling.
 - Cold session: a fix round or `rework` that would resume a session that ended longer ago than the cache idle limit, with an end context above `fix_fresh_over_ctx` (default 60000; `0` means always fresh once idle), starts a fresh fix builder. The ledger shows `fresh fix builder (idle ...)`. Codex fix rounds always resume, because the idle limit is the Anthropic cache TTL.
 - The fresh fix builder gets the branch, the job diff from base to head, the plan, the spec, `read_first`, `builder_rules`, the KB line and the findings (or the rework note). A round that changes nothing after a checks failure is handled like a resumed one.
@@ -338,7 +370,7 @@ Why: a headless `claude -p` run cannot answer a permission prompt, and Claude Co
 - `builder_allow`: extra entries as `Bash(<command>:*)` or `Bash(<command>)`, where the command may hold arguments, such as `git log`. No shell operators, quotes, backslashes or wildcards. A bad entry makes the whole config fail closed. See `docs/reference/project-toml-reference.md`.
 - Deny rules: `Edit(//<job folder>/**)` and `Write(//<job folder>/**)` with the canonical job folder path, and the same two rules for each knowledge base folder, so a builder cannot edit the knowledge base. A deny rule wins over any allow from a repository setting, and `Read` still works.
 - Guard: the builder must not change `plan.md`, `spec.md` or `progress.md` in the job folder. The driver checks them after each builder run, restores them and parks the job with the kind `builder-tampered` and the reason `builder changed <file>`. This catches writes the deny rules cannot, such as a shell command. A failed restore shows in the park reason. The kind accepts `rework` and `cancel` only, never `approve`.
-- Kill switch: `builder_permissions = false` gives the old builder arguments exactly. The reviewer, committer, message and KB runs are not affected. The guard still runs.
+- Kill switch: `builder_permissions = false` gives the old builder arguments exactly. The reviewer and KB runs are not affected. The guard still runs.
 - Known limit: the allowlist is not a sandbox. `find` (with `-exec` or `-delete`) and `git diff`, `git log` and `git show` with `--output` can act outside the worktree. The deny rules and the file guard cover only the job folder files named above and the knowledge base folders. The probes for `find`, `git diff --output`, `Bash(*)` and `acceptEdits` with `rm` have not been run against the real claude, so this has not been probed. Do not rely on the worktree to protect a builder from them.
 
 Probes with the real claude 2.1.303 on haiku in a scratch folder, 2026-10-19:
@@ -365,7 +397,7 @@ Limits:
 - There is no mid-run budget warning or stop. Codex reports usage only at the end of a turn, so the run total is added to the job tally after the run and the job parks when it is over budget. `stall_minutes` still stops a silent run.
 - `cache_ttl` does not apply and is not set. `builder_carry_session` is off.
 - There is no cold-start data, so the COLD STARTS tables show `n/a` for Codex.
-- The agent file text and a short preface go into the prompt. A Codex run lists the skills in `~/.agents/skills`, `$CODEX_HOME/skills` (default `~/.codex/skills`) and `<worktree>/.agents/skills`; only the catalog (name, description, path) is in context. The factory sets `skills.bundled.enabled=false` and disables, by canonical path in `skills.config`, every skill the role is not allowed. The allowlist is the role's plugin list: an entry `superpowers` allows the skills in a `superpowers` subfolder, an entry `foo` allows a top-level `foo` folder, and an empty list, or one that matches no installed skill, gives `skills.include_instructions=false`. Committer and message roles also get `dev-workflow-skills`, KB gets `kb-refresh`. Subagents stay off. When the skill a role names is not installed, the agent text keeps its short rules.
+- The agent file text and a short preface go into the prompt. A Codex run lists the skills in `~/.agents/skills`, `$CODEX_HOME/skills` (default `~/.codex/skills`) and `<worktree>/.agents/skills`; only the catalog (name, description, path) is in context. The factory sets `skills.bundled.enabled=false` and disables, by canonical path in `skills.config`, every skill the role is not allowed. The allowlist is the role's plugin list: an entry `superpowers` allows the skills in a `superpowers` subfolder, an entry `foo` allows a top-level `foo` folder, and an empty list, or one that matches no installed skill, gives `skills.include_instructions=false`. KB gets `kb-refresh`. Subagents stay off. When the skill a role names is not installed, the agent text keeps its short rules.
 - Runs pass `--ignore-user-config`, so your own `~/.codex/config.toml` is not read. The login still works. `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from the child unless `FACTORY_ALLOW_API_KEY=1`.
 - Runs set the `skills.*` flags above (`skills.bundled.enabled`, `skills.config`, `skills.include_instructions`) as `-c` values.
 - Runs set `features.apps=false` and `features.plugins=false`, so ChatGPT apps and Codex plugins add no tools. Codex has no switch that drops every MCP server, and `-c mcp_servers={}` merges instead of replacing.
@@ -377,15 +409,14 @@ Sandbox by role:
 | Role | Sandbox |
 |---|---|
 | builder, fix builder | `workspace-write`, network on |
-| committer, message | `workspace-write`, the repo's `.git` folder writable, network off |
 | kb | `workspace-write` in the KB folder, network off |
 | reviewer | `read-only`, network off |
 
-A failed Codex commit falls back to the driver commit. The real smoke test is `#[ignore]`; run it by hand with `cargo test -j4 -p factory-agent real_codex_smoke -- --ignored`.
+The real smoke test is `#[ignore]`; run it by hand with `cargo test -j4 -p factory-agent real_codex_smoke -- --ignored`.
 
 ## Checking what agents see
 
-`factory probe` builds each role's real agent spec (builder, reviewer, spec-reviewer, committer, kb), adds a unique marker to the agent text, and asks the agent in one turn, with every tool denied, what reached its context. It reports a pass or fail per channel and role:
+`factory probe` builds each role's real agent spec (builder, reviewer, spec-reviewer, kb), adds a unique marker to the agent text, and asks the agent in one turn, with every tool denied, what reached its context. It reports a pass or fail per channel and role:
 
 | Channel | What a pass proves |
 |---|---|
@@ -481,9 +512,9 @@ Run this once after plans 01 to 08 are merged. It uses real agents, so it costs 
    - A job card in build with its worktree and the token counter rising.
    - A `checks.md` in the job folder (`ls .superpowers/sdd/*/checks.md`) with every check passing, or the builder resumed once after a failure.
    - One reviewer run, then the stage moves to approve and merged. A diff that touches a risk path (auth, `src-tauri/`, `Cargo.toml` and so on) parks in needs-human instead. Run `factory approve <id>` after reading the diff.
-   - The merge commit has the committer's message, or the fixed fallback `chore(factory): merge job NNN <slug>`, and its second parent is the reviewed sha (`git log --merges -1 --format=%P`).
+   - The merge commit has the driver-written message, or the fixed fallback `chore(factory): merge job NNN <slug>`, and its second parent is the reviewed sha (`git log --merges -1 --format=%P`).
    - Plan 2 starts by itself as the next job and merges the same way.
-4. Read the cost: `factory tokens 001` and `factory tokens 002`. Each prints runs, raw and weighted tokens per agent role, and the percent of the job 001 weighted baseline. Add the two jobs and the interactive session to compare with the 2.17M weighted of job 001. Check that the reviewer role shows one run per clean round, that no commit helper agents appear, and that the roles `committer` and `message` are listed.
+4. Read the cost: `factory tokens 001` and `factory tokens 002`. Each prints runs, raw and weighted tokens per agent role, and the percent of the job 001 weighted baseline. Add the two jobs and the interactive session to compare with the 2.17M weighted of job 001. Check that the reviewer role shows one run per clean round, and that no commit helper agents appear.
 5. Pass criteria (the spec's success check): the interactive session was the only place the user spent tokens by hand and sat idle while the driver worked, the driver built in a worktree, ran the checks, ran one reviewer, merged the reviewed sha and started plan 2, the dashboard showed live stages and per-job tokens, no stage needed manual repair, `git status` is clean in the main checkout, and the logged weighted total is well below 2.17M (aim under 1.1M for a comparable small feature).
 6. Clean up with `factory cleanup <id>` for each job and confirm `git branch --list 'factory/*'` shows nothing left.
 
