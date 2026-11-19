@@ -1,4 +1,5 @@
 //! The supervisor library: requests, the queue, runtime records and the scheduler.
+pub mod admit;
 pub mod api;
 pub mod daily;
 pub mod factory_cli;

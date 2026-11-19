@@ -280,7 +280,7 @@ Build once: `cargo build -j4 --manifest-path tools/factory/Cargo.toml -p factory
 | `/factory <feature> [--opus]` | Start a draft card, brainstorm and plan with the user, then `factory new` and `factory run <id> --series` in the background. |
 | `/factory status` | `factory status`. |
 | `/factory approve <id>` | Release a `needs-human` job to the merge step. Refused when the code review has not run, unless `--without-review` is given. |
-| `/factory retry <id>` | Continue a `needs-human` job at the stage that parked it (see "Retry"), then run it on like `run`. Refused for a park with no resume stage, and for a cancelled job. |
+| `/factory retry <id>` | Continue a `needs-human` job at the stage that parked it (see "Retry"), then run it on like `run`. When `factoryd` runs, the command queues it with `factoryd enqueue --retry`, so it waits for the daily budget. Refused for a park with no resume stage, and for a cancelled job. |
 | `/factory rework <id> <note>` | Send a `needs-human` job back to the builder with a one-line note. Refused for a park that `retry` can resume, unless `--force` is given. |
 | `/factory cancel <id>` | Stop and park a job. A running driver is not stopped: it ends at its next stage move as `needs-human: cancelled: <reason>`, and the job never reaches review, approve or merged. A cancel during the git merge itself (milliseconds) is a window it cannot stop: main gets the merge and the job stays cancelled. |
 | `/factory cleanup <id>` | Remove the worktree of a finished job. A cancelled job also loses its board card (not in a series with other jobs, not while leased); the job folder stays. |

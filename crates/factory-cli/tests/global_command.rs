@@ -381,6 +381,8 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "dev-workflow-skills:1-git-commit",
         "factoryd is-running",
         "factoryd enqueue",
+        "factoryd enqueue --project <name> --job <id> --retry",
+        "refuses a job that cannot be retried",
         "factoryd status",
         "daily budget",
         "--series",

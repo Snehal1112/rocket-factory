@@ -6,16 +6,16 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use factory_core::project::{self, ProjectFile};
-use factory_core::{normalize_id, slugify, Board, Config, Home, Layout, ResumeAt, Stage};
+use factory_core::project;
+use factory_core::{slugify, Board, Config, Home, Layout, Stage};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::admit::{self, Refusal};
 use crate::api::http::{error_response, ApiResponse, MAX_BODY};
 use crate::api::ApiDeps;
 use crate::factory_cli::CliOutput;
 use crate::request::{validate_job, Action, Request};
-use crate::{queue, QueueError};
 
 const MAX_NOTE: usize = 200;
 const MAX_PATH: usize = 4096;
@@ -72,28 +72,24 @@ fn parse<T: for<'de> Deserialize<'de>>(body: &[u8]) -> Result<T, ApiResponse> {
     serde_json::from_slice(body).map_err(|e| bad(&format!("the request body is not valid: {e}")))
 }
 
+/// The HTTP answer for a refused request.
+fn refusal(r: Refusal) -> ApiResponse {
+    match r {
+        Refusal::BadRequest(m) => bad(&m),
+        Refusal::NotFound(m) => error_response(404, "not_found", &m),
+        Refusal::Disabled(m) => error_response(409, "project_disabled", &m),
+        Refusal::Conflict(m) => error_response(409, "conflict", &m),
+        Refusal::Failed(m) => error_response(500, "failed", &m),
+    }
+}
+
 /// The layout of a project that can take work. A missing project is `not_found`, a broken one `project_disabled`.
 fn enabled(home: &Home, name: &str) -> Result<Layout, ApiResponse> {
-    project::validate_name(name).map_err(|e| bad(&e.to_string()))?;
-    if !home.project_dir(name).is_dir() {
-        return Err(error_response(
-            404,
-            "not_found",
-            &format!("no project named {name}"),
-        ));
-    }
-    let disabled = |why: String| error_response(409, "project_disabled", &why);
-    let file: ProjectFile = project::get(home, name).map_err(|e| disabled(e.to_string()))?;
-    let layout = project::layout(home, name, &file).map_err(|e| disabled(e.to_string()))?;
-    if !file.repo.is_dir() {
-        return Err(disabled("repo path is missing".to_string()));
-    }
-    Ok(layout)
+    admit::project_layout(home, name).map_err(refusal)
 }
 
 fn job_id(raw: &str) -> Result<String, ApiResponse> {
-    validate_job(raw).map_err(|e| bad(&e.to_string()))?;
-    normalize_id(raw).map_err(|e| bad(&e.to_string()))
+    admit::job_id(raw).map_err(refusal)
 }
 
 /// One non-empty line of at most 200 characters.
@@ -214,15 +210,6 @@ fn finished(
     }
 }
 
-fn queue_error(e: QueueError) -> ApiResponse {
-    match e {
-        QueueError::Duplicate(id) => {
-            error_response(409, "conflict", &format!("request {id} is already queued"))
-        }
-        other => error_response(500, "failed", &other.to_string()),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn enqueue(
     home: &Home,
@@ -242,7 +229,7 @@ fn enqueue(
     if let Some(reason) = waive_reason {
         req = req.waive(reason).map_err(|e| bad(&e.to_string()))?;
     }
-    queue::enqueue(home, &req).map_err(queue_error)?;
+    admit::enqueue(home, &req).map_err(refusal)?;
     Ok(req.id)
 }
 
@@ -374,19 +361,7 @@ fn create_inner(
 
 /// Answers 409 when an approve or retry request for the job is already queued or running.
 fn refuse_if_queued(home: &Home, name: &str, id: &str) -> Result<(), ApiResponse> {
-    // The queue entry stays until the child finishes, so this also covers a running request.
-    let twice = queue::list(home).iter().any(|item| {
-        matches!(item, queue::QueueItem::Ok(r)
-            if r.project == name && r.job == id && matches!(r.action, Action::Approve | Action::Retry))
-    });
-    if twice {
-        return Err(error_response(
-            409,
-            "conflict",
-            &format!("job {id} already has an approve or retry queued"),
-        ));
-    }
-    Ok(())
+    admit::refuse_if_queued(home, name, id).map_err(refusal)
 }
 
 /// `POST /projects/{p}/jobs/{id}/approve`.
@@ -478,53 +453,15 @@ fn retry_inner(
     id: &str,
     body: &[u8],
 ) -> Result<ApiResponse, ApiResponse> {
-    let layout = enabled(home, name)?;
-    let id = job_id(id)?;
+    // The project and the job id are checked before the body, as in the other write routes.
+    enabled(home, name)?;
+    job_id(id)?;
     // No body at all means the defaults.
     if !body.is_empty() {
         parse::<RetryBody>(body)?;
     }
-    let board = Board::load(&layout.board_file()).map_err(|e| {
-        error_response(
-            500,
-            "failed",
-            &format!("the board of this project cannot be read: {e}"),
-        )
-    })?;
-    let job = board.jobs.iter().find(|j| j.id == id).ok_or_else(|| {
-        error_response(404, "not_found", &format!("no job {id} in project {name}"))
-    })?;
-    let conflict = |why: &str| error_response(409, "conflict", why);
-    if job.cancelled {
-        return Err(conflict(&format!("job {id} was cancelled")));
-    }
-    if job.stage != Stage::NeedsHuman {
-        return Err(conflict(&format!(
-            "job {id} is in stage {}, retry needs needs-human",
-            job.stage
-        )));
-    }
-    if job.batch_snapshot.is_some() {
-        return Err(conflict(&format!(
-            "job {id} has a pending batch commit, use rework to finish it"
-        )));
-    }
-    let Some(resume) = job.park_resume else {
-        return Err(conflict(&format!(
-            "job {id} has no resume stage, see its park for the next command"
-        )));
-    };
-    // The child would refuse this, and nobody reads a child's refusal, so answer here. An approval
-    // given before the park carries over, as in the engine.
-    if matches!(resume, ResumeAt::Merge | ResumeAt::Sync)
-        && job.stage_before_park() != Some(Stage::Approve)
-    {
-        if let Some(why) = job.approve_refusal(false, false) {
-            return Err(conflict(&why));
-        }
-    }
-    refuse_if_queued(home, name, &id)?;
-    let request_id = enqueue(home, deps, name, Action::Retry, &id, false, false, None)?;
+    // The child would refuse a bad retry, and nobody reads a child's refusal, so answer here.
+    let request_id = admit::queue_retry(home, name, id, (deps.now_ms)()).map_err(refusal)?;
     Ok(ApiResponse {
         status: 202,
         body: json!({"requestId": request_id}),

@@ -36,13 +36,13 @@ Anything else is a feature text, for example `next button for pagination`, `stat
 
 ## Other subcommands
 
-Each is one call and a one-line report of the output, nothing more:
+Each is one call and a one-line report of the output, nothing more (`retry` may first ask `factoryd`, as its line says):
 
 - `status`: `<factory> --project <name> status`
 - `approve <id>`: `<factory> --project <name> approve <id>`. The driver refuses a `needs-human` job whose code review has not run (the checks never passed or the reviewer never ran) and says so. Report that refusal as it is and offer `/factory rework <id> <note>`, or `/factory approve <id> --without-review` to merge unreviewed, which the user must ask for. When the refusal names `factory retry <id>`, offer `/factory retry <id>` first.
 - `approve <id> --without-review`: `<factory> --project <name> approve <id> --without-review`
 - `approve <id> --waive "<reason>"`: `<factory> --project <name> approve <id> --waive=<reason>`. Use the `=` form with the reason as one argument. The reason must be one line, not empty, at most 200 characters. The user must ask for it: it merges a job whose last review asked for changes, records the waiver and files a ticket for each waived blocker. It never combines with `--without-review`.
-- `retry <id>`: `<factory> --project <name> retry <id>`. It continues a parked job at the stage that parked it and runs it on until it merges or parks again, so it can take as long as a run: use the `Shell and background runs` note. Report its last line.
+- `retry <id>`: first run `factoryd is-running`. If it exits 0, a supervisor is running: run `factoryd enqueue --project <name> --job <id> --retry`. It either prints a request id or refuses a job that cannot be retried; report a refusal as it is. After a request id, run `factoryd status` once and tell the user in one line that the retry is queued as that request id, and when the first line of that output contains `reached`, that it waits for the daily budget, giving the reset time from that line. Then stop. For any other exit code of `factoryd is-running` (including command not found), run `<factory> --project <name> retry <id>`. It continues a parked job at the stage that parked it and runs it on until it merges or parks again, so it can take as long as a run: use the `Shell and background runs` note. Report its last line.
 - `rework <id> <note>`: `<factory> --project <name> rework <id> '<note>'` (the driver accepts a one-line note of at most 200 characters and refuses anything else). The driver refuses a job whose park `retry` can resume and names `factory retry <id>`. Report that refusal and offer `/factory retry <id>`.
 - `rework <id> --force <note>`: `<factory> --project <name> rework --force -- <id> '<note>'`. The user must ask for it: it sends a job to the builder even though `retry` could resume it.
 - `cancel <id>`: `<factory> --project <name> cancel <id>`

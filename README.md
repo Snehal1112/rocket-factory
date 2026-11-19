@@ -470,7 +470,7 @@ parallel. It lives in the factory home (`$FACTORY_HOME`, else `~/.factory`):
   refuses a config that has `draft_stale_hours`.
 
 ```
-factoryd enqueue --project myproj --job 003        # add a request (--series, --approve)
+factoryd enqueue --project myproj --job 003        # add a request (--series, --approve, --retry)
 factoryd run                                       # the loop (--once does one tick)
 factoryd status                                    # queue, children, last results
 factoryd stop                                      # ask the loop to end after its tick

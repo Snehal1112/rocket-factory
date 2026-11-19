@@ -6,6 +6,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use factory_core::version::{self, FACTORY_VERSION};
 use factory_core::{Home, HomeConfig};
+use factory_supervisor::admit;
 use factory_supervisor::api::{ApiDeps, ApiServer};
 use factory_supervisor::lock::stop_file;
 use factory_supervisor::request::{Action, Request};
@@ -52,7 +53,33 @@ enum Cmd {
         series: bool,
         #[arg(long)]
         approve: bool,
+        /// Queue a retry of a parked job at its resume stage. A job that cannot be retried is refused here.
+        #[arg(long, conflicts_with_all = ["approve", "series"])]
+        retry: bool,
     },
+}
+
+/// Queues one request and returns its id. A retry passes the same checks as the API's retry route.
+fn enqueue(
+    home: &Home,
+    project: &str,
+    job: &str,
+    series: bool,
+    approve: bool,
+    retry: bool,
+    now: u64,
+) -> Result<String, String> {
+    if retry {
+        return admit::queue_retry(home, project, job, now).map_err(|e| e.to_string());
+    }
+    let action = if approve {
+        Action::Approve
+    } else {
+        Action::Run
+    };
+    let req = Request::new(project, action, job, series, now).map_err(|e| e.to_string())?;
+    queue::enqueue(home, &req).map_err(|e| e.to_string())?;
+    Ok(req.id)
 }
 
 fn now_ms() -> u64 {
@@ -263,11 +290,8 @@ fn main() -> ExitCode {
             Ok(())
         }
         Cmd::IsRunning => Ok(()),
-        Cmd::Enqueue { project, job, series, approve } => {
-            let action = if approve { Action::Approve } else { Action::Run };
-            let req = Request::new(&project, action, &job, series, now_ms()).map_err(|e| e.to_string())?;
-            queue::enqueue(&home, &req).map_err(|e| e.to_string())?;
-            println!("{}", req.id);
+        Cmd::Enqueue { project, job, series, approve, retry } => {
+            println!("{}", enqueue(&home, &project, &job, series, approve, retry, now_ms())?);
             Ok(())
         }
     });
@@ -371,6 +395,38 @@ mod tests {
             "warning: cannot read the version of /x/factory: gone"
         );
         assert_eq!(lines[n - 1], format!("factoryd {FACTORY_VERSION}"));
+    }
+
+    #[test]
+    fn enqueue_retry_conflicts_with_approve_and_series() {
+        let base = [
+            "factoryd",
+            "enqueue",
+            "--project",
+            "p",
+            "--job",
+            "001",
+            "--retry",
+        ];
+        assert!(Cli::try_parse_from(base).is_ok());
+        for extra in ["--approve", "--series"] {
+            let args: Vec<&str> = base.iter().copied().chain([extra]).collect();
+            let err = Cli::try_parse_from(args).err().expect("refused");
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ArgumentConflict,
+                "{extra}"
+            );
+        }
+    }
+
+    #[test]
+    fn enqueue_retry_refuses_an_unknown_project_and_queues_nothing() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        let err = enqueue(&home, "nope", "1", false, false, true, 1).expect_err("refused");
+        assert_eq!(err, "no project named nope");
+        assert!(queue::list(&home).is_empty());
     }
 
     #[test]
