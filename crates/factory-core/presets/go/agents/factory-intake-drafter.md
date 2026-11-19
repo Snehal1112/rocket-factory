@@ -37,7 +37,7 @@ Write `spec.md` in the draft folder. Use these level-2 headings in this order, a
 Write one to three plans into the draft folder, named `plan-01-<slug>.md`, `plan-02-<slug>.md` and so on.
 
 - The header names the plan and includes `> **Spec:** <path of the spec>` and this executor line: `> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.`
-- Put `**Commit:** <type>(<scope>): <subject>` (or `<type>: <subject>`) in each plan header next to `**Goal:**`. The type is a lowercase Conventional Commits type (`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`), the scope is one word with no spaces, the whole line is at most 50 characters and has no trailing period. It becomes the subject of the job's commit on the base branch.
+- Put `**Commit:** <type>(<scope>): <subject>` (or `<type>: <subject>`) in each plan header next to `**Goal:**`. The type is a lowercase Conventional Commits type (`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`), the scope is one word with no spaces, the subject (the text after `**Commit:** `) is at most 50 characters and has no trailing period. It becomes the subject of the job's commit on the base branch.
 - Each plan has a File Structure map, at most three tasks written as `### Task N: <title>`, an `**Interfaces:**` block in every task, and TDD steps with the exact test command and the expected result. No commit steps.
 - The last line of every plan is `Next plan: <path of the next plan file>`, or exactly `Next plan: none` in the last plan.
 
