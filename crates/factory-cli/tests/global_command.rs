@@ -554,6 +554,29 @@ fn global_command_describes_one_job_and_consent() {
     }
 }
 
+#[test]
+fn the_command_asks_for_a_commit_line_in_every_plan() {
+    let text = GLOBAL_COMMAND;
+    for needed in ["**Commit:**", "at most 50 characters", "no trailing period"] {
+        assert!(text.contains(needed), "missing phrase: {needed}");
+    }
+    let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("missing: {needle}"));
+    let header = at("the header names the plan");
+    let plan_bullet = text[header..]
+        .find("**Commit:**")
+        .map(|i| i + header)
+        .expect("plan commit bullet");
+    assert!(plan_bullet < at("3. Always validate"));
+    let spec = at("spec stage <slug> writing-spec");
+    let one_job = text[spec..]
+        .find("`--one-job` was given, the spec")
+        .map(|i| i + spec)
+        .expect("one-job spec sentence");
+    assert!(one_job < at("2. Write the plans"));
+    let validate = &text[at("3. Always validate")..at("4. Run `<factory>")];
+    assert!(validate.contains("**Commit:**"), "step 3 must check the line");
+}
+
 fn cmds_dir(tmp: &Path) -> PathBuf {
     let dir = tmp.join("commands");
     std::fs::create_dir_all(&dir).expect("mkdir");
