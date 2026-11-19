@@ -1,7 +1,7 @@
 //! Plan lint: checks a plan against the format the factory builders rely on.
 
 use crate::runloop::find_placeholder;
-use crate::tasks::{lines_with_fence, parse_tasks, plan_header, task_section};
+use crate::tasks::{header_commit_line, lines_with_fence, parse_tasks, plan_header, task_section};
 
 /// What the lint found. A refusal stops `factory new`, a warning never does.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -78,6 +78,12 @@ pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
         ));
         return lint;
     }
+    if let Some(subject) = header_commit_line(plan) {
+        if let Err(why) = factory_core::check_job_subject(&subject) {
+            lint.refuse = Some(format!("{name} **Commit:** line `{subject}`: {why}"));
+            return lint;
+        }
+    }
     let header = plan_header(plan);
     let header_lines = lines_with_fence(&header);
     let compact = header.contains(FACTORY_EXECUTOR);
@@ -139,6 +145,27 @@ pub fn lint_plan(plan: &str, name: &str) -> PlanLint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_broken_commit_line_refuses() {
+        let long = format!("feat: {}", "a".repeat(46));
+        for subject in [long.as_str(), "add the thing", "feat: add the thing."] {
+            let plan = format!("# P\n\n**Commit:** {subject}\n\n{}", task(1, true, true));
+            let lint = lint_plan(&plan, "plan-01.md");
+            let why = lint.refuse.expect("refused");
+            assert!(why.contains("**Commit:** line"), "{why}");
+        }
+    }
+
+    #[test]
+    fn a_valid_or_missing_commit_line_does_not_refuse() {
+        let ok = format!("# P\n\n**Commit:** feat: add it\n\n{}", task(1, true, true));
+        assert_eq!(lint_plan(&ok, "p.md").refuse, None);
+        let none = format!("# P\n\n{}", task(1, true, true));
+        let lint = lint_plan(&none, "p.md");
+        assert_eq!(lint.refuse, None);
+        assert!(!lint.warnings.iter().any(|w| w.contains("Commit")));
+    }
 
     const GOOD: &str = include_str!("../../../docs/superpowers/plans/2026-10-18-factory-execution-rework/plan-01-count-real-task-headings.md");
 

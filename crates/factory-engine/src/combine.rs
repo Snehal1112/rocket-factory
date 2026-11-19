@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use crate::tasks::{
-    ends_section, is_focus_heading, lines_with_fence, parse_checkbox_tasks, parse_tasks,
-    plan_header, plan_title, review_focus, task_section,
+    commit_line_value, commit_region_end, ends_section, goal_line, is_focus_heading,
+    lines_with_fence, parse_checkbox_tasks, parse_tasks, plan_header, plan_title, review_focus,
+    task_section,
 };
 
 const CONSTRAINTS: &str = "## Global Constraints";
@@ -218,6 +219,37 @@ pub fn combine_plans(plans: &[(String, String)]) -> CombinedPlan {
     }
 }
 
+/// Replaces every commit line in the header of `text` with one `**Commit:** {subject}` line.
+/// The line sits after the `<!-- Combined from: ... -->` comment, else after the `# ` title.
+pub fn with_commit_line(text: &str, subject: &str) -> String {
+    let lines = lines_with_fence(text);
+    let end = commit_region_end(&lines);
+    let mut head: Vec<&str> = lines[..end]
+        .iter()
+        .filter(|(l, fenced)| *fenced || commit_line_value(l).is_none())
+        .map(|(l, _)| *l)
+        .collect();
+    let line = format!("**Commit:** {subject}");
+    let anchor = head
+        .iter()
+        .position(|l| l.starts_with("<!-- Combined from:"))
+        .or_else(|| head.iter().position(|l| l.starts_with("# ")));
+    let at = anchor.map_or(0, |i| i + 1);
+    head.splice(at..at, ["", line.as_str(), ""]);
+    let mut out: Vec<&str> = Vec::new();
+    for l in head {
+        if l.trim().is_empty() && out.last().is_none_or(|p| p.trim().is_empty()) {
+            continue;
+        }
+        out.push(l);
+    }
+    if end < lines.len() && out.last().is_some_and(|p| !p.trim().is_empty()) {
+        out.push("");
+    }
+    out.extend(lines[end..].iter().map(|(l, _)| *l));
+    out.join("\n") + "\n"
+}
+
 /// The new task numbers of a plan with `count` tasks starting at `first`, as `now Tasks A to B`.
 fn task_range(first: u32, count: usize) -> String {
     match count {
@@ -397,19 +429,6 @@ fn names_a_plan(text: &str) -> bool {
     })
 }
 
-/// The text of the header's `Goal:` line, with any bold marks removed.
-fn goal_line(header: &str) -> Option<String> {
-    lines_with_fence(header)
-        .into_iter()
-        .filter(|(_, fenced)| !fenced)
-        .find_map(|(line, _)| {
-            let t = line.trim().trim_start_matches(['-', '*', ' ']);
-            let head = t.get(..5).filter(|h| h.eq_ignore_ascii_case("goal:"))?;
-            let rest = t[head.len()..].trim_start_matches(['*', ' ']).trim();
-            (!rest.is_empty()).then(|| rest.to_string())
-        })
-}
-
 /// The header of a plan without its title, cut at its `# ` and `## ` headings.
 #[derive(Default)]
 struct HeaderParts {
@@ -488,6 +507,38 @@ fn section_items(body: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_commit_line_replaces_the_plan_line_after_the_comment() {
+        let text = "# P\n<!-- Combined from: a.md -->\n\n**Goal:** g\n\n**Commit:** feat: a\n\n**Spec:** s\n\n- [ ] Task 1: work\n";
+        let out = with_commit_line(text, "feat: whole series");
+        assert_eq!(out.matches("**Commit:**").count(), 1, "{out}");
+        assert!(
+            out.starts_with(
+                "# P\n<!-- Combined from: a.md -->\n\n**Commit:** feat: whole series\n\n**Goal:** g\n\n**Spec:** s\n"
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("\n\n\n"), "{out}");
+    }
+
+    #[test]
+    fn with_commit_line_leaves_fenced_and_task_lines_alone() {
+        let fenced =
+            "# P\n<!-- Combined from: a.md -->\n\n### Task 1: a\n\n```\n**Commit:** x\n```\n";
+        let out = with_commit_line(fenced, "feat: s");
+        assert!(out.contains("```\n**Commit:** x\n```"), "{out}");
+        assert_eq!(out.matches("**Commit:** feat: s").count(), 1);
+        let boxes =
+            "# P\n\n**Commit:** feat: a\n\n## Notes\n\n**Commit:** keep me\n\n- [ ] Task 1: w\n";
+        let out = with_commit_line(boxes, "feat: s");
+        assert!(out.contains("## Notes\n\n**Commit:** keep me"), "{out}");
+        assert!(!out.contains("feat: a"), "{out}");
+        assert!(
+            out.starts_with("# P\n\n**Commit:** feat: s\n\n## Notes"),
+            "{out}"
+        );
+    }
 
     #[test]
     fn late_focus_in_a_checkbox_plan_is_not_in_the_last_task() {

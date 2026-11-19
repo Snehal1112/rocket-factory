@@ -281,3 +281,52 @@ fn plans_inside_the_repo_use_relative_paths() {
         "{line}"
     );
 }
+
+/// Four plans whose headers carry `**Commit:** feat: plan one`, and a spec with `spec`.
+fn plans_with_commit(dir: &std::path::Path, spec: &str) -> PathBuf {
+    let plans = four_plans(dir);
+    for n in 1..=4 {
+        let path = plans.join(format!("plan-0{n}-x.md"));
+        let text = std::fs::read_to_string(&path).expect("plan");
+        let text = text.replacen(
+            "**Spec:** s",
+            "**Commit:** feat: plan one\n\n**Spec:** s",
+            1,
+        );
+        std::fs::write(&path, text).expect("plan");
+    }
+    std::fs::write(plans.join("spec.md"), spec).expect("spec");
+    plans
+}
+
+#[test]
+fn one_job_uses_the_spec_commit_line() {
+    let fx = fixture(1_500_000);
+    let spec = SPEC.replacen(
+        "\n\n## Goal",
+        "\n\n**Commit:** feat(x): the whole series\n\n## Goal",
+        1,
+    );
+    let plans = plans_with_commit(fx.tmp.path(), &spec);
+    let made = create_one_job(&fx.driver, "demo", "f", &plans, None, None, false).expect("create");
+    let dir = fx.driver.job_dir(&made.job);
+    let plan = std::fs::read_to_string(dir.join("plan.md")).expect("plan.md");
+    assert_eq!(plan.matches("**Commit:**").count(), 1, "{plan}");
+    assert!(
+        plan.contains("**Commit:** feat(x): the whole series\n"),
+        "{plan}"
+    );
+    assert!(!plan.contains("feat: plan one"), "{plan}");
+}
+
+#[test]
+fn one_job_without_a_spec_commit_line_uses_the_spec_title() {
+    let fx = fixture(1_500_000);
+    let spec = SPEC.replacen("# Spec: Demo", "# Retry design", 1);
+    let plans = plans_with_commit(fx.tmp.path(), &spec);
+    let made = create_one_job(&fx.driver, "demo", "f", &plans, None, None, false).expect("create");
+    let dir = fx.driver.job_dir(&made.job);
+    let plan = std::fs::read_to_string(dir.join("plan.md")).expect("plan.md");
+    assert_eq!(plan.matches("**Commit:**").count(), 1, "{plan}");
+    assert!(plan.contains("**Commit:** feat: retry design\n"), "{plan}");
+}

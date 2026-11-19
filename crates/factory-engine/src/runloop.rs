@@ -402,6 +402,13 @@ fn validate_series_inner(
             }
         })?;
         check_spec(&text, &spec.display().to_string())?;
+        if let Some(subject) = crate::tasks::header_commit_line(&text) {
+            if let Err(why) = factory_core::check_job_subject(&subject) {
+                return Err(EngineError::Msg(format!(
+                    "the spec **Commit:** line `{subject}`: {why}"
+                )));
+            }
+        }
         if let Some(tree) = intake_tree {
             crate::spec_check::check_intake_decisions(&text, tree).map_err(|message| {
                 EngineError::SpecRefused(crate::spec_check::SpecRefusal::UnsourcedDecision(message))
@@ -964,6 +971,33 @@ mod tests {
         assert_eq!(d.job(&marked.id).expect("reload").intake_issue, Some(7));
         let plain = add_job(&d, "plain", "f", &[], None, Stage::Build, None).expect("job");
         assert_eq!(d.job(&plain.id).expect("reload").intake_issue, None);
+    }
+
+    #[test]
+    fn validate_series_refuses_a_spec_with_a_broken_commit_line() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let d = driver(&tmp);
+        let plans = tmp.path().join("plans");
+        std::fs::create_dir_all(&plans).expect("plans");
+        std::fs::write(
+            plans.join("spec.md"),
+            "# Spec\n\n**Commit:** Add x\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It works.\n",
+        )
+        .expect("spec");
+        std::fs::write(
+            plans.join("plan-01-a.md"),
+            "# Plan\n\n### Task 1: t\n\nNext plan: none\n",
+        )
+        .expect("plan");
+        let err = validate_series(&d, &plans, None, None, None, |root, start| {
+            crate::parse_series_with(root, start, None).map_err(EngineError::from)
+        })
+        .err()
+        .expect("a broken commit line is refused");
+        assert!(
+            matches!(&err, EngineError::Invalid(m) if m.contains("**Commit:** line")),
+            "{err}"
+        );
     }
 
     #[test]

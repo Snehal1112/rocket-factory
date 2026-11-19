@@ -121,6 +121,50 @@ pub fn plan_header(plan: &str) -> String {
         .to_string()
 }
 
+/// The text of the header's `Goal:` line, with any bold marks removed.
+pub(crate) fn goal_line(header: &str) -> Option<String> {
+    lines_with_fence(header)
+        .into_iter()
+        .filter(|(_, fenced)| !fenced)
+        .find_map(|(line, _)| {
+            let t = line.trim().trim_start_matches(['-', '*', ' ']);
+            let head = t.get(..5).filter(|h| h.eq_ignore_ascii_case("goal:"))?;
+            let rest = t[head.len()..].trim_start_matches(['*', ' ']).trim();
+            (!rest.is_empty()).then(|| rest.to_string())
+        })
+}
+
+/// The value of a `**Commit:**` or `Commit:` line, with its marks left in. `None` for any other line.
+pub(crate) fn commit_line_value(line: &str) -> Option<&str> {
+    let t = line
+        .trim_start_matches(|c: char| c == '>' || c.is_whitespace())
+        .trim_start_matches('*');
+    let head = t.get(..7).filter(|h| h.eq_ignore_ascii_case("commit:"))?;
+    Some(t[head.len()..].trim())
+}
+
+/// The lines before the first `## ` or `### Task` heading outside a fence, where a commit line counts.
+pub(crate) fn commit_region_end(lines: &[(&str, bool)]) -> usize {
+    lines
+        .iter()
+        .position(|(l, fenced)| !fenced && (l.starts_with("## ") || is_task_heading(l)))
+        .unwrap_or(lines.len())
+}
+
+/// The subject of the first `**Commit:**` line in the header, outside code fences and before the
+/// first `## ` or `### Task` heading. `None` when there is none or it is empty.
+pub fn header_commit_line(text: &str) -> Option<String> {
+    let lines = lines_with_fence(text);
+    let end = commit_region_end(&lines);
+    lines[..end]
+        .iter()
+        .filter(|(_, fenced)| !fenced)
+        .find_map(|(l, _)| commit_line_value(l))
+        .map(|v| v.trim_matches(|c: char| c == '*' || c == '`' || c.is_whitespace()))
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
 /// True for the `## Review Focus` heading line.
 pub(crate) fn is_focus_heading(line: &str) -> bool {
     line.trim_end() == "## Review Focus"
@@ -356,6 +400,35 @@ pub fn spec_excerpt(spec: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_commit_line_is_read_from_the_header() {
+        let text = "# T\n\n**Goal:** g\n\n**Commit:** feat(x): add y\n\n### Task 1: a\n";
+        assert_eq!(header_commit_line(text).as_deref(), Some("feat(x): add y"));
+    }
+
+    #[test]
+    fn the_commit_line_ignores_backticks_and_bold() {
+        let a = "# T\n\n**Commit:** `fix: z`\n";
+        let b = "# T\n\n> **Commit:** fix: z\n";
+        assert_eq!(header_commit_line(a).as_deref(), Some("fix: z"));
+        assert_eq!(header_commit_line(b).as_deref(), Some("fix: z"));
+    }
+
+    #[test]
+    fn a_commit_line_inside_a_task_or_fence_is_ignored() {
+        let task = "# T\n\n### Task 1: a\n\n**Commit:** fix: z\n";
+        let fence = "# T\n\n```\n**Commit:** fix: z\n```\n";
+        assert_eq!(header_commit_line(task), None);
+        assert_eq!(header_commit_line(fence), None);
+        assert_eq!(header_commit_line("# T\n\n**Commit:** \n"), None);
+    }
+
+    #[test]
+    fn a_spec_commit_line_counts_only_before_the_first_section() {
+        let text = "# S\n\n## Goal\n\n**Commit:** feat: x\n";
+        assert_eq!(header_commit_line(text), None);
+    }
 
     #[test]
     fn reads_heading_tasks_in_order() {
