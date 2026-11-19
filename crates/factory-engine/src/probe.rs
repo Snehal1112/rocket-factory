@@ -14,7 +14,7 @@ use crate::agents_file::write_agents_json_at;
 use crate::clock::utc_stamp;
 use crate::ports::{core_err, io_err, JobView};
 use crate::specs::spec_reviewer_agent;
-use crate::{committer_spec, kb_spec, Engine, EngineError, ReviewerExtra};
+use crate::{kb_spec, Engine, EngineError, ReviewerExtra};
 
 /// Where the probe puts the marker so the agent can see it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -64,7 +64,6 @@ fn probe_job_view() -> JobView {
         session_id: None,
         round: 1,
         task_index: 0,
-        issues: Vec::new(),
         batch_snapshot: None,
         fix_source: None,
         escalated_model: None,
@@ -117,7 +116,6 @@ impl Engine<'_> {
                 &work_dir.join("spec.md"),
                 &[work_dir.join("plan.md")],
             ),
-            ProbeRole::Committer => committer_spec(&self.job_id, &self.config, work_dir, "probe"),
             ProbeRole::Kb => {
                 let kb_dir = self
                     .config

@@ -34,7 +34,7 @@ pub struct MessageRequest<'a> {
     pub closes_ticket: bool,
 }
 
-/// The message the driver used before the committer existed. It is the fallback.
+/// The fixed merge or sync message. It is the fallback when no better message can be built.
 pub fn fixed_message(kind: MessageKind, job_id: &str, slug: &str, base: &str) -> String {
     match kind {
         MessageKind::Merge => format!("chore(factory): merge job {job_id} {slug}"),

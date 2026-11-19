@@ -1151,52 +1151,174 @@ fn a_one_task_plan_makes_one_snapshot_and_goes_to_review() {
     assert_eq!(fx.repo.tip(&job.branch).expect("tip"), head);
 }
 
+/// The job worktree of an old batch board, as the git layer needs it.
+fn old_batch_worktree(fx: &Fixture, wt: &std::path::Path) -> factory_git::Worktree {
+    let job = fx.job();
+    factory_git::Worktree {
+        name: wt.file_name().expect("name").to_string_lossy().to_string(),
+        path: wt.to_path_buf(),
+        branch: job.branch.clone(),
+        base: job.base.clone().expect("base"),
+    }
+}
+
+/// The name and bytes of every file at the top of the worktree, sorted by name.
+fn worktree_files(wt: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(wt)
+        .expect("read dir")
+        .map(|e| e.expect("entry"))
+        .filter(|e| e.file_type().expect("type").is_file() && e.file_name() != ".git")
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            (name, std::fs::read(e.path()).expect("read"))
+        })
+        .collect();
+    files.sort();
+    files
+}
+
 #[test]
-fn a_park_right_after_the_soft_reset_resumes_from_the_base() {
+fn an_old_batch_at_its_snapshot_continues_to_review() {
+    let fx = two_task_fixture();
+    let wt = park_a_batch(&fx);
+    let snapshot = fx.job().batch_snapshot.clone().expect("snapshot");
+    // The older driver stopped before its soft reset, so the branch is still at the snapshot.
+    fx.repo
+        .reset_soft(&old_batch_worktree(&fx, &wt), &snapshot)
+        .expect("back to the snapshot");
+    let runner = scripted_auto(vec![]);
+    assert_eq!(
+        fx.engine(&runner).build_stage().expect("resume"),
+        StageOutcome::Advanced(Stage::Review)
+    );
+    assert_eq!(runner.specs_for("builder").len(), 0);
+    let job = fx.job();
+    assert!(job.batch_snapshot.is_none());
+    assert_eq!(job.head.as_deref(), Some(snapshot.as_str()));
+    assert_eq!(fx.repo.tip(&job.branch).expect("tip"), snapshot);
+    let ledger = fx.ledger();
+    assert!(
+        ledger.contains(&format!(
+            "old batch commit skipped, continuing at {}",
+            &snapshot[..7]
+        )),
+        "{ledger}"
+    );
+}
+
+#[test]
+fn an_old_batch_reset_to_the_base_moves_back_to_the_snapshot() {
     let fx = two_task_fixture();
     let wt = park_a_batch(&fx);
     let job = fx.job();
+    let snapshot = job.batch_snapshot.clone().expect("snapshot");
     assert_eq!(
         fx.repo.tip(&job.branch).expect("tip"),
         job.base.clone().expect("base")
     );
-    let repo = git2::Repository::open(&wt).expect("open");
-    let staged = repo
-        .statuses(None)
-        .expect("statuses")
-        .iter()
-        .filter(|s| s.status().is_index_new())
-        .count();
-    assert_eq!(staged, 2);
+    let before = worktree_files(&wt);
     let runner = scripted_auto(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
     );
     assert_eq!(runner.specs_for("builder").len(), 0);
-    assert_eq!(runner.specs_for("committer").len(), 1);
-    assert!(fx.job().batch_snapshot.is_none());
+    let job = fx.job();
+    assert!(job.batch_snapshot.is_none());
+    assert_eq!(job.head.as_deref(), Some(snapshot.as_str()));
+    assert_eq!(fx.repo.tip(&job.branch).expect("tip"), snapshot);
+    assert_eq!(worktree_files(&wt), before);
+    let ledger = fx.ledger();
+    assert!(
+        ledger.contains(&format!(
+            "old batch commit skipped, continuing at {}",
+            &snapshot[..7]
+        )),
+        "{ledger}"
+    );
 }
 
 #[test]
-fn a_finished_batch_with_a_stale_flag_is_recognised_without_a_committer_run() {
+fn an_old_batch_partly_unstaged_at_the_base_recovers() {
     let fx = two_task_fixture();
     let wt = park_a_batch(&fx);
-    // The committer finished its commit, but the driver stopped before it cleared the flag.
-    commit_index(&wt, "feat(test): both tasks");
+    let snapshot = fx.job().batch_snapshot.clone().expect("snapshot");
+    // The index holds only part of the work, the files on disk still hold all of it.
+    {
+        let repo = git2::Repository::open(&wt).expect("open");
+        let mut index = repo.index().expect("index");
+        index
+            .remove_path(std::path::Path::new("b.txt"))
+            .expect("unstage b");
+        index.write().expect("write index");
+    }
+    assert!(!fx
+        .repo
+        .staged_tree_is(&old_batch_worktree(&fx, &wt), &snapshot)
+        .expect("partial index"));
     let runner = scripted_auto(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
     );
-    assert_eq!(runner.specs_for("committer").len(), 0);
     assert_eq!(runner.specs_for("builder").len(), 0);
     let job = fx.job();
-    assert!(job.batch_snapshot.is_none() && job.head.is_some());
+    assert!(job.batch_snapshot.is_none());
+    assert_eq!(job.head.as_deref(), Some(snapshot.as_str()));
+    assert_eq!(fx.repo.tip(&job.branch).expect("tip"), snapshot);
+}
+
+#[test]
+fn an_old_batch_at_the_base_with_other_files_parks() {
+    let fx = two_task_fixture();
+    let wt = park_a_batch(&fx);
+    let snapshot = fx.job().batch_snapshot.clone().expect("snapshot");
+    std::fs::write(wt.join("a.txt"), "not the snapshot\n").expect("change a");
+    let runner = scripted_auto(vec![]);
+    match fx.engine(&runner).build_stage().expect("resume") {
+        StageOutcome::NeedsHuman(r) => {
+            assert!(
+                r.contains(&format!(
+                    "the worktree does not match the old batch snapshot {}",
+                    &snapshot[..7]
+                )),
+                "{r}"
+            );
+            assert!(r.contains("factory rework 001"), "{r}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    let job = fx.job();
+    assert_eq!(job.park_kind.as_deref(), Some("commit-failed"));
+    assert_eq!(job.batch_snapshot.as_deref(), Some(snapshot.as_str()));
+    assert_eq!(
+        fx.repo.tip(&job.branch).expect("tip"),
+        job.base.clone().expect("base")
+    );
+}
+
+#[test]
+fn an_old_batch_the_committer_finished_continues_on_its_tip() {
+    let fx = two_task_fixture();
+    let wt = park_a_batch(&fx);
+    // The old committer finished its commit, but the driver stopped before it cleared the flag.
+    let tip = commit_index(&wt, "feat(test): both tasks");
+    let runner = scripted_auto(vec![]);
+    assert_eq!(
+        fx.engine(&runner).build_stage().expect("resume"),
+        StageOutcome::Advanced(Stage::Review)
+    );
+    assert_eq!(runner.specs_for("builder").len(), 0);
+    let job = fx.job();
+    assert!(job.batch_snapshot.is_none());
+    assert_eq!(job.head.as_deref(), Some(tip.as_str()));
+    let ledger = fx.ledger();
     assert!(
-        fx.ledger().contains("batch commit already done"),
-        "{}",
-        fx.ledger()
+        ledger.contains(&format!(
+            "old batch commit already done, the branch is at {}",
+            &tip[..7]
+        )),
+        "{ledger}"
     );
 }
 
@@ -1218,17 +1340,19 @@ fn a_branch_that_moved_to_other_work_parks_with_the_recovery_command() {
         }
         other => panic!("unexpected {other:?}"),
     }
-    assert_eq!(runner.specs_for("committer").len(), 0);
+    assert_eq!(runner.specs_for("builder").len(), 0);
+    assert_eq!(fx.job().park_kind.as_deref(), Some("commit-failed"));
     assert!(fx.job().batch_snapshot.is_some());
 }
 
 #[test]
-fn a_stop_between_commit_groups_resumes_without_losing_or_repeating_a_commit() {
+fn an_old_batch_with_partial_commits_parks_with_the_reset_hint() {
     let fx = two_task_fixture();
     let wt = park_a_batch(&fx);
     let job = fx.job();
     let snapshot = job.batch_snapshot.clone().expect("snapshot");
-    // The committer made its first group and the driver stopped before the second one.
+    let base = job.base.clone().expect("base");
+    // The old committer made its first group and the driver stopped before the second one.
     {
         let repo = git2::Repository::open(&wt).expect("open");
         let mut index = repo.index().expect("index");
@@ -1253,44 +1377,32 @@ fn a_stop_between_commit_groups_resumes_without_losing_or_repeating_a_commit() {
     // The half-finished batch is not mistaken for a finished one and nothing runs on top of it.
     let runner = scripted_auto(vec![]);
     match fx.engine(&runner).build_stage().expect("resume") {
-        StageOutcome::NeedsHuman(r) => assert!(r.contains("git reset --soft"), "{r}"),
+        StageOutcome::NeedsHuman(r) => {
+            assert!(
+                r.contains(&format!("git reset --soft {}", &base[..7])),
+                "{r}"
+            );
+            assert!(r.contains("factory rework 001"), "{r}");
+        }
         other => panic!("unexpected {other:?}"),
     }
-    assert_eq!(runner.specs_for("committer").len(), 0);
     assert_eq!(runner.specs_for("builder").len(), 0);
-    // The recovery command from the park reason, then a rework: one committer, all the work, no duplicate.
-    let base = job.base.clone().expect("base");
-    let name = wt.file_name().expect("name").to_string_lossy().to_string();
-    let wtree = factory_git::Worktree {
-        name,
-        path: wt.clone(),
-        branch: job.branch.clone(),
-        base: base.clone(),
-    };
-    fx.repo.reset_soft(&wtree, &base).expect("reset");
+    assert_eq!(fx.job().park_kind.as_deref(), Some("commit-failed"));
+    assert!(fx.job().batch_snapshot.is_some());
+    // The recovery command from the park reason, then a rework: the job continues on the snapshot.
+    fx.repo
+        .reset_soft(&old_batch_worktree(&fx, &wt), &base)
+        .expect("reset");
     fx.resume_to_build();
     let runner = scripted_auto(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
     );
-    assert_eq!(runner.specs_for("committer").len(), 1);
+    assert_eq!(runner.specs_for("builder").len(), 0);
     let done = fx.job();
     assert!(done.batch_snapshot.is_none());
-    let head = done.head.clone().expect("head");
-    assert!(fx.repo.same_tree(&head, &snapshot).expect("same tree"));
-    let commits = fx.repo.commits_above(&base, &head).expect("commits");
-    assert!(
-        commits.iter().all(|c| !c.subject.starts_with("wip:")),
-        "{commits:?}"
-    );
-    let subjects: std::collections::HashSet<_> =
-        commits.iter().map(|c| c.subject.clone()).collect();
-    assert_eq!(
-        subjects.len(),
-        commits.len(),
-        "duplicate commit: {commits:?}"
-    );
+    assert_eq!(done.head.as_deref(), Some(snapshot.as_str()));
 }
 
 const EXCERPT_PLAN: &str = "# Demo Plan\n\n**Goal:** make it.\n\n## Global Constraints\n\n- Use -j4.\n\n---\n\n\

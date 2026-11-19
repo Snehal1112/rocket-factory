@@ -8,7 +8,6 @@ mod clock;
 mod codex_prep;
 mod codex_skills;
 mod combine;
-mod commit;
 mod compat;
 mod costs;
 mod decide;
@@ -63,10 +62,6 @@ pub use build::build_stage;
 pub use checks_stage::checks_stage;
 pub use clock::{date_from_days, now_secs, today, utc_stamp};
 pub use combine::{combine_plans, CombinedPlan};
-pub use commit::{
-    committer_prompt, committer_spec, CommitKind, CommitOutcome, CommitRequest, SnapshotRef,
-    COMMITTER_AGENT, COMMITTER_MAX_TURNS, COMMITTER_TOOLS,
-};
 pub use compat::{
     Driver, JobGuard, LostFlag, LostReason, ProjectGuard, RunnerFactory, HEARTBEAT_SECS,
     LEASE_TTL_SECS,
@@ -182,7 +177,6 @@ pub struct Engine<'a> {
     pub config: Config,
     pub events: &'a EventSink,
     pub lock_wait: Duration,
-    pub commit_context: Option<PathBuf>,
     /// Agent files written into each new job worktree. Empty by default.
     pub agent_files: Vec<AgentFile>,
     /// The user-wide folders Codex lists skills from. Empty by default.
@@ -217,7 +211,6 @@ impl<'a> Engine<'a> {
             config,
             events,
             lock_wait: DEFAULT_LOCK_WAIT,
-            commit_context: None,
             agent_files: Vec::new(),
             codex_skill_roots: Vec::new(),
             provider_synced: std::cell::Cell::new(false),
@@ -242,12 +235,6 @@ impl<'a> Engine<'a> {
         self
     }
 
-    /// Sets the file the committer prompt text is read from. Without it the committer step is skipped.
-    pub fn with_commit_context(mut self, path: PathBuf) -> Self {
-        self.commit_context = Some(path);
-        self
-    }
-
     /// Sets the agent files written into each new job worktree.
     pub fn with_agent_files(mut self, files: Vec<AgentFile>) -> Self {
         self.agent_files = files;
@@ -258,13 +245,5 @@ impl<'a> Engine<'a> {
     pub fn with_codex_skill_roots(mut self, roots: Vec<PathBuf>) -> Self {
         self.codex_skill_roots = roots;
         self
-    }
-
-    /// The commit context text, or the reason it cannot be read.
-    pub(crate) fn commit_context_text(&self) -> Result<String, String> {
-        match &self.commit_context {
-            Some(path) => std::fs::read_to_string(path).map_err(|e| e.to_string()),
-            None => Err("no commit context file is set".to_string()),
-        }
     }
 }

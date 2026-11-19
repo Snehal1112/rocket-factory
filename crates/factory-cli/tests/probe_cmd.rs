@@ -40,7 +40,6 @@ impl AgentRunner for ProbeRunner {
         let marker = marker_of(spec);
         let (bootstrap, skills) = match spec.role.as_str() {
             "builder" => ("You have superpowers.", "superpowers:brainstorming"),
-            "committer" | "message" => ("NONE", "dev-workflow-skills:1-git-commit"),
             "kb" => ("NONE", "kb-refresh"),
             _ => ("NONE", "NONE"),
         };
@@ -60,19 +59,13 @@ fn none(_: &str) -> String {
 }
 
 fn files() -> Vec<AgentFile> {
-    [
-        "builder",
-        "code-reviewer",
-        "spec-reviewer",
-        "committer",
-        "kb-refresher",
-    ]
-    .iter()
-    .map(|n| AgentFile {
-        name: format!("factory-{n}.md"),
-        content: format!("---\nname: factory-{n}\n---\nBODY {n}\n"),
-    })
-    .collect()
+    ["builder", "code-reviewer", "spec-reviewer", "kb-refresher"]
+        .iter()
+        .map(|n| AgentFile {
+            name: format!("factory-{n}.md"),
+            content: format!("---\nname: factory-{n}\n---\nBODY {n}\n"),
+        })
+        .collect()
 }
 
 fn ctx_with(fx: &Fixture, runner: Arc<dyn AgentRunner>) -> CliCtx {
@@ -96,7 +89,7 @@ fn probe_prints_a_table_and_exits_zero() {
     let fx = Fixture::new();
     let text = probe(&scripted(&fx), &[]).expect("probe passes");
     assert!(text.starts_with("harness claude  cli unknown"), "{text}");
-    for role in ["builder", "reviewer", "spec-reviewer", "committer", "kb"] {
+    for role in ["builder", "reviewer", "spec-reviewer", "kb"] {
         assert!(text.contains(role), "{role}: {text}");
     }
     assert!(text.contains("agent_text"), "{text}");
@@ -131,11 +124,25 @@ fn probe_json_is_one_parseable_report() {
 #[test]
 fn probe_role_filter_limits_rows() {
     let fx = Fixture::new();
-    let text = probe(&scripted(&fx), &["--role", "kb", "--role", "committer"]).expect("passes");
+    let text = probe(&scripted(&fx), &["--role", "kb", "--role", "spec-reviewer"]).expect("passes");
     assert!(text.contains("Skills seen (kb)"), "{text}");
-    assert!(text.contains("Skills seen (committer)"), "{text}");
+    assert!(text.contains("Skills seen (spec-reviewer)"), "{text}");
     assert!(!text.contains("Skills seen (builder)"), "{text}");
     assert!(!text.contains("Skills seen (reviewer)"), "{text}");
+}
+
+#[test]
+fn probe_refuses_the_committer_role() {
+    let err = Cli::try_parse_from(["factory", "probe", "--role", "committer"])
+        .expect_err("committer is not a probe role");
+    // Clap prints this error on stderr and exits with this code.
+    assert!(err.use_stderr());
+    assert_ne!(err.exit_code(), 0);
+    let text = err.to_string();
+    assert!(text.contains("committer"), "{text}");
+    for role in ["builder", "reviewer", "spec-reviewer", "kb"] {
+        assert!(text.contains(role), "{role}: {text}");
+    }
 }
 
 #[test]

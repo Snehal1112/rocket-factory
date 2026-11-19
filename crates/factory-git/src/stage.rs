@@ -54,6 +54,15 @@ impl Repo {
             .collect())
     }
 
+    /// True when the tree written from the worktree's index has the same id as the
+    /// tree of `rev`. It writes tree objects but never changes the index or the files.
+    pub fn staged_tree_is(&self, wt: &Worktree, rev: &str) -> Result<bool> {
+        let inside = Repository::open(&wt.path)?;
+        let staged = inside.index()?.write_tree()?;
+        let tree = inside.revparse_single(rev)?.peel_to_tree()?.id();
+        Ok(staged == tree)
+    }
+
     /// True when the worktree has no staged, unstaged or untracked (not ignored)
     /// changes.
     pub fn worktree_is_clean(&self, wt: &Worktree) -> Result<bool> {

@@ -138,7 +138,7 @@ impl Fixture {
     }
 
     pub fn engine<'a>(&'a self, runner: &'a dyn AgentRunner) -> Engine<'a> {
-        let engine = Engine::new(
+        Engine::new(
             self.board_path.clone(),
             self.job_dir.clone(),
             "001".to_string(),
@@ -148,13 +148,7 @@ impl Fixture {
             self.config.clone(),
             &self.events,
         )
-        .expect("engine");
-        let context = self.main.join(".claude/factory/commit-context.md");
-        if context.exists() {
-            engine.with_commit_context(context)
-        } else {
-            engine
-        }
+        .expect("engine")
     }
 
     pub fn job(&self) -> Job {

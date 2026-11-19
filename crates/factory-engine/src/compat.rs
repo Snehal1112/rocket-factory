@@ -661,11 +661,6 @@ impl Driver {
         .with_lost(self.lost.clone())
         .with_agent_files(self.agent_files.clone())
         .with_codex_skill_roots(self.codex_skill_roots.clone());
-        let engine = if self.layout.commit_context_file.exists() {
-            engine.with_commit_context(self.layout.commit_context_file.clone())
-        } else {
-            engine
-        };
         f(&engine)
     }
 

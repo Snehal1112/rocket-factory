@@ -8,10 +8,9 @@ use factory_core::{
 use factory_git::Worktree;
 
 use crate::carry::{carry_decision, carry_idle_limit, Carry, CarryInput};
-use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
 use crate::park::{builder_blocked_parts, builder_stop_parts, part_from_file};
 use crate::ports::{git_err, now, one_line, short_sha, JobView};
-use crate::tasks::{parse_tasks, plan_title, spec_goal, PlanTask};
+use crate::tasks::{parse_tasks, PlanTask};
 use crate::{BoardStore, Engine, EngineError, StageOutcome};
 
 /// The most characters of a builder reply kept in `builder-r{round}.md`.
@@ -81,9 +80,9 @@ impl Engine<'_> {
         self.sync_provider()?;
         let job = self.job()?;
         let tasks = parse_tasks(&std::fs::read_to_string(&self.plan_file).unwrap_or_default());
-        // A pending batch commit resumes before any builder runs.
+        // A board an older driver left mid-batch is recovered before any builder runs.
         if job.batch_snapshot.is_some() {
-            return self.resume_batch(&job, &tasks);
+            return self.resume_old_batch(&job);
         }
         if is_mid_task(&job, &tasks) {
             return self.build_task(&job, &tasks);
@@ -719,9 +718,10 @@ impl Engine<'_> {
         self.finish_build(job, &base, new_tip, job.head.clone())
     }
 
-    /// Runs the one committer of a job after its last task. It is safe to call again after a park:
-    /// the branch is either still at the snapshot tip or already reset to the base.
-    fn resume_batch(&self, job: &JobView, tasks: &[PlanTask]) -> Result<StageOutcome, EngineError> {
+    /// Recovers a job an older driver stopped in the middle of its batch commit. The branch either still
+    /// holds the snapshot, was reset to the base with the work staged, or holds the finished commits.
+    /// Any other state parks, because guessing could lose work.
+    fn resume_old_batch(&self, job: &JobView) -> Result<StageOutcome, EngineError> {
         let snapshot = job
             .batch_snapshot
             .clone()
@@ -731,46 +731,44 @@ impl Engine<'_> {
         let wt = self.job_worktree(job, &cwd, &base, &branch);
         let tip = self.repo.tip(&branch).map_err(git_err)?;
         if tip == snapshot {
-            self.repo.reset_soft(&wt, &base).map_err(git_err)?;
-        } else if tip != base {
-            if self.batch_already_committed(&base, &tip, &snapshot)? {
-                // The committer finished and the driver stopped before it cleared the flag.
-                return self.finish_batch(job, &base, tip, 0, &snapshot);
-            }
-            let short = short_sha(&base);
-            let reason = format!(
-                "the branch moved during the batch commit; run `git reset --soft {short}` in the job worktree, then `factory rework {}`",
-                self.job_id
+            let ruling = format!(
+                "old batch commit skipped, continuing at {}",
+                short_sha(&tip)
             );
-            return self.park_with(ParkKind::CommitFailed, reason, Vec::new());
+            return self.continue_old_batch(job, &base, tip, &ruling);
         }
-        let snaps = self.snapshot_refs(&base, &snapshot, tasks)?;
-        let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
-        let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
-        let (title, goal) = (plan_title(&plan), spec_goal(&spec));
-        let req = CommitRequest {
-            kind: CommitKind::Batch,
-            plan_title: &title,
-            task_title: &title,
-            goal: &goal,
-            floor: &base,
-            issues: &job.issues,
-            snapshots: &snaps,
-        };
-        let head = match self.commit_step(&wt, &req)? {
-            CommitOutcome::Committed { tip, .. } => tip,
-            CommitOutcome::NothingStaged => {
-                return self.park_with(
-                    ParkKind::NothingChanged,
-                    "the batch commit found nothing staged".to_string(),
-                    Vec::new(),
-                )
+        if tip == base {
+            self.repo.stage_all(&wt).map_err(git_err)?;
+            if !self.repo.staged_tree_is(&wt, &snapshot).map_err(git_err)? {
+                let reason = format!(
+                    "the worktree does not match the old batch snapshot {}; restore the files, then factory rework {}",
+                    short_sha(&snapshot),
+                    self.job_id
+                );
+                return self.park_with(ParkKind::CommitFailed, reason, Vec::new());
             }
-            CommitOutcome::Park(reason) => {
-                return self.park_with(ParkKind::CommitFailed, reason, Vec::new())
-            }
-        };
-        self.finish_batch(job, &base, head, snaps.len(), &snapshot)
+            // The files already match the snapshot, so only the branch and the index move.
+            self.repo.reset_soft(&wt, &snapshot).map_err(git_err)?;
+            let ruling = format!(
+                "old batch commit skipped, continuing at {}",
+                short_sha(&snapshot)
+            );
+            return self.continue_old_batch(job, &base, snapshot, &ruling);
+        }
+        if self.batch_already_committed(&base, &tip, &snapshot)? {
+            // The old committer finished and the driver stopped before it cleared the flag.
+            let ruling = format!(
+                "old batch commit already done, the branch is at {}",
+                short_sha(&tip)
+            );
+            return self.continue_old_batch(job, &base, tip, &ruling);
+        }
+        let short = short_sha(&base);
+        let reason = format!(
+            "the branch moved during the batch commit; run `git reset --soft {short}` in the job worktree, then `factory rework {}`",
+            self.job_id
+        );
+        self.park_with(ParkKind::CommitFailed, reason, Vec::new())
     }
 
     /// True when the tip holds the snapshot work as real commits: above the base, no `wip:` subject, same tree.
@@ -790,8 +788,8 @@ impl Engine<'_> {
         self.repo.same_tree(tip, snapshot).map_err(git_err)
     }
 
-    /// A rework note that the batch commit left unread must not displace the findings of a later fix round.
-    /// Its text goes to the ledger and the file is removed.
+    /// A rework note that the old batch recovery left unread must not displace the findings of a later fix
+    /// round. Its text goes to the ledger and the file is removed.
     fn keep_unsent_note(&self) -> Result<(), EngineError> {
         let path = self.job_dir.join("rework-note.md");
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -806,51 +804,21 @@ impl Engine<'_> {
         Ok(())
     }
 
-    /// Records the end of a batch commit: a ruling, a cleared flag, then the usual build finish.
-    fn finish_batch(
+    /// Ends the recovery of an old batch: the ruling, the unsent note, a cleared flag, then the usual build finish.
+    fn continue_old_batch(
         &self,
         job: &JobView,
         base: &str,
         head: String,
-        count: usize,
-        snapshot: &str,
+        ruling: &str,
     ) -> Result<StageOutcome, EngineError> {
-        let short = short_sha(&head).to_string();
-        let was = short_sha(snapshot);
-        let what = if count == 0 {
-            format!("batch commit already done, replaced the snapshots up to {was}")
-        } else {
-            format!("batch commit replaced {count} snapshots")
-        };
-        self.ruling(&format!("{what}, the branch is at {short}"))?;
+        self.ruling(ruling)?;
         self.keep_unsent_note()?;
         self.update(|j| {
             j.batch_snapshot = None;
             Ok(())
         })?;
         self.finish_build(job, base, head, job.head.clone())
-    }
-
-    /// The snapshot commits above the base, oldest first, matched to the plan tasks by position.
-    fn snapshot_refs(
-        &self,
-        base: &str,
-        snapshot: &str,
-        tasks: &[PlanTask],
-    ) -> Result<Vec<SnapshotRef>, EngineError> {
-        let commits = self.repo.commits_above(base, snapshot).map_err(git_err)?;
-        Ok(commits
-            .into_iter()
-            .enumerate()
-            .map(|(i, c)| SnapshotRef {
-                n: tasks.get(i).map_or(i as u32 + 1, |t| t.n),
-                sha: c.sha,
-                title: tasks
-                    .get(i)
-                    .map_or_else(|| c.subject.clone(), |t| t.title.clone()),
-                files: c.files,
-            })
-            .collect())
     }
 
     /// Checks the diff cap, records the head and moves the job to review.

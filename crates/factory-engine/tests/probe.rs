@@ -8,19 +8,13 @@ use factory_engine::{run_probe, Delivery};
 const MARKER: &str = "FPROBE-test00000001";
 
 fn files() -> Vec<AgentFile> {
-    [
-        "builder",
-        "code-reviewer",
-        "spec-reviewer",
-        "committer",
-        "kb-refresher",
-    ]
-    .iter()
-    .map(|n| AgentFile {
-        name: format!("factory-{n}.md"),
-        content: format!("---\nname: factory-{n}\n---\nBODY {n}\n"),
-    })
-    .collect()
+    ["builder", "code-reviewer", "spec-reviewer", "kb-refresher"]
+        .iter()
+        .map(|n| AgentFile {
+            name: format!("factory-{n}.md"),
+            content: format!("---\nname: factory-{n}\n---\nBODY {n}\n"),
+        })
+        .collect()
 }
 
 fn fixture(harness: Harness) -> Fixture {
@@ -95,10 +89,13 @@ fn the_agent_delivery_probe_uses_the_agents_file() {
 #[test]
 fn append_delivery_puts_the_marker_in_agent_prompt() {
     for delivery in [Delivery::AppendSystemPrompt, Delivery::Stdin] {
-        let (spec, _fx) = spec_of(ProbeRole::Committer, Harness::Claude, delivery);
+        let (spec, _fx) = spec_of(ProbeRole::Kb, Harness::Claude, delivery);
         assert_eq!(spec.agent, None, "{delivery:?}");
         let text = spec.agent_prompt.expect("agent text");
-        assert!(text.starts_with("---\nname: factory-committer"), "{text}");
+        assert!(
+            text.starts_with("---\nname: factory-kb-refresher"),
+            "{text}"
+        );
         assert!(text.contains(&format!("Probe marker: {MARKER}")), "{text}");
     }
 }

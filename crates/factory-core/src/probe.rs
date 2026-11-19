@@ -54,16 +54,14 @@ pub enum ProbeRole {
     Builder,
     Reviewer,
     SpecReviewer,
-    Committer,
     Kb,
 }
 
 impl ProbeRole {
-    pub const ALL: [ProbeRole; 5] = [
+    pub const ALL: [ProbeRole; 4] = [
         ProbeRole::Builder,
         ProbeRole::Reviewer,
         ProbeRole::SpecReviewer,
-        ProbeRole::Committer,
         ProbeRole::Kb,
     ];
 
@@ -72,7 +70,6 @@ impl ProbeRole {
             ProbeRole::Builder => "builder",
             ProbeRole::Reviewer => "reviewer",
             ProbeRole::SpecReviewer => "spec-reviewer",
-            ProbeRole::Committer => "committer",
             ProbeRole::Kb => "kb",
         }
     }
@@ -318,14 +315,6 @@ mod tests {
     }
 
     #[test]
-    fn committer_on_claude_expects_skills_only() {
-        assert_eq!(
-            expected_channels(ProbeRole::Committer, Harness::Claude, &cfg()),
-            ["agent_text", "skills"]
-        );
-    }
-
-    #[test]
     fn kb_expects_kb_refresh() {
         assert_eq!(
             allowed_skill_entries(ProbeRole::Kb, Harness::Claude, &cfg()),
@@ -488,5 +477,15 @@ mod tests {
         }
         let err = "nobody".parse::<ProbeRole>().expect_err("unknown role");
         assert!(err.contains("nobody"), "{err}");
+    }
+
+    #[test]
+    fn the_role_list_has_no_committer() {
+        assert!(ProbeRole::ALL.iter().all(|r| r.as_str() != "committer"));
+        let err = "committer".parse::<ProbeRole>().expect_err("gone role");
+        assert!(
+            err.contains("builder, reviewer, spec-reviewer, kb"),
+            "{err}"
+        );
     }
 }

@@ -93,3 +93,17 @@ fn head_is_on_the_job_branch_until_it_is_detached() {
     assert!(!repo.head_is_on_branch(&wt).expect("detached"));
     assert_eq!(repo.head_sha(&wt).expect("sha"), oid.to_string());
 }
+
+#[test]
+fn staged_tree_is_compares_the_index_with_a_commit() {
+    let fx = Fixture::new();
+    let (repo, wt) = job_worktree(&fx);
+    let sha = commit_files(&inside(&wt), &[("one.txt", "1\n")], "add one").to_string();
+    assert!(repo.staged_tree_is(&wt, &sha).expect("same tree"));
+
+    std::fs::write(wt.path.join("two.txt"), "2\n").expect("write");
+    // A file on disk that is not staged leaves the index as it was.
+    assert!(repo.staged_tree_is(&wt, &sha).expect("unstaged only"));
+    repo.stage_all(&wt).expect("stage");
+    assert!(!repo.staged_tree_is(&wt, &sha).expect("one more change"));
+}

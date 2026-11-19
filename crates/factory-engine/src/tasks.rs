@@ -56,7 +56,7 @@ pub fn plan_title(plan: &str) -> String {
         .unwrap_or_else(|| "plan".to_string())
 }
 
-/// The goal of a spec for the committer prompt: a `Goal:` line, or else the first line that is
+/// The goal of a spec for a builder excerpt: a `Goal:` line, or else the first line that is
 /// neither blank nor a heading, cut to 200 characters. Empty when there is none.
 pub fn spec_goal(spec: &str) -> String {
     let cut = |text: &str| text.chars().take(200).collect::<String>();

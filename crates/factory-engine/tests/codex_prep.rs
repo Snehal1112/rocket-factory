@@ -532,43 +532,6 @@ fn an_old_job_counts_as_claude() {
 }
 
 #[test]
-fn fallback_commit_runs_when_a_codex_committer_fails() {
-    let fx = codex(committing_fixture());
-    let wt = fx
-        .repo
-        .create_worktree(&factory_git::JobRef {
-            id: "001".into(),
-            slug: "demo".into(),
-            project: None,
-        })
-        .expect("worktree");
-    std::fs::write(wt.path.join("a.txt"), "content\n").expect("write change");
-    let nothing = || -> Effect { Box::new(|_: &AgentSpec| "did nothing".to_string()) };
-    let runner = scripted(vec![nothing(), nothing()]);
-    let request = factory_engine::CommitRequest {
-        kind: factory_engine::CommitKind::Task,
-        plan_title: "demo plan",
-        task_title: "Add the thing.",
-        goal: "add the thing",
-        floor: &wt.base,
-        issues: &[],
-        snapshots: &[],
-    };
-    let out = fx
-        .engine(&runner)
-        .with_agent_files(files())
-        .commit_step(&wt, &request)
-        .expect("step");
-    assert!(
-        matches!(
-            out,
-            factory_engine::CommitOutcome::Committed { fallback: true, .. }
-        ),
-        "{out:?}"
-    );
-}
-
-#[test]
 fn provider_sync_runs_once_per_engine() {
     let fx = codex(committing_fixture());
     let runner = scripted_auto(vec![]);

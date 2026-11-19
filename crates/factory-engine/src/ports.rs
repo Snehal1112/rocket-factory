@@ -96,7 +96,6 @@ pub(crate) struct JobView {
     pub session_id: Option<String>,
     pub round: u32,
     pub task_index: u32,
-    pub issues: Vec<u32>,
     pub batch_snapshot: Option<String>,
     pub fix_source: Option<String>,
     /// The stronger builder model the job escalated to, if any.
@@ -133,7 +132,6 @@ impl Engine<'_> {
             // Plan 01 starts a job at round 0. The engine counts rounds from 1.
             round: job.round.max(1),
             task_index: job.task_index,
-            issues: job.issues.clone(),
             batch_snapshot: job.batch_snapshot.clone(),
             fix_source: job.fix_source.clone(),
             escalated_model: job.escalated_model.clone(),
