@@ -67,6 +67,7 @@ fn review_word(state: ReviewState) -> &'static str {
         ReviewState::Pass => "pass",
         ReviewState::Changes => "changes",
         ReviewState::Skipped => "skipped",
+        ReviewState::Failed => "failed",
     }
 }
 

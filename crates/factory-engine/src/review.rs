@@ -243,7 +243,9 @@ impl Engine<'_> {
             } else {
                 Verdict::Missing
             };
-            let state = if role_verdict == Verdict::Approve {
+            let state = if failed {
+                ReviewState::Failed
+            } else if role_verdict == Verdict::Approve {
                 ReviewState::Pass
             } else {
                 ReviewState::Changes

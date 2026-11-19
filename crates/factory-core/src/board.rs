@@ -14,6 +14,8 @@ pub enum ReviewState {
     Pass,
     Changes,
     Skipped,
+    /// The reviewer run failed or stalled before it gave a verdict. It counts as no verdict yet.
+    Failed,
 }
 
 /// Token totals of one job, summed over its agent runs. New in v3, absent in v1 boards.
@@ -388,7 +390,7 @@ impl Job {
             .collect()
     }
 
-    /// True when a required role has no verdict yet: pending, running or absent. Such a job was never reviewed.
+    /// True when a required role has no verdict yet: pending, running, failed or absent. Such a job was never reviewed.
     pub fn review_missing(&self) -> bool {
         !self.missing_reviews().is_empty()
     }

@@ -423,6 +423,9 @@ fn a_failed_role_with_real_findings_starts_a_fix_round() {
     assert_eq!(outcome.verdict, Verdict::Changes);
     assert!(matches!(outcome.decision, Decision::FixRound));
     assert_eq!(outcome.resume, None);
+    // The code reviewer asked for changes and the security run failed, so each shows its own state.
+    assert_eq!(fx.job().reviews.get("code"), Some(&ReviewState::Changes));
+    assert_eq!(fx.job().reviews.get("security"), Some(&ReviewState::Failed));
     e.apply_decision(&outcome).expect("apply");
     assert_eq!(fx.job().round, 2);
     let file = std::fs::read_to_string(&outcome.review_path).expect("file");
@@ -451,6 +454,10 @@ fn a_failed_role_with_an_approving_role_parks() {
     assert_eq!(job.park_kind.as_deref(), Some("review-failed"));
     assert_eq!(job.park_resume, Some(ResumeAt::Review));
     assert_eq!(job.round, round);
+    // The stalled role shows as failed, not as changes, and counts as having no verdict.
+    assert_eq!(job.reviews.get("code"), Some(&ReviewState::Pass));
+    assert_eq!(job.reviews.get("security"), Some(&ReviewState::Failed));
+    assert_eq!(job.missing_reviews(), vec!["security"]);
     let file = std::fs::read_to_string(&outcome.review_path).expect("file");
     assert!(file.contains("run failed (stalled)"), "{file}");
 }

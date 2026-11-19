@@ -20,7 +20,7 @@
     return known.length ? known : ["code"];
   }
   // True when the code review, or the security review when the job has one, has no verdict: pending,
-  // running or absent. Approve is refused for such a job.
+  // running, failed or absent. Approve is refused for such a job.
   function reviewMissing(job) {
     const reviews = (job && job.reviews) || {};
     const done = (state) => ["pass", "changes", "skipped"].includes(state);
@@ -51,7 +51,7 @@
 
   const MIN_PIPS = 2;
   const MAX_PIPS = 6;
-  const REVIEW_STATES = ["pending", "running", "pass", "changes", "skipped"];
+  const REVIEW_STATES = ["pending", "running", "pass", "changes", "skipped", "failed"];
   const AGENT_STATUSES = ["running", "stale", "done"];
   const CHIP_STAGES = ["review", "approve", "needs-human", "merged"];
   const MERGED_LIMIT = 10;
@@ -743,7 +743,7 @@
           (openChanges(job)
             ? `<p class="review-missing">${escapeHtml(changesNotice(job))}</p>`
             : reviewMissing(job)
-              ? `<p class="review-missing">The review has not run.</p>`
+              ? `<p class="review-missing">${Object.values(job.reviews || {}).includes("failed") ? "The review did not finish." : "The review has not run."}</p>`
               : "") +
           `<p class="hint">${canRetry(job) ? copyChip(`factory retry ${job.id}`) + copyChip(approveCommand(job)) : copyChip(approveCommand(job)) + copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";

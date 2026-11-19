@@ -59,6 +59,17 @@ test("reviewChip shows role and state as text and whitelists the class", () => {
   assert.doesNotMatch(odd, /<script>/);
 });
 
+test("a failed reviewer shows as failed and asks for --without-review", () => {
+  const chip = board.reviewChip("code", "failed");
+  assert.match(chip, /chip-failed/);
+  assert.match(chip, />code failed</);
+  const job = makeJob({ stage: "needs-human", reviews: { code: "failed" } });
+  const card = board.renderCard(job);
+  assert.match(card, /factory approve 001 --without-review/);
+  assert.match(card, /The review did not finish\./);
+  assert.doesNotMatch(card, /The review has not run/);
+});
+
 test("approve command waits for security when it is present", () => {
   const job = makeJob({ stage: "needs-human", reviews: { code: "pass", security: "pending" } });
   assert.match(board.renderCard(job), /factory approve 001 --without-review/);

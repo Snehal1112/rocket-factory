@@ -1224,6 +1224,11 @@ fn assert_parked_review_failed(fx: &Fixture, parked: &StageOutcome, before: u32)
     assert_eq!(job.stage, Stage::NeedsHuman);
     assert_eq!(job.park_kind.as_deref(), Some("review-failed"));
     assert_eq!(job.park_resume, Some(ResumeAt::Review));
+    assert_eq!(
+        job.reviews.get("code"),
+        Some(&factory_core::ReviewState::Failed)
+    );
+    assert!(job.review_missing());
     // The round is the one the review ran in, so no fix round started.
     let reviewed = job.last_review.as_ref().expect("last review").round;
     assert_eq!(job.round, before);
