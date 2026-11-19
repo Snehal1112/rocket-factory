@@ -210,6 +210,25 @@ impl Engine<'_> {
                 return self.park_with(ParkKind::CommitFailed, reason, Vec::new())
             }
         };
+        let (file, label, fallback) = if new_work {
+            (
+                "build.md".to_string(),
+                "build".to_string(),
+                "Build the plan",
+            )
+        } else {
+            (
+                format!("round-{}.md", job.round),
+                format!("fix round {}", job.round),
+                "Address review findings",
+            )
+        };
+        // A git error gives an empty file list, so the note never fails the stage.
+        let files = self
+            .repo
+            .changed_paths(&tip_before, &head)
+            .unwrap_or_default();
+        self.save_commit_note(&file, &label, &run.result_text, fallback, &files)?;
         self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
     }
@@ -702,6 +721,15 @@ impl Engine<'_> {
             self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
             new_tip
         };
+        // A git error gives an empty file list, so the note never fails the task.
+        let files = self.repo.changed_paths(&tip, &new_tip).unwrap_or_default();
+        self.save_commit_note(
+            &format!("task-{}.md", task.n),
+            &format!("task {}", task.n),
+            &run.result_text,
+            &task.title,
+            &files,
+        )?;
         let short = short_sha(&new_tip).to_string();
         self.note_task_checks(task.n, &tip, &new_tip)?;
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;

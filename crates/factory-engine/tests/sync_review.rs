@@ -3,8 +3,6 @@ use common::{approved_job_with, reply, scripted};
 use factory_engine::{sync_requested, sync_stage, SyncOutcome};
 use std::sync::Arc;
 
-const GOOD: &str =
-    "---BEGIN MESSAGE---\nfeat(hello): add the hello docs\n\nBody.\n---END MESSAGE---";
 const APPROVE: &str = "ok\nVERDICT: APPROVE";
 const CHANGES: &str = "- [blocker] fix it\nVERDICT: CHANGES";
 
@@ -221,13 +219,13 @@ fn a_first_round_review_diff_is_unchanged() {
 
 /// The effects of a requested sync of a job behind main: a message, a code review and a security review.
 fn behind_main_effects() -> Vec<common::Effect> {
-    vec![reply(GOOD), reply(APPROVE), reply(SECURITY_OK)]
+    vec![reply(APPROVE), reply(SECURITY_OK)]
 }
 
 #[test]
 fn a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head() {
     // Approve keeps the floor and runs the sync review.
-    let fx = with_security_agent(fixture(vec![reply(GOOD), reply(APPROVE)]));
+    let fx = with_security_agent(fixture(vec![reply(APPROVE)]));
     let head = fx.head.clone();
     common::commit_file(&fx.main, "other.md", "o");
     sync_requested(&fx.driver, &fx.id).expect("sync");
@@ -305,10 +303,7 @@ fn a_sync_runs_the_checks() {
             CHANGES.to_string()
         }
     });
-    let fx = fixture_with_check(
-        &format!("touch {}", file.display()),
-        vec![reply(GOOD), review],
-    );
+    let fx = fixture_with_check(&format!("touch {}", file.display()), vec![review]);
     common::commit_file(&fx.main, "other.md", "o");
     assert_eq!(
         sync_requested(&fx.driver, &fx.id).expect("sync"),
@@ -333,7 +328,7 @@ fn sync_refuses_a_job_with_no_worktree() {
 
 #[test]
 fn sync_requested_merges_main_into_a_job_that_is_behind() {
-    let fx = fixture(vec![reply(GOOD), reply(APPROVE)]);
+    let fx = fixture(vec![reply(APPROVE)]);
     let head = fx.head.clone();
     common::commit_file(&fx.main, "other.md", "o");
     assert_eq!(
@@ -349,7 +344,7 @@ fn sync_requested_merges_main_into_a_job_that_is_behind() {
 
 #[test]
 fn sync_requested_does_not_count_against_max_syncs() {
-    let fx = fixture(vec![reply(GOOD), reply(APPROVE)]);
+    let fx = fixture(vec![reply(APPROVE)]);
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -411,7 +406,7 @@ fn a_rebase_review_runs_the_security_reviewer() {
 
 #[test]
 fn a_sync_without_a_rewrite_runs_the_code_reviewer_only() {
-    let fx = with_security_agent(fixture(vec![reply(GOOD), reply(APPROVE)]));
+    let fx = with_security_agent(fixture(vec![reply(APPROVE)]));
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -427,11 +422,7 @@ fn a_sync_without_a_rewrite_runs_the_code_reviewer_only() {
 
 #[test]
 fn a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review() {
-    let fx = with_security_agent(fixture(vec![
-        reply(GOOD),
-        reply(APPROVE),
-        reply(SECURITY_OK),
-    ]));
+    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
     common::commit_file(&fx.main, "other.md", "o");
     rewrite_branch(&fx);
     assert_eq!(
@@ -504,14 +495,14 @@ fn sync_requested_refuses_a_dirty_worktree() {
 
 #[test]
 fn sync_requested_conflict_parks_and_names_the_paths() {
-    let fx = fixture(vec![reply(GOOD)]);
+    let fx = fixture(vec![]);
     common::commit_file(&fx.main, "docs/hello.txt", "main version\n");
     assert_conflict_parks(&fx);
 }
 
 #[test]
 fn sync_requested_conflict_on_a_rewritten_branch_parks_in_needs_human() {
-    let fx = fixture(vec![reply(GOOD)]);
+    let fx = fixture(vec![]);
     common::commit_file(&fx.main, "docs/hello.txt", "main version\n");
     rewrite_branch(&fx);
     assert_conflict_parks(&fx);
@@ -533,7 +524,7 @@ fn assert_conflict_parks(fx: &common::MergeFixture) {
 
 #[test]
 fn a_sync_conflict_on_a_needs_human_job_replaces_the_park_record() {
-    let fx = fixture(vec![reply(GOOD)]);
+    let fx = fixture(vec![]);
     factory_engine::park_with_parts(
         &fx.driver,
         &fx.id,
@@ -684,7 +675,7 @@ fn sync_refuses_a_pending_batch_snapshot() {
 
 #[test]
 fn a_sync_review_keeps_the_round_review() {
-    let fx = fixture(vec![reply(GOOD), reply(APPROVE)]);
+    let fx = fixture(vec![reply(APPROVE)]);
     common::commit_file(&fx.main, "other.md", "o");
     assert_eq!(
         sync_stage(&fx.driver, &fx.id).expect("sync"),
@@ -702,12 +693,7 @@ fn a_sync_review_keeps_the_round_review() {
 
 #[test]
 fn two_sync_reviews_get_their_own_files() {
-    let fx = fixture(vec![
-        reply(GOOD),
-        reply(APPROVE),
-        reply(GOOD),
-        reply(APPROVE),
-    ]);
+    let fx = fixture(vec![reply(APPROVE), reply(APPROVE)]);
     common::commit_file(&fx.main, "other.md", "o");
     sync_stage(&fx.driver, &fx.id).expect("sync 1");
     common::commit_file(&fx.main, "other2.md", "o");
@@ -718,7 +704,7 @@ fn two_sync_reviews_get_their_own_files() {
 
 #[test]
 fn a_sync_review_that_asks_for_changes_sets_last_review() {
-    let fx = fixture(vec![reply(GOOD), reply(CHANGES)]);
+    let fx = fixture(vec![reply(CHANGES)]);
     common::commit_file(&fx.main, "other.md", "o");
     assert_eq!(
         sync_stage(&fx.driver, &fx.id).expect("sync"),

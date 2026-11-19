@@ -177,39 +177,6 @@ fn another_owner_in_the_lease_sets_lost_and_stops_the_run() {
 }
 
 #[test]
-fn a_lost_lease_stops_before_the_merge_commit() {
-    let slot = Arc::new(Mutex::new(None::<PathBuf>));
-    let hook_slot = slot.clone();
-    let fx = common::SeriesFixture::owned_timed(
-        "a",
-        Arc::new(move |spec| {
-            // The merge message run is the last agent run before the merge.
-            if spec.role == "message" {
-                let path = hook_slot.lock().expect("slot").clone().expect("set");
-                let other = ProjectLease {
-                    owner: "other".into(),
-                    job: "009".into(),
-                    expires: now_secs() + 1.0e6,
-                };
-                std::fs::write(path, serde_json::to_vec(&other).expect("json")).expect("overwrite");
-                std::thread::sleep(Duration::from_secs(1));
-            }
-        }),
-        2.0,
-        Duration::from_millis(200),
-    );
-    *slot.lock().expect("slot") = Some(fx.driver.layout().project_lease_file());
-    let before = common::main_tip(&fx.main);
-    // A failed merge parks the job, so the run ends as needs-human with the lost text.
-    let end = run_it(&fx).expect("run ends");
-    let factory_engine::RunEnd::NeedsHuman(reason) = end else {
-        panic!("expected needs-human, got {end:?}");
-    };
-    assert!(reason.contains("(the lease was taken over)"), "{reason}");
-    assert_eq!(common::main_tip(&fx.main), before, "the job was merged");
-}
-
-#[test]
 fn a_corrupt_lease_during_a_run_stops_the_run() {
     let slot = Arc::new(Mutex::new(None::<PathBuf>));
     let hook_slot = slot.clone();

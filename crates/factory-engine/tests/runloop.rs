@@ -229,10 +229,59 @@ fn every_agent_run_appends_a_usage_line_with_its_role() {
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v["role"].as_str().map(str::to_string))
         .collect();
+    assert_eq!(roles, vec!["builder", "committer", "reviewer"]);
+}
+
+#[test]
+fn a_series_lands_one_merge_per_plan_with_its_commit_subject() {
+    let fx = common::SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let dir = fx.tmp.path().join("plans");
+    std::fs::create_dir_all(&dir).expect("plans dir");
+    let first = dir.join("plan-01-a.md");
+    let second = dir.join("plan-02-b.md");
+    std::fs::write(
+        &first,
+        format!(
+            "# First\n\n**Commit:** feat: first plan\n\n### Task 1: t\n\nNext plan: {}\n",
+            second.display()
+        ),
+    )
+    .expect("plan 1");
+    std::fs::write(
+        &second,
+        "# Second\n\n**Commit:** fix: second plan\n\n### Task 1: t\n\nNext plan: none\n",
+    )
+    .expect("plan 2");
+    let feature = "GitHub issue #7 (https://github.com/o/r/issues/7)";
+    let job = create_job(&fx.driver, "series", feature, Some(&first), None).expect("create");
     assert_eq!(
-        roles,
-        vec!["builder", "committer", "reviewer", "message", "message"]
+        run_series(&fx.driver, &job.id).expect("series"),
+        RunEnd::Merged
     );
+    // Main's first-parent line holds one merge commit per plan, newest first.
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let mut commit = repo
+        .revparse_single("main")
+        .expect("main")
+        .peel_to_commit()
+        .expect("commit");
+    let mut merges = Vec::new();
+    loop {
+        if commit.parent_count() == 2 {
+            merges.push(commit.message().expect("msg").to_string());
+        }
+        let Ok(parent) = commit.parent(0) else {
+            break;
+        };
+        commit = parent;
+    }
+    assert_eq!(merges.len(), 2, "{merges:?}");
+    let (second_msg, first_msg) = (&merges[0], &merges[1]);
+    assert!(first_msg.starts_with("feat: first plan\n"), "{first_msg}");
+    assert!(first_msg.contains("Relates to: #7"), "{first_msg}");
+    assert!(!first_msg.contains("Fixes: #7"), "{first_msg}");
+    assert!(second_msg.starts_with("fix: second plan\n"), "{second_msg}");
+    assert!(second_msg.contains("Fixes: #7"), "{second_msg}");
 }
 
 #[test]

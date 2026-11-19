@@ -27,13 +27,9 @@ fn two_plans_go_from_new_to_merged_with_a_failed_check_resumed_once() -> TestRes
             "builder",
             "committer",
             "reviewer",
-            "message",
-            "message",
             "builder",
             "committer",
             "reviewer",
-            "message",
-            "message"
         ]
     );
     // Spec decision 11: plan B starts by itself after plan A merges.
@@ -64,14 +60,11 @@ fn a_changes_verdict_runs_one_fix_round_then_merges() -> TestResult {
             "builder",
             "committer",
             "reviewer",
-            "message",
-            "message"
         ]
     );
-    // Spec decision 10: the merge commit has the fixed message.
+    // Spec decision 10: the merge commit has the driver-built message, its subject from the plan title.
     assert!(
-        sc.last_merge_subject()?
-            .starts_with("chore(factory): merge job 001"),
+        sc.last_merge_subject()?.starts_with("feat: b"),
         "{}",
         sc.last_merge_subject()?
     );
@@ -214,14 +207,7 @@ fn a_merge_refreshes_the_kb_and_tokens_list_the_kb_role() -> TestResult {
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
     assert_eq!(
         sc.runner.roles(),
-        [
-            "builder",
-            "committer",
-            "reviewer",
-            "message",
-            "message",
-            "kb"
-        ]
+        ["builder", "committer", "reviewer", "kb"]
     );
     assert_eq!(sc.stage("001")?, "merged");
     let job = sc.job("001")?;

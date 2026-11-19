@@ -15,7 +15,7 @@ fn merges_the_reviewed_head_with_the_fixed_message() {
         .expect("commit");
     assert_eq!(
         commit.message().expect("msg").lines().next(),
-        Some("chore(factory): merge job 001 hello")
+        Some("feat: say hello")
     );
     assert_eq!(
         commit.parent_id(1).expect("second parent").to_string(),
@@ -760,4 +760,45 @@ fn an_error_after_an_auto_sync_parks_with_resume_rereview() {
     );
     // The head moved in the sync and was never reviewed, so a retry must not merge it.
     assert_resume(&fx, Some(factory_core::ResumeAt::Rereview));
+}
+
+#[test]
+fn a_merge_commit_carries_the_driver_built_message() {
+    let fx = common::approved_job();
+    let job = fx.driver.job(&fx.id).expect("job");
+    std::fs::write(
+        fx.driver.job_dir(&job).join("plan.md"),
+        "# Hello\n\n**Commit:** feat(docs): add the hello file\n\n### Task 1: hello\n",
+    )
+    .expect("plan");
+    let MergeResult::Merged(sha) = merge_stage(&fx.driver, &fx.id).expect("merge") else {
+        panic!("expected a merge");
+    };
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let commit = repo
+        .find_commit(git2::Oid::from_str(&sha).expect("oid"))
+        .expect("commit");
+    let message = commit.message().expect("msg");
+    assert!(
+        message.starts_with("feat(docs): add the hello file\n"),
+        "{message}"
+    );
+    assert!(message.contains("Factory-Job: 001"), "{message}");
+}
+
+#[test]
+fn no_message_agent_runs_for_a_merge_or_a_sync() {
+    let fx = common::approved_job_with(
+        std::sync::Arc::new(common::scripted(vec![common::reply(
+            "ok\nVERDICT: APPROVE",
+        )])),
+        true,
+    );
+    // Main moves on, so the merge syncs it into the job branch first.
+    common::commit_file(&fx.main, "other.md", "o");
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    assert!(fx.runner.specs_for("message").is_empty());
 }

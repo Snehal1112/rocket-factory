@@ -18,9 +18,7 @@ fn a_job_goes_from_new_to_merged_through_the_cli() {
     let before = fx.main_tip();
     assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
     assert_ne!(fx.main_tip(), before);
-    assert!(fx
-        .main_message()
-        .starts_with("chore(factory): merge job 001 hello"));
+    assert!(fx.main_message().starts_with("feat: plan"));
     assert!(fx.main_file("docs/001-0.txt").exists());
     let status = fx.run(&["status"]).expect("status");
     assert!(

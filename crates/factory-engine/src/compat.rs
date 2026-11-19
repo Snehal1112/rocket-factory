@@ -669,8 +669,9 @@ impl Driver {
         f(&engine)
     }
 
-    /// Asks the committer for the message of the merge (`Merge`) or the sync (`Sync`) commit of a job.
-    /// Always returns a valid message, falling back to the fixed text.
+    /// Builds the message of the merge (`Merge`) or the sync (`Sync`) commit of a job.
+    /// The merge message comes from the plan and the commit notes, the sync message is the fixed text.
+    /// Neither runs an agent.
     pub fn commit_message(
         &self,
         id: &str,
@@ -682,26 +683,28 @@ impl Driver {
             crate::MessageKind::Merge => job.head.clone().unwrap_or_default(),
             crate::MessageKind::Sync => self.repo.tip(self.repo.base_branch())?,
         };
-        let cwd = job
-            .worktree
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.layout.repo.clone());
-        self.with_engine(id, |e| {
-            e.message_step(
-                &cwd,
-                &crate::MessageRequest {
-                    kind,
-                    job_id: &job.id,
-                    slug: &job.slug,
-                    title: &job.feature,
-                    base: &base,
-                    tip: &tip,
-                    issues: &job.issues,
-                    closes_ticket: job.series.as_ref().is_none_or(|pos| pos.index >= pos.total),
-                },
-            )
-        })
+        let req = crate::MessageRequest {
+            kind,
+            job_id: &job.id,
+            slug: &job.slug,
+            title: &job.feature,
+            base: &base,
+            tip: &tip,
+            issues: &job.issues,
+            closes_ticket: job.series.as_ref().is_none_or(|pos| pos.index >= pos.total),
+        };
+        match kind {
+            crate::MessageKind::Merge => self.with_engine(id, |e| e.job_message(&req)),
+            crate::MessageKind::Sync => Ok(factory_core::append_footers(
+                &crate::fixed_message(
+                    crate::MessageKind::Sync,
+                    &job.id,
+                    &job.slug,
+                    self.repo.base_branch(),
+                ),
+                &crate::driver_footers(&req),
+            )),
+        }
     }
 
     /// Refreshes the KB and writes the outcome to the job ledger. Returns a one-line summary.

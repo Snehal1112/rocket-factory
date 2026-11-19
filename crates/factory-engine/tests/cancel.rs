@@ -1,6 +1,4 @@
 mod common;
-use common::{approved_job_with, scripted, Effect};
-use factory_agent::AgentSpec;
 use factory_core::{CoreError, Job, Layout, Stage};
 use factory_engine::{
     create_job, merge_stage, resume_logged, run_job, BoardStore, EngineError, RunEnd,
@@ -8,9 +6,6 @@ use factory_engine::{
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-const GOOD: &str =
-    "---BEGIN MESSAGE---\nfeat(hello): add the hello docs\n\nBody.\n---END MESSAGE---";
 
 /// Parks and cancels a job the way `factory cancel` does.
 fn cancel_job(main: &Path, id: &str) {
@@ -41,25 +36,6 @@ fn a_cancelled_job_does_not_merge() {
     let err = merge_stage(&fx.driver, &fx.id).expect_err("cancelled");
     assert!(matches!(err, EngineError::Cancelled), "{err}");
     assert_eq!(common::main_tip(&fx.main), before, "main is unchanged");
-}
-
-#[test]
-fn a_cancel_during_the_commit_message_run_leaves_main_unchanged() {
-    let target: Target = Arc::new(Mutex::new(None));
-    let seen = target.clone();
-    let effect: Effect = Box::new(move |_: &AgentSpec| {
-        cancel_target(&seen);
-        GOOD.to_string()
-    });
-    let fx = approved_job_with(Arc::new(scripted(vec![effect])), true);
-    *target.lock().expect("target") = Some((fx.main.clone(), fx.id.clone()));
-    let before = common::main_tip(&fx.main);
-    let err = merge_stage(&fx.driver, &fx.id).expect_err("cancelled");
-    assert!(matches!(err, EngineError::Cancelled), "{err}");
-    assert_eq!(common::main_tip(&fx.main), before, "main is unchanged");
-    let job = fx.driver.job(&fx.id).expect("job");
-    assert_eq!(job.stage, Stage::NeedsHuman);
-    assert!(job.cancelled);
 }
 
 #[test]

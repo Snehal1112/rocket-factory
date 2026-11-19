@@ -84,9 +84,7 @@ pub use lock::{lock_board, BoardLock};
 pub use merge::{
     merge_stage, park, park_with_parts, park_with_parts_resume, MergeResult, MAX_SYNCS,
 };
-pub use message::{
-    fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS,
-};
+pub use message::{driver_footers, fixed_message, MessageKind, MessageRequest};
 pub use minors::{minor_tickets_step, MINORS_FILE};
 pub use notes::{read_notes, Notes, NOTES_DIR};
 pub use one_job::{

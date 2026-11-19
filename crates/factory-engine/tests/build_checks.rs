@@ -2887,3 +2887,97 @@ fn a_corrupt_reason_gives_the_corrupt_message() {
     assert!(text.contains("project.lease"), "{text}");
     assert!(!text.contains("taken over"), "{text}");
 }
+
+/// A builder that writes `file` with `body` and ends its reply with a commit note titled `subject`.
+fn note_effect(file: &'static str, body: &'static str, subject: &'static str) -> Effect {
+    Box::new(move |spec| {
+        std::fs::write(spec.cwd.join(file), body).expect("write change");
+        format!(
+            "Done.\n\n---BEGIN COMMIT---\n{subject}\n\nThe reader needs it.\n\n- Add {file}\n---END COMMIT---\n"
+        )
+    })
+}
+
+fn note_file(fx: &Fixture, name: &str) -> String {
+    std::fs::read_to_string(fx.job_dir.join("commit-notes").join(name)).expect("note file")
+}
+
+#[test]
+fn a_task_note_is_saved_from_the_builder_reply() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![note_effect("a.txt", "a\n", "Add the greeting")]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let note = note_file(&fx, "task-1.md");
+    assert!(note.starts_with("Add the greeting\n\n"), "{note}");
+    assert!(note.contains("The reader needs it."), "{note}");
+    assert!(note.contains("- Add a.txt"), "{note}");
+    assert!(!fx.ledger().contains("commit note for"), "{}", fx.ledger());
+}
+
+#[test]
+fn a_task_without_a_note_gets_the_fallback_and_a_ruling() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    let note = note_file(&fx, "task-1.md");
+    assert!(note.starts_with("first thing\n\n"), "{note}");
+    assert!(note.contains("- a.txt"), "{note}");
+    let ledger = fx.ledger();
+    assert!(
+        ledger.contains("commit note for task 1: missing, fallback used"),
+        "{ledger}"
+    );
+}
+
+#[test]
+fn a_fix_round_note_is_saved_as_its_round() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![
+        change_effect("a.txt", 3),
+        note_effect("b.txt", "b\n", "Fix the review findings"),
+    ]);
+    fix_round_from(&fx, &runner, Some("review"));
+    let out = fx.engine(&runner).build_stage().expect("fix round");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let note = note_file(&fx, "round-2.md");
+    assert!(note.starts_with("Fix the review findings\n\n"), "{note}");
+    assert!(note.contains("- Add b.txt"), "{note}");
+}
+
+#[test]
+fn a_whole_plan_build_saves_build_md() {
+    let fx = committing_fixture();
+    let runner = scripted_auto(vec![note_effect("a.txt", "a\n", "Build the whole plan")]);
+    let out = fx.engine(&runner).build_stage().expect("build");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let note = note_file(&fx, "build.md");
+    assert!(note.starts_with("Build the whole plan\n\n"), "{note}");
+    assert!(note.contains("- Add a.txt"), "{note}");
+}
+
+#[test]
+fn a_rerun_task_overwrites_its_note() {
+    let fx = two_task_fixture();
+    let runner = scripted_auto(vec![
+        note_effect("a.txt", "first\n", "Add the first greeting"),
+        note_effect("a.txt", "second\n", "Add the second greeting"),
+    ]);
+    fx.engine(&runner).build_stage().expect("task 1");
+    // The job goes back to task 1, so the task is built again.
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.task_index = 0;
+    job.builder_id = None;
+    job.set_stage(Stage::Build, None, false, 1.0)
+        .expect("stage");
+    board.save(&fx.board_path).expect("save");
+    fx.engine(&runner).build_stage().expect("task 1 again");
+    let names: Vec<String> = std::fs::read_dir(fx.job_dir.join("commit-notes"))
+        .expect("notes dir")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["task-1.md".to_string()]);
+    let note = note_file(&fx, "task-1.md");
+    assert!(note.starts_with("Add the second greeting\n\n"), "{note}");
+    assert!(!note.contains("first greeting"), "{note}");
+}

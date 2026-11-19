@@ -117,13 +117,6 @@ impl AgentRunner for ScriptRunner {
                 ..AgentRun::done("done")
             };
         }
-        // A message run never uses up a script step. Its reply has no message, so the fixed one is used.
-        if spec.role == "message" {
-            return AgentRun {
-                session_id: Some("sess-m".to_string()),
-                ..AgentRun::done("done")
-            };
-        }
         // A KB run never uses up a script step. It reports one page changed.
         if spec.role == "kb" {
             return AgentRun {
