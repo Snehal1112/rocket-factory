@@ -32,7 +32,7 @@ How the driver starts one agent (`claude -p`), the five ways a run ends and the 
 
 ![How an agent is started](docs/assets/images/factory-agents.svg)
 
-The agent runs of one job in order: a fresh builder per task, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. The driver makes the commits and writes the merge message itself, so no agent run is spent on them (the diagram below may still show the older commit and message runs), plus 1 run for the spec review at `factory new`. The job budget stops a run before that:
+The agent runs of one job in order: a fresh builder per task, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. The driver makes the commits and writes the merge message itself, so no agent run is spent on them (the diagram below may still show the older commit and message runs). The spec review at `factory new` adds 1 run. The job budget stops a run before that:
 
 ![Agent turns in one job](docs/assets/images/factory-turns.svg)
 

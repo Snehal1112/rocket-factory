@@ -614,6 +614,7 @@ fn no_doc_describes_the_committer_or_an_ignored_key() -> TestResult {
         forbid_all(&doc, rel, &phrases)?;
         if rel.ends_with("project-toml-reference.md") {
             // Every key mention must sit in the Ignored settings section.
+            require_all(&doc, rel, &["\n### Ignored settings\n"])?;
             let mut inside = false;
             for line in doc.lines() {
                 if line.starts_with('#') {

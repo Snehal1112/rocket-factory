@@ -420,7 +420,7 @@ Your repository only gets the committed spec and plans, the `factory/NNN-slug` b
 | Run was requested but nothing starts | `factoryd status` may say the daily budget is reached. It resets at UTC midnight. Or `factoryd` is not running and the fallback driver failed, so look at the logs below. |
 | The agent fails to start | Run `claude -p "say ok"`. If it cannot log in, run `claude` and log in. |
 | Agents say a skill is missing | Install the `superpowers` and `dev-workflow-skills` plugins (section 2). |
-| Commit step fails with `commit-failed` | Check `park.json` in the job folder. If the builder committed by itself, run `git reset --soft <sha>` in the worktree, then rework. |
+| Commit step fails with `commit-failed` | This now fires only when the driver recovers a job an older version stopped in the middle of a batch commit. Check `park.json` in the job folder. If the builder committed by itself, run `git reset --soft <sha>` in the worktree, then rework. |
 
 Where to look:
 
