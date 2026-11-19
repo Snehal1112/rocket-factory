@@ -25,8 +25,24 @@ fn delivery_parser() -> impl TypedValueParser<Value = Delivery> {
     one_of(&["agent", "append", "stdin"])
 }
 
+/// The usual flow, shown under the command list of `factory --help`.
+const AFTER_HELP: &str = "\
+Typical flow:
+  factory new <slug> \"<feature>\" --plans <dir>   create a job from plans
+  factory run <id> --series                     build it until it merges or needs you
+  factory status                                see every job and what waits on you
+  factory approve <id> | retry <id> | rework <id> \"<note>\"
+
+Run `factory <command> --help` for the details of one command.";
+
 #[derive(Parser, Debug)]
-#[command(name = "factory", version, about = "Software factory driver")]
+#[command(
+    name = "factory",
+    version,
+    about = "Build, check, review and merge planned work with coding agents",
+    arg_required_else_help = true,
+    after_help = AFTER_HELP
+)]
 pub struct Cli {
     /// Main checkout root. Defaults to the repository containing the current directory.
     #[arg(long, global = true)]
@@ -40,9 +56,14 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Create a job at stage build.
+    /// Create a job from a plan or a folder of plans.
+    ///
+    /// A folder of plan-NN files becomes a series, one job per plan, unless --one-job combines
+    /// them. The first job starts at stage build. Nothing runs until `factory run`.
     New {
+        /// A short name for the job, used in its branch and folder, for example login-fix.
         slug: String,
+        /// One line that says what the job builds.
         feature: String,
         /// A plan file or a folder of plan-NN files.
         #[arg(long)]
@@ -51,6 +72,7 @@ pub enum Command {
         /// folder must hold spec.md. It needs --plans.
         #[arg(long, requires = "plans")]
         spec: Option<PathBuf>,
+        /// Run every agent of the job on this model instead of the project's role models.
         #[arg(long)]
         model: Option<String>,
         /// Combine the whole plan chain into one job. It needs --plans.
@@ -64,19 +86,29 @@ pub enum Command {
         #[arg(long)]
         accept_spec: Option<String>,
     },
-    /// Drive a job to merged or needs-human.
+    /// Build, check and review a job until it merges or needs you.
     Run {
+        /// The job id, for example 7 or 007.
         id: String,
         /// Continue with the next plan of the series after each merge.
         #[arg(long)]
         series: bool,
     },
+    /// Show every job, its stage and what waits on you.
+    ///
+    /// It never changes anything, so it is safe to run at any time.
     Status,
+    /// Print the full record of one job as JSON, for debugging.
     Show {
+        /// The job id, for example 7 or 007.
         id: String,
     },
-    /// Merge a job in needs-human or approve.
+    /// Merge a job that waits on you.
+    ///
+    /// The job must be in needs-human or approve. A job whose review did not run, or asked for
+    /// changes, needs --without-review or --waive.
     Approve {
+        /// The job id, for example 7 or 007.
         id: String,
         /// Merge a needs-human job even though its code review has not run.
         #[arg(long)]
@@ -85,33 +117,54 @@ pub enum Command {
         #[arg(long, conflicts_with = "without_review")]
         waive: Option<String>,
     },
-    /// Continue a parked job at the stage that parked it, then drive it like run.
+    /// Continue a parked job at the stage that parked it.
+    ///
+    /// For a failed review, missing checks, a busy main, a busy merge lock or a spent sync cap. Fix
+    /// the cause first. The job then goes on like `run` until it merges or parks again.
     Retry {
+        /// The job id, for example 7 or 007.
         id: String,
     },
-    /// Send a one-line note to the builder as the next round, or to the running task.
+    /// Send the builder a one-line note and return the job to build.
+    ///
+    /// It also revives a cancelled job. It does not run the job: run `factory run <id>` next.
     Rework {
+        /// The job id, for example 7 or 007.
         id: String,
+        /// What the builder should change, one line of at most 200 characters.
         note: String,
         /// Send a job to the builder even though its park has a retry stage.
         #[arg(long)]
         force: bool,
     },
+    /// Give up on a job, or remove a draft by its name.
+    ///
+    /// Nothing is deleted: the branch and worktree stay until `factory cleanup`. `rework` revives
+    /// a cancelled job.
     Cancel {
+        /// The job id, or the name of a draft.
         id: String,
+        /// Why the job is cancelled, stored on its card.
         #[arg(long, default_value = "cancelled by user")]
         reason: String,
+        /// Cancel even though the job holds a live lease, for when its process is gone.
         #[arg(long)]
         force: bool,
     },
-    /// Remove the worktree and branch of a merged or cancelled job. A cancelled job also loses its board card, unless it is in a series with other jobs or holds a live lease. The job folder stays.
+    /// Remove the worktree and branch of a merged or cancelled job.
+    ///
+    /// The job folder always stays. A cancelled job also loses its board card, unless it is in a
+    /// series with other jobs or holds a live lease.
     Cleanup {
+        /// The job id, for example 7 or 007.
         id: String,
+        /// Remove the branch even though it has commits that are not in the base branch.
         #[arg(long)]
         discard_commits: bool,
     },
-    /// Print the token use of one job, or with --cache the prompt cache use of the whole project.
+    /// Show the token use of a job, or the project's cache use with --cache.
     Tokens {
+        /// The job id, for example 7 or 007.
         #[arg(required_unless_present = "cache", conflicts_with = "cache")]
         id: Option<String>,
         /// Print cache use per role and the resumed runs, for every job of the project.
@@ -121,13 +174,15 @@ pub enum Command {
         #[arg(long, requires = "cache", value_parser = clap::value_parser!(u32).range(1..))]
         days: Option<u32>,
     },
-    /// Print the cost of every job and the figures per size group, and write costs.json.
+    /// Show the cost of every job and of each size group, and write costs.json.
     Costs {
         /// Print the cost trend per marker instead of the job tables.
         #[arg(long)]
         trend: bool,
     },
-    /// Ask each role's agent what reaches its context, using a marker, and report a pass or fail per channel.
+    /// Check which context reaches each role's agent.
+    ///
+    /// Each role's agent is asked for a marker, and every channel gets a pass or a fail.
     Probe {
         /// The agent CLI to probe. Defaults to the project's agent_cli.
         #[arg(long, value_parser = harness_parser())]
@@ -142,7 +197,10 @@ pub enum Command {
         #[arg(long, value_parser = delivery_parser(), default_value = "agent")]
         delivery: Delivery,
     },
-    /// Pick one labelled GitHub issue, draft its spec and plans, build it and settle it. Needs `intake = true`.
+    /// Build one labelled GitHub issue from spec to merge.
+    ///
+    /// It picks the issue, drafts its spec and plans, builds the job and settles it. The project
+    /// needs `intake = true`.
     Intake {
         /// Run one pass and exit. A pass is always one issue, so this is the only mode.
         #[arg(long)]
@@ -151,22 +209,24 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Track a feature that is still being specified, before it has a job.
+    /// Track a feature that is still being specified.
     Spec {
         #[command(subcommand)]
         cmd: SpecCmd,
     },
-    /// Manage the registered projects in the factory home.
+    /// Register, inspect and remove the projects in the factory home.
     Project {
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
-    /// Manage the seeded presets in the factory home.
+    /// Refresh the presets in the factory home.
     Presets {
         #[command(subcommand)]
         cmd: PresetsCmd,
     },
-    /// Fallback install of the /factory command file for Claude and the factory skill for Codex. Prints the plugin commands.
+    /// Install the /factory command and the Codex skill without the plugin.
+    ///
+    /// A fallback for when the Claude Code plugin is not used. It prints the plugin commands too.
     Install {
         /// The folder to write factory.md into. By default installs for Claude and Codex under $HOME.
         #[arg(long)]
@@ -175,29 +235,35 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Maintain the Claude Code plugin files in this repository.
+    /// Regenerate or check the Claude Code plugin files.
     Plugin {
         #[command(subcommand)]
         cmd: PluginCmd,
     },
-    /// Update the /factory command and the unedited presets, report overrides that shadow them, and write the version marker.
+    /// Update the /factory command and the unedited presets.
+    ///
+    /// It also reports overrides that shadow them and writes the version marker.
     Upgrade {
         /// Report what would change and write nothing.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Merge the base branch into a job, reset a rewritten branch, then rerun the checks and reviews.
+    /// Merge the base branch into a job, then check and review it again.
+    ///
+    /// A branch that was rewritten is reset first.
     Sync {
+        /// The job id, for example 7 or 007.
         id: String,
     },
-    /// File the follow-up tickets of a merged job and close its parent tickets.
+    /// File a merged job's follow-up tickets and close its parent tickets.
     Tickets {
+        /// The job id, for example 7 or 007.
         id: String,
         /// Print what would happen and change nothing.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Print the structured log, filtered.
+    /// Print the factory log, filtered by job, level or event.
     Log {
         /// Only the lines of this job.
         #[arg(long)]
@@ -212,7 +278,9 @@ pub enum Command {
         #[arg(long, default_value_t = 100)]
         tail: usize,
     },
-    /// Refresh the knowledge base now, ignoring the stop marker.
+    /// Refresh the knowledge base now.
+    ///
+    /// It ignores the stop marker.
     KbRefresh {
         /// The job whose ledger gets the rulings.
         #[arg(long)]
@@ -223,16 +291,31 @@ pub enum Command {
 #[derive(Subcommand, Debug)]
 pub enum SpecCmd {
     /// Add a draft card at stage interviewing and print where its spec file goes.
-    Start { slug: String, feature: String },
+    Start {
+        /// A short name for the draft, for example login-fix.
+        slug: String,
+        /// One line that says what the feature does.
+        feature: String,
+    },
     /// Move a draft to interviewing, writing-spec or writing-plans.
-    Stage { slug: String, stage: String },
+    Stage {
+        /// The name of the draft.
+        slug: String,
+        /// The new stage: interviewing, writing-spec or writing-plans.
+        stage: String,
+    },
     /// Print the stage and spec file of a draft.
-    Resume { slug: String },
+    Resume {
+        /// The name of the draft.
+        slug: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum PluginCmd {
-    /// Write the plugin files from the shipped command text, or only verify them with --check.
+    /// Write the plugin files from the shipped command text.
+    ///
+    /// With --check it only verifies them and writes nothing.
     Sync {
         /// The repository root. Defaults to the current directory.
         #[arg(long)]
@@ -245,7 +328,9 @@ pub enum PluginCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum PresetsCmd {
-    /// Bring the seeded presets up to the built-in text. Hand-edited files are listed and kept.
+    /// Bring the seeded presets up to the built-in text.
+    ///
+    /// Files you edited by hand are listed and kept, unless --force.
     Refresh {
         /// Overwrite files that were edited by hand.
         #[arg(long)]
@@ -259,6 +344,7 @@ pub enum ProjectCmd {
     Add {
         /// The repository top folder, or a subfolder of it for a monorepo project.
         path: PathBuf,
+        /// The preset to start from, a folder name under presets/ in the factory home, for example rust.
         #[arg(long)]
         preset: String,
         /// The branch jobs start from and merge into. Defaults to the branch the repo is on.
@@ -279,8 +365,13 @@ pub enum ProjectCmd {
         path: Option<PathBuf>,
     },
     /// Show the resolved settings of a project.
-    Show { name: String },
-    /// Add every setting the project file does not list yet, as a comment with its default.
+    Show {
+        /// The project name.
+        name: String,
+    },
+    /// Add the settings a project file does not list yet, as comments.
+    ///
+    /// Each one is written as a comment with its default value, so the file shows every setting.
     Defaults {
         /// The project. Leave it out with --all.
         name: Option<String>,
@@ -288,9 +379,13 @@ pub enum ProjectCmd {
         #[arg(long, conflicts_with = "name")]
         all: bool,
     },
-    /// Delete a project folder. The repository and the presets stay.
+    /// Delete a project folder from the factory home.
+    ///
+    /// The repository and the presets stay.
     Remove {
+        /// The project name.
         name: String,
+        /// Remove it even though some jobs are not merged or cancelled, or its file is broken.
         #[arg(long)]
         force: bool,
     },
@@ -300,6 +395,64 @@ pub enum ProjectCmd {
 mod tests {
     use super::*;
     use clap::error::ErrorKind;
+
+    /// Every command and subcommand, with its path such as `project add`.
+    fn all_commands(cmd: &clap::Command, prefix: &str, out: &mut Vec<(String, clap::Command)>) {
+        for sub in cmd.get_subcommands() {
+            let path = format!("{prefix}{}", sub.get_name());
+            out.push((path.clone(), sub.clone()));
+            all_commands(sub, &format!("{path} "), out);
+        }
+    }
+
+    #[test]
+    fn every_command_has_a_short_summary() {
+        use clap::CommandFactory;
+        let mut commands = Vec::new();
+        all_commands(&Cli::command(), "", &mut commands);
+        assert!(commands.len() > 20, "{}", commands.len());
+        let bad: Vec<String> = commands
+            .into_iter()
+            .filter_map(|(path, cmd)| {
+                let about = cmd.get_about().map(|a| a.to_string()).unwrap_or_default();
+                (about.is_empty() || about.chars().count() > 80)
+                    .then(|| format!("`factory {path}`: {about:?}"))
+            })
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "summaries missing or over 80 characters:\n{}",
+            bad.join("\n")
+        );
+    }
+
+    #[test]
+    fn every_positional_argument_is_described() {
+        use clap::CommandFactory;
+        let mut commands = Vec::new();
+        all_commands(&Cli::command(), "", &mut commands);
+        for (path, cmd) in commands {
+            for arg in cmd.get_positionals() {
+                assert!(
+                    arg.get_help().is_some(),
+                    "`factory {path}` argument <{}> has no help",
+                    arg.get_id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bare_factory_prints_the_help() {
+        let err = Cli::try_parse_from(["factory"]).expect_err("shows help");
+        assert_eq!(
+            err.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        let text = err.to_string();
+        assert!(text.contains("Typical flow:"), "{text}");
+        assert!(text.contains("retry"), "{text}");
+    }
 
     #[test]
     fn version_flag_prints_the_workspace_version() {
