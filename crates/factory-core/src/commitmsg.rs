@@ -334,7 +334,8 @@ fn status_value(line: &str) -> Option<&str> {
 /// The status the builder reported, or `None` when it reported none or an unknown one.
 /// A first line `BLOCKED:` wins. Else the first `Status:` line outside code fences with a known
 /// value counts (see `status_value` for the accepted forms); a line with an unknown value is skipped.
-/// The text is the rest of that line and the following unfenced lines up to the first `Ruling:` line.
+/// The text is the rest of that line and the following unfenced lines up to the first `Ruling:`
+/// line or commit note marker.
 pub fn parse_builder_status(reply: &str) -> Option<BuilderStatus> {
     if let Some(reason) = blocked_reason(reply) {
         return Some(BuilderStatus::Blocked(reason));
@@ -362,7 +363,7 @@ pub fn parse_builder_status(reply: &str) -> Option<BuilderStatus> {
             .to_string();
         for rest in lines[at + 1..]
             .iter()
-            .take_while(|l| !l.trim().starts_with("Ruling:"))
+            .take_while(|l| !l.trim().starts_with("Ruling:") && l.trim() != COMMIT_BEGIN)
         {
             text.push('\n');
             text.push_str(rest);
@@ -400,6 +401,235 @@ pub fn extract_message(reply: &str) -> Option<String> {
         None
     } else {
         Some(text.to_string())
+    }
+}
+
+pub const COMMIT_BEGIN: &str = "---BEGIN COMMIT---";
+pub const COMMIT_END: &str = "---END COMMIT---";
+/// The most characters a job commit subject may have.
+pub const MAX_JOB_SUBJECT_CHARS: usize = 50;
+const NOTE_WIDTH: usize = 72;
+const FALLBACK_SUBJECT: &str = "Factory task";
+const FALLBACK_MAX_FILES: usize = 20;
+
+/// The builder's commit note: a subject and a body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitNote {
+    pub subject: String,
+    pub body: String,
+}
+
+impl CommitNote {
+    /// The note as a file: subject, a blank line, the body and a final newline.
+    pub fn to_file_text(&self) -> String {
+        format!("{}\n\n{}\n", self.subject, self.body)
+    }
+
+    /// Reads a note back from `to_file_text`. `None` when the subject is empty.
+    pub fn from_file_text(text: &str) -> Option<CommitNote> {
+        let (first, rest) = text.split_once('\n').unwrap_or((text, ""));
+        let subject = first.trim();
+        if subject.is_empty() {
+            return None;
+        }
+        Some(CommitNote {
+            subject: subject.to_string(),
+            body: rest.trim().to_string(),
+        })
+    }
+}
+
+/// The last commit note in the reply, fenced or not. `None` without a marker pair or a subject.
+pub fn parse_commit_note(reply: &str) -> Option<CommitNote> {
+    for (at, _) in reply.rmatch_indices(COMMIT_BEGIN) {
+        let rest = &reply[at + COMMIT_BEGIN.len()..];
+        let Some(end) = rest.find(COMMIT_END) else {
+            continue;
+        };
+        let mut lines = rest[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("```"))
+            .skip_while(|l| l.trim().is_empty());
+        let subject = lines.next()?.trim();
+        if subject.is_empty() {
+            return None;
+        }
+        let body = lines.collect::<Vec<_>>().join("\n");
+        return Some(CommitNote {
+            subject: subject.to_string(),
+            body: body.trim().to_string(),
+        });
+    }
+    None
+}
+
+/// One part of a note body: a prose run or a bullet, both as single-line text.
+enum NotePart {
+    Prose(String),
+    Bullet(String),
+}
+
+fn bullet_text(line: &str) -> Option<&str> {
+    let t = line.trim_start();
+    t.strip_prefix("- ").or_else(|| t.strip_prefix("* "))
+}
+
+/// The paragraphs of a body, each as its prose run (if any) followed by its bullets.
+fn note_parts(body: &str) -> Vec<Vec<NotePart>> {
+    let mut paragraphs: Vec<Vec<NotePart>> = Vec::new();
+    let mut current: Vec<NotePart> = Vec::new();
+    let mut lines: Vec<&str> = body.lines().collect();
+    lines.push("");
+    for line in lines {
+        if line.trim().is_empty() {
+            if !current.is_empty() {
+                paragraphs.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        let fold = |l: &str| l.split_whitespace().collect::<Vec<_>>().join(" ");
+        if let Some(t) = bullet_text(line) {
+            current.push(NotePart::Bullet(fold(t)));
+            continue;
+        }
+        match current.last_mut() {
+            Some(NotePart::Prose(s) | NotePart::Bullet(s)) => {
+                s.push(' ');
+                s.push_str(&fold(line));
+            }
+            None => current.push(NotePart::Prose(fold(line))),
+        }
+    }
+    paragraphs
+}
+
+/// The bullets of a note body as single-line strings without their marker. Prose is skipped.
+pub fn note_bullets(body: &str) -> Vec<String> {
+    note_parts(body)
+        .into_iter()
+        .flatten()
+        .filter_map(|p| match p {
+            NotePart::Bullet(s) => Some(s),
+            NotePart::Prose(_) => None,
+        })
+        .collect()
+}
+
+/// Folds whitespace and wraps on word boundaries. A word longer than `width` keeps its own line.
+pub fn wrap_paragraph(text: &str, width: usize) -> String {
+    wrap_words(text, width, "", "")
+}
+
+/// Wraps one bullet. The result starts with `- ` and continuation lines with two spaces.
+pub fn wrap_bullet(text: &str, width: usize) -> String {
+    let t = text.trim_start();
+    let t = t.strip_prefix("- ").unwrap_or(t);
+    wrap_words(t, width, "- ", "  ")
+}
+
+fn wrap_words(text: &str, width: usize, first: &str, rest: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = first.to_string();
+    let mut empty = true;
+    for word in text.split_whitespace() {
+        let fits = line.chars().count() + 1 + word.chars().count() <= width;
+        if !empty && !fits {
+            lines.push(std::mem::replace(&mut line, rest.to_string()));
+            empty = true;
+        }
+        if !empty {
+            line.push(' ');
+        }
+        line.push_str(word);
+        empty = false;
+    }
+    lines.push(line);
+    lines.join("\n")
+}
+
+/// Checks a note against the job message rules and rewraps its body at 72 characters.
+pub fn check_note(note: &CommitNote) -> Result<CommitNote, String> {
+    let subject = note.subject.trim();
+    let n = subject.chars().count();
+    if subject.is_empty() {
+        return Err("the subject is empty".to_string());
+    }
+    if n > MAX_JOB_SUBJECT_CHARS {
+        return Err(format!(
+            "the subject is {n} characters, the limit is {MAX_JOB_SUBJECT_CHARS}"
+        ));
+    }
+    if subject.ends_with('.') {
+        return Err("the subject ends with a period".to_string());
+    }
+    if note.body.trim().is_empty() {
+        return Err("the body is empty".to_string());
+    }
+    let paragraphs: Vec<String> = note_parts(&note.body)
+        .into_iter()
+        .map(|parts| {
+            parts
+                .iter()
+                .map(|p| match p {
+                    NotePart::Prose(s) => wrap_paragraph(s, NOTE_WIDTH),
+                    NotePart::Bullet(s) => wrap_bullet(s, NOTE_WIDTH),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
+    Ok(CommitNote {
+        subject: subject.to_string(),
+        body: paragraphs.join("\n\n"),
+    })
+}
+
+/// Folds whitespace and cuts the text to at most `limit` characters at a word boundary, or at
+/// the limit when one word is longer. Trailing whitespace and periods are dropped. An empty
+/// result means the caller should use its default.
+fn cut_text(text: &str, limit: usize) -> String {
+    let folded = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars: Vec<char> = folded.chars().collect();
+    let cut: String = if chars.len() <= limit {
+        folded
+    } else {
+        let head: String = chars[..limit].iter().collect();
+        if chars[limit] == ' ' {
+            head
+        } else {
+            match head.rfind(' ') {
+                Some(i) => head[..i].to_string(),
+                None => head,
+            }
+        }
+    };
+    cut.trim_end_matches(|c: char| c == '.' || c.is_whitespace())
+        .to_string()
+}
+
+/// A note built from the task title and the changed files, for when the builder wrote none.
+pub fn fallback_note(task_title: &str, files: &[String]) -> CommitNote {
+    let mut subject = cut_text(task_title, MAX_JOB_SUBJECT_CHARS);
+    if subject.is_empty() {
+        subject = FALLBACK_SUBJECT.to_string();
+    }
+    let mut lines: Vec<String> = files
+        .iter()
+        .take(FALLBACK_MAX_FILES)
+        .map(|f| format!("- {f}"))
+        .collect();
+    if files.len() > FALLBACK_MAX_FILES {
+        lines.push(format!(
+            "- and {} more files",
+            files.len() - FALLBACK_MAX_FILES
+        ));
+    }
+    if lines.is_empty() {
+        lines.push("- no files changed".to_string());
+    }
+    CommitNote {
+        subject,
+        body: lines.join("\n"),
     }
 }
 
@@ -853,6 +1083,122 @@ mod tests {
         assert_eq!(
             append_footers("feat: x\n\nbody\n\nSigned-off-by: A", &lines),
             "feat: x\n\nbody\n\nSigned-off-by: A\nFixes: #20"
+        );
+    }
+
+    fn note(subject: &str, body: &str) -> CommitNote {
+        CommitNote {
+            subject: subject.to_string(),
+            body: body.to_string(),
+        }
+    }
+
+    const NOTE_REPLY: &str = "Status: DONE\nRuling: a — b — c\n---BEGIN COMMIT---\nAdd a retry endpoint\n\nWhy it matters.\n\n- Add POST retry\n---END COMMIT---\n";
+
+    #[test]
+    fn a_note_is_parsed_from_the_end_of_a_reply() {
+        let got = parse_commit_note(NOTE_REPLY).expect("a note");
+        assert_eq!(got.subject, "Add a retry endpoint");
+        assert_eq!(got.body, "Why it matters.\n\n- Add POST retry");
+    }
+
+    #[test]
+    fn a_missing_note_is_none() {
+        assert_eq!(parse_commit_note("Status: DONE"), None);
+        assert_eq!(parse_commit_note("---BEGIN COMMIT---\nAdd x\n"), None);
+        assert_eq!(
+            parse_commit_note("---BEGIN COMMIT---\n\n---END COMMIT---"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_fenced_note_is_accepted() {
+        let fenced = format!("```text\n{NOTE_REPLY}```\n");
+        assert_eq!(parse_commit_note(&fenced), parse_commit_note(NOTE_REPLY));
+        assert!(parse_commit_note(&fenced).is_some());
+    }
+
+    #[test]
+    fn the_last_note_wins() {
+        let reply = "---BEGIN COMMIT---\nFirst\n\n- a\n---END COMMIT---\n---BEGIN COMMIT---\nSecond\n\n- b\n---END COMMIT---";
+        assert_eq!(parse_commit_note(reply).expect("a note").subject, "Second");
+    }
+
+    #[test]
+    fn check_note_refuses_each_rule() {
+        let err = |n: CommitNote| check_note(&n).expect_err("refused");
+        assert_eq!(err(note("", "- a")), "the subject is empty");
+        assert_eq!(
+            err(note(&"a".repeat(51), "- a")),
+            "the subject is 51 characters, the limit is 50"
+        );
+        assert_eq!(err(note("Add x.", "- a")), "the subject ends with a period");
+        assert_eq!(err(note("Add x", "")), "the body is empty");
+        assert!(check_note(&note(&"a".repeat(50), "- a")).is_ok());
+    }
+
+    #[test]
+    fn check_note_rewraps_long_bullets() {
+        let long = format!("- {}", vec!["word"; 20].join(" "));
+        let got = check_note(&note("Add x", &long)).expect("accepted");
+        let lines: Vec<&str> = got.body.lines().collect();
+        assert!(lines.len() > 1);
+        assert!(lines.iter().all(|l| l.chars().count() <= 72));
+        assert!(lines[0].starts_with("- "));
+        assert!(lines[1..].iter().all(|l| l.starts_with("  ")));
+        let star = check_note(&note("Add x", "* one\n  more")).expect("accepted");
+        assert_eq!(star.body, "- one more");
+    }
+
+    #[test]
+    fn note_bullets_joins_continuations_and_skips_prose() {
+        assert_eq!(
+            note_bullets("Prose line.\n\n- one\n  more\n- two"),
+            vec!["one more", "two"]
+        );
+        assert_eq!(note_bullets("- one\nmore\n* two"), vec!["one more", "two"]);
+    }
+
+    #[test]
+    fn a_note_round_trips_through_its_file_text() {
+        let n = note("Add x", "Why.\n\n- one\n  more\n- two");
+        assert_eq!(CommitNote::from_file_text(&n.to_file_text()), Some(n));
+        assert_eq!(CommitNote::from_file_text("\n\nbody"), None);
+    }
+
+    #[test]
+    fn fallback_note_lists_twenty_files_then_a_count() {
+        let files: Vec<String> = (0..23).map(|i| format!("f{i}.rs")).collect();
+        let got = fallback_note("Add x", &files);
+        let lines: Vec<&str> = got.body.lines().collect();
+        assert_eq!(lines.len(), 21);
+        assert_eq!(lines[0], "- f0.rs");
+        assert_eq!(lines[19], "- f19.rs");
+        assert_eq!(lines[20], "- and 3 more files");
+        assert_eq!(fallback_note("Add x", &[]).body, "- no files changed");
+        let title = "word ".repeat(14);
+        let cut = fallback_note(&title, &[]).subject;
+        assert!(cut.chars().count() <= 50);
+        assert!(cut.split(' ').all(|w| w == "word"));
+        let one = fallback_note(&"a".repeat(60), &[]).subject;
+        assert_eq!(one.chars().count(), 50);
+        assert_eq!(fallback_note("...", &[]).subject, "Factory task");
+    }
+
+    #[test]
+    fn cut_text_handles_long_words_and_periods() {
+        assert_eq!(cut_text("Fix A. Then B", 6), "Fix A");
+        assert_eq!(cut_text(&"b".repeat(60), 50), "b".repeat(50));
+        assert_eq!(cut_text("...", 10), "");
+    }
+
+    #[test]
+    fn the_status_text_stops_at_the_commit_note() {
+        let reply = "Status: DONE_WITH_CONCERNS\nslow test\n---BEGIN COMMIT---\nAdd x\n\n- y\n---END COMMIT---";
+        assert_eq!(
+            parse_builder_status(reply),
+            Some(BuilderStatus::DoneWithConcerns("slow test".to_string()))
         );
     }
 }
