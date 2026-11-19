@@ -46,7 +46,7 @@ pub fn resolve(home: &Home, name: &str, tip: &dyn BaseTipFiles) -> Result<Resolv
     // A bad preset name is a problem, and the layout then never names the preset folder.
     let layout = match project::layout(home, name, &file) {
         Ok(l) => l,
-        Err(_) => project::build_layout(home, name, &file, false),
+        Err(_) => project::build_layout(home, name, &file),
     };
     let merged = merged_config(home, &file, tip, &mut problems);
     let mut notes = Vec::new();
@@ -820,12 +820,8 @@ mod tests {
             "{:?}",
             r.problems
         );
-        assert!(r.layout.commit_context_file.starts_with(&e.home.dir));
-        assert!(!r
-            .layout
-            .commit_context_file
-            .to_string_lossy()
-            .contains(".."));
+        assert!(r.layout.config_file.starts_with(&e.home.dir));
+        assert!(!r.layout.config_file.to_string_lossy().contains(".."));
         assert!(r.config.degraded);
     }
 }

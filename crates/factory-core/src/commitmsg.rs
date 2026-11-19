@@ -4,9 +4,6 @@
 /// allows slack so a 51 character subject does not fail a run.
 pub const MAX_SUBJECT_CHARS: usize = 72;
 
-/// Most commits one committer run may make.
-pub const MAX_COMMITS_PER_RUN: usize = 4;
-
 const TYPES: &[&str] = &[
     "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
 ];
@@ -268,28 +265,6 @@ pub fn append_footers(message: &str, lines: &[String]) -> String {
     out
 }
 
-/// The subject of the plain fallback commit: `chore: <task title>`, with whitespace folded,
-/// a trailing period removed and the whole subject cut to 72 characters.
-pub fn fallback_subject(task_title: &str) -> String {
-    let folded = task_title.split_whitespace().collect::<Vec<_>>().join(" ");
-    let title = folded.trim_end_matches('.').trim();
-    let title = if title.is_empty() {
-        "commit factory changes"
-    } else {
-        title
-    };
-    let prefix = "chore: ";
-    let room = MAX_SUBJECT_CHARS - prefix.chars().count();
-    let cut: String = title.chars().take(room).collect();
-    let cut = cut.trim_end_matches(|c: char| c == '.' || c.is_whitespace());
-    let cut = if cut.is_empty() {
-        "commit factory changes"
-    } else {
-        cut
-    };
-    format!("{prefix}{cut}")
-}
-
 /// The reason after `BLOCKED:` when the first line of a committer reply starts with it.
 pub fn blocked_reason(reply: &str) -> Option<String> {
     let first = reply.lines().next()?.trim();
@@ -385,23 +360,6 @@ pub fn builder_rulings(reply: &str) -> Vec<String> {
         .map(|body| body.trim().to_string())
         .filter(|body| !body.is_empty())
         .collect()
-}
-
-pub const MESSAGE_BEGIN: &str = "---BEGIN MESSAGE---";
-pub const MESSAGE_END: &str = "---END MESSAGE---";
-
-/// The text between the first begin marker and the first end marker after it, trimmed.
-/// `None` when a marker is missing or the text is empty.
-pub fn extract_message(reply: &str) -> Option<String> {
-    let start = reply.find(MESSAGE_BEGIN)? + MESSAGE_BEGIN.len();
-    let rest = &reply[start..];
-    let end = rest.find(MESSAGE_END)?;
-    let text = rest[..end].trim();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text.to_string())
-    }
 }
 
 pub const COMMIT_BEGIN: &str = "---BEGIN COMMIT---";
@@ -803,32 +761,6 @@ mod tests {
     }
 
     #[test]
-    fn fallback_subject_is_a_valid_chore_subject() {
-        assert_eq!(fallback_subject("Add the thing."), "chore: Add the thing");
-        assert_eq!(
-            fallback_subject("  Add   the\nthing  "),
-            "chore: Add the thing"
-        );
-        assert_eq!(fallback_subject(""), "chore: commit factory changes");
-        let long = fallback_subject(&"word ".repeat(40));
-        assert!(long.chars().count() <= MAX_SUBJECT_CHARS);
-        assert!(validate_message(&long).is_ok());
-        let multibyte = fallback_subject(&"é".repeat(100));
-        assert!(multibyte.chars().count() <= MAX_SUBJECT_CHARS);
-        assert!(validate_message(&multibyte).is_ok());
-    }
-
-    #[test]
-    fn fallback_subject_is_valid_for_dots_and_blank_titles() {
-        assert_eq!(fallback_subject(". ."), "chore: commit factory changes");
-        assert_eq!(fallback_subject("abc ."), "chore: abc");
-        assert_eq!(fallback_subject("   "), "chore: commit factory changes");
-        for title in [". .", "abc .", "   "] {
-            assert!(validate_message(&fallback_subject(title)).is_ok());
-        }
-    }
-
-    #[test]
     fn rejects_a_subject_ending_with_whitespace() {
         assert!(validate_message("feat: x ").is_err());
     }
@@ -968,25 +900,6 @@ mod tests {
         assert_eq!(
             builder_rulings(reply),
             vec!["kept the old name".to_string(), "second one".to_string()]
-        );
-    }
-
-    #[test]
-    fn extract_message_takes_the_first_marker_pair() {
-        let reply = "noise\n---BEGIN MESSAGE---\nfeat(x): add y\n\nbody line\n---END MESSAGE---\n---BEGIN MESSAGE---\nother\n---END MESSAGE---";
-        assert_eq!(
-            extract_message(reply).as_deref(),
-            Some("feat(x): add y\n\nbody line")
-        );
-    }
-
-    #[test]
-    fn extract_message_needs_both_markers_and_text() {
-        assert_eq!(extract_message("feat(x): add y"), None);
-        assert_eq!(extract_message("---BEGIN MESSAGE---\nfeat(x): y"), None);
-        assert_eq!(
-            extract_message("---BEGIN MESSAGE---\n  \n---END MESSAGE---"),
-            None
         );
     }
 

@@ -35,9 +35,6 @@ pub fn commit_file(dir: &Path, name: &str, content: &str) -> String {
         .to_string()
 }
 
-/// The subject the fake committer gives its commits.
-pub const AUTO_COMMIT_MESSAGE: &str = "feat(test): build step";
-
 /// Commits whatever is staged in `dir`, like a committer agent would. Returns the new sha.
 pub fn commit_index(dir: &Path, message: &str) -> String {
     let repo = Repository::open(dir).expect("open repo");
@@ -63,20 +60,6 @@ pub fn amend_head(dir: &Path, message: &str) -> String {
     head.amend(Some("HEAD"), None, None, None, Some(message), Some(&tree))
         .expect("amend")
         .to_string()
-}
-
-/// Writes the committer prompt context into the main checkout, where the engine reads it.
-pub fn write_commit_context(main: &Path) {
-    let path = main.join(".claude/factory/commit-context.md");
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-    std::fs::write(path, "TEST CONTEXT\n").expect("context");
-}
-
-/// A fixture whose main checkout has the committer context file, so the engine runs the committer.
-pub fn committing_fixture() -> Fixture {
-    let fx = Fixture::new();
-    write_commit_context(&fx.main);
-    fx
 }
 
 pub struct Fixture {
@@ -170,8 +153,6 @@ pub type Effect = Box<dyn Fn(&AgentSpec) -> String + Send + Sync>;
 pub struct ScriptedRunner {
     effects: Mutex<VecDeque<Effect>>,
     calls: Mutex<Vec<AgentSpec>>,
-    /// When true, every `committer` run commits the staged index and does not use up an effect.
-    auto_committer: bool,
 }
 
 impl ScriptedRunner {
@@ -203,13 +184,6 @@ impl ScriptedRunner {
 impl AgentRunner for ScriptedRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         self.calls.lock().expect("calls").push(spec.clone());
-        if self.auto_committer && spec.role == "committer" {
-            commit_index(&spec.cwd, AUTO_COMMIT_MESSAGE);
-            return AgentRun {
-                session_id: Some("sess-c".to_string()),
-                ..AgentRun::done("done")
-            };
-        }
         let next = self.effects.lock().expect("effects").pop_front();
         match next {
             Some(effect) => AgentRun {
@@ -303,16 +277,6 @@ pub fn scripted(effects: Vec<Effect>) -> ScriptedRunner {
     ScriptedRunner {
         effects: Mutex::new(effects.into()),
         calls: Mutex::new(Vec::new()),
-        auto_committer: false,
-    }
-}
-
-/// Like `scripted`, but committer runs are answered by committing the staged index.
-pub fn scripted_auto(effects: Vec<Effect>) -> ScriptedRunner {
-    ScriptedRunner {
-        effects: Mutex::new(effects.into()),
-        calls: Mutex::new(Vec::new()),
-        auto_committer: true,
     }
 }
 
@@ -355,21 +319,17 @@ pub fn driver_for(
 
 /// Creates a repo, a job branch with one commit adding `docs/hello.txt`, a plan file and a board entry at `approve`.
 pub fn approved_job() -> MergeFixture {
-    approved_job_with(approving_runner(3), false)
+    approved_job_with(approving_runner(3))
 }
 
-/// Like `approved_job`, with a chosen runner. `with_context` commits the committer context file to main first.
-pub fn approved_job_with(runner: Arc<ScriptedRunner>, with_context: bool) -> MergeFixture {
-    approved_job_config(runner, with_context, Config::default())
+/// Like `approved_job`, with a chosen runner.
+pub fn approved_job_with(runner: Arc<ScriptedRunner>) -> MergeFixture {
+    approved_job_config(runner, Config::default())
 }
 
 /// Like `approved_job_with`, with a chosen config.
-pub fn approved_job_config(
-    runner: Arc<ScriptedRunner>,
-    with_context: bool,
-    config: Config,
-) -> MergeFixture {
-    approved_job_dyn(runner.clone(), runner, with_context, config)
+pub fn approved_job_config(runner: Arc<ScriptedRunner>, config: Config) -> MergeFixture {
+    approved_job_dyn(runner.clone(), runner, config)
 }
 
 /// Like `approved_job_config`, with the driver's runner apart from the scripted runner the fixture exposes.
@@ -377,7 +337,6 @@ pub fn approved_job_config(
 pub fn approved_job_dyn(
     runner: Arc<dyn AgentRunner>,
     scripted: Arc<ScriptedRunner>,
-    with_context: bool,
     mut config: Config,
 ) -> MergeFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -389,9 +348,6 @@ pub fn approved_job_dyn(
         let head = repo.head().expect("head").peel_to_commit().expect("commit");
         repo.branch(&config.base_branch, &head, false)
             .expect("base branch");
-    }
-    if with_context {
-        commit_file(&main, ".claude/factory/commit-context.md", "TEST CONTEXT\n");
     }
     // A kb_path set to a relative name points at a folder inside the temp dir.
     if let Some(name) = config.kb_path.clone() {
@@ -579,9 +535,6 @@ impl AgentRunner for RoleRunner {
             std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
             std::fs::write(path, "built\n").expect("write");
             "done".to_string()
-        } else if spec.role == "committer" {
-            commit_index(&spec.cwd, AUTO_COMMIT_MESSAGE);
-            "done".to_string()
         } else if spec.role == "spec-reviewer" {
             "VERDICT: APPROVE".to_string()
         } else {
@@ -610,7 +563,7 @@ impl SeriesFixture {
         SeriesFixture::build(verdict, config, |runner| Arc::new(runner))
     }
 
-    /// A repo with the committer context, and a driver whose runner for each job is a `RoleRunner`
+    /// A repo and a driver whose runner for each job is a `RoleRunner`
     /// with `verdict`, passed through `wrap`.
     pub fn build(
         verdict: &str,
@@ -620,7 +573,6 @@ impl SeriesFixture {
         let tmp = tempfile::tempdir().expect("tempdir");
         let main = tmp.path().join("repo");
         init_repo(&main);
-        write_commit_context(&main);
         let events = main.join(".superpowers/factory/events.jsonl");
         let verdict = verdict.to_string();
         let factory: factory_engine::RunnerFactory = Box::new(move |job_id| {

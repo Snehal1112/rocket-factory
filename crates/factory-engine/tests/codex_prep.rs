@@ -1,6 +1,6 @@
 mod common;
 
-use common::{committing_fixture, reply, scripted, scripted_auto, Effect, Fixture};
+use common::{reply, scripted, Effect, Fixture};
 use factory_agent::AgentSpec;
 use factory_core::AgentFile;
 use factory_engine::KbOutcome;
@@ -36,8 +36,8 @@ fn with_kb(mut fx: Fixture) -> Fixture {
 
 #[test]
 fn run_agent_prepends_the_agent_file_and_the_codex_preface() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -57,8 +57,8 @@ fn run_agent_prepends_the_agent_file_and_the_codex_preface() {
 
 #[test]
 fn kb_gets_the_skill_sentence() {
-    let fx = with_kb(codex(committing_fixture()));
-    let runner = scripted_auto(vec![write_effect(), reply("No relevant changes")]);
+    let fx = with_kb(codex(Fixture::new()));
+    let runner = scripted(vec![write_effect(), reply("No relevant changes")]);
     let e = fx.engine(&runner).with_agent_files(files());
     e.build_stage().expect("build");
     e.kb_refresh_step(None).expect("kb");
@@ -93,9 +93,9 @@ fn agent_text(runner: &common::ScriptedRunner, role: &str) -> String {
 
 #[test]
 fn builder_with_superpowers_installed_gets_skills_and_the_allowlist() {
-    let fx = codex(committing_fixture());
+    let fx = codex(Fixture::new());
     let root = skill_root(&fx, &["superpowers/tdd", "other"]);
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .with_codex_skill_roots(vec![root.clone()])
@@ -120,7 +120,7 @@ fn builder_with_superpowers_installed_gets_skills_and_the_allowlist() {
 
 #[test]
 fn builder_sees_the_worktree_skills_folder() {
-    let fx = codex(committing_fixture());
+    let fx = codex(Fixture::new());
     let wt = fx
         .repo
         .create_worktree(&factory_git::JobRef {
@@ -141,7 +141,7 @@ fn builder_sees_the_worktree_skills_folder() {
         std::fs::create_dir_all(skills.join(rel)).expect("mkdir skill");
         std::fs::write(skills.join(rel).join("SKILL.md"), "x\n").expect("write skill");
     }
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -162,8 +162,8 @@ fn builder_sees_the_worktree_skills_folder() {
 
 #[test]
 fn unmatched_allowlist_has_no_skills_preface() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -175,9 +175,9 @@ fn unmatched_allowlist_has_no_skills_preface() {
 
 #[test]
 fn reviewer_gets_no_skills() {
-    let fx = codex(committing_fixture());
+    let fx = codex(Fixture::new());
     let root = skill_root(&fx, &["superpowers/tdd"]);
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -186,7 +186,7 @@ fn reviewer_gets_no_skills() {
         .with_agent_files(files())
         .checks_stage()
         .expect("checks");
-    let reviewer = scripted_auto(vec![reply("ok\nVERDICT: APPROVE")]);
+    let reviewer = scripted(vec![reply("ok\nVERDICT: APPROVE")]);
     let mut list = files();
     list.push(AgentFile {
         name: "factory-code-reviewer.md".to_string(),
@@ -203,8 +203,8 @@ fn reviewer_gets_no_skills() {
 
 #[test]
 fn a_codex_reviewer_prompt_carries_the_user_note_line() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -215,7 +215,7 @@ fn a_codex_reviewer_prompt_carries_the_user_note_line() {
         .expect("checks");
     let note = fx.job_dir.join("user-note-r1.md");
     std::fs::write(&note, "use a shorter name").expect("note");
-    let reviewer = scripted_auto(vec![reply("ok\nVERDICT: APPROVE")]);
+    let reviewer = scripted(vec![reply("ok\nVERDICT: APPROVE")]);
     let mut list = files();
     list.push(AgentFile {
         name: "factory-code-reviewer.md".to_string(),
@@ -255,8 +255,8 @@ fn kb_with_kb_refresh_installed_has_no_skill_sentence() {
 
 #[test]
 fn network_is_on_only_for_builder_roles() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -266,12 +266,12 @@ fn network_is_on_only_for_builder_roles() {
 
 #[test]
 fn codex_builder_runs_in_the_project_folder() {
-    let mut fx = codex(committing_fixture());
+    let mut fx = codex(Fixture::new());
     common::commit_file(&fx.main, "apps/web/index.txt", "web\n");
     fx.repo = factory_git::Repo::open(&fx.main)
         .expect("open")
         .with_scope("web", std::path::Path::new("apps/web"));
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -349,9 +349,9 @@ fn kb_under_codex_has_no_extra_root_without_auto_commit() {
 
 #[test]
 fn codex_runs_skip_the_cache_ttl_variables() {
-    let mut fx = codex(committing_fixture());
+    let mut fx = codex(Fixture::new());
     fx.config.cache_ttl = Some("5m".to_string());
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -392,8 +392,8 @@ fn agent_file_name_missing_from_the_list_fails_before_spawn() {
 
 #[test]
 fn claude_projects_are_untouched() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -430,9 +430,9 @@ fn saved_claude_state(j: &mut factory_core::Job) {
 
 #[test]
 fn a_provider_switch_clears_saved_session_ids_once() {
-    let fx = codex(committing_fixture());
+    let fx = codex(Fixture::new());
     set_job(&fx, saved_claude_state);
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -449,7 +449,7 @@ fn a_provider_switch_clears_saved_session_ids_once() {
 
 #[test]
 fn provider_switch_clears_task_resume_before_build_task_selects_a_session() {
-    let fx = codex(committing_fixture());
+    let fx = codex(Fixture::new());
     let wt = fx
         .repo
         .create_worktree(&factory_git::JobRef {
@@ -471,7 +471,7 @@ fn provider_switch_clears_task_resume_before_build_task_selects_a_session() {
             tip,
         });
     });
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -484,7 +484,7 @@ fn provider_switch_clears_task_resume_before_build_task_selects_a_session() {
 
 #[test]
 fn provider_switch_clears_legacy_resume_before_findings_are_required() {
-    let fx = codex(committing_fixture());
+    let fx = codex(Fixture::new());
     let wt = fx
         .repo
         .create_worktree(&factory_git::JobRef {
@@ -502,7 +502,7 @@ fn provider_switch_clears_legacy_resume_before_findings_are_required() {
         j.base = Some(wt.base.clone());
         j.head = Some(tip);
     });
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -516,12 +516,12 @@ fn provider_switch_clears_legacy_resume_before_findings_are_required() {
 
 #[test]
 fn an_old_job_counts_as_claude() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     set_job(&fx, |j| {
         j.provider = None;
         j.builder_id = Some("claude-sess".to_string());
     });
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -533,8 +533,8 @@ fn an_old_job_counts_as_claude() {
 
 #[test]
 fn provider_sync_runs_once_per_engine() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![]);
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![]);
     let engine = fx.engine(&runner);
     set_job(&fx, |j| j.provider = None);
     engine.sync_provider().expect("first sync");
@@ -556,8 +556,8 @@ fn provider_sync_runs_once_per_engine() {
 
 #[test]
 fn codex_builders_get_no_simplify_line() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -568,14 +568,14 @@ fn codex_builders_get_no_simplify_line() {
 
 #[test]
 fn a_codex_builder_prompt_carries_the_wider_excerpt() {
-    let fx = codex(committing_fixture());
+    let fx = codex(Fixture::new());
     std::fs::write(&fx.plan_file, "# P\n\n### Task 1: first thing\n\nx\n").expect("plan");
     std::fs::write(
         fx.job_dir.join("spec.md"),
         "Goal: ship it.\n\n## Design\n\nDESIGN-MARKER\n\n## Testing\n\nTESTING-MARKER\n\n## Acceptance criteria\n\n- ACCEPT-MARKER\n",
     )
     .expect("spec");
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -597,8 +597,8 @@ fn a_codex_builder_prompt_carries_the_wider_excerpt() {
 
 #[test]
 fn a_claude_run_pins_helper_agents_to_its_own_model() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.last_spec_for("builder").expect("builder spec");
     let model = spec.model.clone().expect("model");
@@ -613,8 +613,8 @@ fn a_claude_run_pins_helper_agents_to_its_own_model() {
 
 #[test]
 fn a_codex_run_sets_no_subagent_model() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{committing_fixture, scripted_auto, Effect, Fixture, ScriptedRunner};
+use common::{scripted, Effect, Fixture, ScriptedRunner};
 use factory_core::{Board, ParkRecord, Stage};
 use factory_engine::{restore_file, StageOutcome};
 
@@ -20,10 +20,10 @@ fn expect_parked(out: StageOutcome, want: &str) {
 
 #[test]
 fn builder_changing_plan_md_is_restored_and_parked() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let original = std::fs::read_to_string(&fx.plan_file).expect("plan");
     let plan = fx.plan_file.clone();
-    let runner = scripted_auto(vec![Box::new(move |_spec| {
+    let runner = scripted(vec![Box::new(move |_spec| {
         std::fs::write(&plan, "# rewritten\n").expect("write");
         "done".to_string()
     })]);
@@ -39,12 +39,12 @@ fn builder_changing_plan_md_is_restored_and_parked() {
 
 #[test]
 fn builder_changing_progress_md_is_restored_and_parked() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let progress = fx.job_dir.join("progress.md");
     std::fs::write(&progress, "Task 8: Done\n").expect("progress");
     let before = std::fs::read_to_string(&progress).expect("read");
     let p = progress.clone();
-    let runner = scripted_auto(vec![Box::new(move |_spec| {
+    let runner = scripted(vec![Box::new(move |_spec| {
         let mut text = std::fs::read_to_string(&p).expect("read");
         text.push_str("Task 9: Done\n");
         std::fs::write(&p, text).expect("write");
@@ -62,11 +62,11 @@ fn builder_changing_progress_md_is_restored_and_parked() {
 
 #[test]
 fn a_created_job_file_is_removed_and_parks() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let spec_file = fx.job_dir.join("spec.md");
     assert!(!spec_file.exists());
     let s = spec_file.clone();
-    let runner = scripted_auto(vec![Box::new(move |_spec| {
+    let runner = scripted(vec![Box::new(move |_spec| {
         std::fs::write(&s, "new spec\n").expect("write");
         "done".to_string()
     })]);
@@ -79,16 +79,16 @@ fn a_created_job_file_is_removed_and_parks() {
 
 #[test]
 fn unchanged_job_files_do_not_park() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt")]);
     let out = fx.engine(&runner).build_stage().expect("stage");
     assert!(matches!(out, StageOutcome::Advanced(_)), "{out:?}");
 }
 
 #[test]
 fn absent_job_file_stays_absent() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt")]);
     let out = fx.engine(&runner).build_stage().expect("stage");
     assert!(matches!(out, StageOutcome::Advanced(_)), "{out:?}");
     assert!(!fx.job_dir.join("spec.md").exists());
@@ -96,11 +96,11 @@ fn absent_job_file_stays_absent() {
 
 #[test]
 fn guard_holds_with_builder_permissions_false() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.builder_permissions = false;
     let original = std::fs::read_to_string(&fx.plan_file).expect("plan");
     let plan = fx.plan_file.clone();
-    let runner = scripted_auto(vec![Box::new(move |_spec| {
+    let runner = scripted(vec![Box::new(move |_spec| {
         std::fs::write(&plan, "# rewritten\n").expect("write");
         "done".to_string()
     })]);
@@ -117,7 +117,7 @@ fn guard_holds_with_builder_permissions_false() {
 const TWO_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n";
 
 fn two_task_fixture() -> Fixture {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     let mut board = Board::load(&fx.board_path).expect("load");
     board
@@ -138,9 +138,9 @@ fn rewrite_plan_effect(plan: std::path::PathBuf) -> Effect {
 
 /// One clean first build, then round 2 whose builder rewrites `plan.md`.
 fn fix_round_fixture() -> (Fixture, ScriptedRunner) {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let second = rewrite_plan_effect(fx.plan_file.clone());
-    let runner = scripted_auto(vec![change_effect("a.txt"), second]);
+    let runner = scripted(vec![change_effect("a.txt"), second]);
     fx.engine(&runner).build_stage().expect("first");
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
     let mut board = Board::load(&fx.board_path).expect("load");
@@ -154,7 +154,7 @@ fn fix_round_fixture() -> (Fixture, ScriptedRunner) {
 #[test]
 fn guard_holds_in_a_per_task_run() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![rewrite_plan_effect(fx.plan_file.clone())]);
+    let runner = scripted(vec![rewrite_plan_effect(fx.plan_file.clone())]);
     expect_parked(
         fx.engine(&runner).build_stage().expect("stage"),
         "builder changed plan.md",
@@ -197,18 +197,18 @@ fn a_tampered_fix_round_parks_with_rework_only() {
 
 #[test]
 fn a_guard_park_keeps_the_builder_session() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![rewrite_plan_effect(fx.plan_file.clone())]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![rewrite_plan_effect(fx.plan_file.clone())]);
     fx.engine(&runner).build_stage().expect("stage");
     assert_eq!(fx.job().builder_id.as_deref(), Some("sess-1"));
 }
 
 #[test]
 fn a_runner_error_still_restores_the_job_files() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let original = std::fs::read_to_string(&fx.plan_file).expect("plan");
     let (plan, board) = (fx.plan_file.clone(), fx.board_path.clone());
-    let runner = scripted_auto(vec![Box::new(move |_spec| {
+    let runner = scripted(vec![Box::new(move |_spec| {
         std::fs::write(&plan, "# rewritten\n").expect("write");
         std::fs::remove_file(&board).expect("remove board");
         "done".to_string()
@@ -234,12 +234,12 @@ fn restore_reports_a_failed_write() {
 
 #[test]
 fn two_changed_files_are_both_restored_and_the_first_is_named() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let progress = fx.job_dir.join("progress.md");
     std::fs::write(&progress, "Task 8: Done\n").expect("progress");
     let plan_before = std::fs::read_to_string(&fx.plan_file).expect("plan");
     let (p, plan) = (progress.clone(), fx.plan_file.clone());
-    let runner = scripted_auto(vec![Box::new(move |_spec| {
+    let runner = scripted(vec![Box::new(move |_spec| {
         std::fs::write(&p, "changed\n").expect("write");
         std::fs::write(&plan, "# rewritten\n").expect("write");
         "done".to_string()

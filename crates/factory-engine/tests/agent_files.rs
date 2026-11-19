@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::{commit_file, committing_fixture, scripted, scripted_auto, Effect, Fixture};
+use common::{commit_file, scripted, Effect, Fixture};
 use factory_core::{AgentFile, Stage};
 use factory_engine::{EngineError, StageOutcome};
 use git2::{Repository, StatusOptions};
@@ -42,9 +42,9 @@ fn recording_effect(seen: Arc<Mutex<Vec<Option<String>>>>) -> Effect {
 
 #[test]
 fn the_agents_file_exists_before_the_builder_runs_and_the_commit_holds_no_agent_files() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let runner = scripted_auto(vec![recording_effect(seen.clone())]);
+    let runner = scripted(vec![recording_effect(seen.clone())]);
     let out = fx
         .engine(&runner)
         .with_agent_files(files())
@@ -79,10 +79,10 @@ fn the_agents_file_exists_before_the_builder_runs_and_the_commit_holds_no_agent_
 
 #[test]
 fn a_file_tracked_on_the_base_branch_wins_in_the_agents_file() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     commit_file(&fx.main, BUILDER, "REPO");
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let runner = scripted_auto(vec![recording_effect(seen.clone())]);
+    let runner = scripted(vec![recording_effect(seen.clone())]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -100,9 +100,9 @@ fn a_file_tracked_on_the_base_branch_wins_in_the_agents_file() {
 
 #[test]
 fn no_files_means_no_agents_folder() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let runner = scripted_auto(vec![recording_effect(seen)]);
+    let runner = scripted(vec![recording_effect(seen)]);
     fx.engine(&runner).build_stage().expect("build");
     let wt = std::path::PathBuf::from(fx.job().worktree.expect("worktree"));
     assert!(!wt.join(".claude/agents").exists());
@@ -123,7 +123,7 @@ fn worktree(fx: &Fixture) -> std::path::PathBuf {
 
 /// A fixture scoped to the `web` project in `apps/web`, which exists on the base branch.
 fn scoped_fixture() -> Fixture {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     commit_file(&fx.main, "apps/web/index.txt", "web\n");
     fx.repo = factory_git::Repo::open(&fx.main)
         .expect("open")
@@ -134,7 +134,7 @@ fn scoped_fixture() -> Fixture {
 #[test]
 fn builder_starts_in_the_project_folder() {
     let fx = scoped_fixture();
-    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let runner = scripted(vec![write_effect("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -149,8 +149,8 @@ fn builder_starts_in_the_project_folder() {
 
 #[test]
 fn top_folder_project_cwd_is_unchanged() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![write_effect("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -161,9 +161,9 @@ fn top_folder_project_cwd_is_unchanged() {
 
 #[test]
 fn a_later_build_step_rewrites_a_removed_agents_file() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
-    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
+    let runner = scripted(vec![write_effect("a.txt"), write_effect("b.txt")]);
     let e = fx.engine(&runner).with_agent_files(files());
     e.build_stage().expect("first");
     std::fs::remove_file(fx.job_dir.join("agents.json")).expect("remove");
@@ -177,7 +177,7 @@ fn a_later_build_step_rewrites_a_removed_agents_file() {
 
 #[test]
 fn a_file_edited_by_the_builder_does_not_change_the_reviewers_agents() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let tamper: Effect = Box::new(|spec| {
         let dir = spec.cwd.join(".claude/agents");
         std::fs::create_dir_all(&dir).expect("mkdir");
@@ -185,7 +185,7 @@ fn a_file_edited_by_the_builder_does_not_change_the_reviewers_agents() {
         std::fs::write(spec.cwd.join("a.txt"), "a\n").expect("write");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![tamper]);
+    let runner = scripted(vec![tamper]);
     fx.engine(&runner)
         .with_agent_files(files())
         .build_stage()
@@ -196,7 +196,7 @@ fn a_file_edited_by_the_builder_does_not_change_the_reviewers_agents() {
         .expect("checks");
     let seen = Arc::new(Mutex::new(Vec::new()));
     let seen2 = seen.clone();
-    let reviewer = scripted_auto(vec![Box::new(move |spec| {
+    let reviewer = scripted(vec![Box::new(move |spec| {
         seen2
             .lock()
             .expect("seen")
@@ -215,7 +215,7 @@ fn a_file_edited_by_the_builder_does_not_change_the_reviewers_agents() {
 
 #[test]
 fn a_resumed_step_gets_the_agents_file_missed_by_the_first_step() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     let seen = Arc::new(Mutex::new(Vec::new()));
     let second: Effect = {
@@ -228,7 +228,7 @@ fn a_resumed_step_gets_the_agents_file_missed_by_the_first_step() {
             "done".to_string()
         })
     };
-    let runner = scripted_auto(vec![write_effect("a.txt"), second]);
+    let runner = scripted(vec![write_effect("a.txt"), second]);
     // The first step runs without files, as after a crash that lost them.
     fx.engine(&runner).build_stage().expect("first");
     assert!(runner
@@ -256,8 +256,8 @@ fn names_outside_the_allow_list_are_refused() {
         "factory-a/b.md",
         "factory-.md",
     ] {
-        let fx: Fixture = committing_fixture();
-        let runner = scripted_auto(vec![]);
+        let fx: Fixture = Fixture::new();
+        let runner = scripted(vec![]);
         let list = vec![AgentFile {
             name: bad.into(),
             content: "x".into(),
@@ -277,9 +277,9 @@ fn names_outside_the_allow_list_are_refused() {
 
 #[test]
 fn a_resumed_step_refuses_bad_names_and_writes_nothing() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
-    let runner = scripted_auto(vec![write_effect("a.txt"), write_effect("b.txt")]);
+    let runner = scripted(vec![write_effect("a.txt"), write_effect("b.txt")]);
     fx.engine(&runner).build_stage().expect("first");
     let wt = worktree(&fx);
     for bad in ["../evil.md", "Factory-X.md", "factory-x.md.sh"] {
@@ -350,9 +350,9 @@ fn delete_builder_file() -> Effect {
 
 #[test]
 fn a_tracked_agent_text_wins_in_the_agents_file() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
-    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let runner = scripted(vec![write_effect("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(six_files())
         .build_stage()
@@ -365,9 +365,9 @@ fn a_tracked_agent_text_wins_in_the_agents_file() {
 
 #[test]
 fn a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
-    let runner = scripted_auto(vec![delete_builder_file()]);
+    let runner = scripted(vec![delete_builder_file()]);
     fx.engine(&runner)
         .with_agent_files(six_files())
         .build_stage()
@@ -400,10 +400,10 @@ fn a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents() {
 
 #[test]
 fn the_rules_marker_is_read_from_the_effective_text() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     commit_file(&fx.main, BUILDER, "<!-- factory-rules: 1 -->\nTRACKED\n");
-    let runner = scripted_auto(vec![delete_builder_file(), write_effect("b.txt")]);
+    let runner = scripted(vec![delete_builder_file(), write_effect("b.txt")]);
     let e = fx.engine(&runner).with_agent_files(six_files());
     e.build_stage().expect("first");
     e.build_stage().expect("second");
@@ -418,9 +418,9 @@ fn the_rules_marker_is_read_from_the_effective_text() {
 
 #[test]
 fn a_codex_run_sends_no_agents_file() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.agent_cli = Some("codex".to_string());
-    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let runner = scripted(vec![write_effect("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(six_files())
         .build_stage()
@@ -432,7 +432,7 @@ fn a_codex_run_sends_no_agents_file() {
 
 #[test]
 fn an_unreadable_tracked_agent_file_stops_the_run() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::create_dir_all(fx.main.join(".claude/agents")).expect("mkdir");
     std::os::unix::fs::symlink("/etc/hostname", fx.main.join(BUILDER)).expect("symlink");
     let repo = Repository::open(&fx.main).expect("open");
@@ -440,7 +440,7 @@ fn an_unreadable_tracked_agent_file_stops_the_run() {
     index.add_path(std::path::Path::new(BUILDER)).expect("add");
     index.write().expect("write index");
     common::commit_index(&fx.main, "track a symlink");
-    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let runner = scripted(vec![write_effect("a.txt")]);
     let err = fx
         .engine(&runner)
         .with_agent_files(six_files())
@@ -452,8 +452,8 @@ fn an_unreadable_tracked_agent_file_stops_the_run() {
 
 #[test]
 fn no_agent_file_is_written_into_the_worktree() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![write_effect("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(six_files())
         .build_stage()
@@ -476,9 +476,9 @@ fn no_agent_file_is_written_into_the_worktree() {
 
 #[test]
 fn no_shadow_ruling_is_written() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     commit_file(&fx.main, BUILDER, "TRACKED-TEXT");
-    let runner = scripted_auto(vec![write_effect("a.txt")]);
+    let runner = scripted(vec![write_effect("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(six_files())
         .build_stage()
@@ -489,7 +489,7 @@ fn no_shadow_ruling_is_written() {
 
 #[test]
 fn a_job_that_deletes_the_tracked_agent_files_reaches_review() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     for file in six_files() {
         commit_file(
             &fx.main,
@@ -502,7 +502,7 @@ fn a_job_that_deletes_the_tracked_agent_files_reaches_review() {
         std::fs::write(spec.cwd.join("a.txt"), "a\n").expect("write");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![delete_all]);
+    let runner = scripted(vec![delete_all]);
     fx.engine(&runner)
         .with_agent_files(six_files())
         .build_stage()

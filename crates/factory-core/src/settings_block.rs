@@ -49,16 +49,7 @@ const GROUPS: &[(&str, &[Key])] = &[
             ("reviewer_large_over_lines", None),
             ("escalation_model", None),
             ("escalate_after_fix_rounds", None),
-            ("commit_model", None),
             ("kb_model", None),
-        ],
-    ),
-    (
-        "Commits.",
-        &[
-            ("commit_budget_weighted", None),
-            ("commit_subagents", None),
-            ("commit_batch", None),
         ],
     ),
     (
@@ -142,7 +133,6 @@ const GROUPS: &[(&str, &[Key])] = &[
         &[
             ("builder_plugins", None),
             ("reviewer_plugins", None),
-            ("commit_plugins", None),
             ("kb_plugins", None),
         ],
     ),

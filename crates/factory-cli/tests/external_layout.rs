@@ -36,7 +36,6 @@ impl External {
             jobs_dir: home.join("state/jobs"),
             worktrees_dir: home.join("worktrees"),
             config_file: home.join("project.toml"),
-            commit_context_file: home.join("commit-context.md"),
             scope: None,
         };
         std::fs::create_dir_all(&home).expect("home");
@@ -45,7 +44,6 @@ impl External {
             "base_branch = \"v-4.0.0\"\nrisk_paths = [\"src-tauri/**\"]\n",
         )
         .expect("config");
-        std::fs::write(&layout.commit_context_file, "TEST CONTEXT\n").expect("context");
         let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::new());
         let ctx = CliCtx::with_layout(layout.clone(), runner, "tester");
         External {

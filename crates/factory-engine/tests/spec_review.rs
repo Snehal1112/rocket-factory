@@ -3,7 +3,7 @@ mod common;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use common::{driver_for, init_repo, scripted, write_commit_context, Effect, ScriptedRunner};
+use common::{driver_for, init_repo, scripted, Effect, ScriptedRunner};
 use factory_agent::AgentSpec;
 use factory_core::Config;
 use factory_engine::{create_job_with_spec_accepting, Driver, EngineError, SpecMode};
@@ -31,7 +31,6 @@ fn fixture(effects: Vec<Effect>, config: Config) -> Fx {
     let tmp = tempfile::tempdir().expect("tempdir");
     let main = tmp.path().join("repo");
     init_repo(&main);
-    write_commit_context(&main);
     let runner = Arc::new(scripted(effects));
     let driver = driver_for(&main, runner.clone(), config);
     let plans = tmp.path().join("plans");

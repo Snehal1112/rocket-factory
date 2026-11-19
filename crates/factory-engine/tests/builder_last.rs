@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::{committing_fixture, scripted_auto, Effect, Fixture, Tagged};
+use common::{scripted, Effect, Fixture, Tagged};
 use factory_core::{Board, Stage};
 use factory_engine::StageOutcome;
 
@@ -17,7 +17,7 @@ fn change_effect(file: &'static str, lines: usize) -> Effect {
 }
 
 fn two_task_fixture() -> Fixture {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     let mut board = Board::load(&fx.board_path).expect("load");
     board
@@ -32,7 +32,7 @@ fn two_task_fixture() -> Fixture {
 #[test]
 fn builder_last_is_set_on_advance() {
     let fx = two_task_fixture();
-    let runner = Tagged::new(scripted_auto(vec![change_effect("a.txt", 3)]), 31_000);
+    let runner = Tagged::new(scripted(vec![change_effect("a.txt", 3)]), 31_000);
     fx.engine(&runner).build_stage().expect("task 1");
     let last = fx.job().builder_last.expect("builder_last");
     assert_eq!(
@@ -49,7 +49,7 @@ fn builder_last_is_not_set_when_a_task_parks() {
         std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write");
         "BLOCKED: no schema".to_string()
     });
-    let runner = Tagged::new(scripted_auto(vec![blocked]), 31_000);
+    let runner = Tagged::new(scripted(vec![blocked]), 31_000);
     let out = fx.engine(&runner).build_stage().expect("task 1");
     assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
     assert!(fx.job().builder_last.is_none());
@@ -68,10 +68,7 @@ fn builder_last_is_cleared_when_a_builder_is_dispatched() {
         std::fs::write(spec.cwd.join("b.txt"), "y\n").expect("write");
         "done".to_string()
     });
-    let runner = Tagged::new(
-        scripted_auto(vec![change_effect("a.txt", 3), second]),
-        31_000,
-    );
+    let runner = Tagged::new(scripted(vec![change_effect("a.txt", 3), second]), 31_000);
     fx.engine(&runner).build_stage().expect("task 1");
     assert_eq!(fx.job().builder_last.expect("after 1").task, 1);
     fx.engine(&runner).build_stage().expect("task 2");
@@ -82,7 +79,7 @@ fn builder_last_is_cleared_when_a_builder_is_dispatched() {
 #[test]
 fn ended_at_is_taken_when_the_run_returns() {
     let fx = two_task_fixture();
-    let runner = Tagged::new(scripted_auto(vec![change_effect("a.txt", 3)]), 1);
+    let runner = Tagged::new(scripted(vec![change_effect("a.txt", 3)]), 1);
     let secs = || {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -102,7 +99,7 @@ fn ended_at_is_taken_when_the_run_returns() {
 #[test]
 fn a_task_without_any_session_id_sets_no_builder_last() {
     let fx = two_task_fixture();
-    let mut runner = Tagged::new(scripted_auto(vec![change_effect("a.txt", 3)]), 5);
+    let mut runner = Tagged::new(scripted(vec![change_effect("a.txt", 3)]), 5);
     runner.no_session = true;
     fx.engine(&runner).build_stage().expect("task 1");
     assert!(fx.job().builder_last.is_none());

@@ -47,15 +47,16 @@ pub use board::{
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{
     append_footers, blocked_reason, build_job_message, builder_rulings, builder_status,
-    check_job_subject, check_note, extract_message, fallback_note, fallback_subject, has_footer,
-    issue_footer, note_bullets, parse_builder_status, parse_commit_note, parse_issue_refs,
-    parse_issues, title_subject, validate_message, wrap_bullet, wrap_paragraph, BuilderStatus,
-    CommitNote, IssueRef, JobMessage, NoteSection, COMMIT_BEGIN, COMMIT_END, MAX_COMMITS_PER_RUN,
-    MAX_JOB_BULLETS, MAX_JOB_SUBJECT_CHARS, MAX_SUBJECT_CHARS, MESSAGE_BEGIN, MESSAGE_END,
+    check_job_subject, check_note, fallback_note, has_footer, issue_footer, note_bullets,
+    parse_builder_status, parse_commit_note, parse_issue_refs, parse_issues, title_subject,
+    validate_message, wrap_bullet, wrap_paragraph, BuilderStatus, CommitNote, IssueRef, JobMessage,
+    NoteSection, COMMIT_BEGIN, COMMIT_END, MAX_JOB_BULLETS, MAX_JOB_SUBJECT_CHARS,
+    MAX_SUBJECT_CHARS,
 };
 pub use config::{
-    builder_program_ok, check_kb_path, is_env_assignment, resolve_kb_path, CheckRule, Config,
-    CostMarker, KbPathError, NEVER_ALLOWED_PROGRAMS, READ_ONLY_GIT,
+    builder_program_ok, check_kb_path, ignored_keys_in, is_env_assignment, resolve_kb_path,
+    CheckRule, Config, CostMarker, KbPathError, IGNORED_COMMIT_KEYS, NEVER_ALLOWED_PROGRAMS,
+    READ_ONLY_GIT,
 };
 pub use cost::{
     count_tasks, estimate_for, group_of, has_bad_count, stats, usage_summary, CostsFile, Estimate,

@@ -177,7 +177,6 @@ pub fn add(
             "builder_model",
             "reviewer_model",
             "reviewer_model_large",
-            "commit_model",
             "kb_model",
         ] {
             settings.insert(key.into(), toml::Value::String(CODEX_DEFAULT_MODEL.into()));
@@ -396,20 +395,12 @@ pub fn remove(home: &Home, name: &str) -> Result<(), CoreError> {
 pub fn layout(home: &Home, name: &str, file: &ProjectFile) -> Result<Layout, CoreError> {
     validate_name(&file.preset)
         .map_err(|_| CoreError::Config(format!("preset name {:?} is not valid", file.preset)))?;
-    Ok(build_layout(home, name, file, true))
+    Ok(build_layout(home, name, file))
 }
 
-/// Builds the layout. With `preset_ok` false the preset folder is never named.
-pub(crate) fn build_layout(home: &Home, name: &str, file: &ProjectFile, preset_ok: bool) -> Layout {
+/// Builds the layout.
+pub(crate) fn build_layout(home: &Home, name: &str, file: &ProjectFile) -> Layout {
     let dir = home.project_dir(name);
-    let own = dir.join("commit-context.md");
-    let commit_context_file = if own.exists() || !preset_ok {
-        own
-    } else {
-        home.presets_dir()
-            .join(&file.preset)
-            .join("commit-context.md")
-    };
     let state_dir = dir.join("state");
     Layout {
         repo: file.repo.clone(),
@@ -417,7 +408,6 @@ pub(crate) fn build_layout(home: &Home, name: &str, file: &ProjectFile, preset_o
         state_dir,
         worktrees_dir: dir.join("worktrees"),
         config_file: dir.join(PROJECT_FILE),
-        commit_context_file,
         scope: file.subpath.as_ref().map(|sub| Scope {
             project: name.to_string(),
             subpath: sub.clone(),
@@ -571,7 +561,6 @@ mod tests {
             "builder_model",
             "reviewer_model",
             "reviewer_model_large",
-            "commit_model",
             "kb_model",
         ] {
             assert_eq!(text(key).as_deref(), Some("gpt-5.6-luna"), "{key}");
@@ -886,13 +875,6 @@ mod tests {
         assert_eq!(l.jobs_dir, dir.join("state/jobs"));
         assert_eq!(l.worktrees_dir, dir.join("worktrees"));
         assert_eq!(l.config_file, dir.join("project.toml"));
-        assert_eq!(
-            l.commit_context_file,
-            e.home.presets_dir().join("rust/commit-context.md")
-        );
-        std::fs::write(dir.join("commit-context.md"), "mine\n").expect("write");
-        let l = layout(&e.home, "p", &f).expect("layout");
-        assert_eq!(l.commit_context_file, dir.join("commit-context.md"));
     }
 
     #[test]
@@ -1085,12 +1067,8 @@ mod tests {
                 settings: toml::Table::new(),
             };
             assert!(layout(&e.home, "p", &f).is_err(), "{bad:?}");
-            let safe = build_layout(&e.home, "p", &f, false);
-            assert!(safe.commit_context_file.starts_with(&e.home.dir), "{bad:?}");
-            assert!(
-                !safe.commit_context_file.starts_with(e.home.presets_dir()),
-                "{bad:?}"
-            );
+            let safe = build_layout(&e.home, "p", &f);
+            assert!(safe.config_file.starts_with(&e.home.dir), "{bad:?}");
         }
     }
 }

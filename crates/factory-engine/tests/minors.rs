@@ -90,10 +90,7 @@ fn minor_tickets_off_files_nothing() {
         minor_tickets: false,
         ..Config::default()
     };
-    let fx = with_tracker(
-        approved_job_config(approving_runner(3), false, config),
-        t.clone(),
-    );
+    let fx = with_tracker(approved_job_config(approving_runner(3), config), t.clone());
     with_review(&fx, REVIEW);
     merge(&fx);
     let report = minor_tickets_step(&fx.driver, &fx.id, false).expect("step");

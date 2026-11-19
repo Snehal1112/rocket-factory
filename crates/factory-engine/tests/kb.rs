@@ -163,7 +163,7 @@ mod merge_hook {
             kb_path: kb.then(|| "kb/rocketapi".to_string()),
             ..Config::default()
         };
-        approved_job_config(Arc::new(scripted(effects)), false, config)
+        approved_job_config(Arc::new(scripted(effects)), config)
     }
 
     fn merge(fx: &MergeFixture) {

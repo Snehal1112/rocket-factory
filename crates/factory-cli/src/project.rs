@@ -391,7 +391,6 @@ pub fn codex_problems(cfg: &Config, path_env: &str) -> Vec<String> {
         ("builder_model", Some(cfg.builder_model.as_str())),
         ("reviewer_model", Some(cfg.reviewer_model.as_str())),
         ("reviewer_model_large", cfg.reviewer_model_large.as_deref()),
-        ("commit_model", Some(cfg.commit_model.as_str())),
         ("kb_model", Some(cfg.kb_model.as_str())),
         ("escalation_model", cfg.escalation_model.as_deref()),
     ];

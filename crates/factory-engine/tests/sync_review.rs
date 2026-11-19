@@ -8,7 +8,7 @@ const CHANGES: &str = "- [blocker] fix it\nVERDICT: CHANGES";
 
 /// A fixture in round 1 with a round review already saved.
 fn fixture(effects: Vec<common::Effect>) -> common::MergeFixture {
-    let fx = approved_job_with(Arc::new(scripted(effects)), true);
+    let fx = approved_job_with(Arc::new(scripted(effects)));
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -67,7 +67,7 @@ fn fixture_with_check(command: &str, effects: Vec<common::Effect>) -> common::Me
         }],
         ..factory_core::Config::default()
     };
-    let fx = common::approved_job_config(Arc::new(scripted(effects)), true, config);
+    let fx = common::approved_job_config(Arc::new(scripted(effects)), config);
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -567,7 +567,7 @@ fn a_checks_gate_failure_during_a_sync_keeps_its_own_park_kind() {
         code_paths: vec!["**".into()],
         ..factory_core::Config::default()
     };
-    let fx = common::approved_job_config(Arc::new(scripted(vec![])), true, config);
+    let fx = common::approved_job_config(Arc::new(scripted(vec![])), config);
     force_stage(&fx, factory_core::Stage::NeedsHuman);
     rewrite_branch(&fx);
     assert!(matches!(
@@ -730,12 +730,7 @@ fn a_failed_requested_sync_review_parks_with_resume_rereview() {
         1,
         inner.clone(),
     );
-    let fx = common::approved_job_dyn(
-        Arc::new(failing),
-        inner,
-        true,
-        factory_core::Config::default(),
-    );
+    let fx = common::approved_job_dyn(Arc::new(failing), inner, factory_core::Config::default());
     fx.driver
         .store()
         .update_job(&fx.id, |j| {

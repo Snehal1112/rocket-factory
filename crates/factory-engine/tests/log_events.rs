@@ -112,7 +112,7 @@ fn builder_effects() -> Vec<common::Effect> {
 #[test]
 fn agent_run_logs_start_and_end() {
     let fx = common::Fixture::new();
-    let runner = common::scripted_auto(builder_effects());
+    let runner = common::scripted(builder_effects());
     let (res, lines) = factory_telemetry::capture("info", || fx.engine(&runner).build_stage());
     res.expect("build");
     let starts = events_named(&lines, "agent.start");
@@ -161,7 +161,7 @@ fn agent_end_carries_usage_fields() {
     let fx = common::Fixture::new();
     // The engine counts rounds from 1, a new job starts at 0.
     let round = fx.job().round.max(1);
-    let runner = UsageRunner(common::scripted_auto(builder_effects()), false);
+    let runner = UsageRunner(common::scripted(builder_effects()), false);
     let (res, lines) = factory_telemetry::capture("info", || fx.engine(&runner).build_stage());
     res.expect("build");
     let ends = events_named(&lines, "agent.end");
@@ -190,7 +190,7 @@ fn agent_end_carries_usage_fields() {
 #[test]
 fn agent_end_session_id_is_empty_without_a_session() {
     let fx = common::Fixture::new();
-    let runner = UsageRunner(common::scripted_auto(builder_effects()), true);
+    let runner = UsageRunner(common::scripted(builder_effects()), true);
     let (res, lines) = factory_telemetry::capture("info", || fx.engine(&runner).build_stage());
     res.expect("build");
     let ends = events_named(&lines, "agent.end");
@@ -213,7 +213,7 @@ fn failed_agent_run_logs_agent_end() {
 }
 
 fn checks_run(fx: &common::Fixture, level: &str) -> Vec<Value> {
-    let runner = common::scripted_auto(builder_effects());
+    let runner = common::scripted(builder_effects());
     fx.engine(&runner).build_stage().expect("build");
     let (res, lines) = factory_telemetry::capture(level, || fx.engine(&runner).checks_stage());
     res.expect("checks");
@@ -245,8 +245,8 @@ fn check_command_secret_is_redacted() {
 
 #[test]
 fn decide_logs_the_choice() {
-    let fx = common::committing_fixture();
-    let runner = common::scripted_auto(builder_effects());
+    let fx = common::Fixture::new();
+    let runner = common::scripted(builder_effects());
     fx.engine(&runner).build_stage().expect("build");
     fx.engine(&runner).checks_stage().expect("checks");
     let rr = common::scripted(vec![Box::new(|_| "fine\nVERDICT: APPROVE".to_string())]);
@@ -285,8 +285,7 @@ fn kb_failure_logs_step_error_and_merge_result_is_unchanged() {
         kb_path: Some("kb/rocketapi".to_string()),
         ..factory_core::Config::default()
     };
-    let fx =
-        common::approved_job_config(std::sync::Arc::new(common::scripted(vec![])), false, config);
+    let fx = common::approved_job_config(std::sync::Arc::new(common::scripted(vec![])), config);
     let (res, lines) =
         factory_telemetry::capture("info", || factory_engine::merge_stage(&fx.driver, &fx.id));
     assert!(matches!(
@@ -314,7 +313,7 @@ fn tickets_failure_logs_step_error() {
         ..factory_core::Config::default()
     };
     let fx = common::with_tracker(
-        common::approved_job_config(common::approving_runner(3), false, config),
+        common::approved_job_config(common::approving_runner(3), config),
         t,
     );
     common::set_feature(&fx, "dedup cleanups #76", Some("## Goal\nsomething with enough words to pass the check here\n\n## Acceptance criteria\n- a\n"));

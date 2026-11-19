@@ -1,6 +1,6 @@
 mod common;
 
-use common::{amend_head, commit_file, committing_fixture, scripted_auto, Effect, Fixture};
+use common::{amend_head, commit_file, scripted, Effect, Fixture};
 use factory_core::{ParkKind, ParkRecord, Stage};
 use factory_engine::{merge_stage, MergeResult, StageOutcome};
 
@@ -28,8 +28,8 @@ fn only_part(rec: &ParkRecord) -> &factory_core::ParkPart {
 #[test]
 fn no_park_has_empty_evidence() {
     // A builder that commits on its own is a BuilderCommitted park.
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![Box::new(|spec| {
+    let fx = Fixture::new();
+    let runner = scripted(vec![Box::new(|spec| {
         commit_file(&spec.cwd, "a.txt", "x\n");
         "done".to_string()
     })]);
@@ -43,8 +43,8 @@ fn no_park_has_empty_evidence() {
 
 #[test]
 fn nothing_changed_without_a_reply_says_so() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![Box::new(|_| String::new())]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![Box::new(|_| String::new())]);
     let out = fx.engine(&runner).build_stage().expect("build");
     assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
@@ -57,19 +57,19 @@ fn nothing_changed_without_a_reply_says_so() {
 #[test]
 fn a_nothing_changed_park_after_a_rewrite_lists_sync() {
     // A fix round on an unrewritten branch does not offer sync.
-    let fx = committing_fixture();
-    let first = scripted_auto(vec![change_effect("a.txt")]);
+    let fx = Fixture::new();
+    let first = scripted(vec![change_effect("a.txt")]);
     fx.engine(&first).build_stage().expect("first");
     start_fix_round(&fx);
-    let runner = scripted_auto(vec![Box::new(|_| "no change".to_string())]);
+    let runner = scripted(vec![Box::new(|_| "no change".to_string())]);
     fx.engine(&runner).build_stage().expect("fix");
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, ParkKind::NothingChanged);
     assert!(!rec.next.iter().any(|n| n.contains("factory sync")));
 
     // The same park after the reviewed head left the branch lists sync.
-    let fx = committing_fixture();
-    let first = scripted_auto(vec![change_effect("a.txt")]);
+    let fx = Fixture::new();
+    let first = scripted(vec![change_effect("a.txt")]);
     fx.engine(&first).build_stage().expect("first");
     start_fix_round(&fx);
     let board = factory_core::Board::load(&fx.board_path).expect("load");
@@ -78,7 +78,7 @@ fn a_nothing_changed_park_after_a_rewrite_lists_sync() {
         std::path::Path::new(&wt.expect("worktree")),
         "feat(test): reworded outside the factory",
     );
-    let runner = scripted_auto(vec![Box::new(|_| "no change".to_string())]);
+    let runner = scripted(vec![Box::new(|_| "no change".to_string())]);
     fx.engine(&runner).build_stage().expect("fix");
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, ParkKind::NothingChanged);
@@ -111,7 +111,7 @@ fn docs_rule(command: &str) -> factory_core::CheckRule {
 }
 
 fn risky_sync_fixture(checks: Vec<factory_core::CheckRule>) -> common::MergeFixture {
-    let fx = common::approved_job_config(common::approving_runner(3), false, risky_config(checks));
+    let fx = common::approved_job_config(common::approving_runner(3), risky_config(checks));
     // Main moves, so the merge syncs first.
     common::commit_file(&fx.main, "other.md", "o");
     fx
@@ -271,8 +271,7 @@ fn a_checks_failed_sync_park_keeps_one_reason_and_one_ruling() {
 
 #[test]
 fn other_sync_parks_stay_kind_other() {
-    let fx =
-        common::approved_job_config(common::approving_runner(3), false, risky_config(Vec::new()));
+    let fx = common::approved_job_config(common::approving_runner(3), risky_config(Vec::new()));
     let wt = common::worktree_of(&fx);
     common::commit_file(&wt, "same.txt", "branch");
     common::record_head(&fx, &common::branch_tip(&fx));

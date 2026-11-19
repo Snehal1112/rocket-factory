@@ -1,6 +1,6 @@
 mod common;
 
-use common::{committing_fixture, scripted_auto, Effect, Fixture, Tagged};
+use common::{scripted, Effect, Fixture, Tagged};
 use factory_core::{AgentFile, Board, BuilderLast, CheckRule};
 
 fn append_effect() -> Effect {
@@ -22,7 +22,7 @@ fn now() -> u64 {
 
 /// Builds with a runner whose builder ends at `end_ctx`, then runs the checks.
 fn build_round(fx: &Fixture, end_ctx: u64) -> Tagged {
-    let runner = Tagged::new(scripted_auto(vec![append_effect()]), end_ctx);
+    let runner = Tagged::new(scripted(vec![append_effect()]), end_ctx);
     fx.engine(&runner).build_stage().expect("build");
     fx.engine(&runner).checks_stage().expect("checks");
     runner
@@ -30,7 +30,7 @@ fn build_round(fx: &Fixture, end_ctx: u64) -> Tagged {
 
 /// Builds round 1 with failing checks, so fix round 2 is next, and sets the last builder's end time.
 fn reach_fix_round(end_ctx: u64, idle_secs: u64) -> Fixture {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
@@ -116,15 +116,15 @@ fn set_round_and_idle(fx: &Fixture, round: u32, idle_secs: u64) {
 
 #[test]
 fn a_cold_round_one_resume_without_findings_still_resumes() {
-    let fx = committing_fixture();
-    let first = Tagged::new(scripted_auto(vec![append_effect()]), 150_000);
+    let fx = Fixture::new();
+    let first = Tagged::new(scripted(vec![append_effect()]), 150_000);
     fx.engine(&first).build_stage().expect("build");
     assert!(fx.job().round <= 1);
     set_round_and_idle(&fx, 1, 1_000);
     let session = fx.job().builder_id.expect("session");
     // The resume prompt needs a findings file, so the round-1 resume gets one.
     std::fs::write(fx.job_dir.join("changes-r1.md"), "carry on").expect("findings");
-    let runner = Tagged::new(scripted_auto(vec![append_effect()]), 20_000);
+    let runner = Tagged::new(scripted(vec![append_effect()]), 20_000);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.inner.last_spec_for("builder").expect("builder spec");
     assert_eq!(spec.resume, Some(session));
@@ -165,10 +165,10 @@ fn codex_files() -> Vec<AgentFile> {
 
 #[test]
 fn a_cold_codex_fix_round_still_resumes() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.agent_cli = Some("codex".to_string());
     fx.config.escalation_model = None;
-    let first = Tagged::new(scripted_auto(vec![append_effect()]), 150_000);
+    let first = Tagged::new(scripted(vec![append_effect()]), 150_000);
     fx.engine(&first)
         .with_agent_files(codex_files())
         .build_stage()
@@ -187,7 +187,7 @@ fn a_cold_codex_fix_round_still_resumes() {
     });
     board.save(&fx.board_path).expect("save");
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
-    let runner = Tagged::new(scripted_auto(vec![append_effect()]), 20_000);
+    let runner = Tagged::new(scripted(vec![append_effect()]), 20_000);
     fx.engine(&runner)
         .with_agent_files(codex_files())
         .build_stage()

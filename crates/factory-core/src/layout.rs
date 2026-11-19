@@ -114,8 +114,6 @@ pub struct Layout {
     pub worktrees_dir: PathBuf,
     /// The factory config file.
     pub config_file: PathBuf,
-    /// The context file the committer prompt reads.
-    pub commit_context_file: PathBuf,
     /// Set for a project that owns one subfolder of a shared repo, else `None`.
     pub scope: Option<Scope>,
 }
@@ -129,7 +127,6 @@ impl Layout {
             jobs_dir: repo.join(".superpowers/sdd"),
             worktrees_dir: repo.join(".claude/worktrees"),
             config_file: repo.join(".claude/factory/config.toml"),
-            commit_context_file: repo.join(".claude/factory/commit-context.md"),
             scope: None,
         }
     }
@@ -323,10 +320,6 @@ mod tests {
         assert_eq!(
             l.config_file,
             PathBuf::from("/r/.claude/factory/config.toml")
-        );
-        assert_eq!(
-            l.commit_context_file,
-            PathBuf::from("/r/.claude/factory/commit-context.md")
         );
     }
 

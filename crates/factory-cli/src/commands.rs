@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use factory_agent::{AgentRunner, ApiKeySource, Caps, ClaudeRunner, CodexRunner, EventSink};
 use factory_core::{
-    outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout, ParkRecord, Stage,
+    ignored_keys_in, outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout,
+    ParkRecord, Stage,
 };
 use factory_engine::{
     costs_path, create_job_with_spec_accepting, create_one_job_accepting, find_draft,
@@ -622,7 +623,21 @@ fn costs(ctx: &CliCtx, trend: bool) -> Result<String, CliError> {
     Ok(out)
 }
 
+/// One warning line per ignored commit key that the config file sets. A missing file gives none.
+pub fn ignored_key_warnings(config_file: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(config_file) else {
+        return Vec::new();
+    };
+    ignored_keys_in(&text)
+        .into_iter()
+        .map(|key| format!("warning: {key} has no effect, the driver writes commit messages"))
+        .collect()
+}
+
 fn run(ctx: &CliCtx, id: &str, series: bool) -> Result<String, CliError> {
+    for line in ignored_key_warnings(&ctx.layout.config_file) {
+        eprintln!("{line}");
+    }
     ctx.runnable()?;
     let d = ctx.driver()?;
     // The project lease comes first, so a second driver is refused before any stage work.
@@ -1305,6 +1320,21 @@ fn tokens(ctx: &CliCtx, id: &str) -> Result<String, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ignored_key_warnings_lists_each_set_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("config.toml");
+        std::fs::write(&file, "commit_batch = false\ncommit_model = \"x\"\n").expect("write");
+        assert_eq!(
+            ignored_key_warnings(&file),
+            [
+                "warning: commit_model has no effect, the driver writes commit messages",
+                "warning: commit_batch has no effect, the driver writes commit messages",
+            ]
+        );
+        assert!(ignored_key_warnings(&dir.path().join("none.toml")).is_empty());
+    }
 
     #[test]
     fn tokens_percent_does_not_overflow_on_huge_totals() {

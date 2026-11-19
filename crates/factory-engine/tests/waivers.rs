@@ -124,7 +124,7 @@ fn a_panicking_tracker_does_not_skip_the_waiver_and_minor_steps() {
         tickets_on_merge: true,
         ..factory_core::Config::default()
     };
-    let fx = common::approved_job_config(common::approving_runner(3), false, config);
+    let fx = common::approved_job_config(common::approving_runner(3), config);
     let fx = common::with_boxed_tracker(
         fx,
         Box::new(common::PanicTracker {

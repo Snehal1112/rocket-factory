@@ -1,6 +1,6 @@
 mod common;
 
-use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture};
+use common::{scripted, Effect, Fixture};
 use factory_agent::AgentSpec;
 use factory_core::Board;
 
@@ -33,9 +33,9 @@ fn assert_runs_on(spec: &AgentSpec, model: &str) {
 
 #[test]
 fn a_job_model_runs_the_builder_and_reviewer_on_it() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     set_job_model(&fx, "claude-opus-5-5");
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner).build_stage().expect("build");
     fx.engine(&runner).checks_stage().expect("checks");
     let rr = scripted(vec![Box::new(|_| "fine\nVERDICT: APPROVE".to_string())]);
@@ -59,8 +59,8 @@ fn a_job_model_runs_the_builder_and_reviewer_on_it() {
 
 #[test]
 fn without_a_job_model_the_config_models_stay() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.last_spec_for("builder").expect("builder");
     assert_eq!(
@@ -71,9 +71,9 @@ fn without_a_job_model_the_config_models_stay() {
 
 #[test]
 fn a_blank_job_model_is_ignored() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     set_job_model(&fx, "  ");
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.last_spec_for("builder").expect("builder");
     assert_eq!(

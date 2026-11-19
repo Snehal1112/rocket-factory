@@ -245,7 +245,7 @@ fn a_base_off_the_base_branch_parks_with_the_branch_name() {
         base_branch: "trunk".to_string(),
         ..factory_core::Config::default()
     };
-    let fx = common::approved_job_config(common::approving_runner(3), false, config);
+    let fx = common::approved_job_config(common::approving_runner(3), config);
     // The branch trunk has its own root commit, so the job base is not on it.
     let repo = git2::Repository::open(&fx.main).expect("open");
     let sig = git2::Signature::now("t", "t@example.com").expect("sig");
@@ -270,7 +270,7 @@ fn trunk_fixture() -> common::MergeFixture {
         base_branch: "trunk".to_string(),
         ..factory_core::Config::default()
     };
-    let fx = common::approved_job_config(common::approving_runner(3), false, config);
+    let fx = common::approved_job_config(common::approving_runner(3), config);
     let repo = git2::Repository::open(&fx.main).expect("open");
     repo.set_head("refs/heads/trunk").expect("head on trunk");
     repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
@@ -703,7 +703,6 @@ fn a_failed_auto_sync_review_parks_with_resume_rereview() {
     let fx = common::approved_job_dyn(
         std::sync::Arc::new(failing),
         inner,
-        false,
         factory_core::Config::default(),
     );
     common::commit_file(&fx.main, "other.md", "o");
@@ -744,12 +743,7 @@ fn an_error_after_an_auto_sync_parks_with_resume_rereview() {
         dir: std::sync::Mutex::new(None),
         inner: inner.clone(),
     });
-    let fx = common::approved_job_dyn(
-        blocker.clone(),
-        inner,
-        false,
-        factory_core::Config::default(),
-    );
+    let fx = common::approved_job_dyn(blocker.clone(), inner, factory_core::Config::default());
     let job = fx.driver.job(&fx.id).expect("job");
     *blocker.dir.lock().expect("dir") = Some(fx.driver.job_dir(&job));
     common::commit_file(&fx.main, "other.md", "o");
@@ -788,17 +782,13 @@ fn a_merge_commit_carries_the_driver_built_message() {
 
 #[test]
 fn no_message_agent_runs_for_a_merge_or_a_sync() {
-    let fx = common::approved_job_with(
-        std::sync::Arc::new(common::scripted(vec![common::reply(
-            "ok\nVERDICT: APPROVE",
-        )])),
-        true,
-    );
+    let fx = common::approved_job_with(std::sync::Arc::new(common::scripted(vec![common::reply(
+        "ok\nVERDICT: APPROVE",
+    )])));
     // Main moves on, so the merge syncs it into the job branch first.
     common::commit_file(&fx.main, "other.md", "o");
     assert!(matches!(
         merge_stage(&fx.driver, &fx.id).expect("merge"),
         MergeResult::Merged(_)
     ));
-    assert!(fx.runner.specs_for("message").is_empty());
 }

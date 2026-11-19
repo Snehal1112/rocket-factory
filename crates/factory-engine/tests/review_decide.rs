@@ -1,8 +1,6 @@
 mod common;
 
-use common::{
-    committing_fixture, scripted, scripted_auto, Effect, Fixture, RoleFailing, ScriptedRunner,
-};
+use common::{scripted, Effect, Fixture, RoleFailing, ScriptedRunner};
 use factory_agent::StopReason;
 use factory_core::{BudgetState, DiffClass, ResumeAt, Stage, Verdict};
 use factory_engine::{decide, DecideInput, Decision, ReviewerExtra, StageOutcome};
@@ -213,7 +211,7 @@ fn build_and_pass_checks(fx: &Fixture, files: &[&'static str]) -> ScriptedRunner
             "done".to_string()
         }
     })];
-    let runner = scripted_auto(effects);
+    let runner = scripted(effects);
     fx.engine(&runner).build_stage().expect("build");
     // The review stage reads the checks.md that the checks stage wrote.
     fx.engine(&runner).checks_stage().expect("checks");
@@ -227,7 +225,7 @@ fn reviewer(reply: &'static str) -> ScriptedRunner {
 #[test]
 fn the_reviewer_prompt_carries_the_kb_line_only_when_set() {
     for kb in [Some("/kb/rocketapi"), None] {
-        let mut fx = committing_fixture();
+        let mut fx = Fixture::new();
         fx.config.kb_path = kb.map(String::from);
         build_and_pass_checks(&fx, &["a.txt"]);
         let rr = reviewer("ok\nVERDICT: APPROVE");
@@ -257,7 +255,7 @@ fn the_reviewer_prompt_carries_the_kb_line_only_when_set() {
 
 #[test]
 fn reviewer_spec_is_read_only_and_tells_it_to_page_the_diff() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("ok\nVERDICT: APPROVE");
     let e = fx.engine(&rr);
@@ -357,7 +355,7 @@ fn reviewer_prompt_has_no_note_line_without_the_file() {
 
 #[test]
 fn reviewer_rules_come_from_the_config_and_are_absent_by_default() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("ok\nVERDICT: APPROVE");
     let none = fx.engine(&rr).reviewer_spec(
@@ -389,7 +387,7 @@ fn reviewer_rules_come_from_the_config_and_are_absent_by_default() {
 
 #[test]
 fn approve_on_a_normal_diff_is_auto_merge_and_apply_sets_approve() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let e = fx.engine(&rr);
@@ -412,7 +410,7 @@ fn verdict_not_on_the_last_line_counts_as_changes() {
         "verdict: approve",
         "looks good",
     ] {
-        let fx = committing_fixture();
+        let fx = Fixture::new();
         build_and_pass_checks(&fx, &["a.txt"]);
         let rr = reviewer(reply);
         let out = fx.engine(&rr).review_stage().expect("review");
@@ -423,7 +421,7 @@ fn verdict_not_on_the_last_line_counts_as_changes() {
 
 #[test]
 fn changes_verdict_starts_a_fix_round_with_the_review_text() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("1. [blocker] src/a.rs:3 bad\nVERDICT: CHANGES");
     let e = fx.engine(&rr);
@@ -442,7 +440,7 @@ fn changes_verdict_starts_a_fix_round_with_the_review_text() {
 
 #[test]
 fn risky_diff_with_approve_needs_a_human_naming_the_path() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let e = fx.engine(&rr);
@@ -469,7 +467,7 @@ fn risky_diff_with_approve_needs_a_human_naming_the_path() {
 
 #[test]
 fn final_check_failure_blocks_auto_merge() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     // The checks pass during review, then the mapped command starts failing.
@@ -499,7 +497,7 @@ fn code_review_state(fx: &Fixture) -> factory_core::ReviewState {
 
 #[test]
 fn review_state_is_running_during_the_run_and_pass_after_approve() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let board = fx.board_path.clone();
     let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -525,7 +523,7 @@ fn review_state_is_running_during_the_run_and_pass_after_approve() {
 #[test]
 fn review_state_is_changes_after_changes_and_after_a_missing_verdict() {
     for reply in ["bad\nVERDICT: CHANGES", "no verdict line here"] {
-        let fx = committing_fixture();
+        let fx = Fixture::new();
         build_and_pass_checks(&fx, &["a.txt"]);
         let rr = reviewer(reply);
         let e = fx.engine(&rr);
@@ -540,7 +538,7 @@ fn review_state_is_changes_after_changes_and_after_a_missing_verdict() {
 
 #[test]
 fn a_fix_round_resets_the_review_state() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("bad\nVERDICT: CHANGES");
     let e = fx.engine(&rr);
@@ -554,7 +552,7 @@ fn a_fix_round_resets_the_review_state() {
 const FOCUS_PLAN: &str = "# P\n\nIntro line.\n\n## Review Focus\n\nCheck the lease handling.\n\n### Task 1: first thing\n\nBODY-MARKER one\n";
 
 fn review_prompt_for(plan: &str, ledger: &str) -> String {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, plan).expect("plan");
     build_and_pass_checks(&fx, &["a.txt"]);
     let mut text = std::fs::read_to_string(fx.job_dir.join("progress.md")).unwrap_or_default();
@@ -606,7 +604,7 @@ fn a_plan_without_review_focus_has_no_empty_section() {
 
 #[test]
 fn the_reviewer_spec_is_strict_and_capped() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("ok\nVERDICT: APPROVE");
     fx.engine(&rr).review_stage().expect("review");
@@ -624,7 +622,7 @@ fn model_of_review(fx: &Fixture, files: &[&'static str]) -> Option<String> {
 }
 
 fn large_fixture(over: u32) -> Fixture {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.reviewer_model = "sonnet".into();
     fx.config.reviewer_model_large = Some("opus".into());
     fx.config.reviewer_large_over_lines = over;
@@ -704,7 +702,7 @@ fn direct_prompt(round: u32, extra: &ReviewerExtra) -> String {
 
 /// The prompt for a round when the given files exist in the job dir.
 fn direct_prompt_with(round: u32, extra: &ReviewerExtra, files: &[&str]) -> String {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     for f in files {
         std::fs::write(fx.job_dir.join(f), "1. [blocker] x\n").expect("write");
     }
@@ -861,7 +859,7 @@ const TWO_BLOCKERS: &str =
 
 #[test]
 fn review_writes_last_review_and_a_counted_ledger_line() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer(TWO_BLOCKERS);
     fx.engine(&rr).review_stage().expect("review");
@@ -880,7 +878,7 @@ fn review_writes_last_review_and_a_counted_ledger_line() {
 
 #[test]
 fn last_review_survives_a_fix_round() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer(TWO_BLOCKERS);
     let e = fx.engine(&rr);
@@ -895,7 +893,7 @@ fn last_review_survives_a_fix_round() {
 
 #[test]
 fn risky_changes_starts_a_fix_round() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer(TWO_BLOCKERS);
     let e = fx.engine(&rr);
@@ -911,7 +909,7 @@ fn risky_changes_starts_a_fix_round() {
 
 #[test]
 fn risky_approve_with_failing_final_checks_starts_a_fix_round() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let out = fx.engine(&rr).review_stage().expect("review");
@@ -926,7 +924,7 @@ fn risky_approve_with_failing_final_checks_starts_a_fix_round() {
 
 #[test]
 fn decide_event_carries_verdict_and_risky() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer(TWO_BLOCKERS);
     let (_, lines) = factory_telemetry::capture("info", || {
@@ -946,7 +944,7 @@ fn run_risky_build_with_failing_check(fx: &Fixture) -> StageOutcome {
         std::fs::write(spec.cwd.join("src-tauri/src/lib.rs"), "x\n").expect("write");
         "done".to_string()
     })];
-    let runner = scripted_auto(effects);
+    let runner = scripted(effects);
     fx.engine(&runner).build_stage().expect("build");
     fx.engine(&runner).checks_stage().expect("checks")
 }
@@ -961,7 +959,7 @@ fn failing_check() -> Vec<factory_core::CheckRule> {
 
 #[test]
 fn risky_failing_checks_with_zero_rounds_park_at_once() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = failing_check();
     fx.config.risky_fix_rounds = Some(0);
     assert!(matches!(
@@ -976,7 +974,7 @@ fn risky_failing_checks_with_zero_rounds_park_at_once() {
         .job_dir
         .join(format!("changes-r{}.md", parked_round + 1))
         .exists());
-    let mut control = committing_fixture();
+    let mut control = Fixture::new();
     control.config.checks = failing_check();
     assert_eq!(
         run_risky_build_with_failing_check(&control),
@@ -1004,7 +1002,7 @@ fn second_round(
         }
         "done".to_string()
     });
-    let runner = scripted_auto(vec![builder, Box::new(move |_| reply.to_string())]);
+    let runner = scripted(vec![builder, Box::new(move |_| reply.to_string())]);
     fx.engine(&runner).build_stage().expect("build r2");
     fx.engine(&runner).checks_stage().expect("checks r2");
     fx.engine(&runner).review_stage().expect("review r2")
@@ -1012,7 +1010,7 @@ fn second_round(
 
 #[test]
 fn risky_park_evidence_starts_with_the_review() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
     let e = fx.engine(&rr);
@@ -1039,7 +1037,7 @@ fn risky_park_evidence_starts_with_the_review() {
 
 #[test]
 fn changes_remain_evidence_lists_the_open_blockers() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.fix_rounds = 1;
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer(TWO_BLOCKERS);
@@ -1064,7 +1062,7 @@ fn changes_remain_evidence_lists_the_open_blockers() {
 
 #[test]
 fn risk_part_names_paths_added_by_fix_rounds() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["src-tauri/a.rs"]);
     let rr = reviewer(TWO_BLOCKERS);
     let e = fx.engine(&rr);
@@ -1085,7 +1083,7 @@ fn risk_part_names_paths_added_by_fix_rounds() {
 
 #[test]
 fn review_part_without_the_file_names_the_verdict() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.fix_rounds = 0;
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer(TWO_BLOCKERS);
@@ -1100,7 +1098,7 @@ fn review_part_without_the_file_names_the_verdict() {
 
 #[test]
 fn review_part_reads_the_file_inside_the_job_folder() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.fix_rounds = 0;
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer(TWO_BLOCKERS);
@@ -1126,14 +1124,14 @@ fn review_part_reads_the_file_inside_the_job_folder() {
 
 #[test]
 fn nothing_changed_after_a_review_fix_shows_the_review() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer(TWO_BLOCKERS);
     let e = fx.engine(&rr);
     let out = e.review_stage().expect("review");
     e.apply_decision(&out).expect("apply");
     let silent: Effect = Box::new(|_| "no change needed".to_string());
-    let rr2 = scripted_auto(vec![silent]);
+    let rr2 = scripted(vec![silent]);
     assert!(matches!(
         fx.engine(&rr2).build_stage().expect("build r2"),
         StageOutcome::NeedsHuman(_)
@@ -1150,7 +1148,7 @@ fn nothing_changed_after_a_review_fix_shows_the_review() {
 
 #[test]
 fn risky_final_check_park_keeps_the_risk_part() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.risky_fix_rounds = Some(0);
     build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
     let rr = reviewer("fine\nVERDICT: APPROVE");
@@ -1171,7 +1169,7 @@ fn risky_final_check_park_keeps_the_risk_part() {
 
 #[test]
 fn a_round_two_gate_park_shows_the_round_one_review() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer(TWO_BLOCKERS);
     let e = fx.engine(&rr);
@@ -1186,7 +1184,7 @@ fn a_round_two_gate_park_shows_the_round_one_review() {
         std::fs::write(spec.cwd.join("b.txt"), "y\n").expect("write");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![builder]);
+    let runner = scripted(vec![builder]);
     fx.engine(&runner).build_stage().expect("build r2");
     assert!(matches!(
         fx.engine(&runner).checks_stage().expect("checks r2"),
@@ -1205,7 +1203,7 @@ fn a_round_two_gate_park_shows_the_round_one_review() {
 
 /// A reviewer run that ends `reason` once, over a fixture that built and passed its checks.
 fn failed_review(reason: StopReason) -> (Fixture, StageOutcome, u32) {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let inner = Arc::new(reviewer("fine\nVERDICT: APPROVE"));
     let failing = RoleFailing::new("reviewer", reason, 1, inner.clone());
@@ -1273,7 +1271,7 @@ impl factory_agent::AgentRunner for FailedWithText {
 
 #[test]
 fn a_failed_run_with_a_verdict_is_not_review_failed() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let e = fx.engine(&FailedWithText("fine\nVERDICT: APPROVE"));
     let out = e.review_stage().expect("review");
@@ -1286,7 +1284,7 @@ fn a_failed_run_with_a_verdict_is_not_review_failed() {
 
 #[test]
 fn a_turn_limit_review_is_not_review_failed() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let inner = Arc::new(reviewer("fine\nVERDICT: APPROVE"));
     let failing = RoleFailing::new("reviewer", StopReason::TurnLimit, 1, inner);
@@ -1303,7 +1301,7 @@ fn a_turn_limit_review_is_not_review_failed() {
 
 #[test]
 fn a_real_changes_verdict_still_starts_a_fix_round() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     build_and_pass_checks(&fx, &["a.txt"]);
     let rr = reviewer("1. [blocker] src/a.rs:3 bad\nVERDICT: CHANGES");
     let e = fx.engine(&rr);

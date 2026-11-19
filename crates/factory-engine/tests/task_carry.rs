@@ -1,6 +1,6 @@
 mod common;
 
-use common::{committing_fixture, scripted_auto, Effect, Fixture, Tagged};
+use common::{scripted, Effect, Fixture, Tagged};
 use factory_agent::{AgentRun, AgentRunner, AgentSpec};
 use factory_core::{Board, Stage, TaskSession};
 use factory_engine::{StageOutcome, COMMIT_NOTE_LINE};
@@ -16,7 +16,7 @@ fn change_effect(file: &'static str, lines: usize) -> Effect {
 }
 
 fn two_task_fixture() -> Fixture {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     let mut board = Board::load(&fx.board_path).expect("load");
     board
@@ -44,7 +44,7 @@ fn two_effects() -> Vec<Effect> {
 fn task_two_continues_the_session_when_gap_and_context_allow() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -67,7 +67,7 @@ fn task_two_continues_the_session_when_gap_and_context_allow() {
 fn the_carried_builder_logs_agent_end_resumed() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     let (_, lines) = factory_telemetry::capture("info", || {
         e.build_stage().expect("task 1");
@@ -85,7 +85,7 @@ fn the_carried_builder_logs_agent_end_resumed() {
 #[test]
 fn the_setting_off_starts_every_task_fresh() {
     let fx = two_task_fixture();
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -102,7 +102,7 @@ fn the_setting_off_starts_every_task_fresh() {
 fn a_stale_gap_starts_fresh_and_names_the_reason() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     let mut board = Board::load(&fx.board_path).expect("load");
@@ -125,7 +125,7 @@ fn a_stale_gap_starts_fresh_and_names_the_reason() {
 fn an_oversized_context_starts_fresh() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 150_000);
+    let runner = Tagged::new(scripted(two_effects()), 150_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -141,7 +141,7 @@ fn an_oversized_context_starts_fresh() {
 fn a_rework_note_starts_fresh() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     std::fs::write(fx.job_dir.join("rework-note.md"), "mind the schema").expect("note");
@@ -160,7 +160,7 @@ fn a_rework_note_starts_fresh() {
 fn task_one_is_never_carried() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     fx.engine(&runner).build_stage().expect("task 1");
     assert_eq!(runner.inner.specs_for("builder")[0].resume, None);
     assert!(
@@ -172,9 +172,9 @@ fn task_one_is_never_carried() {
 
 #[test]
 fn the_whole_plan_builder_is_never_carried() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(vec![change_effect("a.txt", 3)]), 30_000);
+    let runner = Tagged::new(scripted(vec![change_effect("a.txt", 3)]), 30_000);
     fx.engine(&runner).build_stage().expect("build");
     assert_eq!(runner.inner.specs_for("builder")[0].resume, None);
 }
@@ -183,7 +183,7 @@ fn the_whole_plan_builder_is_never_carried() {
 fn the_carried_spec_has_permissions_agent_tools_and_turns() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -203,7 +203,7 @@ fn the_carried_spec_has_permissions_agent_tools_and_turns() {
 fn the_carried_prompt_names_the_new_task_and_overrides_later_tasks() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -248,7 +248,7 @@ fn a_failed_carry_gets_one_fresh_builder() {
     fx.config.builder_carry_session = true;
     let runner = FailResume {
         inner: Tagged::new(
-            scripted_auto(vec![
+            scripted(vec![
                 change_effect("a.txt", 3),
                 noop_effect(),
                 change_effect("b.txt", 2),
@@ -277,7 +277,7 @@ fn a_failed_carry_gets_one_fresh_builder() {
 fn a_crash_session_beats_a_carry() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     let mut board = Board::load(&fx.board_path).expect("load");
@@ -316,10 +316,7 @@ fn a_tampering_carried_builder_parks_without_a_second_run() {
         std::fs::write(&plan, text).expect("write");
         "done".to_string()
     });
-    let runner = Tagged::new(
-        scripted_auto(vec![change_effect("a.txt", 3), tamper]),
-        30_000,
-    );
+    let runner = Tagged::new(scripted(vec![change_effect("a.txt", 3), tamper]), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     match e.build_stage().expect("task 2") {
@@ -335,7 +332,7 @@ fn a_fix_round_after_a_chain_resumes_the_last_session() {
     fx.config.builder_carry_session = true;
     let mut effects = two_effects();
     effects.push(change_effect("c.txt", 2));
-    let runner = Tagged::new(scripted_auto(effects), 30_000);
+    let runner = Tagged::new(scripted(effects), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -355,8 +352,7 @@ fn a_fix_round_after_a_chain_resumes_the_last_session() {
 fn the_batch_snapshot_and_reset_work_with_a_carry() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    fx.config.commit_batch = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -370,8 +366,7 @@ fn the_batch_snapshot_and_reset_work_with_a_carry() {
 fn batch_snapshot_logs_commit_done_with_kind_snapshot() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    fx.config.commit_batch = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     let (_, lines) = factory_telemetry::capture("info", || {
         e.build_stage().expect("task 1");
@@ -396,7 +391,7 @@ fn a_checkbox_only_plan_runs_one_whole_plan_builder_and_never_carries() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
     std::fs::write(&fx.plan_file, "# P\n\n- [ ] Task 1: a\n- [ ] Task 2: b\n").expect("plan");
-    let runner = Tagged::new(scripted_auto(vec![change_effect("a.txt", 3)]), 30_000);
+    let runner = Tagged::new(scripted(vec![change_effect("a.txt", 3)]), 30_000);
     fx.engine(&runner).build_stage().expect("build");
     let b = runner.inner.specs_for("builder");
     assert_eq!(b.len(), 1);
@@ -407,7 +402,7 @@ fn a_checkbox_only_plan_runs_one_whole_plan_builder_and_never_carries() {
 fn builder_last_survives_a_carried_advance() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -424,7 +419,7 @@ fn events<'a>(lines: &'a [serde_json::Value], name: &str) -> Vec<&'a serde_json:
 #[test]
 fn task_start_and_end_are_logged_per_task() {
     let fx = two_task_fixture();
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     let (_, lines) = factory_telemetry::capture("info", || {
         e.build_stage().expect("task 1");
@@ -461,7 +456,7 @@ fn task_start_and_end_are_logged_per_task() {
 fn parked_task_has_no_task_end() {
     let fx = two_task_fixture();
     let effects: Vec<Effect> = vec![Box::new(|_| "did nothing".to_string())];
-    let runner = Tagged::new(scripted_auto(effects), 30_000);
+    let runner = Tagged::new(scripted(effects), 30_000);
     let e = fx.engine(&runner);
     let (_, lines) = factory_telemetry::capture("info", || {
         e.build_stage().expect("task 1");
@@ -478,7 +473,7 @@ fn task_start_repeats_when_the_task_is_re_entered() {
         Box::new(|_| "did nothing".to_string()),
         change_effect("a.txt", 3),
     ];
-    let runner = Tagged::new(scripted_auto(effects), 30_000);
+    let runner = Tagged::new(scripted(effects), 30_000);
     let e = fx.engine(&runner);
     let (_, lines) = factory_telemetry::capture("info", || {
         e.build_stage().expect("parks");
@@ -505,7 +500,7 @@ fn task_start_title_is_one_line_and_capped() {
         format!("# P\n\n### Task 1: {}\n\nx\n", "x".repeat(400)),
     )
     .expect("plan");
-    let runner = Tagged::new(scripted_auto(vec![change_effect("a.txt", 3)]), 30_000);
+    let runner = Tagged::new(scripted(vec![change_effect("a.txt", 3)]), 30_000);
     let e = fx.engine(&runner);
     let (_, lines) = factory_telemetry::capture("info", || {
         e.build_stage().expect("task 1");
@@ -521,7 +516,7 @@ fn task_start_title_is_one_line_and_capped() {
 fn a_carried_task_prompt_has_the_simplify_line() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -538,7 +533,7 @@ fn a_carried_task_prompt_has_the_simplify_line() {
 fn the_carry_prompt_asks_for_a_commit_note() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -550,7 +545,7 @@ fn the_carry_prompt_asks_for_a_commit_note() {
 fn the_carried_prompt_closes_the_task_before_asking_for_simplify_again() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -570,7 +565,7 @@ fn the_carried_prompt_has_no_again_line_with_simplify_off() {
     let mut fx = two_task_fixture();
     fx.config.builder_carry_session = true;
     fx.config.builder_simplify = false;
-    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let runner = Tagged::new(scripted(two_effects()), 30_000);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");

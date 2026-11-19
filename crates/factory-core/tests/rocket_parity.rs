@@ -57,10 +57,6 @@ fn settings_resolve_to_the_old_values() {
     assert_eq!(new.stall_minutes, old.stall_minutes);
     assert_eq!(new.builder_model, old.builder_model);
     assert_eq!(new.reviewer_model, old.reviewer_model);
-    assert_eq!(new.commit_model, old.commit_model);
-    assert_eq!(new.commit_subagents, old.commit_subagents);
-    assert_eq!(new.commit_budget_weighted, old.commit_budget_weighted);
-    assert_eq!(new.commit_batch, old.commit_batch);
     assert_eq!(new.builder_excerpt, old.builder_excerpt);
     assert_eq!(new.tickets_on_merge, old.tickets_on_merge);
     assert_eq!(new.kb_path, old.kb_path);

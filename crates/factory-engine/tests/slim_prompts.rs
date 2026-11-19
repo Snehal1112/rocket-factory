@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture};
+use common::{scripted, Effect, Fixture};
 use factory_core::{AgentFile, Stage};
 use factory_engine::COMMIT_NOTE_LINE;
 
@@ -52,8 +52,8 @@ fn change(file: &'static str) -> Effect {
 }
 
 fn first_prompt(files: Vec<AgentFile>) -> (Fixture, String) {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change("a.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(files)
         .build_stage()
@@ -63,7 +63,7 @@ fn first_prompt(files: Vec<AgentFile>) -> (Fixture, String) {
 }
 
 fn task_prompt(files: Vec<AgentFile>) -> (Fixture, String) {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
     board
@@ -72,7 +72,7 @@ fn task_prompt(files: Vec<AgentFile>) -> (Fixture, String) {
         .set_stage(Stage::Build, None, false, 1.0)
         .expect("stage");
     board.save(&fx.board_path).expect("save");
-    let runner = scripted_auto(vec![change("a.txt")]);
+    let runner = scripted(vec![change("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(files)
         .build_stage()
@@ -82,11 +82,11 @@ fn task_prompt(files: Vec<AgentFile>) -> (Fixture, String) {
 }
 
 fn fix_prompt(first: Vec<AgentFile>, fix: Vec<AgentFile>) -> (Fixture, String) {
-    fix_prompt_on(committing_fixture(), first, fix)
+    fix_prompt_on(Fixture::new(), first, fix)
 }
 
 fn fix_prompt_on(fx: Fixture, first: Vec<AgentFile>, fix: Vec<AgentFile>) -> (Fixture, String) {
-    let runner = scripted_auto(vec![change("a.txt"), change("b.txt")]);
+    let runner = scripted(vec![change("a.txt"), change("b.txt")]);
     fx.engine(&runner)
         .with_agent_files(first)
         .build_stage()
@@ -106,8 +106,8 @@ fn fix_prompt_on(fx: Fixture, first: Vec<AgentFile>, fix: Vec<AgentFile>) -> (Fi
 }
 
 fn review_prompt(files: Vec<AgentFile>) -> (Fixture, String) {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change("a.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change("a.txt")]);
     fx.engine(&runner)
         .with_agent_files(files.clone())
         .build_stage()
@@ -225,7 +225,7 @@ fn the_slim_task_prompt_is_shorter_than_the_full_one() {
 
 #[test]
 fn the_slim_fix_round_prompt_keeps_findings_hints_and_the_kb_line() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.check_hints = vec!["cargo test".to_string()];
     fx.config.kb_path = Some(fx.tmp.path().join("kb").to_string_lossy().into_owned());
     let files = builder_file(Some("<!-- factory-rules: 1 -->"));
@@ -248,9 +248,9 @@ fn the_fix_round_checks_the_agent_file_when_it_starts() {
 
 #[test]
 fn the_fallback_is_noted_once_per_job_and_agent() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
-    let runner = scripted_auto(vec![change("a.txt"), change("b.txt")]);
+    let runner = scripted(vec![change("a.txt"), change("b.txt")]);
     fx.engine(&runner)
         .with_agent_files(builder_file(None))
         .build_stage()
@@ -376,8 +376,8 @@ const GOLDEN_FIX_FRESH: &str = "You are the builder in a software factory, picki
 
 #[test]
 fn the_fresh_fix_prompt_matches_golden_text() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change("a.txt"), change("b.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change("a.txt"), change("b.txt")]);
     fx.engine(&runner).build_stage().expect("first");
     std::fs::write(fx.job_dir.join("changes-r3.md"), "fix it").expect("findings");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");

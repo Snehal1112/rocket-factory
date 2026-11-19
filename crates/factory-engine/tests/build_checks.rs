@@ -1,9 +1,6 @@
 mod common;
 
-use common::{
-    commit_file, commit_index, committing_fixture, scripted, scripted_auto, Effect, Fixture,
-    ScriptedRunner,
-};
+use common::{commit_file, commit_index, scripted, Effect, Fixture, ScriptedRunner};
 use factory_core::Stage;
 use factory_engine::{StageOutcome, COMMIT_NOTE_LINE};
 
@@ -30,8 +27,8 @@ fn silent_effect() -> Effect {
 
 #[test]
 fn first_build_records_head_session_and_moves_to_review() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let e = fx.engine(&runner);
     let out = e.build_stage().expect("build");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
@@ -45,8 +42,8 @@ fn first_build_records_head_session_and_moves_to_review() {
 
 #[test]
 fn first_build_with_no_changes_parks_the_job() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![silent_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![silent_effect()]);
     let out = fx.engine(&runner).build_stage().expect("build");
     match out {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes"), "{r}"),
@@ -57,8 +54,8 @@ fn first_build_with_no_changes_parks_the_job() {
 
 #[test]
 fn resume_uses_the_session_and_records_prev_head() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     let first_head = fx.job().head.clone();
@@ -78,8 +75,8 @@ fn resume_uses_the_session_and_records_prev_head() {
 
 #[test]
 fn resume_with_no_changes_parks_the_job() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
@@ -107,8 +104,8 @@ fn fix_round_from(fx: &Fixture, runner: &ScriptedRunner, source: Option<&str>) -
 
 #[test]
 fn a_no_change_fix_round_after_failed_checks_goes_to_review_when_the_checks_now_pass() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     let head = fix_round_from(&fx, &runner, Some("checks"));
     let out = fx.engine(&runner).build_stage().expect("resume");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
@@ -121,8 +118,8 @@ fn a_no_change_fix_round_after_failed_checks_goes_to_review_when_the_checks_now_
 
 #[test]
 fn a_no_change_fix_round_after_failed_checks_parks_as_checks_failed_when_they_still_fail() {
-    let mut fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let mut fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
@@ -144,8 +141,8 @@ fn a_no_change_fix_round_after_failed_checks_parks_as_checks_failed_when_they_st
 
 #[test]
 fn a_no_change_fix_round_after_a_review_still_parks_as_nothing_changed() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     fix_round_from(&fx, &runner, Some("review"));
     match fx.engine(&runner).build_stage().expect("resume") {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
@@ -160,9 +157,9 @@ fn reply_effect(text: &'static str) -> Effect {
 
 #[test]
 fn a_resume_that_pushes_back_on_everything_parks_with_the_reply_as_a_part() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let reason = "Finding 1 is wrong: the lease is released in Drop, see lease.rs:40.";
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), reply_effect(reason)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), reply_effect(reason)]);
     fix_round_from(&fx, &runner, Some("review"));
     match fx.engine(&runner).build_stage().expect("resume") {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
@@ -182,8 +179,8 @@ fn a_resume_that_pushes_back_on_everything_parks_with_the_reply_as_a_part() {
 
 #[test]
 fn a_resume_that_changes_code_still_saves_its_reply() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![
+    let fx = Fixture::new();
+    let runner = scripted(vec![
         change_effect("a.txt", 3),
         Box::new(|spec| {
             std::fs::write(spec.cwd.join("b.txt"), "x\n").expect("write");
@@ -209,8 +206,8 @@ fn a_resume_reply_of_needs_context_or_blocked_parks_without_committing() {
         ),
         ("BLOCKED: the schema file is gone", "schema file is gone"),
     ] {
-        let fx = committing_fixture();
-        let runner = scripted_auto(vec![
+        let fx = Fixture::new();
+        let runner = scripted(vec![
             change_effect("a.txt", 3),
             Box::new(move |spec| {
                 std::fs::write(spec.cwd.join("b.txt"), "x\n").expect("write");
@@ -236,9 +233,9 @@ fn a_resume_reply_of_needs_context_or_blocked_parks_without_committing() {
 
 #[test]
 fn diff_over_the_cap_parks_the_job() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.diff_cap_lines = 5;
-    let runner = scripted_auto(vec![change_effect("big.txt", 50)]);
+    let runner = scripted(vec![change_effect("big.txt", 50)]);
     match fx.engine(&runner).build_stage().expect("build") {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("cap"), "{r}"),
         other => panic!("unexpected {other:?}"),
@@ -256,7 +253,7 @@ fn diff_over_the_cap_parks_the_job() {
 
 #[test]
 fn bad_config_is_rejected_when_the_engine_is_built() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["cargo test --workspace -j4".into()],
@@ -278,8 +275,8 @@ fn bad_config_is_rejected_when_the_engine_is_built() {
 
 #[test]
 fn a_rework_note_is_the_findings_of_the_resume_and_is_removed_after() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     // A rework resets the round to 0, so there is no changes-r file, only the note.
@@ -297,14 +294,14 @@ fn a_rework_note_is_the_findings_of_the_resume_and_is_removed_after() {
 }
 
 fn built(fx: &Fixture) -> ScriptedRunner {
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     runner
 }
 
 #[test]
 fn passing_checks_write_checks_md_and_stay_in_review() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = built(&fx);
     let out = fx.engine(&runner).checks_stage().expect("checks");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
@@ -314,7 +311,7 @@ fn passing_checks_write_checks_md_and_stay_in_review() {
 
 #[test]
 fn failing_checks_start_a_fix_round() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
         commands: vec!["false".into()],
@@ -335,7 +332,7 @@ fn failing_checks_start_a_fix_round() {
 
 #[test]
 fn failing_checks_beyond_fix_rounds_need_a_human() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.fix_rounds = 1;
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["**".into()],
@@ -364,13 +361,13 @@ fn failing_checks_beyond_fix_rounds_need_a_human() {
 
 #[test]
 fn docs_only_diff_still_writes_a_pass_line() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![factory_core::CheckRule {
         paths: vec!["src/**".into()],
         commands: vec!["false".into()],
         ..factory_core::CheckRule::default()
     }];
-    let runner = scripted_auto(vec![change_effect("a.md", 3)]);
+    let runner = scripted(vec![change_effect("a.md", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let out = fx.engine(&runner).checks_stage().expect("checks");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
@@ -381,7 +378,7 @@ fn docs_only_diff_still_writes_a_pass_line() {
 const TWO_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n";
 
 fn two_task_fixture() -> Fixture {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
     board
@@ -396,7 +393,7 @@ fn two_task_fixture() -> Fixture {
 #[test]
 fn the_first_task_call_stays_in_build_and_names_only_task_one() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let out = fx.engine(&runner).build_stage().expect("build");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
     let job = fx.job();
@@ -421,9 +418,8 @@ fn the_first_task_call_stays_in_build_and_names_only_task_one() {
 
 #[test]
 fn the_last_task_call_records_head_and_moves_to_review() {
-    let mut fx = two_task_fixture();
-    fx.config.commit_batch = false;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = two_task_fixture();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     let first = fx.repo.tip(&fx.job().branch).expect("tip after task 1");
@@ -451,7 +447,7 @@ fn the_last_task_call_records_head_and_moves_to_review() {
 #[test]
 fn a_task_that_changes_nothing_parks_the_job_with_its_number() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     match e.build_stage().expect("task 2") {
@@ -475,8 +471,8 @@ fn a_task_that_changes_nothing_parks_the_job_with_its_number() {
 
 #[test]
 fn a_plan_without_task_headings_runs_one_whole_plan_builder() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let out = fx.engine(&runner).build_stage().expect("build");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
     assert_eq!(fx.job().task_index, 0);
@@ -486,7 +482,7 @@ fn a_plan_without_task_headings_runs_one_whole_plan_builder() {
 #[test]
 fn a_fix_round_resumes_the_session_and_does_not_restart_the_task_loop() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![
+    let runner = scripted(vec![
         change_effect("a.txt", 3),
         change_effect("b.txt", 2),
         change_effect("c.txt", 1),
@@ -539,7 +535,7 @@ fn a_stopped_first_task_parks_and_a_rework_resumes_at_that_task_with_the_note() 
         .set_stage(Stage::Build, None, true, 1.0)
         .expect("stage");
     board.save(&fx.board_path).expect("save");
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let out = fx.engine(&runner).build_stage().expect("task 1 again");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
     let spec = runner.last_spec_for("builder").expect("spec");
@@ -563,7 +559,7 @@ fn blocked_effect(file: &'static str, reply: &'static str) -> Effect {
 #[test]
 fn a_blocked_reply_parks_without_committing() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![blocked_effect("a.txt", "BLOCKED: no schema")]);
+    let runner = scripted(vec![blocked_effect("a.txt", "BLOCKED: no schema")]);
     match fx.engine(&runner).build_stage().expect("task 1") {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("no schema"), "{r}"),
         other => panic!("unexpected {other:?}"),
@@ -585,7 +581,7 @@ fn a_blocked_reply_parks_without_committing() {
 #[test]
 fn a_needs_context_reply_parks_like_blocked() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![blocked_effect(
+    let runner = scripted(vec![blocked_effect(
         "a.txt",
         "Did some of it.\nStatus: NEEDS_CONTEXT which table?",
     )]);
@@ -605,7 +601,7 @@ fn a_needs_context_reply_parks_like_blocked() {
 #[test]
 fn a_reply_without_a_status_line_is_committed_as_before() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let out = fx.engine(&runner).build_stage().expect("task 1");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
     assert_eq!(fx.job().task_index, 1);
@@ -635,8 +631,8 @@ fn assert_short_base(reason: &str, base: &str) {
 
 #[test]
 fn a_whole_plan_builder_that_commits_on_its_own_parks_before_any_committer_run() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![commits_on_its_own_effect("a.txt")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![commits_on_its_own_effect("a.txt")]);
     match fx.engine(&runner).build_stage().expect("build") {
         StageOutcome::NeedsHuman(r) => {
             assert!(r.contains("committed on its own"), "{r}");
@@ -645,13 +641,12 @@ fn a_whole_plan_builder_that_commits_on_its_own_parks_before_any_committer_run()
         }
         other => panic!("unexpected {other:?}"),
     }
-    assert!(runner.specs_for("committer").is_empty());
 }
 
 #[test]
 fn a_task_builder_that_commits_on_its_own_parks_with_its_number() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![commits_on_its_own_effect("a.txt")]);
+    let runner = scripted(vec![commits_on_its_own_effect("a.txt")]);
     match fx.engine(&runner).build_stage().expect("task 1") {
         StageOutcome::NeedsHuman(r) => {
             assert!(r.contains("committed on its own in task 1"), "{r}");
@@ -661,18 +656,16 @@ fn a_task_builder_that_commits_on_its_own_parks_with_its_number() {
         other => panic!("unexpected {other:?}"),
     }
     assert_eq!(fx.job().task_index, 0);
-    assert!(runner.specs_for("committer").is_empty());
 }
 
 #[test]
 fn a_whole_plan_build_makes_one_wip_snapshot() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("build"),
         StageOutcome::Advanced(Stage::Review)
     );
-    assert!(runner.specs_for("committer").is_empty());
     let job = fx.job();
     let base = job.base.clone().expect("base");
     let head = job.head.clone().expect("head");
@@ -684,8 +677,8 @@ fn a_whole_plan_build_makes_one_wip_snapshot() {
 
 #[test]
 fn a_fix_round_snapshot_sits_above_the_reviewed_head() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     let reviewed = fx.job().head.clone().expect("reviewed head");
@@ -694,7 +687,6 @@ fn a_fix_round_snapshot_sits_above_the_reviewed_head() {
         e.build_stage().expect("fix"),
         StageOutcome::Advanced(Stage::Review)
     );
-    assert!(runner.specs_for("committer").is_empty());
     let job = fx.job();
     let head = job.head.clone().expect("head");
     assert_eq!(job.prev_head.as_deref(), Some(reviewed.as_str()));
@@ -713,8 +705,8 @@ fn a_fix_round_snapshot_sits_above_the_reviewed_head() {
 
 #[test]
 fn a_fix_round_that_detaches_head_parks_before_the_snapshot() {
-    let fx = committing_fixture();
-    let first = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let first = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&first).build_stage().expect("first");
     let reviewed = fx.job().head.clone().expect("reviewed head");
     start_fix_round(&fx);
@@ -725,7 +717,7 @@ fn a_fix_round_that_detaches_head_parks_before_the_snapshot() {
         repo.set_head_detached(id).expect("detach");
         "done".to_string()
     });
-    let second = scripted_auto(vec![detach_and_change]);
+    let second = scripted(vec![detach_and_change]);
     match fx.engine(&second).build_stage().expect("fix") {
         StageOutcome::NeedsHuman(r) => {
             assert!(
@@ -748,22 +740,21 @@ fn a_fix_round_that_detaches_head_parks_before_the_snapshot() {
 
 #[test]
 fn a_fix_round_that_changes_nothing_parks_without_a_committer_run() {
-    let fx = committing_fixture();
-    let first = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let first = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&first).build_stage().expect("first");
     start_fix_round(&fx);
-    let second = scripted_auto(vec![silent_effect()]);
+    let second = scripted(vec![silent_effect()]);
     match fx.engine(&second).build_stage().expect("fix") {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
         other => panic!("unexpected {other:?}"),
     }
-    assert!(second.specs_for("committer").is_empty());
 }
 
 #[test]
 fn the_builder_prompts_tell_it_not_to_commit() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![
+    let runner = scripted(vec![
         change_effect("a.txt", 3),
         change_effect("b.txt", 2),
         change_effect("c.txt", 1),
@@ -791,8 +782,8 @@ fn the_builder_prompts_tell_it_not_to_commit() {
             spec.prompt
         );
     }
-    let whole = committing_fixture();
-    let whole_runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let whole = Fixture::new();
+    let whole_runner = scripted(vec![change_effect("a.txt", 3)]);
     whole
         .engine(&whole_runner)
         .build_stage()
@@ -817,9 +808,9 @@ const KB_PROMPT: &str = "Knowledge base: /kb/rocketapi. Read /kb/rocketapi/READM
 
 #[test]
 fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.kb_path = Some("/kb/rocketapi".into());
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     let first = runner.last_spec_for("builder").expect("spec").prompt;
@@ -848,8 +839,8 @@ fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
         ]
     );
 
-    let off = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let off = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     off.engine(&runner).build_stage().expect("first");
     let spec = runner.last_spec_for("builder").expect("spec");
     assert!(!spec.prompt.contains("Knowledge base"));
@@ -863,7 +854,7 @@ fn the_first_and_resume_builder_prompts_carry_the_kb_line_only_when_set() {
 fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
     let mut fx = two_task_fixture();
     fx.config.kb_path = Some("/kb/rocketapi".into());
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(prompt.contains(KB_PROMPT), "{prompt}");
@@ -876,7 +867,7 @@ fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
     );
 
     let off = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     off.engine(&runner).build_stage().expect("build");
     let spec = runner.last_spec_for("builder").expect("spec");
     assert!(!spec.prompt.contains("Knowledge base"));
@@ -888,8 +879,8 @@ fn the_task_builder_prompt_carries_the_kb_line_only_when_set() {
 
 #[test]
 fn the_first_builder_prompt_has_no_project_wording_by_default() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(
@@ -903,10 +894,10 @@ fn the_first_builder_prompt_has_no_project_wording_by_default() {
 
 #[test]
 fn the_first_builder_prompt_takes_read_first_and_rules_from_the_config() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.read_first = vec!["CLAUDE.md".into(), "docs/rules".into()];
     fx.config.builder_rules = vec!["Run cargo check -j4.".into(), "Keep it small.".into()];
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(
@@ -928,9 +919,9 @@ fn the_resume_prompt_names_check_hints_only_when_set() {
         vec![],
         vec!["make test".to_string(), "make lint".to_string()],
     ] {
-        let mut fx = committing_fixture();
+        let mut fx = Fixture::new();
         fx.config.check_hints = hints.clone();
-        let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+        let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
         let e = fx.engine(&runner);
         e.build_stage().expect("first");
         std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
@@ -957,7 +948,7 @@ fn the_task_builder_prompt_takes_read_first_and_rules_from_the_config() {
     let mut fx = two_task_fixture();
     fx.config.read_first = vec!["CLAUDE.md".into()];
     fx.config.builder_rules = vec!["Keep it small.".into()];
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(
@@ -971,7 +962,7 @@ fn the_task_builder_prompt_takes_read_first_and_rules_from_the_config() {
     assert!(prompt.contains("Rules: Keep it small."), "{prompt}");
 
     let off = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     off.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(
@@ -990,7 +981,7 @@ fn without_an_excerpt_the_task_builder_prompt_keeps_the_read_the_plan_wording() 
     let mut fx = two_task_fixture();
     fx.config.builder_excerpt = false;
     fx.config.read_first = vec!["CLAUDE.md".into()];
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     assert!(
@@ -1006,7 +997,7 @@ fn without_an_excerpt_the_task_builder_prompt_keeps_the_read_the_plan_wording() 
     let mut fx = two_task_fixture();
     std::fs::write(&fx.plan_file, "# P\n\nno task headings here\n").expect("plan");
     fx.config.builder_excerpt = true;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let _ = fx.engine(&runner).build_stage();
     if let Some(spec) = runner.last_spec_for("builder") {
         assert!(!spec.prompt.contains("Task excerpt"), "{}", spec.prompt);
@@ -1016,7 +1007,7 @@ fn without_an_excerpt_the_task_builder_prompt_keeps_the_read_the_plan_wording() 
 const THREE_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n\n### Task 3: third thing\n\nz\n";
 
 fn three_task_fixture() -> Fixture {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, THREE_TASKS).expect("plan");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
     board
@@ -1031,7 +1022,7 @@ fn three_task_fixture() -> Fixture {
 #[test]
 fn a_three_task_plan_keeps_three_snapshots_and_runs_no_committer() {
     let fx = three_task_fixture();
-    let runner = scripted_auto(vec![
+    let runner = scripted(vec![
         change_effect("a.txt", 3),
         change_effect("b.txt", 2),
         change_effect("c.txt", 4),
@@ -1051,7 +1042,6 @@ fn a_three_task_plan_keeps_three_snapshots_and_runs_no_committer() {
         e.build_stage().expect("task 3"),
         StageOutcome::Advanced(Stage::Review)
     );
-    assert_eq!(runner.specs_for("committer").len(), 0);
     let job = fx.job();
     assert_eq!(job.stage, Stage::Review);
     assert_eq!(job.task_index, 3);
@@ -1074,7 +1064,7 @@ fn a_three_task_plan_keeps_three_snapshots_and_runs_no_committer() {
 #[test]
 fn an_empty_task_still_parks() {
     let fx = three_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), silent_effect()]);
+    let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     match e.build_stage().expect("task 2") {
@@ -1082,14 +1072,13 @@ fn an_empty_task_still_parks() {
         other => panic!("unexpected {other:?}"),
     }
     assert_eq!(fx.job().task_index, 1);
-    assert_eq!(runner.specs_for("committer").len(), 0);
 }
 
 /// Leaves the state an older driver left when its batch committer stopped right after the soft reset:
 /// the flag holds the last snapshot, the stage is Build, and the branch is back at the base with the work
 /// staged. Returns the worktree path.
 fn park_a_batch(fx: &Fixture) -> std::path::PathBuf {
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     assert_eq!(
@@ -1122,7 +1111,7 @@ fn park_a_batch(fx: &Fixture) -> std::path::PathBuf {
 
 #[test]
 fn a_one_task_plan_makes_one_snapshot_and_goes_to_review() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, "# P\n\n### Task 1: only thing\n\nx\n").expect("plan");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
     board
@@ -1131,13 +1120,12 @@ fn a_one_task_plan_makes_one_snapshot_and_goes_to_review() {
         .set_stage(Stage::Build, None, false, 1.0)
         .expect("stage");
     board.save(&fx.board_path).expect("save");
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("build"),
         StageOutcome::Advanced(Stage::Review)
     );
     assert_eq!(runner.specs_for("builder").len(), 1);
-    assert_eq!(runner.specs_for("committer").len(), 0);
     let job = fx.job();
     assert_eq!(job.stage, Stage::Review);
     assert!(job.batch_snapshot.is_none());
@@ -1186,7 +1174,7 @@ fn an_old_batch_at_its_snapshot_continues_to_review() {
     fx.repo
         .reset_soft(&old_batch_worktree(&fx, &wt), &snapshot)
         .expect("back to the snapshot");
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
@@ -1217,7 +1205,7 @@ fn an_old_batch_reset_to_the_base_moves_back_to_the_snapshot() {
         job.base.clone().expect("base")
     );
     let before = worktree_files(&wt);
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
@@ -1256,7 +1244,7 @@ fn an_old_batch_partly_unstaged_at_the_base_recovers() {
         .repo
         .staged_tree_is(&old_batch_worktree(&fx, &wt), &snapshot)
         .expect("partial index"));
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
@@ -1274,7 +1262,7 @@ fn an_old_batch_at_the_base_with_other_files_parks() {
     let wt = park_a_batch(&fx);
     let snapshot = fx.job().batch_snapshot.clone().expect("snapshot");
     std::fs::write(wt.join("a.txt"), "not the snapshot\n").expect("change a");
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     match fx.engine(&runner).build_stage().expect("resume") {
         StageOutcome::NeedsHuman(r) => {
             assert!(
@@ -1303,7 +1291,7 @@ fn an_old_batch_the_committer_finished_continues_on_its_tip() {
     let wt = park_a_batch(&fx);
     // The old committer finished its commit, but the driver stopped before it cleared the flag.
     let tip = commit_index(&wt, "feat(test): both tasks");
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
@@ -1328,7 +1316,7 @@ fn a_branch_that_moved_to_other_work_parks_with_the_recovery_command() {
     let wt = park_a_batch(&fx);
     // A commit with a different tree than the snapshots.
     commit_file(&wt, "extra.txt", "x\n");
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     match fx.engine(&runner).build_stage().expect("resume") {
         StageOutcome::NeedsHuman(r) => {
             let base = fx.job().base.expect("base");
@@ -1375,7 +1363,7 @@ fn an_old_batch_with_partial_commits_parks_with_the_reset_hint() {
         .expect("commit");
     }
     // The half-finished batch is not mistaken for a finished one and nothing runs on top of it.
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     match fx.engine(&runner).build_stage().expect("resume") {
         StageOutcome::NeedsHuman(r) => {
             assert!(
@@ -1394,7 +1382,7 @@ fn an_old_batch_with_partial_commits_parks_with_the_reset_hint() {
         .reset_soft(&old_batch_worktree(&fx, &wt), &base)
         .expect("reset");
     fx.resume_to_build();
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
@@ -1412,7 +1400,7 @@ const EXCERPT_SPEC: &str =
 ## Acceptance criteria\n\n- ACCEPT-MARKER\n\n## Testing\n\nTESTING-MARKER\n";
 
 fn excerpt_fixture() -> Fixture {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     std::fs::write(&fx.plan_file, EXCERPT_PLAN).expect("plan");
     std::fs::write(fx.job_dir.join("spec.md"), EXCERPT_SPEC).expect("spec");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
@@ -1432,7 +1420,7 @@ fn events_of(fx: &Fixture) -> String {
 #[test]
 fn a_task_builder_gets_its_own_task_the_header_and_the_spec_excerpt() {
     let fx = excerpt_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     for want in [
@@ -1468,7 +1456,7 @@ fn first_builder_prompt(plan: &str, excerpt_on: bool) -> (String, String) {
     let mut fx = excerpt_fixture();
     fx.config.builder_excerpt = excerpt_on;
     std::fs::write(&fx.plan_file, plan).expect("plan");
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
     // The fixtures differ only in the temp dir, so the paths are normalized.
@@ -1560,7 +1548,7 @@ fn a_builder_that_detaches_head_parks_before_the_snapshot() {
         repo.set_head_detached(id).expect("detach");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![detach_and_change]);
+    let runner = scripted(vec![detach_and_change]);
     match fx.engine(&runner).build_stage().expect("task 1") {
         StageOutcome::NeedsHuman(r) => {
             assert!(r.contains("moved HEAD off the job branch in task 1"), "{r}");
@@ -1589,7 +1577,7 @@ fn a_rework_note_left_by_a_batch_goes_to_the_ledger_and_a_fix_round_uses_the_fin
         "please look at the batch",
     )
     .expect("note");
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     assert_eq!(
         fx.engine(&runner).build_stage().expect("resume"),
         StageOutcome::Advanced(Stage::Review)
@@ -1608,7 +1596,7 @@ fn a_rework_note_left_by_a_batch_goes_to_the_ledger_and_a_fix_round_uses_the_fin
     job.round = 2;
     job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
     board.save(&fx.board_path).expect("save");
-    let fix = scripted_auto(vec![change_effect("c.txt", 2)]);
+    let fix = scripted(vec![change_effect("c.txt", 2)]);
     assert_eq!(
         fx.engine(&fix).build_stage().expect("fix round"),
         StageOutcome::Advanced(Stage::Review)
@@ -1627,7 +1615,7 @@ fn a_long_stale_note_is_cut_to_300_characters_in_the_ledger() {
         format!("{}\nTAIL-MARKER", "n".repeat(400)),
     )
     .expect("note");
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     fx.engine(&runner).build_stage().expect("resume");
     let ledger = fx.ledger();
     assert!(
@@ -1641,7 +1629,7 @@ fn a_long_stale_note_is_cut_to_300_characters_in_the_ledger() {
 #[test]
 fn builder_rulings_land_in_the_ledger_with_a_task_prefix() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![blocked_effect(
+    let runner = scripted(vec![blocked_effect(
         "a.txt",
         "Done.\nRuling: kept the old name\nRuling: used a Vec\n```\nRuling: fenced\n```\nStatus: DONE",
     )]);
@@ -1664,7 +1652,7 @@ fn builder_rulings_land_in_the_ledger_with_a_task_prefix() {
 #[test]
 fn concerns_are_recorded_for_done_with_concerns() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![blocked_effect(
+    let runner = scripted(vec![blocked_effect(
         "a.txt",
         "Done.\nStatus: DONE_WITH_CONCERNS\nThe query is slow.\nThe index may be missing.",
     )]);
@@ -1690,36 +1678,31 @@ fn rule(path: &str, command: &str) -> factory_core::CheckRule {
 
 #[test]
 fn each_task_writes_a_checks_file_for_its_own_range() {
-    for batch in [true, false] {
-        let mut fx = two_task_fixture();
-        fx.config.commit_batch = batch;
-        fx.config.checks = vec![rule("a.txt", "echo task-a"), rule("b.txt", "echo task-b")];
-        let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
-        let e = fx.engine(&runner);
-        e.build_stage().expect("task 1");
-        e.build_stage().expect("task 2");
-        let one =
-            std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
-        let two =
-            std::fs::read_to_string(fx.job_dir.join("checks-task2.md")).expect("checks-task2.md");
-        assert!(
-            one.contains("PASS echo task-a") && !one.contains("task-b"),
-            "{one}"
-        );
-        assert!(
-            two.contains("PASS echo task-b") && !two.contains("task-a"),
-            "{two}"
-        );
-        assert!(
-            fx.ledger().contains("task 1 checks: pass"),
-            "{}",
-            fx.ledger()
-        );
-        assert!(
-            !fx.job_dir.join("checks.md").exists(),
-            "the whole-branch file is not written here"
-        );
-    }
+    let mut fx = two_task_fixture();
+    fx.config.checks = vec![rule("a.txt", "echo task-a"), rule("b.txt", "echo task-b")];
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let one = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
+    let two = std::fs::read_to_string(fx.job_dir.join("checks-task2.md")).expect("checks-task2.md");
+    assert!(
+        one.contains("PASS echo task-a") && !one.contains("task-b"),
+        "{one}"
+    );
+    assert!(
+        two.contains("PASS echo task-b") && !two.contains("task-a"),
+        "{two}"
+    );
+    assert!(
+        fx.ledger().contains("task 1 checks: pass"),
+        "{}",
+        fx.ledger()
+    );
+    assert!(
+        !fx.job_dir.join("checks.md").exists(),
+        "the whole-branch file is not written here"
+    );
 }
 
 #[test]
@@ -1727,7 +1710,7 @@ fn a_failing_task_check_is_a_ledger_line_not_a_park() {
     let mut fx = two_task_fixture();
     fx.config.checks = vec![rule("a.txt", "false")];
     let before_round = fx.job().round;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let out = fx.engine(&runner).build_stage().expect("task 1");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
     let job = fx.job();
@@ -1744,7 +1727,7 @@ fn a_failing_task_check_is_a_ledger_line_not_a_park() {
 fn a_failing_check_after_task_two_is_reported_against_task_two() {
     let mut fx = two_task_fixture();
     fx.config.checks = vec![rule("a.txt", "true"), rule("b.txt", "false")];
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -1780,7 +1763,7 @@ fn a_capped_away_dependents_check_still_leaves_its_note() {
         }
         "done".to_string()
     });
-    let runner = scripted_auto(vec![write_workspace]);
+    let runner = scripted(vec![write_workspace]);
     fx.engine(&runner).build_stage().expect("task 1");
     let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
     assert!(
@@ -1814,7 +1797,7 @@ fn a_crate_template_only_in_lint_expands_in_a_real_run() {
         }
         "done".to_string()
     });
-    let runner = scripted_auto(vec![write_workspace]);
+    let runner = scripted(vec![write_workspace]);
     fx.engine(&runner).build_stage().expect("task 1");
     let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
     assert!(md.contains("cargo clippy -j4 -p corepkg"), "{md}");
@@ -1838,7 +1821,7 @@ fn a_broken_workspace_map_still_runs_the_checks() {
         std::fs::write(path, "pub fn f() {}\n").expect("write");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![write_broken]);
+    let runner = scripted(vec![write_broken]);
     fx.engine(&runner).build_stage().expect("task 1");
     let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
     assert!(md.contains("NOTE workspace map unavailable"), "{md}");
@@ -1851,7 +1834,7 @@ fn a_broken_workspace_map_still_runs_the_checks() {
 fn a_task_with_no_mapped_checks_writes_nothing() {
     let mut fx = two_task_fixture();
     fx.config.checks = vec![rule("src/**", "false")];
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     assert!(!fx.job_dir.join("checks-task1.md").exists());
     assert!(!fx.ledger().contains("task 1 checks"), "{}", fx.ledger());
@@ -1870,8 +1853,8 @@ fn assert_builder_spec_is_strict(spec: &factory_agent::AgentSpec) {
 #[test]
 fn builder_specs_are_strict_and_name_their_tools() {
     // The first spec and the resume spec come from a plan without task headings.
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     std::fs::write(fx.job_dir.join("rework-note.md"), "rename the helper").expect("note");
@@ -1887,15 +1870,15 @@ fn builder_specs_are_strict_and_name_their_tools() {
     specs.iter().for_each(assert_builder_spec_is_strict);
     // The task spec comes from a plan with task headings.
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     assert_builder_spec_is_strict(&runner.last_spec_for("builder").expect("spec"));
 }
 
 /// The first, resume and task specs of a builder, in that order.
 fn three_builder_specs() -> (Fixture, Fixture, Vec<factory_agent::AgentSpec>) {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     std::fs::write(fx.job_dir.join("rework-note.md"), "rename the helper").expect("note");
@@ -1907,7 +1890,7 @@ fn three_builder_specs() -> (Fixture, Fixture, Vec<factory_agent::AgentSpec>) {
     e.build_stage().expect("resume");
     let mut specs = runner.specs_for("builder");
     let tfx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     tfx.engine(&runner).build_stage().expect("task 1");
     specs.push(runner.last_spec_for("builder").expect("task spec"));
     (fx, tfx, specs)
@@ -1941,9 +1924,9 @@ fn builder_specs_still_pass_assert_builder_spec_is_strict() {
 
 #[test]
 fn builder_permissions_false_restores_the_old_argument_list() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.builder_permissions = false;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.specs_for("builder").remove(0);
     assert_eq!(spec.permission_mode, None);
@@ -1972,9 +1955,9 @@ fn builder_permissions_false_restores_the_old_argument_list() {
 
 #[test]
 fn builder_permissions_false_restores_all_three_builder_specs() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.builder_permissions = false;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     std::fs::write(fx.job_dir.join("rework-note.md"), "rename the helper").expect("note");
@@ -1987,7 +1970,7 @@ fn builder_permissions_false_restores_all_three_builder_specs() {
     let mut specs = runner.specs_for("builder");
     let mut tfx = two_task_fixture();
     tfx.config.builder_permissions = false;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     tfx.engine(&runner).build_stage().expect("task 1");
     specs.push(runner.last_spec_for("builder").expect("task spec"));
     assert_eq!(specs.len(), 3);
@@ -2004,11 +1987,11 @@ fn builder_permissions_false_restores_all_three_builder_specs() {
 
 #[test]
 fn kb_folder_is_denied_for_edit_and_write() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     let kb = fx.tmp.path().join("kb").join("rocketapi");
     std::fs::create_dir_all(&kb).expect("mkdir kb");
     fx.config.kb_path = Some(kb.to_string_lossy().into_owned());
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.specs_for("builder").remove(0);
     let canon = kb.canonicalize().expect("canonical").display().to_string();
@@ -2028,24 +2011,24 @@ fn kb_folder_is_denied_for_edit_and_write() {
 #[test]
 fn a_path_with_a_rule_character_leaves_the_spec_unchanged() {
     for name in ["job)1", "job,1"] {
-        let mut fx = committing_fixture();
+        let mut fx = Fixture::new();
         let odd = fx.tmp.path().join(name);
         std::fs::create_dir_all(&odd).expect("mkdir");
         std::fs::copy(&fx.plan_file, odd.join("plan.md")).expect("plan");
         fx.plan_file = odd.join("plan.md");
         fx.events = factory_agent::EventSink::new(odd.join("events.jsonl"), "001");
         fx.job_dir = odd;
-        let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+        let runner = scripted(vec![change_effect("a.txt", 3)]);
         fx.engine(&runner).build_stage().expect("build");
         let spec = runner.specs_for("builder").remove(0);
         assert_eq!(spec.permission_mode, None, "{name}");
         assert!(spec.allowed_tools.is_empty(), "{name}");
     }
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     let kb = fx.tmp.path().join("kb)1");
     std::fs::create_dir_all(&kb).expect("mkdir kb");
     fx.config.kb_path = Some(kb.to_string_lossy().into_owned());
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     // A bad kb_path yields no KB folder, so no rule or extra directory names it.
     let spec = runner.specs_for("builder").remove(0);
@@ -2059,14 +2042,14 @@ fn a_path_with_a_rule_character_leaves_the_spec_unchanged() {
 
 #[test]
 fn glob_character_in_job_dir_leaves_the_spec_unchanged() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     let odd = fx.tmp.path().join("job[1]");
     std::fs::create_dir_all(&odd).expect("mkdir");
     std::fs::copy(&fx.plan_file, odd.join("plan.md")).expect("plan");
     fx.plan_file = odd.join("plan.md");
     fx.events = factory_agent::EventSink::new(odd.join("events.jsonl"), "001");
     fx.job_dir = odd;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.specs_for("builder").remove(0);
     assert_eq!(spec.permission_mode, None);
@@ -2076,8 +2059,8 @@ fn glob_character_in_job_dir_leaves_the_spec_unchanged() {
 
 #[test]
 fn the_fix_resume_prompt_names_receiving_code_review_and_the_needs_context_rule() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     std::fs::write(fx.job_dir.join("changes-r2.md"), "fix it").expect("findings");
@@ -2103,7 +2086,7 @@ fn the_fix_resume_prompt_names_receiving_code_review_and_the_needs_context_rule(
 #[test]
 fn every_builder_prompt_names_subagent_driven_development() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![
+    let runner = scripted(vec![
         change_effect("a.txt", 3),
         change_effect("b.txt", 2),
         change_effect("c.txt", 1),
@@ -2136,8 +2119,8 @@ fn every_builder_prompt_names_subagent_driven_development() {
         "{}",
         specs[0].prompt
     );
-    let whole = committing_fixture();
-    let whole_runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let whole = Fixture::new();
+    let whole_runner = scripted(vec![change_effect("a.txt", 3)]);
     whole
         .engine(&whole_runner)
         .build_stage()
@@ -2160,9 +2143,9 @@ const NOT_CONTROLLER: &str =
 
 #[test]
 fn cache_ttl_reaches_every_agent_run_as_a_claude_variable() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.cache_ttl = Some("5m".to_string());
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let specs = runner.specs_for("builder");
     assert!(!specs.is_empty(), "no builder run");
@@ -2178,8 +2161,8 @@ fn cache_ttl_reaches_every_agent_run_as_a_claude_variable() {
 
 #[test]
 fn no_cache_ttl_leaves_the_claude_environment_alone() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let builder = runner.last_spec_for("builder").expect("builder run");
     assert!(
@@ -2194,9 +2177,9 @@ fn no_cache_ttl_leaves_the_claude_environment_alone() {
 
 #[test]
 fn every_agent_run_loads_only_its_roles_plugins() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.builder_plugins = vec!["superpowers".to_string(), "rust-analyzer-lsp".to_string()];
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let builders = runner.specs_for("builder");
     assert!(!builders.is_empty(), "no builder run");
@@ -2245,7 +2228,7 @@ fn dispatched_lines(fx: &Fixture) -> Vec<String> {
 fn a_rerun_resumes_the_saved_session() {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     let out = fx.engine(&runner).build_stage().expect("rerun");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
     let builders = runner.specs_for("builder");
@@ -2267,7 +2250,7 @@ const INTERRUPTED: &str =
 fn a_resume_prompt_names_the_task() {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("rerun");
     let spec = runner.last_spec_for("builder").expect("spec");
     assert_eq!(
@@ -2276,7 +2259,7 @@ fn a_resume_prompt_names_the_task() {
     );
 
     let fx = two_task_fixture();
-    let first = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let first = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&first).build_stage().expect("task 1");
     let mut board = factory_core::Board::load(&fx.board_path).expect("load");
     let job = board.find_mut("001").expect("job");
@@ -2287,7 +2270,7 @@ fn a_resume_prompt_names_the_task() {
         tip,
     });
     board.save(&fx.board_path).expect("save");
-    let second = scripted_auto(vec![change_effect("b.txt", 2)]);
+    let second = scripted(vec![change_effect("b.txt", 2)]);
     fx.engine(&second).build_stage().expect("task 2");
     let spec = second.last_spec_for("builder").expect("spec");
     assert_eq!(spec.resume.as_deref(), Some("sess-two"));
@@ -2301,7 +2284,7 @@ fn a_resume_prompt_names_the_task() {
 fn the_ledger_says_resumed_or_fresh() {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -2329,7 +2312,7 @@ fn the_ledger_says_resumed_or_fresh() {
 fn the_resume_is_used_once() {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -2341,8 +2324,8 @@ fn the_resume_is_used_once() {
 
 #[test]
 fn the_whole_plan_dispatched_line_is_unchanged() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let base = fx.job().base.expect("base");
     assert_eq!(
@@ -2389,7 +2372,7 @@ fn a_failed_resume_falls_back_to_a_fresh_builder() {
     crashed_in_task_one(&fx, "sess-old");
     let runner = resume_stops(
         StopReason::Failed,
-        scripted_auto(vec![change_effect("a.txt", 3)]),
+        scripted(vec![change_effect("a.txt", 3)]),
     );
     let out = fx.engine(&runner).build_stage().expect("rerun");
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
@@ -2423,7 +2406,7 @@ fn a_failed_resume_falls_back_to_a_fresh_builder() {
 fn assert_resume_not_retried(stop: StopReason) {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
-    let runner = resume_stops(stop, scripted_auto(vec![change_effect("a.txt", 3)]));
+    let runner = resume_stops(stop, scripted(vec![change_effect("a.txt", 3)]));
     match fx.engine(&runner).build_stage().expect("rerun") {
         StageOutcome::NeedsHuman(r) => {
             assert!(
@@ -2502,7 +2485,7 @@ fn a_session_of_another_task_is_ignored() {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
     edit_session(&fx, |s| s.task = 2);
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("rerun");
     assert_started_fresh(&fx, &runner);
 }
@@ -2512,7 +2495,7 @@ fn a_moved_tip_starts_fresh() {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
     edit_session(&fx, |s| s.tip = "0".repeat(40));
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("rerun");
     assert_started_fresh(&fx, &runner);
 }
@@ -2534,7 +2517,7 @@ fn a_fresh_fallback_keeps_the_partial_edits() {
         std::fs::write(spec.cwd.join("a.txt"), "a\n").expect("write");
         "done".to_string()
     });
-    let runner = resume_stops(StopReason::Failed, scripted_auto(vec![effect]));
+    let runner = resume_stops(StopReason::Failed, scripted(vec![effect]));
     fx.engine(&runner).build_stage().expect("rerun");
     assert!(seen.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(std::fs::read_to_string(&partial).expect("read"), "half\n");
@@ -2550,7 +2533,7 @@ fn a_tampered_resume_parks_without_a_fresh_run() {
         std::fs::write(&plan, "# changed\n").expect("tamper");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![effect]);
+    let runner = scripted(vec![effect]);
     fx.engine(&runner).build_stage().expect("rerun");
     let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, factory_core::ParkKind::BuilderTampered);
@@ -2568,7 +2551,7 @@ fn a_tampered_resume_parks_without_a_fresh_run() {
 fn a_blocked_resume_parks_without_a_fresh_run() {
     let fx = two_task_fixture();
     crashed_in_task_one(&fx, "sess-old");
-    let runner = scripted_auto(vec![blocked_effect("a.txt", "BLOCKED: no schema")]);
+    let runner = scripted(vec![blocked_effect("a.txt", "BLOCKED: no schema")]);
     fx.engine(&runner).build_stage().expect("rerun");
     let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, factory_core::ParkKind::BuilderBlocked);
@@ -2611,7 +2594,7 @@ fn session_effect(
 fn build_task_saves_the_session_while_the_builder_runs() {
     let fx = two_task_fixture();
     let seen: Seen = Arc::new(Mutex::new(None));
-    let runner = scripted_auto(vec![session_effect(
+    let runner = scripted(vec![session_effect(
         fx.board_path.clone(),
         "sess-live",
         "a.txt",
@@ -2652,7 +2635,7 @@ fn the_hook_writes_the_board_through_its_own_store() {
         std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![effect]);
+    let runner = scripted(vec![effect]);
     fx.engine(&runner).build_stage().expect("task 1");
     let base = fx.job().base.clone().expect("base");
     assert_eq!(
@@ -2668,10 +2651,9 @@ fn the_hook_writes_the_board_through_its_own_store() {
 
 #[test]
 fn the_second_task_session_records_the_tip_after_the_first_commit() {
-    let mut fx = two_task_fixture();
-    fx.config.commit_batch = false;
+    let fx = two_task_fixture();
     let seen: Seen = Arc::new(Mutex::new(None));
-    let runner = scripted_auto(vec![
+    let runner = scripted(vec![
         change_effect("a.txt", 3),
         session_effect(
             fx.board_path.clone(),
@@ -2712,7 +2694,7 @@ fn the_session_is_cleared_when_the_run_returns_even_if_it_parks() {
         std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
         "BLOCKED: no schema".to_string()
     });
-    let runner = scripted_auto(vec![effect]);
+    let runner = scripted(vec![effect]);
     let out = fx.engine(&runner).build_stage().expect("task 1");
     assert!(matches!(out, StageOutcome::NeedsHuman(_)), "{out:?}");
     let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
@@ -2745,7 +2727,7 @@ fn a_failing_session_write_does_not_stop_the_run() {
         std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![effect]);
+    let runner = scripted(vec![effect]);
     let out = fx
         .engine(&runner)
         .with_lock_wait(std::time::Duration::from_millis(200))
@@ -2760,13 +2742,13 @@ fn a_failing_session_write_does_not_stop_the_run() {
 
 #[test]
 fn only_task_builders_get_a_session_hook() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let effect: Effect = Box::new(|spec| {
         assert!(spec.on_session.is_none());
         std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![effect]);
+    let runner = scripted(vec![effect]);
     let out = fx.engine(&runner).build_stage().expect("build");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
     let specs = runner.specs_for("builder");
@@ -2779,7 +2761,7 @@ const SIMPLIFY: &str = "invoke the `simplify` skill";
 #[test]
 fn the_simplify_line_reaches_new_task_builders() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -2789,8 +2771,8 @@ fn the_simplify_line_reaches_new_task_builders() {
         assert!(spec.prompt.contains(SIMPLIFY), "{}", spec.prompt);
     }
     // A plan without task headings gets one whole-plan builder, which gets the line too.
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let spec = runner.last_spec_for("builder").expect("spec");
     assert!(spec.prompt.contains(SIMPLIFY), "{}", spec.prompt);
@@ -2800,7 +2782,7 @@ fn the_simplify_line_reaches_new_task_builders() {
 fn builder_simplify_off_drops_the_line() {
     let mut fx = two_task_fixture();
     fx.config.builder_simplify = false;
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
@@ -2813,8 +2795,8 @@ fn builder_simplify_off_drops_the_line() {
 
 #[test]
 fn a_fix_round_prompt_has_no_simplify_line() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("first");
     start_fix_round(&fx);
@@ -2827,7 +2809,7 @@ fn a_fix_round_prompt_has_no_simplify_line() {
 #[test]
 fn the_simplify_line_says_not_to_skip_it() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     let spec = runner.last_spec_for("builder").expect("spec");
     assert!(
@@ -2841,7 +2823,7 @@ fn the_simplify_line_says_not_to_skip_it() {
 #[test]
 fn a_lost_engine_starts_no_agent() {
     use factory_engine::{LostFlag, LostReason};
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = scripted(vec![]);
     let flag = std::sync::Arc::new(LostFlag::new());
     flag.set(LostReason::TakenOver);
@@ -2857,7 +2839,7 @@ fn a_lost_engine_starts_no_agent() {
 #[test]
 fn a_lost_engine_starts_no_reviewer() {
     use factory_engine::{LostFlag, LostReason};
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = built(&fx);
     let calls = runner.call_count();
     let flag = std::sync::Arc::new(LostFlag::new());
@@ -2875,7 +2857,7 @@ fn a_lost_engine_starts_no_reviewer() {
 
 #[test]
 fn an_engine_without_a_flag_is_never_lost() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = scripted(vec![]);
     assert!(!fx.engine(&runner).lost());
 }
@@ -2907,7 +2889,7 @@ fn note_file(fx: &Fixture, name: &str) -> String {
 #[test]
 fn a_task_note_is_saved_from_the_builder_reply() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![note_effect("a.txt", "a\n", "Add the greeting")]);
+    let runner = scripted(vec![note_effect("a.txt", "a\n", "Add the greeting")]);
     fx.engine(&runner).build_stage().expect("task 1");
     let note = note_file(&fx, "task-1.md");
     assert!(note.starts_with("Add the greeting\n\n"), "{note}");
@@ -2919,7 +2901,7 @@ fn a_task_note_is_saved_from_the_builder_reply() {
 #[test]
 fn a_task_without_a_note_gets_the_fallback_and_a_ruling() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("task 1");
     let note = note_file(&fx, "task-1.md");
     assert!(note.starts_with("first thing\n\n"), "{note}");
@@ -2933,8 +2915,8 @@ fn a_task_without_a_note_gets_the_fallback_and_a_ruling() {
 
 #[test]
 fn a_fix_round_note_is_saved_as_its_round() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![
+    let fx = Fixture::new();
+    let runner = scripted(vec![
         change_effect("a.txt", 3),
         note_effect("b.txt", "b\n", "Fix the review findings"),
     ]);
@@ -2948,8 +2930,8 @@ fn a_fix_round_note_is_saved_as_its_round() {
 
 #[test]
 fn a_whole_plan_build_saves_build_md() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![note_effect("a.txt", "a\n", "Build the whole plan")]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![note_effect("a.txt", "a\n", "Build the whole plan")]);
     let out = fx.engine(&runner).build_stage().expect("build");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
     let note = note_file(&fx, "build.md");
@@ -2960,7 +2942,7 @@ fn a_whole_plan_build_saves_build_md() {
 #[test]
 fn a_rerun_task_overwrites_its_note() {
     let fx = two_task_fixture();
-    let runner = scripted_auto(vec![
+    let runner = scripted(vec![
         note_effect("a.txt", "first\n", "Add the first greeting"),
         note_effect("a.txt", "second\n", "Add the second greeting"),
     ]);

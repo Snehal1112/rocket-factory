@@ -1,6 +1,6 @@
 mod common;
 
-use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture};
+use common::{scripted, Effect, Fixture};
 use factory_core::{Board, CheckRule, Stage};
 use factory_engine::{create_job, run_series, StageOutcome};
 
@@ -21,7 +21,7 @@ fn write_effect() -> Effect {
 
 /// Builds once, then fails the checks, so a fix round starts.
 fn build_and_fail(fx: &Fixture) -> StageOutcome {
-    let runner = scripted_auto(vec![write_effect()]);
+    let runner = scripted(vec![write_effect()]);
     fx.engine(&runner).build_stage().expect("build");
     fx.engine(&runner).checks_stage().expect("checks")
 }
@@ -34,7 +34,7 @@ fn set_job_model(fx: &Fixture, model: &str) {
 
 #[test]
 fn the_second_fix_round_is_escalated_and_logged() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     failing_checks(&mut fx);
     assert_eq!(build_and_fail(&fx), StageOutcome::Advanced(Stage::Build));
     assert_eq!(fx.job().round, 2);
@@ -52,7 +52,7 @@ fn the_second_fix_round_is_escalated_and_logged() {
 
 #[test]
 fn a_job_with_its_own_model_is_not_escalated() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     failing_checks(&mut fx);
     set_job_model(&fx, "claude-sonnet-5-5");
     build_and_fail(&fx);
@@ -64,8 +64,8 @@ fn a_job_with_its_own_model_is_not_escalated() {
 
 #[test]
 fn review_findings_escalate_too() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![write_effect()]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![write_effect()]);
     for round in 2..=3 {
         fx.engine(&runner).build_stage().expect("build");
         assert_eq!(
@@ -114,7 +114,7 @@ fn append_effect() -> Effect {
 
 /// Builds with a fresh runner, then runs the checks, and returns the runner for its specs.
 fn build_round(fx: &Fixture) -> common::ScriptedRunner {
-    let runner = scripted_auto(vec![append_effect()]);
+    let runner = scripted(vec![append_effect()]);
     fx.engine(&runner).build_stage().expect("build");
     fx.engine(&runner).checks_stage().expect("checks");
     runner
@@ -139,7 +139,7 @@ fn passing_checks(fx: &mut Fixture) {
 
 #[test]
 fn the_escalated_round_runs_a_fresh_builder_on_the_stronger_model() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     reach_round_three(&mut fx);
     let runner = build_round(&fx);
     let spec = runner.last_spec_for("builder").expect("builder spec");
@@ -164,7 +164,7 @@ fn the_escalated_round_runs_a_fresh_builder_on_the_stronger_model() {
 
 #[test]
 fn the_reviewer_is_not_escalated() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     reach_round_three(&mut fx);
     passing_checks(&mut fx);
     build_round(&fx);
@@ -179,7 +179,7 @@ fn the_reviewer_is_not_escalated() {
 
 #[test]
 fn a_rework_note_wins_in_an_escalated_round() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     reach_round_three(&mut fx);
     std::fs::write(fx.job_dir.join("rework-note.md"), "do it differently").expect("note");
     let runner = build_round(&fx);
@@ -196,7 +196,7 @@ fn a_rework_note_wins_in_an_escalated_round() {
 
 #[test]
 fn the_first_fix_round_still_resumes() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     failing_checks(&mut fx);
     build_round(&fx);
     assert_eq!(fx.job().round, 2);
@@ -212,7 +212,7 @@ fn the_first_fix_round_still_resumes() {
 
 #[test]
 fn a_later_escalated_round_resumes_the_strong_session() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.fix_rounds = 3;
     reach_round_three(&mut fx);
     let third = build_round(&fx);
@@ -226,7 +226,7 @@ fn a_later_escalated_round_resumes_the_strong_session() {
 
 #[test]
 fn the_fresh_fix_prompt_carries_the_project_rules() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.read_first = vec!["CLAUDE.md".into()];
     fx.config.builder_rules = vec!["Run cargo check -j4.".into()];
     let kb = fx.tmp.path().join("kb");
@@ -246,10 +246,10 @@ fn the_fresh_fix_prompt_carries_the_project_rules() {
 
 #[test]
 fn a_provider_switch_clears_the_escalated_model() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     reach_round_three(&mut fx);
     fx.config.agent_cli = Some("codex".to_string());
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     fx.engine(&runner).sync_provider().expect("sync");
     assert_eq!(fx.job().escalated_model, None);
     assert!(
@@ -262,7 +262,7 @@ fn a_provider_switch_clears_the_escalated_model() {
 
 #[test]
 fn a_reworked_escalated_job_does_not_resume_the_old_model_session() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     reach_round_three(&mut fx);
     // `factory rework` resets the round to 0 and writes the note.
     let mut board = Board::load(&fx.board_path).expect("load");
@@ -277,7 +277,7 @@ fn a_reworked_escalated_job_does_not_resume_the_old_model_session() {
 
 #[test]
 fn a_padded_escalation_model_resumes_the_second_escalated_round() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.fix_rounds = 3;
     fx.config.escalation_model = Some("  claude-opus-5-5  ".to_string());
     failing_checks(&mut fx);
@@ -295,10 +295,10 @@ fn a_padded_escalation_model_resumes_the_second_escalated_round() {
 
 #[test]
 fn an_escalated_round_that_changes_nothing_after_checks_parks_like_a_resumed_one() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     reach_round_three(&mut fx);
     assert_eq!(fx.job().fix_source.as_deref(), Some("checks"));
-    let runner = scripted_auto(vec![Box::new(|_| "nothing to do".to_string())]);
+    let runner = scripted(vec![Box::new(|_| "nothing to do".to_string())]);
     let out = fx.engine(&runner).build_stage().expect("build");
     let spec = runner.last_spec_for("builder").expect("builder spec");
     assert_eq!(spec.resume, None);

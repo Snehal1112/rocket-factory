@@ -14,7 +14,7 @@ fn merged(spec: Option<&str>, tracker: &FakeTracker) -> MergeFixture {
         ..Config::default()
     };
     let fx = with_tracker(
-        common::approved_job_config(common::approving_runner(3), false, config),
+        common::approved_job_config(common::approving_runner(3), config),
         tracker.clone(),
     );
     set_feature(&fx, "dedup cleanups https://github.com/o/r/issues/76", spec);
@@ -280,7 +280,7 @@ fn approved_with_hook(on: bool, spec: Option<&str>, tracker: &FakeTracker) -> Me
         ..Config::default()
     };
     let fx = with_tracker(
-        common::approved_job_config(common::approving_runner(3), false, config),
+        common::approved_job_config(common::approving_runner(3), config),
         tracker.clone(),
     );
     set_feature(&fx, "dedup cleanups #76", spec);
@@ -291,7 +291,7 @@ fn approved_with_hook(on: bool, spec: Option<&str>, tracker: &FakeTracker) -> Me
 fn a_merge_with_the_default_config_runs_the_ticket_step() {
     let t = tracker();
     let fx = with_tracker(
-        common::approved_job_config(common::approving_runner(3), false, Config::default()),
+        common::approved_job_config(common::approving_runner(3), Config::default()),
         t.clone(),
     );
     set_feature(&fx, "dedup cleanups #76", Some(SPEC_WITH_TWO));
@@ -312,7 +312,7 @@ fn created_labels(parent_labels: &[&str], config: Config) -> Vec<Vec<String>> {
         ..config
     };
     let fx = with_tracker(
-        common::approved_job_config(common::approving_runner(3), false, config),
+        common::approved_job_config(common::approving_runner(3), config),
         t.clone(),
     );
     set_feature(&fx, "dedup cleanups #76", Some(SPEC_WITH_TWO));
@@ -507,7 +507,7 @@ fn no_gh_binary_after_a_merge_leaves_the_job_merged_and_reports_it() {
         tickets_on_merge: true,
         ..Config::default()
     };
-    let fx = common::approved_job_config(common::approving_runner(3), false, config);
+    let fx = common::approved_job_config(common::approving_runner(3), config);
     let missing =
         factory_engine::GhTracker::with_program("definitely-not-a-real-program-xyz", &fx.main);
     let fx = MergeFixture {

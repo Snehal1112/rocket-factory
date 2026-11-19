@@ -1,8 +1,6 @@
 mod common;
 
-use common::{
-    committing_fixture, scripted, scripted_auto, Effect, Fixture, RoleFailing, ScriptedRunner,
-};
+use common::{scripted, Effect, Fixture, RoleFailing, ScriptedRunner};
 use factory_agent::{AgentRunner, StopReason};
 use factory_core::{
     parse_verdict, AgentFile, Board, CheckRule, Config, Job, ParkKind, ResumeAt, ReviewState,
@@ -21,7 +19,7 @@ fn change_effect() -> Effect {
 
 /// A fixture whose only rule plans the given format and lint commands over every path.
 fn fixture_with_gates(format: &[&str], lint: &[&str]) -> Fixture {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         format: format.iter().map(|s| s.to_string()).collect(),
@@ -33,7 +31,7 @@ fn fixture_with_gates(format: &[&str], lint: &[&str]) -> Fixture {
 
 /// Builds one changed file, then runs the final checks, which record the gates.
 fn run_checks_over_one_file(fx: &Fixture) -> Job {
-    let runner = scripted_auto(vec![change_effect()]);
+    let runner = scripted(vec![change_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("build");
     e.final_checks().expect("checks");
@@ -69,7 +67,7 @@ fn reviewed_fixture_with(mut fx: Fixture, reviewers: &[&str], files: &[&'static 
         }
         "done".to_string()
     });
-    let runner = scripted_auto(vec![builder]);
+    let runner = scripted(vec![builder]);
     fx.engine(&runner).build_stage().expect("build");
     fx.engine(&runner).checks_stage().expect("checks");
     let mut board = Board::load(&fx.board_path).expect("load");
@@ -80,7 +78,7 @@ fn reviewed_fixture_with(mut fx: Fixture, reviewers: &[&str], files: &[&'static 
 }
 
 fn reviewed_fixture(reviewers: &[&str]) -> Fixture {
-    reviewed_fixture_with(committing_fixture(), reviewers, &["a.txt"])
+    reviewed_fixture_with(Fixture::new(), reviewers, &["a.txt"])
 }
 
 fn agent_calls(runner: &ScriptedRunner) -> usize {
@@ -176,7 +174,7 @@ fn a_code_only_config_writes_the_review_file_as_before() {
 #[test]
 fn security_is_skipped_for_a_docs_only_round() {
     let fx = reviewed_fixture_with(
-        committing_fixture(),
+        Fixture::new(),
         &["code", "security"],
         &["docs/a.md", "docs/guide/b.md"],
     );
@@ -194,7 +192,7 @@ fn security_is_skipped_for_a_docs_only_round() {
 
 /// Reviews a round that changed only `files` and returns the calls made and the security state.
 fn security_for(files: &[&'static str], code_paths: Option<Vec<String>>) -> (usize, ReviewState) {
-    let mut base = committing_fixture();
+    let mut base = Fixture::new();
     if let Some(code_paths) = code_paths {
         base.config.code_paths = code_paths;
     }
@@ -289,7 +287,7 @@ fn a_missing_security_agent_parks_as_review_failed() {
 
 #[test]
 fn a_risky_diff_still_goes_to_a_human_after_both_approve() {
-    let mut base = committing_fixture();
+    let mut base = Fixture::new();
     base.config.risk_paths = vec!["secrets/**".into()];
     let fx = reviewed_fixture_with(base, &["code", "security"], &["secrets/key.txt"]);
     let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_OK)]);
@@ -303,9 +301,9 @@ fn a_risky_diff_still_goes_to_a_human_after_both_approve() {
 
 #[test]
 fn the_security_spec_uses_its_own_agent_role_and_rules() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.security_rules = vec!["No shell calls.".to_string()];
-    let runner = scripted_auto(vec![]);
+    let runner = scripted(vec![]);
     let diff = fx.job_dir.join("diff.patch");
     let names = fx.job_dir.join("names.txt");
     let spec = fx.engine(&runner).security_spec_with_model(
@@ -325,8 +323,8 @@ fn the_security_spec_uses_its_own_agent_role_and_rules() {
 
 #[test]
 fn a_code_spec_is_unchanged() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![]);
     let spec = fx.engine(&runner).reviewer_spec(
         &fx.main,
         &fx.job_dir.join("diff.patch"),
@@ -363,7 +361,7 @@ fn format_and_lint_results_land_on_the_board_after_the_checks() {
 
 #[test]
 fn a_gate_with_no_commands_has_no_entry() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["true".into()],
@@ -377,7 +375,7 @@ fn a_gate_with_no_commands_has_no_entry() {
 #[test]
 fn a_new_round_clears_the_gate_entries() {
     let fx = fixture_with_gates(&["true"], &["false"]);
-    let runner = scripted_auto(vec![change_effect()]);
+    let runner = scripted(vec![change_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("build");
     e.final_checks().expect("checks");
@@ -395,7 +393,7 @@ fn a_new_round_clears_the_gate_entries() {
 #[test]
 fn the_final_checks_record_the_gates_again() {
     let fx = fixture_with_gates(&["true"], &["echo lint"]);
-    let runner = scripted_auto(vec![change_effect()]);
+    let runner = scripted(vec![change_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("build");
     e.checks_stage().expect("checks stage");

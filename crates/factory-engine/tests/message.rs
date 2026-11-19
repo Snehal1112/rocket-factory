@@ -30,7 +30,7 @@ fn with_issues(fx: &common::MergeFixture, issues: Vec<u32>) {
 
 #[test]
 fn merge_message_ends_with_the_fixes_and_job_footers() {
-    let fx = approved_job_with(Arc::new(scripted(vec![])), true);
+    let fx = approved_job_with(Arc::new(scripted(vec![])));
     with_issues(&fx, vec![20]);
     let sha = merged(&fx);
     assert!(
@@ -59,7 +59,7 @@ fn set_series(fx: &common::MergeFixture, index: u32, total: u32) {
 
 #[test]
 fn the_last_plan_says_fixes_even_with_follow_ups() {
-    let fx = approved_job_with(Arc::new(scripted(vec![])), true);
+    let fx = approved_job_with(Arc::new(scripted(vec![])));
     common::set_feature(&fx, "x #20", Some(SPEC_WITH_FOLLOW_UPS));
     with_issues(&fx, vec![20]);
     set_series(&fx, 3, 3);
@@ -73,7 +73,7 @@ fn the_last_plan_says_fixes_even_with_follow_ups() {
 
 #[test]
 fn plan_one_of_three_says_relates_to_even_without_follow_ups() {
-    let fx = approved_job_with(Arc::new(scripted(vec![])), true);
+    let fx = approved_job_with(Arc::new(scripted(vec![])));
     with_issues(&fx, vec![20]);
     set_series(&fx, 1, 3);
     let sha = merged(&fx);
@@ -86,7 +86,7 @@ fn plan_one_of_three_says_relates_to_even_without_follow_ups() {
 
 #[test]
 fn a_single_plan_job_with_follow_ups_says_fixes() {
-    let fx = approved_job_with(Arc::new(scripted(vec![])), true);
+    let fx = approved_job_with(Arc::new(scripted(vec![])));
     common::set_feature(&fx, "x #20", Some(SPEC_WITH_FOLLOW_UPS));
     with_issues(&fx, vec![20]);
     let sha = merged(&fx);
@@ -99,7 +99,7 @@ fn a_single_plan_job_with_follow_ups_says_fixes() {
 
 #[test]
 fn a_job_without_issues_gets_only_the_job_footer() {
-    let fx = approved_job_with(Arc::new(scripted(vec![])), true);
+    let fx = approved_job_with(Arc::new(scripted(vec![])));
     let sha = merged(&fx);
     assert!(
         subject(&fx, &sha).ends_with("\n\nFactory-Job: 001"),
@@ -111,7 +111,7 @@ fn a_job_without_issues_gets_only_the_job_footer() {
 #[test]
 fn sync_message_uses_relates_to_then_the_job_footer() {
     let effects = vec![reply("ok\nVERDICT: APPROVE")];
-    let fx = approved_job_with(Arc::new(scripted(effects)), true);
+    let fx = approved_job_with(Arc::new(scripted(effects)));
     with_issues(&fx, vec![20]);
     common::commit_file(&fx.main, "other.md", "o");
     merged(&fx);

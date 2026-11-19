@@ -61,7 +61,7 @@ pub(crate) fn sandbox_for(role: &str) -> SandboxPlan {
             mode: "workspace-write",
             network: true,
         }
-    } else if has_role(role, "committer") || has_role(role, "message") || has_role(role, "kb") {
+    } else if has_role(role, "kb") {
         SandboxPlan {
             mode: "workspace-write",
             network: false,
@@ -110,9 +110,6 @@ impl Engine<'_> {
         spec.sandbox = Some(plan.mode.to_string());
         spec.network = plan.network;
         spec.writable_roots.clear();
-        if has_role(&spec.role, "committer") || has_role(&spec.role, "message") {
-            spec.writable_roots.push(self.repo.common_git_dir());
-        }
         if has_role(&spec.role, "kb") {
             if let Some(kb_dir) = kb_folder(&spec.add_dirs).map(Path::to_path_buf) {
                 if self.config.kb_auto_commit {
@@ -176,22 +173,9 @@ mod tests {
 
     #[test]
     fn skill_gap_is_true_only_for_a_missing_named_skill() {
-        let commit = found("dev-workflow-skills", "1-git-commit");
         let kb = found("", "kb-refresh");
         let other = found("superpowers", "tdd");
         assert!(!skill_gap("builder", &[], &list(&["superpowers"])));
-        assert!(!skill_gap(
-            "committer",
-            std::slice::from_ref(&commit),
-            &list(&["dev-workflow-skills"])
-        ));
-        assert!(skill_gap(
-            "committer",
-            std::slice::from_ref(&other),
-            &list(&["dev-workflow-skills"])
-        ));
-        assert!(skill_gap("message", &[], &list(&["dev-workflow-skills"])));
-        assert!(skill_gap("committer", &[commit], &[]));
         assert!(!skill_gap("kb", &[kb], &list(&["kb-refresh"])));
         assert!(skill_gap("kb", &[other], &list(&["kb-refresh"])));
         assert!(!skill_gap(
@@ -199,19 +183,12 @@ mod tests {
             &[found("kb-refresh", "refresh")],
             &list(&["kb-refresh"])
         ));
-        assert!(!skill_gap(
-            "committer",
-            &[found("", "dev-workflow-skills")],
-            &list(&["dev-workflow-skills"])
-        ));
     }
 
     #[test]
     fn sandbox_follows_the_role() {
         let table = [
             ("builder", "workspace-write", true),
-            ("committer", "workspace-write", false),
-            ("message", "workspace-write", false),
             ("kb", "workspace-write", false),
             ("reviewer", "read-only", false),
             ("something-else", "read-only", false),

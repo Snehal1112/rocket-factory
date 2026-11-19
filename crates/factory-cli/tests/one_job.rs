@@ -322,3 +322,49 @@ fn accept_spec_on_a_refused_risky_spec_creates_the_job_and_prints_the_warning() 
         "{out}"
     );
 }
+
+fn write_ignored_keys(fx: &Fixture) {
+    let path = fx.root.join(".claude/factory/config.toml");
+    let mut text = std::fs::read_to_string(&path).expect("config");
+    text.push_str("commit_model = \"claude-sonnet-5-5\"\ncommit_batch = false\n");
+    std::fs::write(path, text).expect("config");
+}
+
+fn factory(fx: &Fixture, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_factory"))
+        .arg("--root")
+        .arg(&fx.root)
+        .args(args)
+        .output()
+        .expect("run binary")
+}
+
+#[test]
+fn factory_run_warns_once_per_ignored_key() {
+    let fx = Fixture::new();
+    write_ignored_keys(&fx);
+    let output = factory(&fx, &["run", "999"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let first = "warning: commit_model has no effect, the driver writes commit messages";
+    let second = "warning: commit_batch has no effect, the driver writes commit messages";
+    assert_eq!(stderr.matches("has no effect").count(), 2, "{stderr}");
+    let at_first = stderr.find(first).expect("first warning");
+    let at_second = stderr.find(second).expect("second warning");
+    assert!(at_first < at_second, "{stderr}");
+    assert!(!output.status.success());
+    assert!(
+        stderr[at_second..].lines().count() > 1,
+        "the error follows the warnings: {stderr}"
+    );
+}
+
+#[test]
+fn factory_status_does_not_warn() {
+    let fx = Fixture::new();
+    write_ignored_keys(&fx);
+    let output = factory(&fx, &["status"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stderr.contains("has no effect"), "{stderr}");
+    assert!(!stdout.contains("has no effect"), "{stdout}");
+}

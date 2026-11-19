@@ -1,6 +1,6 @@
 mod common;
 
-use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture, ScriptedRunner};
+use common::{scripted, Effect, Fixture, ScriptedRunner};
 use factory_core::{CheckRule, ParkKind, ParkRecord, Stage};
 use factory_engine::{Decision, StageOutcome};
 
@@ -19,7 +19,7 @@ fn write_effect(files: Vec<(&'static str, &'static str)>) -> Effect {
 
 /// Builds the job with one builder run that writes `files`.
 fn built(fx: &Fixture, files: Vec<(&'static str, &'static str)>) -> ScriptedRunner {
-    let runner = scripted_auto(vec![write_effect(files)]);
+    let runner = scripted(vec![write_effect(files)]);
     fx.engine(&runner).build_stage().expect("build");
     runner
 }
@@ -42,7 +42,7 @@ fn reviewer(reply: &'static str) -> ScriptedRunner {
 
 #[test]
 fn a_code_diff_with_no_mapped_check_parks_as_no_checks_before_the_review() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -69,7 +69,7 @@ fn a_code_diff_with_no_mapped_check_parks_as_no_checks_before_the_review() {
 
 #[test]
 fn a_crate_rule_with_no_owner_parks_no_checks() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["cargo check -j4 -p {crate}".into()],
@@ -90,7 +90,7 @@ fn a_crate_rule_with_no_owner_parks_no_checks() {
 
 #[test]
 fn a_path_covered_by_a_planned_command_is_not_gated() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
         commands: vec!["true".into()],
@@ -103,7 +103,7 @@ fn a_path_covered_by_a_planned_command_is_not_gated() {
 
 #[test]
 fn a_docs_only_diff_with_no_mapped_check_is_not_parked() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     let runner = built(&fx, vec![("a.md", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -112,7 +112,7 @@ fn a_docs_only_diff_with_no_mapped_check_is_not_parked() {
 
 #[test]
 fn risky_diff_with_an_unchecked_path_parks() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     let runner = built(&fx, vec![("src-tauri/src/lib.rs", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -137,7 +137,7 @@ fn risky_diff_with_an_unchecked_path_parks() {
 
 #[test]
 fn an_exempt_path_does_not_park() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     fx.config.unchecked_paths = vec!["LICENSE".into()];
     let runner = built(&fx, vec![("LICENSE", "x\n")]);
@@ -147,7 +147,7 @@ fn an_exempt_path_does_not_park() {
 
 #[test]
 fn the_final_checks_gate_parks_an_approved_job() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     fx.engine(&runner)
         .checks_stage()
@@ -168,7 +168,7 @@ fn the_final_checks_gate_parks_an_approved_job() {
 
 #[test]
 fn a_risky_approve_meets_the_no_checks_gate() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     let runner = built(&fx, vec![("src-tauri/src/lib.rs", "x\n")]);
     fx.engine(&runner)
         .checks_stage()
@@ -212,7 +212,7 @@ fn reviewer_prompt(fx: &Fixture) -> String {
 
 #[test]
 fn a_code_diff_with_no_test_warns_and_does_not_park() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
     assert_eq!(out, StageOutcome::Advanced(Stage::Review));
@@ -222,7 +222,7 @@ fn a_code_diff_with_no_test_warns_and_does_not_park() {
 
 #[test]
 fn a_new_test_path_gives_no_note() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = built(&fx, vec![("a.txt", "x\n"), ("tests/a.txt", "x\n")]);
     fx.engine(&runner).checks_stage().expect("checks");
     assert!(!ledger(&fx).contains(LEDGER_NOTE));
@@ -231,7 +231,7 @@ fn a_new_test_path_gives_no_note() {
 
 #[test]
 fn an_added_test_marker_counts_as_a_test() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = built(&fx, vec![("src/a.rs", "#[cfg(test)]\nmod t {}\n")]);
     fx.engine(&runner).checks_stage().expect("checks");
     assert!(!ledger(&fx).contains(LEDGER_NOTE));
@@ -240,7 +240,7 @@ fn an_added_test_marker_counts_as_a_test() {
 
 #[test]
 fn require_tests_parks_a_code_diff_with_no_test() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.require_tests = true;
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -256,7 +256,7 @@ fn require_tests_parks_a_code_diff_with_no_test() {
 
 #[test]
 fn require_tests_does_not_park_a_docs_only_diff() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.require_tests = true;
     let runner = built(&fx, vec![("a.md", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -265,7 +265,7 @@ fn require_tests_does_not_park_a_docs_only_diff() {
 
 #[test]
 fn a_failing_check_still_wins_over_the_no_tests_rule() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.require_tests = true;
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
@@ -294,7 +294,7 @@ fn approve(fx: &Fixture) {
 
 #[test]
 fn the_ledger_names_the_commands_that_ran_before_the_approval_line() {
-    let fx = committing_fixture();
+    let fx = Fixture::new();
     let runner = built(&fx, vec![("tests/a.txt", "x\n")]);
     fx.engine(&runner).checks_stage().expect("checks");
     approve(&fx);
@@ -306,7 +306,7 @@ fn the_ledger_names_the_commands_that_ran_before_the_approval_line() {
 
 #[test]
 fn the_ledger_says_none_when_no_command_ran() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     let runner = built(&fx, vec![("a.md", "x\n")]);
     fx.engine(&runner).checks_stage().expect("checks");
@@ -316,7 +316,7 @@ fn the_ledger_says_none_when_no_command_ran() {
 
 #[test]
 fn a_docs_only_job_is_not_stopped_by_the_gates_at_the_end() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     fx.config.require_tests = true;
     let runner = built(&fx, vec![("docs/a.md", "x\n")]);
@@ -327,7 +327,7 @@ fn a_docs_only_job_is_not_stopped_by_the_gates_at_the_end() {
 
 /// A fixture scoped to the `web` project in `apps/web`, which exists on the base branch.
 fn scoped_fixture() -> Fixture {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     common::commit_file(&fx.main, "apps/web/index.txt", "web\n");
     fx.repo = factory_git::Repo::open(&fx.main)
         .expect("open")
@@ -420,7 +420,7 @@ fn checks_run_in_the_project_folder() {
 
 #[test]
 fn top_folder_project_paths_are_unchanged() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     pwd_check(&mut fx);
     let runner = built(&fx, vec![("src/a.rs", "x\n"), CHECK_SCRIPT]);
     fx.engine(&runner).checks_stage().expect("checks");
@@ -469,7 +469,7 @@ fn a_root_src_path_parks_before_any_scoped_check_mapping() {
 
 #[test]
 fn rename_across_the_boundary_is_out_of_scope() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     common::commit_file(&fx.main, "apps/web/a.rs", "fn a() {}\n");
     common::commit_file(&fx.main, "apps/api/keep.txt", "k\n");
     fx.repo = factory_git::Repo::open(&fx.main)
@@ -480,7 +480,7 @@ fn rename_across_the_boundary_is_out_of_scope() {
         std::fs::rename(root.join("apps/web/a.rs"), root.join("apps/api/a.rs")).expect("move");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![mover]);
+    let runner = scripted(vec![mover]);
     fx.engine(&runner).build_stage().expect("build");
     let out = fx.engine(&runner).checks_stage().expect("checks");
     match out {
@@ -522,7 +522,7 @@ fn more_than_ten_out_of_scope_paths_are_counted() {
 
 #[test]
 fn rename_into_the_project_is_out_of_scope_by_its_old_path() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     common::commit_file(&fx.main, "apps/api/a.rs", "fn a() {}\n");
     common::commit_file(&fx.main, "apps/web/keep.txt", "k\n");
     fx.repo = factory_git::Repo::open(&fx.main)
@@ -533,7 +533,7 @@ fn rename_into_the_project_is_out_of_scope_by_its_old_path() {
         std::fs::rename(root.join("apps/api/a.rs"), root.join("apps/web/a.rs")).expect("move");
         "done".to_string()
     });
-    let runner = scripted_auto(vec![mover]);
+    let runner = scripted(vec![mover]);
     fx.engine(&runner).build_stage().expect("build");
     let out = fx.engine(&runner).checks_stage().expect("checks");
     match out {
@@ -558,7 +558,7 @@ fn a_sibling_folder_with_a_shared_prefix_is_out_of_scope() {
 
 #[test]
 fn top_folder_project_has_no_scope_check() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     let runner = built(&fx, vec![("README.md", "x\n")]);
     let out = fx.engine(&runner).checks_stage().expect("checks");
@@ -567,7 +567,7 @@ fn top_folder_project_has_no_scope_check() {
 
 #[test]
 fn no_checks_parks_with_resume_review() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     only_src_checks(&mut fx);
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     fx.engine(&runner).checks_stage().expect("checks");
@@ -579,7 +579,7 @@ fn no_checks_parks_with_resume_review() {
 
 #[test]
 fn no_checks_at_the_final_gate_parks_with_resume_review() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     fx.engine(&runner).checks_stage().expect("checks");
     let rr = reviewer("fine\nVERDICT: APPROVE");
@@ -595,7 +595,7 @@ fn no_checks_at_the_final_gate_parks_with_resume_review() {
 
 #[test]
 fn no_tests_parks_without_resume() {
-    let mut fx = committing_fixture();
+    let mut fx = Fixture::new();
     fx.config.require_tests = true;
     let runner = built(&fx, vec![("a.txt", "x\n")]);
     fx.engine(&runner).checks_stage().expect("checks");

@@ -23,8 +23,8 @@ fn line(role: &str, spec: &AgentSpec) -> String {
 
 #[test]
 fn reviewer_and_kb_arguments_are_unchanged() {
-    let fx = committing_fixture();
-    let runner = scripted_auto(vec![change_effect("a.txt", 3)]);
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&runner).build_stage().expect("build");
     let reviewer = fx.engine(&runner).reviewer_spec(
         &fx.main,

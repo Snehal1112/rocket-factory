@@ -7,6 +7,28 @@ use std::path::{Path, PathBuf};
 /// Default per-job budget in weighted tokens. A config file can set its own.
 pub const DEFAULT_JOB_BUDGET_WEIGHTED: u64 = 1_000_000;
 
+/// The commit settings that no longer do anything. Old files may still set them.
+pub const IGNORED_COMMIT_KEYS: [&str; 5] = [
+    "commit_model",
+    "commit_subagents",
+    "commit_budget_weighted",
+    "commit_batch",
+    "commit_plugins",
+];
+
+/// The ignored keys the TOML text sets at the top level or in its `[settings]` table, in constant order.
+/// Text that does not parse gives an empty list.
+pub fn ignored_keys_in(text: &str) -> Vec<&'static str> {
+    let Ok(table) = toml::from_str::<toml::Table>(text) else {
+        return Vec::new();
+    };
+    let settings = table.get("settings").and_then(|v| v.as_table());
+    IGNORED_COMMIT_KEYS
+        .into_iter()
+        .filter(|k| table.contains_key(*k) || settings.is_some_and(|s| s.contains_key(*k)))
+        .collect()
+}
+
 /// Path-based risk list from spec decision 6. Matching ignores case.
 const DEFAULT_RISK: &[&str] = &[
     "src-tauri/**",
@@ -115,11 +137,17 @@ pub struct Config {
     pub dependents_cap: u32,
     /// Path globs that no check covers on purpose. They are never reported as uncovered.
     pub unchecked_paths: Vec<String>,
+    /// Ignored: the driver writes commit messages. Kept so old files load.
+    #[serde(skip_serializing)]
     pub commit_model: String,
+    /// Ignored: the driver writes commit messages. Kept so old files load.
+    #[serde(skip_serializing)]
     pub commit_subagents: bool,
-    /// Per-run cap on weighted tokens for one committer run.
+    /// Ignored: the driver writes commit messages. Kept so old files load.
+    #[serde(skip_serializing)]
     pub commit_budget_weighted: u64,
-    /// Run one committer per job after the last task instead of one per task.
+    /// Ignored: the driver writes commit messages. Kept so old files load.
+    #[serde(skip_serializing)]
     pub commit_batch: bool,
     /// Give each task builder only its own task instead of the whole plan and spec.
     pub builder_excerpt: bool,
@@ -211,7 +239,8 @@ pub struct Config {
     pub builder_plugins: Vec<String>,
     /// Claude Code plugins reviewer runs load. Every other plugin is off.
     pub reviewer_plugins: Vec<String>,
-    /// Claude Code plugins committer and message runs load. Every other plugin is off.
+    /// Ignored: the driver writes commit messages. Kept so old files load.
+    #[serde(skip_serializing)]
     pub commit_plugins: Vec<String>,
     /// Claude Code plugins KB refresh runs load. Every other plugin is off.
     pub kb_plugins: Vec<String>,
@@ -312,7 +341,6 @@ impl Config {
         match role {
             "builder" => &self.builder_plugins,
             "reviewer" | "security-review" => &self.reviewer_plugins,
-            "committer" | "message" => &self.commit_plugins,
             "kb" => &self.kb_plugins,
             _ => &[],
         }
@@ -321,7 +349,6 @@ impl Config {
     /// The skill (or skill group) the agent text of `role` names, if any.
     pub fn named_skill_for(role: &str) -> Option<&'static str> {
         match role {
-            "committer" | "message" => Some("dev-workflow-skills"),
             "kb" => Some("kb-refresh"),
             _ => None,
         }
@@ -376,13 +403,9 @@ impl Config {
                 "diff_cap_lines and budget_weighted must be above zero".into(),
             ));
         }
-        if cfg.commit_budget_weighted == 0
-            || cfg.kb_budget_weighted == 0
-            || cfg.spec_review_budget_weighted == 0
-        {
+        if cfg.kb_budget_weighted == 0 || cfg.spec_review_budget_weighted == 0 {
             return Err(CoreError::Config(
-                "commit_budget_weighted, kb_budget_weighted and spec_review_budget_weighted must be above zero"
-                    .into(),
+                "kb_budget_weighted and spec_review_budget_weighted must be above zero".into(),
             ));
         }
         let label = &cfg.intake_label;
@@ -426,7 +449,6 @@ impl Config {
         let models = [
             &cfg.builder_model,
             &cfg.reviewer_model,
-            &cfg.commit_model,
             &cfg.kb_model,
             &cfg.intake_model,
         ];
@@ -439,7 +461,6 @@ impl Config {
             ("reviewer_model", Some(cfg.reviewer_model.as_str())),
             ("reviewer_model_large", cfg.reviewer_model_large.as_deref()),
             ("escalation_model", cfg.escalation_model.as_deref()),
-            ("commit_model", Some(cfg.commit_model.as_str())),
             ("kb_model", Some(cfg.kb_model.as_str())),
         ];
         if let Some((key, _)) = named
@@ -582,7 +603,6 @@ impl Config {
         for (key, names) in [
             ("builder_plugins", &cfg.builder_plugins),
             ("reviewer_plugins", &cfg.reviewer_plugins),
-            ("commit_plugins", &cfg.commit_plugins),
             ("kb_plugins", &cfg.kb_plugins),
         ] {
             if names
@@ -1283,8 +1303,10 @@ mod tests {
     fn each_role_loads_only_the_plugins_it_uses_by_default() {
         let cfg = Config::default();
         assert_eq!(cfg.plugins_for("builder"), ["superpowers"]);
-        assert_eq!(cfg.plugins_for("committer"), ["dev-workflow-skills"]);
-        assert_eq!(cfg.plugins_for("message"), ["dev-workflow-skills"]);
+        assert!(cfg.plugins_for("committer").is_empty());
+        assert!(cfg.plugins_for("message").is_empty());
+        assert_eq!(Config::named_skill_for("committer"), None);
+        assert_eq!(Config::named_skill_for("message"), None);
         assert!(cfg.plugins_for("reviewer").is_empty());
         assert!(cfg.plugins_for("kb").is_empty());
         assert!(cfg.plugins_for("someone-else").is_empty());
@@ -1294,7 +1316,6 @@ mod tests {
     fn skill_allow_for_adds_the_named_skill_once() {
         let cfg = Config::default();
         assert_eq!(cfg.skill_allow_for("kb"), ["kb-refresh"]);
-        assert_eq!(cfg.skill_allow_for("committer"), ["dev-workflow-skills"]);
         assert_eq!(cfg.skill_allow_for("builder"), ["superpowers"]);
         let cfg = Config::parse("kb_plugins = [\"kb-refresh@x\"]").expect("parse");
         assert_eq!(cfg.skill_allow_for("kb"), ["kb-refresh@x"]);
@@ -1303,7 +1324,7 @@ mod tests {
     #[test]
     fn plugin_lists_can_be_set_per_role() {
         let cfg = Config::parse(
-            "builder_plugins = [\"superpowers\", \"rust-analyzer-lsp\"]\nreviewer_plugins = [\"x@market\"]\ncommit_plugins = []\nkb_plugins = [\"y\"]",
+            "builder_plugins = [\"superpowers\", \"rust-analyzer-lsp\"]\nreviewer_plugins = [\"x@market\"]\nkb_plugins = [\"y\"]",
         )
         .expect("parse");
         assert_eq!(
@@ -1311,7 +1332,6 @@ mod tests {
             ["superpowers", "rust-analyzer-lsp"]
         );
         assert_eq!(cfg.plugins_for("reviewer"), ["x@market"]);
-        assert!(cfg.plugins_for("committer").is_empty());
         assert_eq!(cfg.plugins_for("kb"), ["y"]);
     }
 
@@ -1346,12 +1366,7 @@ mod tests {
     #[test]
     fn default_models_are_sonnet_and_opus_5_5() {
         let cfg = Config::default();
-        for m in [
-            &cfg.builder_model,
-            &cfg.reviewer_model,
-            &cfg.commit_model,
-            &cfg.kb_model,
-        ] {
+        for m in [&cfg.builder_model, &cfg.reviewer_model, &cfg.kb_model] {
             assert_eq!(m, "claude-sonnet-5-5");
         }
         assert_eq!(cfg.reviewer_model_large.as_deref(), Some("claude-opus-5-5"));
@@ -1364,7 +1379,6 @@ mod tests {
             "reviewer_model",
             "reviewer_model_large",
             "escalation_model",
-            "commit_model",
             "kb_model",
         ] {
             for name in ["fable", "claude-fable-5-1", "Claude-Fable-5-1"] {
@@ -1441,11 +1455,42 @@ mod tests {
     #[test]
     fn cost_switches_default_on_and_can_be_turned_off() {
         let cfg = Config::default();
-        assert!(cfg.commit_batch && cfg.builder_excerpt);
-        let off = Config::parse("commit_batch = false\nbuilder_excerpt = false").expect("parse");
-        assert!(!off.commit_batch && !off.builder_excerpt);
-        assert!(Config::parse("commit_batch = \"yes\"").is_err());
+        assert!(cfg.builder_excerpt);
+        let off = Config::parse("builder_excerpt = false").expect("parse");
+        assert!(!off.builder_excerpt);
         assert!(Config::parse("commit_bach = true").is_err());
+    }
+
+    #[test]
+    fn an_ignored_commit_key_loads_even_when_it_was_invalid() {
+        for text in [
+            "commit_budget_weighted = 0",
+            "commit_model = \"\"",
+            "commit_model = \"fable\"",
+            "commit_plugins = [\"two words\"]",
+        ] {
+            assert!(Config::parse(text).is_ok(), "{text}");
+        }
+    }
+
+    #[test]
+    fn ignored_keys_in_lists_the_set_keys_in_order() {
+        assert_eq!(
+            ignored_keys_in("commit_batch = false\ncommit_model = \"x\""),
+            ["commit_model", "commit_batch"]
+        );
+        assert_eq!(
+            ignored_keys_in("[settings]\ncommit_batch = false\ncommit_model = \"x\""),
+            ["commit_model", "commit_batch"]
+        );
+        assert!(ignored_keys_in("fix_rounds = 3").is_empty());
+        assert!(ignored_keys_in("not = = toml").is_empty());
+    }
+
+    #[test]
+    fn the_ignored_keys_are_not_serialized() {
+        let text = toml::to_string(&Config::default()).expect("serialize");
+        assert!(!text.contains("commit_"), "{text}");
     }
 
     #[test]
@@ -1713,9 +1758,6 @@ mod tests {
         assert_eq!(cfg.stall_minutes, 10);
         assert_eq!(cfg.builder_model, "claude-sonnet-5-5");
         assert!(cfg.risk_paths.iter().any(|p| p == "src-tauri/**"));
-        assert_eq!(cfg.commit_model, "claude-sonnet-5-5");
-        assert!(!cfg.commit_subagents);
-        assert_eq!(cfg.commit_budget_weighted, 60_000);
         assert_eq!(cfg.kb_path, None);
         assert_eq!(cfg.kb_model, "claude-sonnet-5-5");
         assert_eq!(cfg.kb_budget_weighted, 150_000);
@@ -1786,12 +1828,9 @@ mod tests {
     }
 
     #[test]
-    fn commit_and_kb_keys_override_defaults() {
+    fn kb_keys_override_defaults() {
         let cfg = Config::parse(
             r#"
-            commit_model = "opus"
-            commit_subagents = true
-            commit_budget_weighted = 90000
             kb_path = "/kb/rocketapi"
             kb_model = "haiku"
             kb_budget_weighted = 40000
@@ -1799,9 +1838,6 @@ mod tests {
             "#,
         )
         .expect("valid");
-        assert_eq!(cfg.commit_model, "opus");
-        assert!(cfg.commit_subagents);
-        assert_eq!(cfg.commit_budget_weighted, 90_000);
         assert_eq!(cfg.kb_path.as_deref(), Some("/kb/rocketapi"));
         assert_eq!(cfg.kb_model, "haiku");
         assert_eq!(cfg.kb_budget_weighted, 40_000);
@@ -1809,10 +1845,8 @@ mod tests {
     }
 
     #[test]
-    fn bad_commit_and_kb_values_are_errors() {
-        assert!(Config::parse("commit_budget_weighted = 0").is_err());
+    fn bad_kb_values_are_errors() {
         assert!(Config::parse("kb_budget_weighted = 0").is_err());
-        assert!(Config::parse("commit_model = \"\"").is_err());
         assert!(Config::parse("kb_model = \"  \"").is_err());
         assert!(Config::parse("kb_path = \"\"").is_err());
         assert!(Config::parse("kb_pth = \"/x\"").is_err());
@@ -1887,9 +1921,6 @@ mod tests {
             &"cargo check -j4 --manifest-path tools/factory-server/Cargo.toml".to_string()
         ));
         assert!(cmds("docs/a.md").is_empty());
-        assert_eq!(cfg.commit_model, "sonnet");
-        assert!(!cfg.commit_subagents);
-        assert_eq!(cfg.commit_budget_weighted, 60_000);
         assert_eq!(cfg.kb_path, None);
     }
 

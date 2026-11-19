@@ -1,8 +1,8 @@
 mod common;
 
 use common::{
-    approved_job_dyn, approving_runner, driver_for, scripted_auto, Effect, MergeFixture,
-    RoleFailing, ScriptedRunner,
+    approved_job_dyn, approving_runner, driver_for, scripted, Effect, MergeFixture, RoleFailing,
+    ScriptedRunner,
 };
 use factory_agent::{AgentSpec, StopReason};
 use factory_core::{CheckRule, Config, LastReview, ResumeAt, Stage};
@@ -38,9 +38,9 @@ fn park(fx: &MergeFixture, kind: factory_core::ParkKind, resume: Option<ResumeAt
 }
 
 /// A fixture parked as `review-failed` after one failed reviewer run. `inner` answers the retry.
-fn failed_review_fixture(inner: Arc<ScriptedRunner>, with_context: bool) -> MergeFixture {
+fn failed_review_fixture(inner: Arc<ScriptedRunner>) -> MergeFixture {
     let failing = RoleFailing::new("reviewer", StopReason::Failed, 1, inner.clone());
-    let fx = approved_job_dyn(Arc::new(failing), inner, with_context, Config::default());
+    let fx = approved_job_dyn(Arc::new(failing), inner, Config::default());
     force_stage(&fx, Stage::Review);
     let end = run_job(&fx.driver, &fx.id).expect("run");
     assert!(matches!(end, RunEnd::NeedsHuman(_)), "{end:?}");
@@ -52,7 +52,7 @@ fn failed_review_fixture(inner: Arc<ScriptedRunner>, with_context: bool) -> Merg
 
 #[test]
 fn retry_after_a_failed_review_reviews_the_same_head() {
-    let fx = failed_review_fixture(approving_runner(2), false);
+    let fx = failed_review_fixture(approving_runner(2));
     let before = fx.driver.job(&fx.id).expect("job");
     let end = retry_job(&fx.driver, &fx.id).expect("retry");
     assert_eq!(end, RunEnd::Merged);
@@ -74,8 +74,8 @@ fn a_review_retry_with_changes_starts_a_fix_round() {
         "done".to_string()
     });
     let reviewer_ok: Effect = Box::new(|_: &AgentSpec| "ok\nVERDICT: APPROVE".to_string());
-    let inner = Arc::new(scripted_auto(vec![reviewer_changes, builder, reviewer_ok]));
-    let fx = failed_review_fixture(inner, true);
+    let inner = Arc::new(scripted(vec![reviewer_changes, builder, reviewer_ok]));
+    let fx = failed_review_fixture(inner);
     let end = retry_job(&fx.driver, &fx.id).expect("retry");
     assert_eq!(end, RunEnd::Merged, "{}", ledger(&fx));
     assert!(ledger(&fx).contains("fix round 2"), "{}", ledger(&fx));
@@ -94,7 +94,7 @@ fn retry_after_no_checks_runs_the_checks() {
         ..Config::default()
     };
     let runner = approving_runner(3);
-    let fx = approved_job_dyn(runner.clone(), runner.clone(), true, uncovered);
+    let fx = approved_job_dyn(runner.clone(), runner.clone(), uncovered);
     force_stage(&fx, Stage::Review);
     let end = run_job(&fx.driver, &fx.id).expect("run");
     assert!(matches!(end, RunEnd::NeedsHuman(_)), "{end:?}");
@@ -370,18 +370,13 @@ fn role_runner(first: &'static str) -> Arc<ScriptedRunner> {
             }) as Effect
         })
         .collect();
-    Arc::new(scripted_auto(effects))
+    Arc::new(scripted(effects))
 }
 
 /// A job parked at `approve` because the branch moved after the review.
 fn tip_moved_fixture(first: &'static str) -> (MergeFixture, String) {
     let runner = role_runner(first);
-    let fx = with_security_agent(approved_job_dyn(
-        runner.clone(),
-        runner,
-        true,
-        Config::default(),
-    ));
+    let fx = with_security_agent(approved_job_dyn(runner.clone(), runner, Config::default()));
     let tip = common::commit_file(&common::worktree_of(&fx), "extra.md", "e");
     let end = run_job(&fx.driver, &fx.id).expect("run");
     assert!(matches!(end, RunEnd::NeedsHuman(_)), "{end:?}");
@@ -409,7 +404,6 @@ fn a_rereview_retry_after_a_failed_sync_review_reviews_again() {
     let fx = with_security_agent(approved_job_dyn(
         Arc::new(failing),
         runner,
-        false,
         Config::default(),
     ));
     common::commit_file(&fx.main, "other.md", "o");
@@ -455,7 +449,7 @@ fn checked_rereview_fixture(command: &str) -> MergeFixture {
         ..Config::default()
     };
     let runner = role_runner("ok\nVERDICT: APPROVE");
-    let fx = with_security_agent(approved_job_dyn(runner.clone(), runner, true, config));
+    let fx = with_security_agent(approved_job_dyn(runner.clone(), runner, config));
     park(&fx, factory_core::ParkKind::Other, Some(ResumeAt::Rereview));
     fx
 }
@@ -496,7 +490,7 @@ fn a_rereview_retry_with_failing_final_checks_starts_a_fix_round() {
 #[test]
 fn a_sync_retry_runs_one_more_sync_and_merges() {
     let runner = role_runner("ok\nVERDICT: APPROVE");
-    let fx = approved_job_dyn(runner.clone(), runner, false, Config::default());
+    let fx = approved_job_dyn(runner.clone(), runner, Config::default());
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -552,7 +546,7 @@ fn a_review_retry_with_failing_checks_starts_a_fix_round() {
         ..Config::default()
     };
     let runner = role_runner("ok\nVERDICT: APPROVE");
-    let fx = approved_job_dyn(runner.clone(), runner, true, config);
+    let fx = approved_job_dyn(runner.clone(), runner, config);
     force_stage(&fx, Stage::Review);
     park(
         &fx,
