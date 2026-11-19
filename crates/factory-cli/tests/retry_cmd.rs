@@ -76,6 +76,17 @@ fn retry_refuses_a_builder_park_with_its_next_commands() {
 }
 
 #[test]
+fn retry_refuses_a_park_without_park_json_and_names_its_next_commands() {
+    let fx = risky_parked();
+    let dir = factory_core::Layout::in_repo(&fx.root).job_dir(&job(&fx).dir);
+    std::fs::remove_file(dir.join(factory_core::PARK_FILE)).expect("remove park.json");
+    let text = refusal(fx.run(&["retry", "1"]));
+    assert!(text.contains("no stage to retry at"), "{text}");
+    assert!(text.contains("factory rework 001 <note>"), "{text}");
+    assert_eq!(job(&fx).stage, factory_core::Stage::NeedsHuman);
+}
+
+#[test]
 fn rework_refuses_a_park_with_resume_and_names_retry() {
     let fx = main_busy_parked();
     let reason = job(&fx).reason.expect("reason");

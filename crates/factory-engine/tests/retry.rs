@@ -261,6 +261,35 @@ fn retry_refuses_a_park_without_resume() {
     assert!(text.contains("factory cancel 001"), "{text}");
 }
 
+fn remove_park_file(fx: &MergeFixture) {
+    let job = fx.driver.job(&fx.id).expect("job");
+    let path = fx.driver.job_dir(&job).join(factory_core::PARK_FILE);
+    std::fs::remove_file(&path).expect("remove park.json");
+}
+
+#[test]
+fn retry_still_resumes_when_park_json_is_missing() {
+    let fx = common::approved_job();
+    dirty_main_park(&fx);
+    // Retry reads the resume stage from the board, so the park file is not needed.
+    remove_park_file(&fx);
+    let end = retry_job(&fx.driver, &fx.id).expect("retry");
+    assert_eq!(end, RunEnd::Merged);
+    assert!(ledger(&fx).contains("retry at merge"), "{}", ledger(&fx));
+}
+
+#[test]
+fn retry_without_resume_or_park_json_refuses_with_the_kind_commands() {
+    let fx = common::approved_job();
+    park(&fx, factory_core::ParkKind::NothingChanged, None);
+    remove_park_file(&fx);
+    let text = refusal(&fx);
+    assert!(text.contains("no stage to retry at"), "{text}");
+    assert!(text.contains("factory rework 001 <note>"), "{text}");
+    assert!(text.contains("factory cancel 001"), "{text}");
+    assert_eq!(fx.driver.job(&fx.id).expect("job").stage, Stage::NeedsHuman);
+}
+
 #[test]
 fn retry_refuses_a_builder_park() {
     let fx = common::approved_job();
