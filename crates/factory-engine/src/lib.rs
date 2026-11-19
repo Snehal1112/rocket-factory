@@ -16,12 +16,14 @@ mod drafts;
 mod escalation;
 mod followups;
 mod intake;
+mod jobmsg;
 mod kb;
 mod lease;
 mod lock;
 mod merge;
 mod message;
 mod minors;
+mod notes;
 mod one_job;
 mod park;
 mod permissions;
@@ -86,6 +88,7 @@ pub use message::{
     fixed_message, message_prompt, message_spec, MessageKind, MessageRequest, MESSAGE_TOOLS,
 };
 pub use minors::{minor_tickets_step, MINORS_FILE};
+pub use notes::{read_notes, Notes, NOTES_DIR};
 pub use one_job::{
     create_one_job, create_one_job_accepting, one_job_estimate, OneJob, ONE_JOB_OVERHEAD_WEIGHTED,
     ONE_JOB_PER_TASK_WEIGHTED,
