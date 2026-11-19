@@ -1093,6 +1093,25 @@ const NOT_CONTROLLER: &str =
     "You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review.";
 
 #[test]
+fn builder_files_ask_for_a_commit_note() -> TestResult {
+    for path in PRESET_BUILDERS {
+        let text = read(path)?;
+        require_all(
+            &text,
+            path,
+            &[
+                "---BEGIN COMMIT---",
+                "---END COMMIT---",
+                "not inside a code fence",
+                "driver commits them",
+            ],
+        )?;
+        forbid_all(&text, path, &["committer agent"])?;
+    }
+    Ok(())
+}
+
+#[test]
 fn builder_files_say_the_builder_is_the_implementer_not_the_controller() -> TestResult {
     for path in PRESET_BUILDERS {
         require_all(

@@ -114,7 +114,8 @@ pub use spec_check::{
     SPEC_OVERRIDE_HINT,
 };
 pub use specs::{
-    ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, REVIEWER_MAX_TURNS, RULES_VERSION,
+    ReviewerExtra, BUILDER_MAX_TURNS, BUILDER_TOOLS, COMMIT_NOTE_LINE, REVIEWER_MAX_TURNS,
+    RULES_VERSION,
 };
 pub use store::{next_id, BoardStore, StoreError, DEFAULT_LOCK_WAIT};
 pub use sync::{sync_requested, sync_requested_by, sync_stage, SyncCaller, SyncKind, SyncOutcome};

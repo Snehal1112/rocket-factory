@@ -24,8 +24,14 @@ pub(crate) const INTERRUPTED_PROMPT: &str = "You were interrupted. Run git statu
 
 /// The interrupted prompt with the task number filled in.
 pub(crate) fn interrupted_prompt(n: u32) -> String {
-    INTERRUPTED_PROMPT.replace("{n}", &n.to_string())
+    format!(
+        "{}\n{COMMIT_NOTE_LINE}",
+        INTERRUPTED_PROMPT.replace("{n}", &n.to_string())
+    )
 }
+/// Asks every builder to end its reply with a commit note. The driver writes the commit message from it.
+pub const COMMIT_NOTE_LINE: &str = "End your reply with a commit note between ---BEGIN COMMIT--- and ---END COMMIT---, written as plain text and not inside a code fence: a subject of at most 50 characters in the imperative mood with no trailing period, a blank line, one or two sentences on why, a blank line, then one \"- \" bullet per change. The driver writes the commit message from it.";
+
 /// The turn cap of a reviewer run. The reviewer agent files carry the same number, and a test pins it.
 pub const REVIEWER_MAX_TURNS: u32 = 40;
 /// The tools a builder run may use. They are every tool the builder agent files tell it to use.
@@ -193,7 +199,7 @@ impl Engine<'_> {
             format!(
                 "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
                  {read} Never edit the plan.\n{spec_line}\
-                 {rules}{simplify}{kb}",
+                 {rules}{simplify}{kb}\n{COMMIT_NOTE_LINE}",
                 branch = job.branch,
                 read = self.read_line(false),
                 rules = self.rules_line(),
@@ -209,7 +215,7 @@ impl Engine<'_> {
              {rules}{simplify}\
              Do not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
-             {kb}Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.",
+             {kb}Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.\n{COMMIT_NOTE_LINE}",
             branch = job.branch,
             read = self.read_line(false),
             rules = self.rules_line(),
@@ -301,7 +307,7 @@ impl Engine<'_> {
                  Do only Task {n}: {title}. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\n\
                  {rules}{simplify}\
                  Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
-                 {kb}",
+                 {kb}\n{COMMIT_NOTE_LINE}",
                 branch = job.branch,
                 read = self.read_line(!excerpt.is_empty()),
                 rules = self.rules_line(),
@@ -322,7 +328,7 @@ impl Engine<'_> {
              Do not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. \
              Never push, never merge, never touch the board or the ledger.\n\
              Never sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\n\
-             {kb}Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.",
+             {kb}Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.\n{COMMIT_NOTE_LINE}",
             branch = job.branch,
             read = self.read_line(!excerpt.is_empty()),
             rules = self.rules_line(),
@@ -382,7 +388,7 @@ impl Engine<'_> {
         let prompt = format!(
             "Task {prev} is done and committed as {sha}. Base {base7}, current tip {tip7}. \
              The driver now gives you Task {n} in this same session; this replaces the earlier line that later tasks belong to other agents. \
-             Do only Task {n}: {title}. Do not redo or rework earlier tasks.\n{your_task}\n{simplify}",
+             Do only Task {n}: {title}. Do not redo or rework earlier tasks.\n{your_task}\n{simplify}\n{COMMIT_NOTE_LINE}",
             simplify = self.carried_simplify_line(task.n),
             prev = task.n.saturating_sub(1),
             sha = crate::ports::short_sha(tip),
@@ -418,7 +424,7 @@ impl Engine<'_> {
                  Read all the findings first, then verify each against the code. \
                  Work one item at a time. If a finding is wrong, push back with a reason in your reply and do not change the code for it. \
                  If an item is unclear, reply with `Status: NEEDS_CONTEXT` and the question instead of guessing. \
-                 Run the relevant checks{hints} before you finish.",
+                 Run the relevant checks{hints} before you finish.\n{COMMIT_NOTE_LINE}",
                 findings = findings.display(),
                 branch = job.branch,
                 hints = hints,
@@ -434,7 +440,7 @@ impl Engine<'_> {
              Work one item at a time. If a finding is wrong, push back with a reason in your reply and do not change the code for it. \
              If an item is unclear, reply with `Status: NEEDS_CONTEXT` and the question instead of guessing. \
              Run the relevant checks{hints} before you finish. \
-             Never push, never merge.",
+             Never push, never merge.\n{COMMIT_NOTE_LINE}",
             findings = findings.display(),
             branch = job.branch,
             hints = hints,
@@ -464,7 +470,7 @@ impl Engine<'_> {
              Follow `superpowers:receiving-code-review` for the findings. \
              Run the relevant checks{hints}. \
              Do not run `git add` or `git commit`; the driver commits for you. \
-             Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line.",
+             Reply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line.\n{COMMIT_NOTE_LINE}",
             branch = job.branch,
             read = self.read_line(false),
             spec_line = self.spec_line(),

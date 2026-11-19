@@ -3,7 +3,7 @@ mod common;
 use common::{committing_fixture, scripted_auto, Effect, Fixture, Tagged};
 use factory_agent::{AgentRun, AgentRunner, AgentSpec};
 use factory_core::{Board, Stage, TaskSession};
-use factory_engine::StageOutcome;
+use factory_engine::{StageOutcome, COMMIT_NOTE_LINE};
 
 const TWO_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n";
 
@@ -532,6 +532,18 @@ fn a_carried_task_prompt_has_the_simplify_line() {
         "{}",
         spec.prompt
     );
+}
+
+#[test]
+fn the_carry_prompt_asks_for_a_commit_note() {
+    let mut fx = two_task_fixture();
+    fx.config.builder_carry_session = true;
+    let runner = Tagged::new(scripted_auto(two_effects()), 30_000);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("task 1");
+    e.build_stage().expect("task 2");
+    let prompt = runner.inner.specs_for("builder")[1].prompt.clone();
+    assert!(prompt.ends_with(COMMIT_NOTE_LINE), "{prompt}");
 }
 
 #[test]

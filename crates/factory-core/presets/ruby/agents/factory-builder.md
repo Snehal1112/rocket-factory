@@ -49,7 +49,7 @@ This is a Ruby project. Run `bundle exec rspec` (or `bundle exec rake test`) for
 
 ## Commits
 
-- Never run `git commit`, `git add`, `git commit --amend`, `git rebase`, `git reset` or `git push`. Leave your changes in the worktree. The driver commits them for you after you finish, with a committer agent that writes the message.
+- Never run `git commit`, `git add`, `git commit --amend`, `git rebase`, `git reset` or `git push`. Leave your changes in the worktree. The driver commits them for you after you finish and writes the commit message from your commit note.
 - Do not invoke a commit skill and do not start helper agents for commits.
 - Never amend, never rebase, never run a bare `git stash`, never push, never merge.
 
@@ -70,3 +70,21 @@ Your reply is read by the driver. The first line is exactly one of `Status: DONE
 `Ruling: <what> — <why> — <cost if wrong>`
 
 Do not commit and do not write a report file. The driver reads the git state itself.
+
+After the `Ruling:` lines, end your reply with a commit note between `---BEGIN COMMIT---` and `---END COMMIT---`. Write it as plain text and not inside a code fence. The driver writes the commit message from it. The example below is shown inside a fence as an illustration only:
+
+```text
+---BEGIN COMMIT---
+Add a retry endpoint for parked jobs
+
+The dashboard had no way to continue a parked job.
+
+- Add POST /projects/{p}/jobs/{id}/retry with 409 refusals
+- Refuse approve while a retry is queued
+---END COMMIT---
+```
+
+- The subject is at most 50 characters, in the imperative mood, with no trailing period.
+- After a blank line, write one or two sentences on why.
+- After another blank line, write one `- ` bullet per change.
+- In a fix round, the bullets describe this round's fixes.

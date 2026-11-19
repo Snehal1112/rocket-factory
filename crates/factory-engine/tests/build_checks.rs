@@ -5,7 +5,7 @@ use common::{
     Fixture, ScriptedRunner,
 };
 use factory_core::Stage;
-use factory_engine::StageOutcome;
+use factory_engine::{StageOutcome, COMMIT_NOTE_LINE};
 
 /// A builder that writes a file and leaves it uncommitted, as the real builder now does.
 fn change_effect(file: &'static str, lines: usize) -> Effect {
@@ -1524,7 +1524,7 @@ fn a_single_task_plan_gets_its_excerpt() {
 fn the_excerpt_prompt_is_smaller_than_the_plan_and_spec_it_replaces() {
     let big_task = format!(
         "### Task 2: second thing\n\n{}\n",
-        "filler line\n".repeat(400)
+        "filler line\n".repeat(600)
     );
     let plan =
         format!("# Demo Plan\n\n- Use -j4.\n\n### Task 1: first thing\n\nbody\n\n{big_task}");
@@ -2268,7 +2268,7 @@ fn a_resume_prompt_names_the_task() {
     let spec = runner.last_spec_for("builder").expect("spec");
     assert_eq!(
         spec.prompt,
-        format!("{INTERRUPTED} 1, and do not redo finished work.")
+        format!("{INTERRUPTED} 1, and do not redo finished work.\n{COMMIT_NOTE_LINE}")
     );
 
     let fx = two_task_fixture();
@@ -2289,7 +2289,7 @@ fn a_resume_prompt_names_the_task() {
     assert_eq!(spec.resume.as_deref(), Some("sess-two"));
     assert_eq!(
         spec.prompt,
-        format!("{INTERRUPTED} 2, and do not redo finished work.")
+        format!("{INTERRUPTED} 2, and do not redo finished work.\n{COMMIT_NOTE_LINE}")
     );
 }
 

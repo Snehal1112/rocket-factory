@@ -4,6 +4,7 @@ mod common;
 
 use common::{committing_fixture, scripted, scripted_auto, Effect, Fixture};
 use factory_core::{AgentFile, Stage};
+use factory_engine::COMMIT_NOTE_LINE;
 
 const TWO_TASKS: &str = "# P\n\n### Task 1: first thing\n\nx\n\n### Task 2: second thing\n\ny\n";
 
@@ -124,6 +125,11 @@ fn review_prompt(files: Vec<AgentFile>) -> (Fixture, String) {
     (fx, prompt)
 }
 
+/// A golden builder prompt followed by the commit note line.
+fn with_note(golden: &str) -> String {
+    format!("{golden}\n{COMMIT_NOTE_LINE}")
+}
+
 const GOLDEN_FIRST: &str = "You are the builder in a software factory. Your working directory is the job worktree, already on branch `factory/001-demo`.\nRead the plan at <TMP>/job/plan.md. Never edit the plan.\nFollow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md), task by task. You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review. Write the failing test first, then the code, then run the checks.\nAfter your checks pass, invoke the `simplify` skill on your uncommitted changes, even when the change is small; do not skip it. Run it inline without helper agents, apply only fixes inside the files of this task, then run the checks again.\nDo not run `git add` or `git commit`. Leave your changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. Never push, never merge, never touch the board or the ledger.\nReply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.";
 
 const GOLDEN_TASK: &str = "You are the builder in a software factory. Your working directory is the job worktree, already on branch `factory/001-demo`.\nThe plan is at <TMP>/job/plan.md. Never edit the plan.\nTask excerpt: the plan header, your task, and the spec goal, design, edge cases, decisions, scope and acceptance criteria follow. They replace reading the plan and the spec in full. Open those files only for something this excerpt refers to outside itself. If a skill such as superpowers:subagent-driven-development tells you to read or load the plan file, use this excerpt instead and do not read the plan file in full.\n--- plan header ---\n# P\n--- your task ---\n### Task 1: first thing\n\nx\n--- end of excerpt ---\nBase commit: <SHA>. Current tip: <SHA>.\nNo earlier task has a commit yet.\nDo only Task 1: first thing. Earlier tasks are already committed, do not redo them. Later tasks belong to other agents.\nFollow the implementer rules of `superpowers:subagent-driven-development` (its implementer-prompt.md) for this task. You are the implementer, not the controller: do not dispatch implementer or reviewer subagents and do not run a task review. Write the failing test first, then the code, then run the checks the task names.\nAfter your checks pass, invoke the `simplify` skill on your uncommitted changes, even when the change is small; do not skip it. Run it inline without helper agents, apply only fixes inside the files of this task, then run the checks again.\nDo not run `git add` or `git commit`. Leave this task's changes in the worktree: the driver commits them for you after you finish. Skip every commit step of the plan. Never push, never merge, never touch the board or the ledger.\nNever sleep or poll, never run a command in the background and wait for it; if a command needs more than ten minutes say so and stop.\nReply with Status: DONE, Status: DONE_WITH_CONCERNS, Status: BLOCKED or Status: NEEDS_CONTEXT as the first line, then at most five lines of concerns or the blocker, then one Ruling: <what> — <why> — <cost if wrong> line per judgment call. Do not commit and do not write a report file. If you are blocked, stop and reply Status: BLOCKED with the reason.";
@@ -135,19 +141,19 @@ const GOLDEN_REVIEW: &str = "Review this round's diff for the job.\nInputs: the 
 #[test]
 fn the_full_first_builder_prompt_matches_golden_text() {
     let (fx, prompt) = first_prompt(Vec::new());
-    assert_eq!(norm(&fx, &prompt), GOLDEN_FIRST);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_FIRST));
 }
 
 #[test]
 fn the_full_task_builder_prompt_matches_golden_text() {
     let (fx, prompt) = task_prompt(Vec::new());
-    assert_eq!(norm(&fx, &prompt), GOLDEN_TASK);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_TASK));
 }
 
 #[test]
 fn the_full_fix_prompt_matches_golden_text() {
     let (fx, prompt) = fix_prompt(Vec::new(), Vec::new());
-    assert_eq!(norm(&fx, &prompt), GOLDEN_FIX);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_FIX));
 }
 
 #[test]
@@ -189,13 +195,13 @@ fn a_current_agent_file_gives_the_slim_first_run_prompt() {
 #[test]
 fn a_missing_marker_keeps_the_full_builder_prompt() {
     let (fx, prompt) = task_prompt(builder_file(None));
-    assert_eq!(norm(&fx, &prompt), GOLDEN_TASK);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_TASK));
 }
 
 #[test]
 fn an_older_marker_keeps_the_full_builder_prompt() {
     let (fx, prompt) = task_prompt(builder_file(Some("<!-- factory-rules: 0 -->")));
-    assert_eq!(norm(&fx, &prompt), GOLDEN_TASK);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_TASK));
 }
 
 #[test]
@@ -207,7 +213,7 @@ fn a_newer_marker_counts_as_current() {
 #[test]
 fn a_marker_inside_other_text_does_not_count() {
     let (fx, prompt) = task_prompt(builder_file(Some("see <!-- factory-rules: 1 --> here")));
-    assert_eq!(norm(&fx, &prompt), GOLDEN_TASK);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_TASK));
 }
 
 #[test]
@@ -237,7 +243,7 @@ fn the_fix_round_checks_the_agent_file_when_it_starts() {
     let (_fx, prompt) = fix_prompt(Vec::new(), files);
     assert!(!prompt.contains("git commit"), "{prompt}");
     let (fx, prompt) = fix_prompt(Vec::new(), Vec::new());
-    assert_eq!(norm(&fx, &prompt), GOLDEN_FIX);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_FIX));
 }
 
 #[test]
@@ -382,5 +388,21 @@ fn the_fresh_fix_prompt_matches_golden_text() {
     board.save(&fx.board_path).expect("save");
     fx.engine(&runner).build_stage().expect("fresh fix");
     let prompt = runner.last_spec_for("builder").expect("spec").prompt;
-    assert_eq!(norm(&fx, &prompt), GOLDEN_FIX_FRESH);
+    assert_eq!(norm(&fx, &prompt), with_note(GOLDEN_FIX_FRESH));
+}
+
+#[test]
+fn the_slim_fix_resume_prompt_asks_for_a_commit_note() {
+    let files = builder_file(Some("<!-- factory-rules: 1 -->"));
+    let (_fx, prompt) = fix_prompt(Vec::new(), files);
+    assert!(prompt.ends_with(COMMIT_NOTE_LINE), "{prompt}");
+}
+
+#[test]
+fn the_slim_first_and_task_prompts_ask_for_a_commit_note() {
+    let files = builder_file(Some("<!-- factory-rules: 1 -->"));
+    let (_fx, first) = first_prompt(files.clone());
+    assert!(first.ends_with(COMMIT_NOTE_LINE), "{first}");
+    let (_fx, task) = task_prompt(files);
+    assert!(task.ends_with(COMMIT_NOTE_LINE), "{task}");
 }
