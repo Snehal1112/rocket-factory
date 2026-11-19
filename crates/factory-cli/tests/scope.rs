@@ -61,11 +61,6 @@ fn scoped() -> Scoped {
         "risk_paths = [\"docs/**\"]\n",
     )
     .expect("config");
-    std::fs::write(
-        root.join(".claude/factory/commit-context.md"),
-        "TEST CONTEXT\n",
-    )
-    .expect("context");
     let mut layout = Layout::in_repo(&root);
     layout.scope = Some(Scope {
         project: "web".into(),

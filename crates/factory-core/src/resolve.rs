@@ -258,6 +258,9 @@ fn note_drift(
     ));
 }
 
+/// Agent files the presets no longer ship. A copy left in the preset layer is ignored.
+const RETIRED_AGENTS: [&str; 1] = ["factory-committer.md"];
+
 fn merged_agents(
     home: &Home,
     name: &str,
@@ -270,6 +273,7 @@ fn merged_agents(
     if project::validate_name(&file.preset).is_ok() {
         let preset_agents = home.presets_dir().join(&file.preset).join("agents");
         by_name.extend(read_agent_dir(&preset_agents, problems));
+        by_name.retain(|n, _| !RETIRED_AGENTS.contains(&n.as_str()));
     }
     let preset_files = by_name.clone();
     let own_files = read_agent_dir(&home.project_dir(name).join("agents"), problems);
@@ -400,13 +404,25 @@ mod tests {
             [
                 "factory-builder.md",
                 "factory-code-reviewer.md",
-                "factory-committer.md",
                 "factory-intake-drafter.md",
                 "factory-kb-refresher.md",
                 "factory-security-reviewer.md",
                 "factory-spec-reviewer.md"
             ]
         );
+    }
+
+    #[test]
+    fn a_retired_preset_agent_left_on_disk_is_not_resolved() {
+        let e = env();
+        let left = e
+            .home
+            .presets_dir()
+            .join("rust/agents/factory-committer.md");
+        std::fs::write(&left, "---\nname: factory-committer\n---\nOld.\n").expect("write");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.agents.iter().all(|a| a.name != "factory-committer.md"));
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
     }
 
     #[test]

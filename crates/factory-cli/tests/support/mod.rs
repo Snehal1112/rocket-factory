@@ -206,10 +206,6 @@ impl Scenario {
             "risk_paths = [\"secrets/**\"]\n{extra_config}\n[[checks]]\npaths = [\"**\"]\ncommands = [\"test ! -f bad.flag\"]\n"
         );
         std::fs::write(root.join(".claude/factory/config.toml"), config)?;
-        std::fs::write(
-            root.join(".claude/factory/commit-context.md"),
-            "TEST CONTEXT\n",
-        )?;
         let plans = tmp.path().join("plans");
         std::fs::create_dir_all(&plans)?;
         let plan_b = plans.join("plan-02-b.md");

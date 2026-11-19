@@ -15,14 +15,12 @@ pub const PRESET_NAMES: [&str; 5] = ["rust", "go", "ruby", "csharp", "node"];
 pub struct Preset {
     pub name: &'static str,
     pub config: &'static str,
-    pub commit_context: &'static str,
     pub agents: &'static [(&'static str, &'static str)],
 }
 
 static RUST: Preset = Preset {
     name: "rust",
     config: include_str!("../presets/rust/config.toml"),
-    commit_context: include_str!("../presets/rust/commit-context.md"),
     agents: &[
         (
             "factory-builder.md",
@@ -31,10 +29,6 @@ static RUST: Preset = Preset {
         (
             "factory-code-reviewer.md",
             include_str!("../presets/rust/agents/factory-code-reviewer.md"),
-        ),
-        (
-            "factory-committer.md",
-            include_str!("../presets/rust/agents/factory-committer.md"),
         ),
         (
             "factory-intake-drafter.md",
@@ -58,7 +52,6 @@ static RUST: Preset = Preset {
 static GO: Preset = Preset {
     name: "go",
     config: include_str!("../presets/go/config.toml"),
-    commit_context: include_str!("../presets/go/commit-context.md"),
     agents: &[
         (
             "factory-builder.md",
@@ -67,10 +60,6 @@ static GO: Preset = Preset {
         (
             "factory-code-reviewer.md",
             include_str!("../presets/go/agents/factory-code-reviewer.md"),
-        ),
-        (
-            "factory-committer.md",
-            include_str!("../presets/go/agents/factory-committer.md"),
         ),
         (
             "factory-intake-drafter.md",
@@ -94,7 +83,6 @@ static GO: Preset = Preset {
 static RUBY: Preset = Preset {
     name: "ruby",
     config: include_str!("../presets/ruby/config.toml"),
-    commit_context: include_str!("../presets/ruby/commit-context.md"),
     agents: &[
         (
             "factory-builder.md",
@@ -103,10 +91,6 @@ static RUBY: Preset = Preset {
         (
             "factory-code-reviewer.md",
             include_str!("../presets/ruby/agents/factory-code-reviewer.md"),
-        ),
-        (
-            "factory-committer.md",
-            include_str!("../presets/ruby/agents/factory-committer.md"),
         ),
         (
             "factory-intake-drafter.md",
@@ -130,7 +114,6 @@ static RUBY: Preset = Preset {
 static CSHARP: Preset = Preset {
     name: "csharp",
     config: include_str!("../presets/csharp/config.toml"),
-    commit_context: include_str!("../presets/csharp/commit-context.md"),
     agents: &[
         (
             "factory-builder.md",
@@ -139,10 +122,6 @@ static CSHARP: Preset = Preset {
         (
             "factory-code-reviewer.md",
             include_str!("../presets/csharp/agents/factory-code-reviewer.md"),
-        ),
-        (
-            "factory-committer.md",
-            include_str!("../presets/csharp/agents/factory-committer.md"),
         ),
         (
             "factory-intake-drafter.md",
@@ -166,7 +145,6 @@ static CSHARP: Preset = Preset {
 static NODE: Preset = Preset {
     name: "node",
     config: include_str!("../presets/node/config.toml"),
-    commit_context: include_str!("../presets/node/commit-context.md"),
     agents: &[
         (
             "factory-builder.md",
@@ -175,10 +153,6 @@ static NODE: Preset = Preset {
         (
             "factory-code-reviewer.md",
             include_str!("../presets/node/agents/factory-code-reviewer.md"),
-        ),
-        (
-            "factory-committer.md",
-            include_str!("../presets/node/agents/factory-committer.md"),
         ),
         (
             "factory-intake-drafter.md",
@@ -243,20 +217,12 @@ type PresetFile<'a> = (PathBuf, &'a str, Option<&'a str>, String);
 /// Every file of a preset, with the `/`-separated path under `presets_dir` as the manifest key.
 fn files_of<'a>(presets_dir: &Path, p: &'a Preset) -> Vec<PresetFile<'a>> {
     let base = presets_dir.join(p.name);
-    let mut files = vec![
-        (
-            base.join("config.toml"),
-            p.config,
-            None,
-            format!("{}/config.toml", p.name),
-        ),
-        (
-            base.join("commit-context.md"),
-            p.commit_context,
-            None,
-            format!("{}/commit-context.md", p.name),
-        ),
-    ];
+    let mut files = vec![(
+        base.join("config.toml"),
+        p.config,
+        None,
+        format!("{}/config.toml", p.name),
+    )];
     for (file, text) in p.agents {
         files.push((
             base.join("agents").join(file),
@@ -590,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn presets_ship_the_seven_agents_and_name_no_rocket_file() {
+    fn presets_ship_the_six_agents_and_name_no_rocket_file() {
         for name in PRESET_NAMES {
             let p = embedded(name).expect("preset");
             let mut names: Vec<&str> = p.agents.iter().map(|(n, _)| *n).collect();
@@ -600,7 +566,6 @@ mod tests {
                 [
                     "factory-builder.md",
                     "factory-code-reviewer.md",
-                    "factory-committer.md",
                     "factory-intake-drafter.md",
                     "factory-kb-refresher.md",
                     "factory-security-reviewer.md",
@@ -627,7 +592,6 @@ mod tests {
                     );
                 }
             }
-            assert!(!p.commit_context.contains("Rocket"));
         }
     }
 
@@ -788,9 +752,12 @@ mod tests {
             .any(|p| p.ends_with("go/agents/factory-builder.md")));
         let edited = dir.path().join("rust/config.toml");
         std::fs::write(&edited, "# mine\n").expect("edit");
-        std::fs::remove_file(dir.path().join("go/commit-context.md")).expect("rm");
+        std::fs::remove_file(dir.path().join("go/agents/factory-kb-refresher.md")).expect("rm");
         let again = seed(dir.path()).expect("seed again");
-        assert_eq!(again, vec![dir.path().join("go/commit-context.md")]);
+        assert_eq!(
+            again,
+            vec![dir.path().join("go/agents/factory-kb-refresher.md")]
+        );
         assert_eq!(std::fs::read_to_string(&edited).expect("read"), "# mine\n");
     }
 
@@ -802,7 +769,7 @@ mod tests {
     fn refresh_writes_absent_files() {
         let dir = tempfile::tempdir().expect("tmp");
         let r = refresh(dir.path(), false).expect("refresh");
-        assert_eq!(r.written.len(), 45);
+        assert_eq!(r.written.len(), 35);
         assert!(r.updated.is_empty() && r.skipped.is_empty() && r.refused.is_empty());
         assert!(dir.path().join("go/agents/factory-builder.md").exists());
     }
@@ -812,7 +779,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         seed(dir.path()).expect("seed");
         let r = refresh(dir.path(), false).expect("refresh");
-        assert_eq!(r.skipped.len(), 45);
+        assert_eq!(r.skipped.len(), 35);
         assert!(r.written.is_empty() && r.updated.is_empty() && r.refused.is_empty());
     }
 
@@ -875,7 +842,7 @@ mod tests {
                 r.refused.is_empty() && r.written.is_empty(),
                 "{name}/{file}"
             );
-            assert_eq!(r.skipped.len(), 44, "{name}/{file}");
+            assert_eq!(r.skipped.len(), 34, "{name}/{file}");
             assert_eq!(
                 std::fs::read_to_string(&path).expect("read"),
                 shipped(name, file),
@@ -952,7 +919,6 @@ mod tests {
         let mut v = Vec::new();
         for name in PRESET_NAMES {
             v.push(format!("{name}/config.toml"));
-            v.push(format!("{name}/commit-context.md"));
             for (f, _) in embedded(name).expect("preset").agents {
                 v.push(format!("{name}/agents/{f}"));
             }
@@ -967,7 +933,6 @@ mod tests {
         let p = embedded(name).expect("preset");
         match rest {
             "config.toml" => p.config,
-            "commit-context.md" => p.commit_context,
             _ => shipped(name, rest.trim_start_matches("agents/")),
         }
     }
@@ -976,9 +941,9 @@ mod tests {
     fn an_unedited_file_that_differs_from_the_embedded_text_is_updated_through_the_manifest() {
         let dir = tempfile::tempdir().expect("tmp");
         seed(dir.path()).expect("seed");
-        let rel = "rust/agents/factory-committer.md";
+        let rel = "go/agents/factory-spec-reviewer.md";
         let path = dir.path().join(rel);
-        let older = "---\nname: factory-committer\n---\nAn older shipped text.\n";
+        let older = "---\nname: factory-spec-reviewer\n---\nAn older shipped text.\n";
         std::fs::write(&path, older).expect("old");
         let mut m = Manifest::read(dir.path()).expect("read");
         m.set(rel.to_string(), sha256_hex(older.as_bytes()));
@@ -987,8 +952,8 @@ mod tests {
         let r = refresh(dir.path(), false).expect("refresh");
         assert_eq!(r.updated, vec![path.clone()]);
         assert!(r.refused.is_empty() && r.written.is_empty());
-        assert_eq!(r.skipped.len(), 44);
-        let shipped_text = shipped("rust", "factory-committer.md");
+        assert_eq!(r.skipped.len(), 34);
+        let shipped_text = shipped("go", "factory-spec-reviewer.md");
         assert_eq!(std::fs::read_to_string(&path).expect("read"), shipped_text);
         let after = Manifest::read(dir.path()).expect("read again");
         assert_eq!(
@@ -998,17 +963,51 @@ mod tests {
     }
 
     #[test]
+    fn no_preset_ships_the_committer_or_the_commit_context() {
+        let dir = tempfile::tempdir().expect("tmp");
+        for name in PRESET_NAMES {
+            let p = embedded(name).expect("preset");
+            assert!(p.agents.iter().all(|(n, _)| *n != "factory-committer.md"));
+            assert!(files_of(dir.path(), p)
+                .iter()
+                .all(|(_, _, _, key)| !key.ends_with("commit-context.md")));
+        }
+    }
+
+    #[test]
+    fn refresh_leaves_retired_preset_files_alone() {
+        let dir = tempfile::tempdir().expect("tmp");
+        seed(dir.path()).expect("seed");
+        let older = "---\nname: factory-committer\n---\nAn older shipped text.\n";
+        let mut m = Manifest::read(dir.path()).expect("read");
+        for rel in ["rust/agents/factory-committer.md", "rust/commit-context.md"] {
+            std::fs::write(dir.path().join(rel), older).expect("old");
+            m.set(rel.to_string(), sha256_hex(older.as_bytes()));
+        }
+        m.write(dir.path()).expect("write");
+
+        refresh(dir.path(), false).expect("refresh");
+        for rel in ["rust/agents/factory-committer.md", "rust/commit-context.md"] {
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join(rel)).expect("read"),
+                older,
+                "{rel}"
+            );
+        }
+    }
+
+    #[test]
     fn seed_records_a_hash_for_every_file_it_writes() {
         let dir = tempfile::tempdir().expect("tmp");
         let wrote = seed(dir.path()).expect("seed");
-        assert_eq!(wrote.len(), 45);
+        assert_eq!(wrote.len(), 35);
         assert!(wrote.iter().all(|p| !p.ends_with(MANIFEST_FILE)));
         let m = Manifest::read(dir.path()).expect("read");
         for rel in all_rels() {
             let bytes = std::fs::read(dir.path().join(&rel)).expect("file");
             assert_eq!(m.get(&rel), Some(sha256_hex(&bytes).as_str()), "{rel}");
         }
-        assert_eq!(m.render().lines().count(), 45);
+        assert_eq!(m.render().lines().count(), 35);
     }
 
     #[test]
@@ -1031,7 +1030,7 @@ mod tests {
         std::fs::write(dir.path().join("rust/config.toml"), "# mine\n").expect("edit");
         seed(dir.path()).expect("seed again");
         let m = Manifest::read(dir.path()).expect("read");
-        assert_eq!(m.render().lines().count(), 44);
+        assert_eq!(m.render().lines().count(), 34);
         assert!(m.get("rust/config.toml").is_none());
     }
 
@@ -1079,7 +1078,7 @@ mod tests {
         let r = refresh(dir.path(), false).expect("refresh");
         assert_eq!(r.updated, vec![path]);
         let m = Manifest::read(dir.path()).expect("read");
-        assert_eq!(m.render().lines().count(), 45);
+        assert_eq!(m.render().lines().count(), 35);
         for rel in all_rels() {
             let want = sha256_hex(embedded_text(&rel).as_bytes());
             assert_eq!(m.get(&rel), Some(want.as_str()), "{rel}");
@@ -1110,7 +1109,7 @@ mod tests {
     fn a_bad_manifest_line_makes_that_file_unmanifested() {
         let dir = tempfile::tempdir().expect("tmp");
         seed(dir.path()).expect("seed");
-        let rel = "rust/agents/factory-committer.md";
+        let rel = "go/agents/factory-kb-refresher.md";
         let path = dir.path().join(rel);
         std::fs::write(&path, "An older text.\n").expect("old");
         let mpath = dir.path().join(MANIFEST_FILE);
@@ -1134,13 +1133,16 @@ mod tests {
     fn a_deleted_preset_file_is_written_again_and_recorded() {
         let dir = tempfile::tempdir().expect("tmp");
         seed(dir.path()).expect("seed");
-        let path = dir.path().join("go/commit-context.md");
+        let path = dir.path().join("go/agents/factory-kb-refresher.md");
         std::fs::remove_file(&path).expect("rm");
         let r = refresh(dir.path(), false).expect("refresh");
         assert_eq!(r.written, vec![path]);
         let m = Manifest::read(dir.path()).expect("read");
-        let want = sha256_hex(embedded("go").expect("go").commit_context.as_bytes());
-        assert_eq!(m.get("go/commit-context.md"), Some(want.as_str()));
+        let want = sha256_hex(shipped("go", "factory-kb-refresher.md").as_bytes());
+        assert_eq!(
+            m.get("go/agents/factory-kb-refresher.md"),
+            Some(want.as_str())
+        );
     }
 
     #[test]
@@ -1211,7 +1213,7 @@ mod tests {
     fn messy_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tmp");
         seed(dir.path()).expect("seed");
-        std::fs::remove_file(dir.path().join("go/commit-context.md")).expect("rm");
+        std::fs::remove_file(dir.path().join("go/agents/factory-kb-refresher.md")).expect("rm");
         std::fs::write(dir.path().join("rust/config.toml"), "# mine\n").expect("edit");
         std::fs::write(
             dir.path().join("rust/agents/factory-builder.md"),
@@ -1228,20 +1230,23 @@ mod tests {
 
         let plan = plan_refresh(dir.path()).expect("plan");
         assert_eq!(snapshot(dir.path()), before);
-        assert_eq!(plan.written, vec![dir.path().join("go/commit-context.md")]);
+        assert_eq!(
+            plan.written,
+            vec![dir.path().join("go/agents/factory-kb-refresher.md")]
+        );
         assert_eq!(
             plan.updated,
             vec![dir.path().join("rust/agents/factory-builder.md")]
         );
         assert_eq!(plan.refused, vec![dir.path().join("rust/config.toml")]);
-        assert_eq!(plan.skipped.len(), 42);
+        assert_eq!(plan.skipped.len(), 32);
     }
 
     #[test]
     fn plan_refresh_reports_what_refresh_then_does() {
         let dir = messy_dir();
-        let rel = "go/agents/factory-committer.md";
-        let older = "---\nname: factory-committer\n---\nAn older shipped text.\n";
+        let rel = "go/agents/factory-spec-reviewer.md";
+        let older = "---\nname: factory-spec-reviewer\n---\nAn older shipped text.\n";
         std::fs::write(dir.path().join(rel), older).expect("old");
         let mut m = Manifest::read(dir.path()).expect("read");
         m.set(rel.to_string(), sha256_hex(older.as_bytes()));
@@ -1258,7 +1263,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         let presets = dir.path().join("presets");
         let plan = plan_refresh(&presets).expect("plan");
-        assert_eq!(plan.written.len(), 45);
+        assert_eq!(plan.written.len(), 35);
         assert!(plan.updated.is_empty() && plan.skipped.is_empty() && plan.refused.is_empty());
         assert!(!presets.exists());
     }
@@ -1333,7 +1338,8 @@ mod tests {
         std::fs::write(&layer, "# project override\n").expect("write");
         let updated = vec![
             home.presets_dir().join("rust/agents/factory-builder.md"),
-            home.presets_dir().join("rust/agents/factory-committer.md"),
+            home.presets_dir()
+                .join("rust/agents/factory-spec-reviewer.md"),
         ];
         let tip_for = |name: &str| -> Result<Box<dyn BaseTipFiles>, String> {
             assert_eq!(name, "alpha");
@@ -1367,10 +1373,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let home = Home::at(tmp.path().to_path_buf());
         register(&home, "alpha", "rust");
-        let updated = vec![
-            home.presets_dir().join("rust/config.toml"),
-            home.presets_dir().join("rust/commit-context.md"),
-        ];
+        let updated = vec![home.presets_dir().join("rust/config.toml")];
         assert_eq!(shadowed(&home, &updated, &never), vec![]);
     }
 

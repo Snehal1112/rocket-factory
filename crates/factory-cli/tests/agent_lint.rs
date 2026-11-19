@@ -118,11 +118,10 @@ fn factory_file_names(dir: &Path) -> Result<Vec<String>, String> {
 }
 
 #[test]
-fn every_preset_ships_the_seven_factory_agents() -> TestResult {
+fn every_preset_ships_the_six_factory_agents() -> TestResult {
     let want = vec![
         "factory-builder.md".to_string(),
         "factory-code-reviewer.md".to_string(),
-        "factory-committer.md".to_string(),
         "factory-intake-drafter.md".to_string(),
         "factory-kb-refresher.md".to_string(),
         "factory-security-reviewer.md".to_string(),
@@ -347,49 +346,6 @@ fn reviewer_body_pins_the_rules() -> TestResult {
     // `SingleLineEditor` contains "Edit", so it is removed before the tool names are checked.
     let without_editor = text.replace("SingleLineEditor", "");
     forbid_all(&without_editor, "reviewer", &["Bash", "Write", "Edit"])
-}
-
-#[test]
-fn committer_frontmatter_is_headless() -> TestResult {
-    let text = read(&preset_agent("rust", "factory-committer.md"))?;
-    let fm = frontmatter(&text)?;
-    if fm_get(&fm, "name") != Some("factory-committer") {
-        return Err("committer name is wrong".to_string());
-    }
-    for banned in ["isolation", "model", "tools"] {
-        if fm_get(&fm, banned).is_some() {
-            return Err(format!("committer frontmatter must not set {banned}"));
-        }
-    }
-    check_description(&fm, "committer")?;
-    check_max_turns(&fm, "committer")
-}
-
-#[test]
-fn committer_body_pins_the_rules() -> TestResult {
-    let text = read(&preset_agent("rust", "factory-committer.md"))?;
-    require_all(
-        &text,
-        "committer",
-        &[
-            "dev-workflow-skills:1-git-commit",
-            "standing answers",
-            "inline",
-            "floor",
-            "Never push",
-            "Never ask the user",
-            "GIT_SEQUENCE_EDITOR=true",
-            "git add -A",
-            "at most 4 commits",
-            "git rebase --abort",
-            "HARNESS_GATE",
-            "BLOCKED:",
-            "message-only",
-            "---BEGIN MESSAGE---",
-            "---END MESSAGE---",
-        ],
-    )?;
-    forbid_all(&text, "committer", &["SendMessage", "--force-with-lease"])
 }
 
 #[test]
@@ -1268,13 +1224,24 @@ fn docs_describe_the_builder_carry() -> TestResult {
 }
 
 #[test]
-fn the_committer_and_kb_files_have_no_rules_marker() -> TestResult {
+fn every_intake_drafter_asks_for_the_commit_line() -> TestResult {
     for preset in PRESETS {
-        for name in ["factory-committer.md", "factory-kb-refresher.md"] {
-            let path = preset_agent(preset, name);
-            if read(&path)?.contains("factory-rules") {
-                return Err(format!("{path} must not carry a rules marker"));
-            }
+        let path = preset_agent(preset, "factory-intake-drafter.md");
+        require_all(
+            &read(&path)?,
+            &path,
+            &["**Commit:**", "at most 50 characters"],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_kb_files_have_no_rules_marker() -> TestResult {
+    for preset in PRESETS {
+        let path = preset_agent(preset, "factory-kb-refresher.md");
+        if read(&path)?.contains("factory-rules") {
+            return Err(format!("{path} must not carry a rules marker"));
         }
     }
     Ok(())

@@ -130,11 +130,6 @@ impl Fixture {
             format!("risk_paths = [\"{risk}\"]\n"),
         )
         .expect("config");
-        std::fs::write(
-            root.join(".claude/factory/commit-context.md"),
-            "TEST CONTEXT\n",
-        )
-        .expect("context");
         let builder_calls = Arc::new(AtomicUsize::new(0));
         let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::counting(builder_calls.clone()));
         let ctx = CliCtx::new(root.clone(), runner, "tester");
