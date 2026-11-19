@@ -210,6 +210,125 @@ fn a_job_without_notes_uses_the_old_commit_subjects() {
     assert!(!message.contains("chore(factory): sync"));
 }
 
+/// Commits one file per subject on the fixture repo and returns the base and the new tip.
+fn commit_subjects(fx: &Fixture, subjects: &[&str]) -> (String, String) {
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let base = repo
+        .head()
+        .expect("head")
+        .peel_to_commit()
+        .expect("commit")
+        .id()
+        .to_string();
+    let mut tip = base.clone();
+    for (i, msg) in subjects.iter().enumerate() {
+        commit_file(&fx.main, &format!("c{i}.txt"), msg);
+        tip = amend_head(&fx.main, msg);
+    }
+    (base, tip)
+}
+
+#[test]
+fn a_fix_round_after_the_upgrade_keeps_the_old_commits() {
+    let fx = Fixture::new();
+    write_plan(&fx, PLAN);
+    let (base, tip) = commit_subjects(&fx, &["feat(x): add y", "wip: fix round 2"]);
+    write_note(&fx, "round-2.md", "Address review", "Refuse approve");
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    let message = engine
+        .job_message(&request(&base, &tip, &[], true))
+        .expect("message");
+    let changes = message.find("Changes:\n- feat(x): add y").expect("changes");
+    let fixes = message
+        .find("Review fixes:\n- Refuse approve")
+        .expect("fixes");
+    assert!(changes < fixes);
+    assert!(!message.contains("wip:"));
+}
+
+#[test]
+fn a_job_between_tasks_at_the_upgrade_keeps_every_task() {
+    let fx = Fixture::new();
+    write_plan(&fx, PLAN);
+    let (base, tip) = commit_subjects(
+        &fx,
+        &[
+            "feat(x): add the endpoint",
+            "wip: task 2 Show the button",
+            "wip: task 3 Add the docs",
+        ],
+    );
+    write_note(&fx, "task-3.md", "Add the docs", "Write the guide");
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    let message = engine
+        .job_message(&request(&base, &tip, &[], true))
+        .expect("message");
+    let second = message
+        .find("Show the button:\n\n")
+        .expect("title-only task 2");
+    let third = message
+        .find("Add the docs:\n- Write the guide")
+        .expect("task 3");
+    let changes = message
+        .find("Changes:\n- feat(x): add the endpoint")
+        .expect("changes");
+    assert!(second < third && third < changes);
+    assert!(!message.contains("wip:"));
+}
+
+#[test]
+fn an_old_recovered_batch_gets_task_sections() {
+    let fx = Fixture::new();
+    write_plan(&fx, PLAN);
+    let (base, tip) = commit_subjects(
+        &fx,
+        &[
+            "wip: task 1 Add the endpoint",
+            "wip: task 2 Show the button",
+        ],
+    );
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    let message = engine
+        .job_message(&request(&base, &tip, &[], true))
+        .expect("message");
+    let want = "feat(retry): retry a parked job\n\n\
+Let a user retry a parked job.\n\n\
+Add the endpoint:\n\n\
+Show the button:\n\n\
+Factory-Job: 001";
+    assert_eq!(message, want);
+}
+
+#[test]
+fn a_new_style_job_message_is_unchanged_by_its_wip_commits() {
+    let fx = Fixture::new();
+    write_plan(&fx, PLAN);
+    let (base, tip) = commit_subjects(
+        &fx,
+        &[
+            "wip: task 1 Add the endpoint",
+            "chore(factory): sync main into job 001 demo",
+            "wip: fix round 2",
+        ],
+    );
+    write_note(&fx, "task-1.md", "Add the endpoint", "Add POST retry");
+    write_note(&fx, "round-2.md", "Address review", "Refuse approve");
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    let message = engine
+        .job_message(&request(&base, &tip, &[], true))
+        .expect("message");
+    let want = "feat(retry): retry a parked job\n\n\
+Let a user retry a parked job.\n\n\
+Add the endpoint:\n- Add POST retry\n\n\
+Review fixes:\n- Refuse approve\n\n\
+Factory-Job: 001";
+    assert_eq!(message, want);
+}
+
 #[test]
 fn a_job_without_issues_gets_only_the_job_footer() {
     let fx = Fixture::new();

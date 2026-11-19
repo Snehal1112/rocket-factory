@@ -16,7 +16,8 @@ use crate::{BoardStore, Engine, EngineError, StageOutcome};
 /// The most characters of a builder reply kept in `builder-r{round}.md`.
 const REPLY_CAP: usize = 6000;
 
-/// The subject of a task snapshot commit. The squash at merge replaces it.
+/// The subject of a task snapshot commit. It stays on the job branch, and the no-ff merge
+/// commit carries the job message.
 fn snapshot_subject(n: u32, title: &str) -> String {
     format!("wip: task {n} {title}")
 }

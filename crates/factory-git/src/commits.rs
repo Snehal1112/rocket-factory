@@ -54,8 +54,8 @@ impl Repo {
     }
 
     /// Commits the index of the job worktree on its current branch and returns the
-    /// new sha. This is the plain `git2` fallback commit, used when the committer
-    /// agent fails. Refused when nothing is staged.
+    /// new sha. The driver uses it for its `wip:` snapshot commits. Refused when
+    /// nothing is staged.
     pub fn commit_staged(&self, wt: &Worktree, message: &str) -> Result<String> {
         let inside = Repository::open(&wt.path)?;
         let mut index = inside.index()?;

@@ -2,7 +2,7 @@ mod common;
 use factory_engine::{merge_stage, MergeResult};
 
 #[test]
-fn merges_the_reviewed_head_with_the_fixed_message() {
+fn merges_the_reviewed_head_with_the_driver_message() {
     let fx = common::approved_job();
     let before = common::main_tip(&fx.main);
     let MergeResult::Merged(sha) = merge_stage(&fx.driver, &fx.id).expect("merge") else {

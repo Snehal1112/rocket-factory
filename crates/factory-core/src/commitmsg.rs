@@ -1,4 +1,4 @@
-//! Rules for commit messages written by the committer agent, checked by the driver.
+//! Rules for commit messages and builder commit notes, checked by the driver.
 
 /// Longest subject the driver accepts. The commit skill asks for 50, and the driver
 /// allows slack so a 51 character subject does not fail a run.
@@ -265,7 +265,7 @@ pub fn append_footers(message: &str, lines: &[String]) -> String {
     out
 }
 
-/// The reason after `BLOCKED:` when the first line of a committer reply starts with it.
+/// The reason after `BLOCKED:` when the first line of an agent reply starts with it.
 pub fn blocked_reason(reply: &str) -> Option<String> {
     let first = reply.lines().next()?.trim();
     first
@@ -440,6 +440,8 @@ fn note_parts(body: &str) -> Vec<Vec<NotePart>> {
     lines.push("");
     for line in lines {
         if line.trim().is_empty() {
+            // A bare `- ` line with no continuation is an empty bullet and is skipped.
+            current.retain(|p| !matches!(p, NotePart::Bullet(s) if s.is_empty()));
             if !current.is_empty() {
                 paragraphs.push(std::mem::take(&mut current));
             }
@@ -452,7 +454,9 @@ fn note_parts(body: &str) -> Vec<Vec<NotePart>> {
         }
         match current.last_mut() {
             Some(NotePart::Prose(s) | NotePart::Bullet(s)) => {
-                s.push(' ');
+                if !s.is_empty() {
+                    s.push(' ');
+                }
                 s.push_str(&fold(line));
             }
             None => current.push(NotePart::Prose(fold(line))),
@@ -536,6 +540,9 @@ pub fn check_note(note: &CommitNote) -> Result<CommitNote, String> {
                 .join("\n")
         })
         .collect();
+    if paragraphs.is_empty() {
+        return Err("the body is empty".to_string());
+    }
     Ok(CommitNote {
         subject: subject.to_string(),
         body: paragraphs.join("\n\n"),
@@ -1186,6 +1193,17 @@ mod tests {
             vec!["one more", "two"]
         );
         assert_eq!(note_bullets("- one\nmore\n* two"), vec!["one more", "two"]);
+    }
+
+    #[test]
+    fn empty_bullets_are_skipped() {
+        assert_eq!(note_bullets("- one\n- \n- two"), vec!["one", "two"]);
+        let got = check_note(&note("Add x", "- one\n- \n- two")).expect("accepted");
+        assert_eq!(got.body, "- one\n- two");
+        assert_eq!(
+            check_note(&note("Add x", "- ")).expect_err("refused"),
+            "the body is empty"
+        );
     }
 
     #[test]

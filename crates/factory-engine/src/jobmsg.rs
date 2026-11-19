@@ -1,5 +1,7 @@
 //! The merge message of a job, built by the driver from the plan and the builders' notes.
 
+use std::collections::BTreeMap;
+
 use factory_core::{
     append_footers, build_job_message, check_job_subject, note_bullets, title_subject,
     validate_message, CommitNote, JobMessage, NoteSection,
@@ -18,6 +20,20 @@ fn plan_heading(plan: &str) -> Option<&str> {
         .filter(|title| !title.is_empty())
 }
 
+/// The task number and title of a `wip: task N <title>` snapshot subject.
+fn wip_task(subject: &str) -> Option<(u32, String)> {
+    let rest = subject.strip_prefix("wip: task ")?;
+    let (n, title) = rest.split_once(' ').unwrap_or((rest, ""));
+    let n: u32 = n.parse().ok()?;
+    let title = title.trim();
+    let title = if title.is_empty() {
+        format!("Task {n}")
+    } else {
+        title.to_string()
+    };
+    Some((n, title))
+}
+
 /// One message section from a note.
 fn section(note: &CommitNote) -> NoteSection {
     NoteSection {
@@ -27,8 +43,8 @@ fn section(note: &CommitNote) -> NoteSection {
 }
 
 impl Engine<'_> {
-    /// Builds the merge message: subject, goal, one section per note, review fixes and footers.
-    /// A message that fails the check is replaced by the fixed message.
+    /// Builds the merge message: subject, goal, one section per task, the old committer commits,
+    /// review fixes and footers. A message that fails the check is replaced by the fixed message.
     pub fn job_message(&self, req: &MessageRequest<'_>) -> Result<String, EngineError> {
         let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
         let from_line = match header_commit_line(&plan) {
@@ -50,32 +66,47 @@ impl Engine<'_> {
         let why = goal_line(&plan_header(&plan));
 
         let notes = read_notes(&self.job_dir);
+        // A git error means no commits, so a message problem never fails the merge.
+        let subjects: Vec<String> = self
+            .repo
+            .commits_above(req.base, req.tip)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| c.subject)
+            .collect();
         let mut sections: Vec<NoteSection> = Vec::new();
         if let Some(note) = &notes.build {
             sections.push(section(note));
         }
-        sections.extend(notes.tasks.iter().map(|(_, note)| section(note)));
+        // Tasks with a note get its section, tasks with only a snapshot commit get their title.
+        let mut tasks: BTreeMap<u32, NoteSection> = notes
+            .tasks
+            .iter()
+            .map(|(n, note)| (*n, section(note)))
+            .collect();
+        for (n, title) in subjects.iter().filter_map(|s| wip_task(s)) {
+            tasks.entry(n).or_insert_with(|| NoteSection {
+                title,
+                bullets: Vec::new(),
+            });
+        }
+        sections.extend(tasks.into_values());
+        // Commits of the old committer agent, from jobs that ran before the upgrade.
+        let legacy: Vec<String> = subjects
+            .into_iter()
+            .filter(|s| !s.starts_with("wip:") && !s.starts_with("chore(factory): sync"))
+            .collect();
+        if !legacy.is_empty() {
+            sections.push(NoteSection {
+                title: "Changes".to_string(),
+                bullets: legacy,
+            });
+        }
         let fixes: Vec<String> = notes
             .rounds
             .iter()
             .flat_map(|(_, note)| note_bullets(&note.body))
             .collect();
-        if notes.is_empty() {
-            let bullets: Vec<String> = self
-                .repo
-                .commits_above(req.base, req.tip)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|c| c.subject)
-                .filter(|s| !s.starts_with("wip:") && !s.starts_with("chore(factory): sync"))
-                .collect();
-            if !bullets.is_empty() {
-                sections.push(NoteSection {
-                    title: "Changes".to_string(),
-                    bullets,
-                });
-            }
-        }
 
         let footers = driver_footers(req);
         let message = build_job_message(&JobMessage {

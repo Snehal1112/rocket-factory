@@ -44,9 +44,8 @@ fn recent_log(inside: &Repository, count: usize) -> Result<Vec<String>> {
 }
 
 impl Repo {
-    /// Computes, through `git2`, what the skill's step 1 commands print for the
-    /// staged changes of a job worktree, so the driver can put them in the
-    /// committer prompt.
+    /// Computes, through `git2`, what the commit skill's step 1 commands print
+    /// for the staged changes of a job worktree: status, diff and recent log.
     pub fn staged_report(&self, wt: &Worktree, log_count: usize) -> Result<StagedReport> {
         let inside = Repository::open(&wt.path)?;
         let head = inside.head()?;

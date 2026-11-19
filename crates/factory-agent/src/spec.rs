@@ -75,8 +75,8 @@ pub struct AgentSpec {
     /// Weighted tokens already spent by earlier runs of this job.
     pub used_before: u64,
     pub stall_after: Option<Duration>,
-    /// Extra environment variables for the child process. Empty for every agent
-    /// except the committer, which sets `HARNESS_GATE=0`.
+    /// Extra environment variables for the child process, such as the cache TTL or
+    /// the subagent model. Empty by default.
     pub env: Vec<(String, String)>,
     /// Adds `--strict-mcp-config`, so the run loads no MCP servers from settings.
     /// On by default, so no factory agent ever loads an MCP server.

@@ -160,9 +160,30 @@ pub fn header_commit_line(text: &str) -> Option<String> {
         .iter()
         .filter(|(_, fenced)| !fenced)
         .find_map(|(l, _)| commit_line_value(l))
-        .map(|v| v.trim_matches(|c: char| c == '*' || c == '`' || c.is_whitespace()))
+        .map(unwrap_commit_value)
         .filter(|v| !v.is_empty())
         .map(str::to_string)
+}
+
+/// The subject inside a commit line value. The closing `**` of a bold label is dropped, then
+/// only a balanced wrapping pair of `**` or backticks, so inner and trailing marks stay.
+fn unwrap_commit_value(value: &str) -> &str {
+    let mut v = value.trim_start_matches('*').trim();
+    // A bold that closes after the subject, as in `**Commit: x**`, leaves an unmatched `**`.
+    if let Some(head) = v.strip_suffix("**").filter(|h| !h.contains("**")) {
+        v = head.trim();
+    }
+    loop {
+        let inner = ["**", "`"].iter().find_map(|mark| {
+            v.strip_prefix(mark)
+                .and_then(|rest| rest.strip_suffix(mark))
+                .filter(|inner| !inner.contains(mark))
+        });
+        match inner {
+            Some(inner) => v = inner.trim(),
+            None => return v,
+        }
+    }
 }
 
 /// True for the `## Review Focus` heading line.
@@ -413,6 +434,18 @@ mod tests {
         let b = "# T\n\n> **Commit:** fix: z\n";
         assert_eq!(header_commit_line(a).as_deref(), Some("fix: z"));
         assert_eq!(header_commit_line(b).as_deref(), Some("fix: z"));
+    }
+
+    #[test]
+    fn the_commit_line_keeps_a_trailing_backticked_word() {
+        let a = "# T\n\n**Commit:** feat: add `x`\n";
+        let b = "# T\n\n**Commit:** `feat: add x`\n";
+        let c = "# T\n\n**Commit:** **feat: add `x`**\n";
+        let d = "# T\n\n**Commit: feat: add `x`**\n";
+        assert_eq!(header_commit_line(a).as_deref(), Some("feat: add `x`"));
+        assert_eq!(header_commit_line(b).as_deref(), Some("feat: add x"));
+        assert_eq!(header_commit_line(c).as_deref(), Some("feat: add `x`"));
+        assert_eq!(header_commit_line(d).as_deref(), Some("feat: add `x`"));
     }
 
     #[test]
