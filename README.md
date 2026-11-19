@@ -28,11 +28,11 @@ The processes behind a job:
 
 ![Who talks to whom](docs/assets/images/factory-processes.svg)
 
-How the driver starts one agent (`claude -p`), the five ways a run ends and the six roles it starts. Only the builder and the KB refresher can start subagents, and the builder's limit of 2 helpers is a line in its prompt, not driver code:
+How the driver starts one agent (`claude -p`), the five ways a run ends and the six roles it starts: builder, reviewer, spec reviewer, security reviewer, intake drafter and KB refresher. Only the builder and the KB refresher can start subagents, and the builder's limit of 2 helpers is a line in its prompt, not driver code:
 
 ![How an agent is started](docs/assets/images/factory-agents.svg)
 
-The agent runs of one job in order: a fresh builder per task, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. The driver makes the commits and writes the merge message itself, so no agent run is spent on them (the diagram below may still show the older commit and message runs). The spec review at `factory new` adds 1 run. The job budget stops a run before that:
+The agent runs of one job in order: a fresh builder per task, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. The driver makes the commits and writes the merge message itself, so no agent run is spent on them. The spec review at `factory new` adds 1 run. The job budget stops a run before that:
 
 ![Agent turns in one job](docs/assets/images/factory-turns.svg)
 
