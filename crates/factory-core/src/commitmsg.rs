@@ -633,6 +633,121 @@ pub fn fallback_note(task_title: &str, files: &[String]) -> CommitNote {
     }
 }
 
+/// The most bullets a job message holds across its task sections and review fixes.
+pub const MAX_JOB_BULLETS: usize = 60;
+
+/// Checks a job subject: the shared message rules plus the 50 character job limit.
+pub fn check_job_subject(subject: &str) -> Result<(), String> {
+    validate_message(subject)?;
+    let n = subject.chars().count();
+    if n > MAX_JOB_SUBJECT_CHARS {
+        return Err(format!(
+            "the subject is {n} characters, the limit is {MAX_JOB_SUBJECT_CHARS}"
+        ));
+    }
+    Ok(())
+}
+
+/// The job subject taken from a plan title: `feat: <title>` without the plan suffix, links and
+/// issue refs, cut to fit 50 characters. An empty result becomes `feat: factory job`.
+pub fn title_subject(title: &str) -> String {
+    let mut words: Vec<&str> = title.split_whitespace().collect();
+    let n = words.len();
+    if n >= 2
+        && words[n - 2].eq_ignore_ascii_case("implementation")
+        && words[n - 1].eq_ignore_ascii_case("plan")
+    {
+        words.truncate(n - 2);
+    }
+    let kept: Vec<&str> = words
+        .into_iter()
+        .filter(|w| {
+            !(w.starts_with("http://") || w.starts_with("https://"))
+                && parse_issue_refs(w).is_empty()
+        })
+        .collect();
+    let joined = kept.join(" ");
+    let mut chars = joined.chars();
+    let text: String = match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    };
+    // The 6 characters of `feat: ` come out of the 50.
+    let cut = cut_text(&text, MAX_JOB_SUBJECT_CHARS - 6);
+    if cut.is_empty() {
+        "feat: factory job".to_string()
+    } else {
+        format!("feat: {cut}")
+    }
+}
+
+/// One task section of a job message: a title and the bullets of its commit note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteSection {
+    pub title: String,
+    pub bullets: Vec<String>,
+}
+
+/// The parts of a job message.
+#[derive(Debug, Clone)]
+pub struct JobMessage<'a> {
+    pub subject: &'a str,
+    pub why: Option<&'a str>,
+    pub tasks: &'a [NoteSection],
+    pub fixes: &'a [String],
+    pub footers: &'a [String],
+}
+
+/// Builds the job message: subject, why paragraph, one section per task, the review fixes and
+/// the footers. The body holds at most 60 bullets, the rest becomes one `- and N more changes`.
+pub fn build_job_message(m: &JobMessage<'_>) -> String {
+    let mut left = MAX_JOB_BULLETS;
+    let mut dropped = 0usize;
+    let mut blocks: Vec<Vec<String>> = Vec::new();
+    let mut take = |bullets: &[String], lines: &mut Vec<String>| {
+        let kept = bullets.len().min(left);
+        left -= kept;
+        dropped += bullets.len() - kept;
+        lines.extend(bullets[..kept].iter().map(|b| wrap_bullet(b, NOTE_WIDTH)));
+        kept
+    };
+    for section in m.tasks {
+        let mut lines = vec![format!("{}:", section.title)];
+        let kept = take(&section.bullets, &mut lines);
+        if kept > 0 || section.bullets.is_empty() {
+            blocks.push(lines);
+        }
+    }
+    if !m.fixes.is_empty() {
+        let mut lines = vec!["Review fixes:".to_string()];
+        if take(m.fixes, &mut lines) > 0 {
+            blocks.push(lines);
+        }
+    }
+    if dropped > 0 {
+        if let Some(last) = blocks.last_mut() {
+            last.push(format!("- and {dropped} more changes"));
+        }
+    }
+    let mut paragraphs: Vec<String> = vec![m.subject.to_string()];
+    if let Some(why) = m.why.filter(|w| !w.trim().is_empty()) {
+        paragraphs.push(wrap_paragraph(why, NOTE_WIDTH));
+    }
+    paragraphs.extend(blocks.into_iter().map(|b| b.join("\n")));
+    let mut out = paragraphs.join("\n\n");
+    let footers: Vec<&str> = m
+        .footers
+        .iter()
+        .map(|f| f.as_str())
+        .filter(|f| !out.lines().any(|l| l == *f))
+        .collect();
+    if !footers.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&footers.join("\n"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1200,5 +1315,157 @@ mod tests {
             parse_builder_status(reply),
             Some(BuilderStatus::DoneWithConcerns("slow test".to_string()))
         );
+    }
+
+    fn sample_sections() -> Vec<NoteSection> {
+        vec![
+            NoteSection {
+                title: "Add the endpoint".to_string(),
+                bullets: vec!["a".to_string(), "b".to_string()],
+            },
+            NoteSection {
+                title: "Show the button".to_string(),
+                bullets: vec!["c".to_string()],
+            },
+        ]
+    }
+
+    fn sample_message() -> String {
+        let tasks = sample_sections();
+        let fixes = vec!["Refuse approve while a retry is queued".to_string()];
+        let footers = vec!["Fixes: #142".to_string(), "Factory-Job: 042".to_string()];
+        build_job_message(&JobMessage {
+            subject: "feat(retry): retry a parked job",
+            why: Some("The dashboard could not continue a parked job."),
+            tasks: &tasks,
+            fixes: &fixes,
+            footers: &footers,
+        })
+    }
+
+    #[test]
+    fn the_job_message_has_subject_why_sections_fixes_and_footers() {
+        let expected = "feat(retry): retry a parked job\n\nThe dashboard could not continue a parked job.\n\nAdd the endpoint:\n- a\n- b\n\nShow the button:\n- c\n\nReview fixes:\n- Refuse approve while a retry is queued\n\nFixes: #142\nFactory-Job: 042";
+        assert_eq!(sample_message(), expected);
+    }
+
+    #[test]
+    fn a_message_without_why_or_fixes_leaves_them_out() {
+        let tasks = sample_sections();
+        let msg = build_job_message(&JobMessage {
+            subject: "feat: x",
+            why: Some("  "),
+            tasks: &tasks,
+            fixes: &[],
+            footers: &[],
+        });
+        assert_eq!(
+            msg,
+            "feat: x\n\nAdd the endpoint:\n- a\n- b\n\nShow the button:\n- c"
+        );
+        assert!(!msg.contains("Review fixes:"));
+    }
+
+    #[test]
+    fn the_job_message_passes_validate_message() {
+        assert_eq!(validate_message(&sample_message()), Ok(()));
+    }
+
+    #[test]
+    fn the_body_is_capped_at_sixty_bullets() {
+        let tasks: Vec<NoteSection> = (0..3)
+            .map(|i| NoteSection {
+                title: format!("Task {i}"),
+                bullets: (0..25).map(|j| format!("item {i} {j}")).collect(),
+            })
+            .collect();
+        let msg = build_job_message(&JobMessage {
+            subject: "feat: x",
+            why: None,
+            tasks: &tasks,
+            fixes: &[],
+            footers: &[],
+        });
+        let bullets = msg.lines().filter(|l| l.starts_with("- ")).count();
+        assert_eq!(bullets, 61);
+        assert!(msg.ends_with("- item 2 9\n- and 15 more changes"));
+    }
+
+    #[test]
+    fn a_section_with_no_bullet_left_after_the_cap_is_left_out() {
+        let tasks = vec![NoteSection {
+            title: "Big".to_string(),
+            bullets: (0..60).map(|j| format!("b{j}")).collect(),
+        }];
+        let fixes = vec!["late fix".to_string()];
+        let msg = build_job_message(&JobMessage {
+            subject: "feat: x",
+            why: None,
+            tasks: &tasks,
+            fixes: &fixes,
+            footers: &[],
+        });
+        assert!(!msg.contains("Review fixes:"));
+        assert!(msg.ends_with("- b59\n- and 1 more changes"));
+    }
+
+    #[test]
+    fn check_job_subject_limits_fifty_characters() {
+        let ok = format!("feat: {}", "a".repeat(44));
+        assert_eq!(ok.chars().count(), 50);
+        assert_eq!(check_job_subject(&ok), Ok(()));
+        let long = format!("feat: {}", "a".repeat(45));
+        assert_eq!(
+            check_job_subject(&long),
+            Err("the subject is 51 characters, the limit is 50".to_string())
+        );
+        assert!(check_job_subject("Add x").is_err());
+        assert!(check_job_subject("feat: x.").is_err());
+    }
+
+    #[test]
+    fn title_subject_strips_the_plan_suffix_and_issue_refs() {
+        assert_eq!(
+            title_subject("Retry at the parked stage Implementation Plan"),
+            "feat: retry at the parked stage"
+        );
+        assert_eq!(
+            title_subject("Fix #12 crash https://github.com/o/r/issues/12"),
+            "feat: fix crash"
+        );
+        assert_eq!(title_subject(""), "feat: factory job");
+    }
+
+    #[test]
+    fn title_subject_cuts_on_a_word_boundary_with_multibyte_text() {
+        let title =
+            "Résumé é handling — across the whole pipeline é and — every other stage of the run";
+        let subject = title_subject(title);
+        assert!(subject.chars().count() <= 50);
+        assert_eq!(check_job_subject(&subject), Ok(()));
+        let text = subject.strip_prefix("feat: ").expect("prefix");
+        let lowered = title.replacen('R', "r", 1);
+        assert!(lowered.starts_with(text));
+        assert!(lowered[text.len()..].starts_with(' '));
+        let long = title_subject(&"x".repeat(60));
+        assert_eq!(long.chars().count(), 50);
+        assert!(long.starts_with("feat: "));
+    }
+
+    #[test]
+    fn footers_never_join_a_footer_like_section() {
+        let tasks = vec![NoteSection {
+            title: "Fix: x".to_string(),
+            bullets: vec!["Add: y".to_string()],
+        }];
+        let footers = vec!["Factory-Job: 042".to_string()];
+        let msg = build_job_message(&JobMessage {
+            subject: "feat: x",
+            why: None,
+            tasks: &tasks,
+            fixes: &[],
+            footers: &footers,
+        });
+        assert!(msg.ends_with("- Add: y\n\nFactory-Job: 042"));
     }
 }
