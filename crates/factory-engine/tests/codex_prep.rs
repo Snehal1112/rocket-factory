@@ -56,20 +56,18 @@ fn run_agent_prepends_the_agent_file_and_the_codex_preface() {
 }
 
 #[test]
-fn committer_message_and_kb_get_the_skill_sentence() {
+fn kb_gets_the_skill_sentence() {
     let fx = with_kb(codex(committing_fixture()));
     let runner = scripted_auto(vec![write_effect(), reply("No relevant changes")]);
     let e = fx.engine(&runner).with_agent_files(files());
     e.build_stage().expect("build");
     e.kb_refresh_step(None).expect("kb");
-    for role in ["committer", "kb"] {
-        let spec = runner.last_spec_for(role).expect(role);
-        let text = spec.agent_prompt.expect("agent text");
-        assert!(
-            text.contains("The skill your instructions name is not available"),
-            "{role}: {text}"
-        );
-    }
+    let spec = runner.last_spec_for("kb").expect("kb");
+    let text = spec.agent_prompt.expect("agent text");
+    assert!(
+        text.contains("The skill your instructions name is not available"),
+        "kb: {text}"
+    );
 }
 
 const BAN: &str = "Do not load or invoke skills";
@@ -242,29 +240,6 @@ fn a_codex_reviewer_prompt_carries_the_user_note_line() {
 }
 
 #[test]
-fn committer_keeps_the_skill_sentence_only_when_the_commit_skill_is_missing() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
-    fx.engine(&runner)
-        .with_agent_files(files())
-        .build_stage()
-        .expect("build");
-    assert!(agent_text(&runner, "committer").contains(SENTENCE));
-
-    let fx = codex(committing_fixture());
-    let root = skill_root(&fx, &["dev-workflow-skills/1-git-commit"]);
-    let runner = scripted_auto(vec![write_effect()]);
-    fx.engine(&runner)
-        .with_agent_files(files())
-        .with_codex_skill_roots(vec![root])
-        .build_stage()
-        .expect("build");
-    let text = agent_text(&runner, "committer");
-    assert!(!text.contains(SENTENCE), "{text}");
-    assert!(text.contains("skill catalog"), "{text}");
-}
-
-#[test]
 fn kb_with_kb_refresh_installed_has_no_skill_sentence() {
     let fx = with_kb(codex(Fixture::new()));
     let root = skill_root(&fx, &["kb-refresh"]);
@@ -287,25 +262,6 @@ fn network_is_on_only_for_builder_roles() {
         .build_stage()
         .expect("build");
     assert!(runner.last_spec_for("builder").expect("builder").network);
-    assert!(
-        !runner
-            .last_spec_for("committer")
-            .expect("committer")
-            .network
-    );
-}
-
-#[test]
-fn committer_gets_the_git_dir_as_a_writable_root() {
-    let fx = codex(committing_fixture());
-    let runner = scripted_auto(vec![write_effect()]);
-    fx.engine(&runner)
-        .with_agent_files(files())
-        .build_stage()
-        .expect("build");
-    let spec = runner.last_spec_for("committer").expect("committer");
-    assert_eq!(spec.writable_roots, vec![fx.repo.common_git_dir()]);
-    assert_eq!(spec.sandbox.as_deref(), Some("workspace-write"));
 }
 
 #[test]
@@ -324,9 +280,6 @@ fn codex_builder_runs_in_the_project_folder() {
     let builder = runner.last_spec_for("builder").expect("builder");
     assert_eq!(builder.cwd, wt.join("apps/web"));
     assert_eq!(builder.sandbox.as_deref(), Some("workspace-write"));
-    let committer = runner.last_spec_for("committer").expect("committer");
-    assert_eq!(committer.cwd, wt);
-    assert_eq!(committer.writable_roots, vec![fx.repo.common_git_dir()]);
 }
 
 #[test]

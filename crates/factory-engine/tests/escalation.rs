@@ -163,16 +163,11 @@ fn the_escalated_round_runs_a_fresh_builder_on_the_stronger_model() {
 }
 
 #[test]
-fn the_reviewer_and_committer_are_not_escalated() {
+fn the_reviewer_is_not_escalated() {
     let mut fx = committing_fixture();
     reach_round_three(&mut fx);
     passing_checks(&mut fx);
-    let runner = build_round(&fx);
-    let committer = runner.last_spec_for("committer").expect("committer spec");
-    assert_eq!(
-        committer.model.as_deref(),
-        Some(fx.config.commit_model.as_str())
-    );
+    build_round(&fx);
     let reviewer = scripted(vec![Box::new(|_| "fine\nVERDICT: APPROVE".to_string())]);
     fx.engine(&reviewer).review_stage().expect("review");
     let spec = reviewer.last_spec_for("reviewer").expect("reviewer spec");

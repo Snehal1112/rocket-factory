@@ -1,8 +1,6 @@
 mod common;
 
-use common::{
-    amend_head, commit_file, committing_fixture, scripted, scripted_auto, Effect, Fixture,
-};
+use common::{amend_head, commit_file, committing_fixture, scripted_auto, Effect, Fixture};
 use factory_core::{ParkKind, ParkRecord, Stage};
 use factory_engine::{merge_stage, MergeResult, StageOutcome};
 
@@ -29,25 +27,6 @@ fn only_part(rec: &ParkRecord) -> &factory_core::ParkPart {
 
 #[test]
 fn no_park_has_empty_evidence() {
-    // A committer that rewrites the reviewed head is a CommitFailed park.
-    let fx = committing_fixture();
-    let first = scripted_auto(vec![change_effect("a.txt")]);
-    fx.engine(&first).build_stage().expect("first");
-    start_fix_round(&fx);
-    let second = scripted(vec![
-        change_effect("b.txt"),
-        Box::new(|spec| {
-            amend_head(&spec.cwd, "feat(test): reword");
-            "done".to_string()
-        }),
-    ]);
-    fx.engine(&second).build_stage().expect("fix");
-    let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
-    assert_eq!(rec.kind, ParkKind::CommitFailed);
-    let part = only_part(&rec);
-    assert_eq!(part.title, "Why it stopped");
-    assert_eq!(part.text, rec.reason);
-
     // A builder that commits on its own is a BuilderCommitted park.
     let fx = committing_fixture();
     let runner = scripted_auto(vec![Box::new(|spec| {

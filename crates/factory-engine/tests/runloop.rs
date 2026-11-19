@@ -229,7 +229,7 @@ fn every_agent_run_appends_a_usage_line_with_its_role() {
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v["role"].as_str().map(str::to_string))
         .collect();
-    assert_eq!(roles, vec!["builder", "committer", "reviewer"]);
+    assert_eq!(roles, vec!["builder", "reviewer"]);
 }
 
 #[test]

@@ -5,7 +5,7 @@ use factory_core::{
     builder_rulings, builder_status, is_agent_file_name, parse_builder_status, BuilderStatus,
     ParkKind, ParkPart, Stage, TaskSession, TaskState,
 };
-use factory_git::{CommitInfo, Worktree};
+use factory_git::Worktree;
 
 use crate::carry::{carry_decision, carry_idle_limit, Carry, CarryInput};
 use crate::commit::{CommitKind, CommitOutcome, CommitRequest, SnapshotRef};
@@ -17,9 +17,19 @@ use crate::{BoardStore, Engine, EngineError, StageOutcome};
 /// The most characters of a builder reply kept in `builder-r{round}.md`.
 const REPLY_CAP: usize = 6000;
 
-/// The subject of a task snapshot commit. The batch committer replaces it.
+/// The subject of a task snapshot commit. The squash at merge replaces it.
 fn snapshot_subject(n: u32, title: &str) -> String {
     format!("wip: task {n} {title}")
+}
+
+/// What a snapshot of the builder's uncommitted work did.
+enum Snapshot {
+    /// A `wip:` commit was made; it holds the new branch tip.
+    Made(String),
+    /// Nothing was left to stage.
+    Nothing,
+    /// The builder moved HEAD off the job branch; it holds the park reason.
+    OffBranch(String),
 }
 
 /// The saved session id when it belongs to task `n` and the branch is still at the recorded tip.
@@ -175,21 +185,21 @@ impl Engine<'_> {
                 Vec::new(),
             );
         }
-        // The floor is the base in the first round and the last reviewed head in a fix round.
-        let floor = previous_head.clone().unwrap_or_else(|| base.clone());
-        let before = self
-            .repo
-            .commits_above(&floor, &tip_before)
-            .map_err(git_err)?;
         let wt = self.job_worktree(&job, &cwd, &base, &branch);
-        let (kind, title) = if new_work {
-            (CommitKind::Legacy, "build the plan")
+        let (subject, place) = if new_work {
+            ("wip: build the plan".to_string(), String::new())
         } else {
-            (CommitKind::Fix, "address review findings")
+            (
+                format!("wip: fix round {}", job.round),
+                format!(" in fix round {}", job.round),
+            )
         };
-        let head = match self.commit_work(&wt, kind, title, &floor, &job.issues)? {
-            CommitOutcome::Committed { tip, .. } => tip,
-            CommitOutcome::NothingStaged => {
+        let head = match self.snapshot(&wt, &subject, &place, &tip_before)? {
+            Snapshot::Made(head) => head,
+            Snapshot::OffBranch(reason) => {
+                return self.park_with(ParkKind::BuilderCommitted, reason, Vec::new())
+            }
+            Snapshot::Nothing => {
                 if !new_work && job.fix_source.as_deref() == Some("checks") {
                     return self.nothing_changed_after_checks(
                         &job,
@@ -205,9 +215,6 @@ impl Engine<'_> {
                 };
                 let parts = self.nothing_changed_parts(job.fix_source.as_deref(), reply);
                 return self.park_with(ParkKind::NothingChanged, why.to_string(), parts);
-            }
-            CommitOutcome::Park(reason) => {
-                return self.park_with(ParkKind::CommitFailed, reason, Vec::new())
             }
         };
         let (file, label, fallback) = if new_work {
@@ -229,7 +236,6 @@ impl Engine<'_> {
             .changed_paths(&tip_before, &head)
             .unwrap_or_default();
         self.save_commit_note(&file, &label, &run.result_text, fallback, &files)?;
-        self.note_rewrites("build", &floor, &before, &head)?;
         self.finish_build(&job, &base, head, previous_head)
     }
 
@@ -381,52 +387,38 @@ impl Engine<'_> {
         }
     }
 
-    /// Runs the committer step for the builder's uncommitted work.
-    fn commit_work(
+    /// Commits the builder's uncommitted work as one `wip:` snapshot on the job branch. `place` names the
+    /// task or fix round in the park reason, and `tip_before` is the branch tip before the builder ran.
+    fn snapshot(
         &self,
         wt: &Worktree,
-        kind: CommitKind,
-        task_title: &str,
-        floor: &str,
-        issues: &[u32],
-    ) -> Result<CommitOutcome, EngineError> {
-        let plan = std::fs::read_to_string(&self.plan_file).unwrap_or_default();
-        let spec = std::fs::read_to_string(self.job_dir.join("spec.md")).unwrap_or_default();
-        let (plan_title, goal) = (plan_title(&plan), spec_goal(&spec));
-        let req = CommitRequest {
-            kind,
-            plan_title: &plan_title,
-            task_title,
-            goal: &goal,
-            floor,
-            issues,
-            snapshots: &[],
-        };
-        self.commit_step(wt, &req)
-    }
-
-    /// Writes a ruling when the committer rewrote commits that were above the floor before the run.
-    fn note_rewrites(
-        &self,
-        label: &str,
-        floor: &str,
-        before: &[CommitInfo],
-        tip: &str,
-    ) -> Result<(), EngineError> {
-        let after = self.repo.commits_above(floor, tip).map_err(git_err)?;
-        let gone: Vec<&str> = before
-            .iter()
-            .filter(|c| !after.iter().any(|a| a.sha == c.sha))
-            .map(|c| short_sha(&c.sha))
-            .collect();
-        if gone.is_empty() {
-            return Ok(());
+        subject: &str,
+        place: &str,
+        tip_before: &str,
+    ) -> Result<Snapshot, EngineError> {
+        if !self.repo.head_is_on_branch(wt).map_err(git_err)? {
+            let short = short_sha(tip_before);
+            let at = self.repo.head_sha(wt).map_or(String::new(), |id| {
+                format!(", HEAD is at {}", short_sha(&id))
+            });
+            return Ok(Snapshot::OffBranch(format!(
+                "builder moved HEAD off the job branch{place} (the branch was at {short} before the run{at}); if the detached HEAD has commits, note its sha with `git rev-parse HEAD` first, then run `git checkout {}` in the job worktree (uncommitted changes stay), then `factory rework {}`",
+                wt.branch, self.job_id
+            )));
         }
-        let short = short_sha(tip);
-        self.ruling(&format!(
-            "{label} commit rewrote earlier commits {}, the branch is now at {short}",
-            gone.join(", ")
-        ))
+        let staged = self.repo.stage_all(wt).map_err(git_err)?;
+        if staged.is_empty() {
+            return Ok(Snapshot::Nothing);
+        }
+        let sha = self.repo.commit_staged(wt, subject).map_err(git_err)?;
+        tracing::info!(
+            event = "commit.done",
+            kind = "snapshot",
+            sha = %sha,
+            fallback = false,
+            "snapshot commit made"
+        );
+        Ok(Snapshot::Made(sha))
     }
 
     /// Parks the job when the builder reply says BLOCKED or NEEDS_CONTEXT, before anything is committed.
@@ -667,59 +659,20 @@ impl Engine<'_> {
             );
         }
         let wt = self.job_worktree(job, &cwd, &base, &branch);
-        let new_tip = if self.config.commit_batch {
-            if !self.repo.head_is_on_branch(&wt).map_err(git_err)? {
-                let short = short_sha(&tip);
-                let at = self.repo.head_sha(&wt).map_or(String::new(), |id| {
-                    format!(", HEAD is at {}", short_sha(&id))
-                });
-                return self.park_with(
-                    ParkKind::BuilderCommitted,
-                    format!(
-                        "builder moved HEAD off the job branch in task {} (the branch was at {short} before the run{at}); if the detached HEAD has commits, note its sha with `git rev-parse HEAD` first, then run `git checkout {branch}` in the job worktree (uncommitted changes stay), then `factory rework {}`",
-                        task.n, self.job_id
-                    ),
-                    Vec::new(),
-                );
+        let subject = snapshot_subject(task.n, &task.title);
+        let place = format!(" in task {}", task.n);
+        let new_tip = match self.snapshot(&wt, &subject, &place, &tip)? {
+            Snapshot::Made(sha) => sha,
+            Snapshot::OffBranch(reason) => {
+                return self.park_with(ParkKind::BuilderCommitted, reason, Vec::new())
             }
-            let staged = self.repo.stage_all(&wt).map_err(git_err)?;
-            if staged.is_empty() {
+            Snapshot::Nothing => {
                 return self.park_with(
                     ParkKind::NothingChanged,
                     format!("task {} changed nothing", task.n),
                     Vec::new(),
-                );
+                )
             }
-            let sha = self
-                .repo
-                .commit_staged(&wt, &snapshot_subject(task.n, &task.title))
-                .map_err(git_err)?;
-            tracing::info!(
-                event = "commit.done",
-                kind = "snapshot",
-                sha = %sha,
-                fallback = false,
-                "snapshot commit made"
-            );
-            sha
-        } else {
-            let before = self.repo.commits_above(&base, &tip).map_err(git_err)?;
-            let new_tip =
-                match self.commit_work(&wt, CommitKind::Task, &task.title, &base, &job.issues)? {
-                    CommitOutcome::Committed { tip, .. } => tip,
-                    CommitOutcome::NothingStaged => {
-                        return self.park_with(
-                            ParkKind::NothingChanged,
-                            format!("task {} changed nothing", task.n),
-                            Vec::new(),
-                        )
-                    }
-                    CommitOutcome::Park(reason) => {
-                        return self.park_with(ParkKind::CommitFailed, reason, Vec::new())
-                    }
-                };
-            self.note_rewrites(&format!("task {}", task.n), &base, &before, &new_tip)?;
-            new_tip
         };
         // A git error gives an empty file list, so the note never fails the task.
         let files = self.repo.changed_paths(&tip, &new_tip).unwrap_or_default();
@@ -751,23 +704,17 @@ impl Engine<'_> {
         });
         let next = job.task_index + 1;
         let last = next as usize >= tasks.len();
-        let snapshot = (self.config.commit_batch && last).then(|| new_tip.clone());
         let session_model = self.session_model(&run, job.builder_session_model.clone());
         self.update(|j| {
             j.builder_last = builder_last;
             j.builder_id = session;
             j.builder_session_model = session_model;
             j.task_index = next;
-            j.batch_snapshot = snapshot;
             j.task_session = None;
             Ok(())
         })?;
         if !last {
             return Ok(StageOutcome::Advanced(Stage::Build));
-        }
-        if self.config.commit_batch {
-            let job = self.job()?;
-            return self.resume_batch(&job, tasks);
         }
         self.finish_build(job, &base, new_tip, job.head.clone())
     }

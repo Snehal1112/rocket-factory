@@ -18,19 +18,10 @@ fn two_plans_go_from_new_to_merged_with_a_failed_check_resumed_once() -> TestRes
     )?;
     let end = sc.start(&sc.plan_a, true)?;
     assert_eq!(end, "merged", "{end}");
-    // Spec decision 4: a red check resumes the builder, the committer commits the fix, and no reviewer run is spent.
+    // Spec decision 4: a red check resumes the builder, the driver snapshots the fix, and no reviewer run is spent.
     assert_eq!(
         sc.runner.roles(),
-        [
-            "builder",
-            "committer",
-            "builder",
-            "committer",
-            "reviewer",
-            "builder",
-            "committer",
-            "reviewer",
-        ]
+        ["builder", "builder", "reviewer", "builder", "reviewer"]
     );
     // Spec decision 11: plan B starts by itself after plan A merges.
     assert_eq!(sc.merges_on_main()?, 2);
@@ -53,14 +44,7 @@ fn a_changes_verdict_runs_one_fix_round_then_merges() -> TestResult {
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
     assert_eq!(
         sc.runner.roles(),
-        [
-            "builder",
-            "committer",
-            "reviewer",
-            "builder",
-            "committer",
-            "reviewer",
-        ]
+        ["builder", "reviewer", "builder", "reviewer"]
     );
     // Spec decision 10: the merge commit has the driver-built message, its subject from the plan title.
     assert!(
@@ -87,7 +71,7 @@ fn a_risky_diff_waits_for_approve_and_then_merges_the_reviewed_sha() -> TestResu
         end.starts_with("needs-human") && end.contains("risky"),
         "{end}"
     );
-    assert_eq!(sc.runner.roles(), ["builder", "committer", "reviewer"]);
+    assert_eq!(sc.runner.roles(), ["builder", "reviewer"]);
     assert_eq!(sc.stage("001")?, "needs-human");
     assert_eq!(sc.main_tip()?, before);
     let reviewed = sc.job("001")?.head.ok_or("no reviewed head")?;
@@ -205,10 +189,7 @@ fn a_merge_refreshes_the_kb_and_tokens_list_the_kb_role() -> TestResult {
     std::fs::write(sc.root.join(".git/info/exclude"), ".superpowers/\n")?;
     // Spec decision 16: the KB refresh runs after the merge and never changes the result.
     assert_eq!(sc.start(&sc.plan_b, false)?, "merged");
-    assert_eq!(
-        sc.runner.roles(),
-        ["builder", "committer", "reviewer", "kb"]
-    );
+    assert_eq!(sc.runner.roles(), ["builder", "reviewer", "kb"]);
     assert_eq!(sc.stage("001")?, "merged");
     let job = sc.job("001")?;
     let ledger = std::fs::read_to_string(

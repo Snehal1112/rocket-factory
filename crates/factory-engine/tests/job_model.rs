@@ -32,7 +32,7 @@ fn assert_runs_on(spec: &AgentSpec, model: &str) {
 }
 
 #[test]
-fn a_job_model_runs_the_builder_committer_and_reviewer_on_it() {
+fn a_job_model_runs_the_builder_and_reviewer_on_it() {
     let fx = committing_fixture();
     set_job_model(&fx, "claude-opus-5-5");
     let runner = scripted_auto(vec![write_effect()]);
@@ -43,10 +43,6 @@ fn a_job_model_runs_the_builder_committer_and_reviewer_on_it() {
     let built = runner.specs_for("builder");
     assert!(!built.is_empty());
     built
-        .iter()
-        .for_each(|s| assert_runs_on(s, "claude-opus-5-5"));
-    runner
-        .specs_for("committer")
         .iter()
         .for_each(|s| assert_runs_on(s, "claude-opus-5-5"));
     assert_runs_on(

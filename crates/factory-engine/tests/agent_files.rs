@@ -381,25 +381,20 @@ fn a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents() {
         .with_agent_files(six_files())
         .review_stage()
         .expect("review");
-    let specs = [
-        runner.last_spec_for("committer").expect("committer"),
-        reviewer.last_spec_for("reviewer").expect("reviewer"),
-    ];
-    for spec in specs {
-        let json = agents_of(&spec);
-        assert!(
-            prompt_of(&json, "factory-builder").contains("TRACKED-TEXT"),
-            "{json}"
-        );
-        for name in [
-            "code-reviewer",
-            "committer",
-            "kb-refresher",
-            "spec-reviewer",
-        ] {
-            let key = format!("factory-{name}");
-            assert_eq!(prompt_of(&json, &key), format!("RESOLVED {name}\n"));
-        }
+    let spec = reviewer.last_spec_for("reviewer").expect("reviewer");
+    let json = agents_of(&spec);
+    assert!(
+        prompt_of(&json, "factory-builder").contains("TRACKED-TEXT"),
+        "{json}"
+    );
+    for name in [
+        "code-reviewer",
+        "committer",
+        "kb-refresher",
+        "spec-reviewer",
+    ] {
+        let key = format!("factory-{name}");
+        assert_eq!(prompt_of(&json, &key), format!("RESOLVED {name}\n"));
     }
 }
 
@@ -521,14 +516,9 @@ fn a_job_that_deletes_the_tracked_agent_files_reaches_review() {
         .with_agent_files(six_files())
         .review_stage()
         .expect("review");
-    let specs = [
-        runner.last_spec_for("committer").expect("committer"),
-        reviewer.last_spec_for("reviewer").expect("reviewer"),
-    ];
-    for spec in specs {
-        assert_eq!(
-            agents_prompt(&spec, "factory-committer").as_deref(),
-            Some("TRACKED factory-committer.md")
-        );
-    }
+    let spec = reviewer.last_spec_for("reviewer").expect("reviewer");
+    assert_eq!(
+        agents_prompt(&spec, "factory-committer").as_deref(),
+        Some("TRACKED factory-committer.md")
+    );
 }

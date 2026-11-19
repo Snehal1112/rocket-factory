@@ -154,7 +154,7 @@ fn a_cold_rework_gets_a_fresh_fix_builder() {
 
 /// Codex runs need the agent files in the prompt.
 fn codex_files() -> Vec<AgentFile> {
-    ["builder", "committer"]
+    ["builder"]
         .iter()
         .map(|n| AgentFile {
             name: format!("factory-{n}.md"),
