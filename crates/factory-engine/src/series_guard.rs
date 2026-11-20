@@ -113,6 +113,7 @@ impl Engine<'_> {
             j.builder_id = None;
             j.task_session = None;
             j.builder_last = None;
+            j.checks_pass = None;
             j.builder_session_model = None;
             Ok(())
         })

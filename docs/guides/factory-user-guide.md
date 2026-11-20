@@ -317,7 +317,7 @@ factory new login-fix "Fix login redirect" \
   --one-job --accept-over-budget
 ```
 
-**With `--plans` and several plans**, plan 1 becomes a job at stage `build`. Every later plan gets its own job, waiting at stage `spec`. They start in order when you run with `--series`. The jobs share a series id such as `S1`.
+**With `--plans` and several plans**, plan 1 becomes a job at stage `build`. Every later plan gets its own job, waiting at stage `spec`. They start in order when you run with `--series`. The jobs share a series id such as `S1`. A later plan started before the plan ahead of it has merged parks as `series-waiting`; `run --series` continues it once the earlier plan merges, and `factory retry <id>` continues it by hand.
 
 **How the plans folder is read:**
 
@@ -1209,7 +1209,7 @@ This mode is read-only and reads the old in-repository `.superpowers/` folder. *
 | `--port <N>` | The port for this page. Default 8765. |
 | `--draft-stale-hours <N>` | Hours before an idle draft shows as stale. Default 24. |
 
-Each job card shows: the job id, a `plan k of N` chip for a series, the feature, the branch, the builder round, review chips, time in the stage, tokens against the budget (amber at 80%, red at 100%), and ready-to-copy commands: retry, approve and cancel for a park with a resume stage, else approve, rework and cancel. A job waiting on you has a button that shows what went wrong.
+Each job card shows: the job id, a `plan k of N` chip for a series, the feature, the branch, the builder round, review chips, time in the stage, tokens against the budget (amber at 80%, red at 100%), and ready-to-copy commands: retry, approve and cancel for a park with a resume stage (a series-waiting park, resume `build`, offers retry and cancel only), else approve, rework and cancel. A job waiting on you has a button that shows what went wrong.
 
 If you see `token_rejected`, `factoryd` refused the token. If you see `api_unreachable`, `factoryd` is not running.
 

@@ -38,6 +38,11 @@
     return reviewMissing(job) ? `factory approve ${job.id} --without-review` : `factory approve ${job.id}`;
   }
 
+  // The approve chip beside retry. A series-waiting park resumes at build and cannot be approved, only retried.
+  function retryApprove(job) {
+    return job.park_resume === "build" ? "" : copyChip(approveCommand(job));
+  }
+
   // True when a retry can resume the parked job. A cancelled job has none.
   function canRetry(job) {
     return job.cancelled !== true && typeof job.park_resume === "string" && job.park_resume !== "";
@@ -746,7 +751,7 @@
             : reviewMissing(job)
               ? `<p class="review-missing">${Object.values(job.reviews || {}).includes("failed") ? "The review did not finish." : "The review has not run."}</p>`
               : "") +
-          `<p class="hint">${canRetry(job) ? copyChip(`factory retry ${job.id}`) + copyChip(approveCommand(job)) : copyChip(approveCommand(job)) + copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
+          `<p class="hint">${canRetry(job) ? copyChip(`factory retry ${job.id}`) + retryApprove(job) : copyChip(approveCommand(job)) + copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : "";
     const warning = job.spec_warning
       ? `<details class="spec-warning"${job.stage === "needs-human" ? " open" : ""}><summary>Spec warnings (${String(job.spec_warning).split("; ").filter((part) => part.trim() !== "").length})</summary><p class="reason">${escapeHtml(job.spec_warning)}</p></details>`
@@ -872,7 +877,7 @@
       job.cancelled === true
         ? copyChip(`factory cleanup ${job.id}`)
         : canRetry(job)
-          ? `${copyChip(`factory retry ${job.id}`)}${copyChip(approveCommand(job))}`
+          ? `${copyChip(`factory retry ${job.id}`)}${retryApprove(job)}`
           : `${copyChip(approveCommand(job))}${copyChip(`factory rework ${job.id} <note>`)}`;
     return (
       `<li><span class="job-id">${id}</span>` +

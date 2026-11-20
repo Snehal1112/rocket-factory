@@ -276,6 +276,23 @@ test("renderSummary does not count waiting plans as running", () => {
   assert.doesNotMatch(idle, /All caught up/);
 });
 
+test("a series-waiting park card offers retry and cancel but no approve", () => {
+  const html = board.renderCard(
+    makeJob({ stage: "needs-human", park_kind: "series-waiting", park_resume: "build", reason: "waiting for the earlier plan" }),
+  );
+  assert.match(html, /factory retry 001/);
+  assert.match(html, /factory cancel 001/);
+  assert.doesNotMatch(html, /factory approve/);
+});
+
+test("a series-waiting park in the needs-you list offers no approve", () => {
+  const html = board.renderSummary(
+    makeState([makeJob({ stage: "needs-human", park_kind: "series-waiting", park_resume: "build" })]),
+  );
+  assert.match(html, /factory retry 001/);
+  assert.doesNotMatch(html, /factory approve/);
+});
+
 test("a cancelled job in the needs-you list offers only cleanup", () => {
   const html = board.renderSummary(makeState([makeJob({ stage: "needs-human", cancelled: true })]));
   assert.match(html, /factory cleanup 001/);

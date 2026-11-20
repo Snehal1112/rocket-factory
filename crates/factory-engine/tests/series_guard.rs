@@ -195,7 +195,11 @@ fn a_per_task_rework_after_main_moved_recuts_and_keeps_the_note() {
             std::fs::write(fx.job_dir.join("rework-note.md"), "mind the gap").expect("note")
         });
     assert_eq!(fx.job().base.as_deref(), Some(tip.as_str()));
-    assert!(fx.ledger().contains("re-cut"), "{}", fx.ledger());
+    assert!(
+        fx.ledger().contains("re-cut the branch from"),
+        "{}",
+        fx.ledger()
+    );
     assert!(seen.load(Ordering::SeqCst), "the builder saw main's file");
     let specs = runner.specs_for("builder");
     assert!(
@@ -221,7 +225,11 @@ fn a_whole_plan_rework_after_main_moved_recuts_and_keeps_the_note() {
                 .expect("round");
         });
     assert_eq!(fx.job().base.as_deref(), Some(tip.as_str()));
-    assert!(fx.ledger().contains("re-cut"), "{}", fx.ledger());
+    assert!(
+        fx.ledger().contains("re-cut the branch from"),
+        "{}",
+        fx.ledger()
+    );
     assert!(seen.load(Ordering::SeqCst), "the builder saw main's file");
     let specs = runner.specs_for("builder");
     let findings = fx.job_dir.join("changes-r2.md").display().to_string();
@@ -269,6 +277,11 @@ fn a_branch_with_commits_is_never_recut() {
     );
     assert!(
         !ledger_of(&fx, &two).contains("re-cut"),
+        "{}",
+        ledger_of(&fx, &two)
+    );
+    assert!(
+        !ledger_of(&fx, &two).contains("kept the stale worktree"),
         "{}",
         ledger_of(&fx, &two)
     );
