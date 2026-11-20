@@ -1,11 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use factory_checks::{
     append_notes, plan_checks_in, run_checks, write_checks_md, CheckPlan, ChecksReport, Workspace,
 };
 use factory_core::{
-    classify_paths, code_paths_of, has_test_marker, has_test_path, uncovered_paths, Config,
-    DiffClass, ParkKind, ParkPart, ReviewState, Stage,
+    classify_paths, code_paths_of, has_test_marker, has_test_path, uncovered_paths, ChecksPass,
+    Config, DiffClass, ParkKind, ParkPart, ReviewState, Stage,
 };
 
 use crate::decide::fix_rounds_used;
@@ -82,17 +82,55 @@ fn log_check_results(report: &ChecksReport) {
 impl Engine<'_> {
     /// Runs the mapped checks over the whole job diff and writes `checks.md`.
     pub(crate) fn run_checks_now(&self) -> Result<ChecksReport, EngineError> {
-        let (base, head) = self.job_range()?;
-        let raw = self.repo.changed_paths(&base, &head).map_err(git_err)?;
-        let workdir = self.repo.workdir_in(&self.worktree()?);
-        let plan = self.plan_for(&self.repo.scoped_paths(&raw), &workdir);
+        let (head, workdir, plan) = self.planned_checks()?;
         let report = run_checks(&workdir, &plan);
         log_check_results(&report);
         let md = self.job_dir.join("checks.md");
         write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
         append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
         self.record_gates(&plan, &report)?;
+        let pass = report.all_passed().then(|| ChecksPass {
+            head,
+            commands: report.results.iter().map(|r| r.command.clone()).collect(),
+        });
+        self.update(|j| {
+            j.checks_pass = pass;
+            Ok(())
+        })?;
         Ok(report)
+    }
+
+    /// The head of the whole job diff, the workdir and the check plan for the scoped changed paths.
+    fn planned_checks(&self) -> Result<(String, PathBuf, CheckPlan), EngineError> {
+        let (base, head) = self.job_range()?;
+        let raw = self.repo.changed_paths(&base, &head).map_err(git_err)?;
+        let workdir = self.repo.workdir_in(&self.worktree()?);
+        let plan = self.plan_for(&self.repo.scoped_paths(&raw), &workdir);
+        Ok((head, workdir, plan))
+    }
+
+    /// The commands of the passing checks run when the final gate may reuse it, else `None`. It holds
+    /// only when the head is the one that passed, the worktree is clean and the planned commands are
+    /// the same. Any doubt or error gives `None`, so the checks run again.
+    pub(crate) fn reusable_checks(&self) -> Result<Option<Vec<String>>, EngineError> {
+        let job = self.job()?;
+        let Some(pass) = job.checks_pass.clone() else {
+            return Ok(None);
+        };
+        if job.head.as_deref() != Some(pass.head.as_str()) {
+            return Ok(None);
+        }
+        let (Some(cwd), Some(base)) = (job.worktree.as_deref(), job.base.as_deref()) else {
+            return Ok(None);
+        };
+        let wt = self.job_worktree(&job, cwd, base, &job.branch);
+        if !self.repo.worktree_is_clean(&wt).unwrap_or(false) {
+            return Ok(None);
+        }
+        let Ok((_, _, plan)) = self.planned_checks() else {
+            return Ok(None);
+        };
+        Ok((plan.commands == pass.commands).then_some(pass.commands))
     }
 
     /// Puts the `format` and `lint` results on the board. A gate with no result has no entry.

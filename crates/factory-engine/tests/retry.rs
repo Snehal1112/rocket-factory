@@ -468,12 +468,13 @@ fn a_rereview_retry_with_failing_first_checks_starts_a_fix_round() {
 fn a_rereview_retry_with_failing_final_checks_starts_a_fix_round() {
     let marker = tempfile::tempdir().expect("marker dir");
     let file = marker.path().join("ran-once");
-    // The first run passes and leaves the marker, so the final run fails.
+    // The first run passes and leaves the marker and a stray file. The dirty worktree makes the final
+    // gate run the checks again, and the second run fails.
     let script = marker.path().join("check.sh");
     std::fs::write(
         &script,
         format!(
-            "if [ -f {0} ]; then exit 1; else touch {0}; fi\n",
+            "if [ -f {0} ]; then exit 1; else touch {0} stray.txt; fi\n",
             file.display()
         ),
     )

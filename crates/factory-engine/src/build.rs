@@ -378,7 +378,13 @@ impl Engine<'_> {
     }
 
     /// The worktree handle the git layer needs, built from the job record.
-    fn job_worktree(&self, job: &JobView, cwd: &Path, base: &str, branch: &str) -> Worktree {
+    pub(crate) fn job_worktree(
+        &self,
+        job: &JobView,
+        cwd: &Path,
+        base: &str,
+        branch: &str,
+    ) -> Worktree {
         Worktree {
             name: self.repo.job_ref(&self.job_id, &job.slug).dir_name(),
             path: cwd.to_path_buf(),

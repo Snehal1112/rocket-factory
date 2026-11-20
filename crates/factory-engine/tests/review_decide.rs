@@ -1310,3 +1310,119 @@ fn a_real_changes_verdict_still_starts_a_fix_round() {
     assert_eq!(out.resume, None);
     assert_eq!(fx.job().park_kind, None);
 }
+
+/// Counts every check run in a file outside the worktree. Call it before `build_and_pass_checks`.
+fn counting_config(fx: &mut Fixture) -> std::path::PathBuf {
+    let count = fx.job_dir.join("runs.txt");
+    let script = fx.job_dir.join("count.sh");
+    std::fs::write(&script, format!("echo run >> {}\n", count.display())).expect("script");
+    fx.config.checks = vec![factory_core::CheckRule {
+        paths: vec!["**".into()],
+        commands: vec![format!("sh {}", script.display())],
+        ..factory_core::CheckRule::default()
+    }];
+    count
+}
+
+fn runs(count: &std::path::Path) -> usize {
+    std::fs::read_to_string(count)
+        .unwrap_or_default()
+        .lines()
+        .count()
+}
+
+/// Reviews `APPROVE` and applies the decision.
+fn approve_and_apply(fx: &Fixture) -> StageOutcome {
+    let rr = reviewer("fine\nVERDICT: APPROVE");
+    let e = fx.engine(&rr);
+    let out = e.review_stage().expect("review");
+    e.apply_decision(&out).expect("apply")
+}
+
+#[test]
+fn checks_stage_records_the_passing_head_and_commands() {
+    let mut fx = Fixture::new();
+    counting_config(&mut fx);
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let job = fx.job();
+    assert_eq!(
+        job.checks_pass,
+        Some(factory_core::ChecksPass {
+            head: job.head.clone().expect("head"),
+            commands: vec![format!("sh {}", fx.job_dir.join("count.sh").display())],
+        })
+    );
+}
+
+#[test]
+fn a_failing_check_run_clears_the_record() {
+    let mut fx = Fixture::new();
+    counting_config(&mut fx);
+    let r = build_and_pass_checks(&fx, &["a.txt"]);
+    assert!(fx.job().checks_pass.is_some());
+    fx.config.checks[0].commands = vec!["false".into()];
+    fx.engine(&r).checks_stage().expect("checks");
+    assert_eq!(fx.job().checks_pass, None);
+}
+
+#[test]
+fn final_gate_reuses_checks_on_an_unchanged_head() {
+    let mut fx = Fixture::new();
+    let count = counting_config(&mut fx);
+    build_and_pass_checks(&fx, &["a.txt"]);
+    assert_eq!(
+        approve_and_apply(&fx),
+        StageOutcome::Advanced(Stage::Approve)
+    );
+    assert_eq!(runs(&count), 1);
+    let ledger = std::fs::read_to_string(fx.job_dir.join("progress.md")).expect("ledger");
+    let line = ledger
+        .lines()
+        .find(|l| l.contains("checks ran: "))
+        .expect("a checks ran line");
+    assert!(line.contains("(reused from the checks stage)"), "{line}");
+}
+
+#[test]
+fn final_gate_reruns_checks_when_the_worktree_is_dirty() {
+    let mut fx = Fixture::new();
+    let count = counting_config(&mut fx);
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let wt = fx.job().worktree.expect("worktree");
+    std::fs::write(std::path::Path::new(&wt).join("stray.txt"), "x").expect("stray");
+    assert_eq!(
+        approve_and_apply(&fx),
+        StageOutcome::Advanced(Stage::Approve)
+    );
+    assert_eq!(runs(&count), 2);
+}
+
+#[test]
+fn final_gate_reruns_checks_when_the_head_moved() {
+    let mut fx = Fixture::new();
+    let count = counting_config(&mut fx);
+    build_and_pass_checks(&fx, &["a.txt"]);
+    let wt = fx.job().worktree.expect("worktree");
+    let head = common::commit_file(std::path::Path::new(&wt), "b.txt", "b");
+    factory_engine::BoardStore::new(&fx.board_path, std::time::Duration::from_secs(5))
+        .update_job("001", |j| {
+            j.head = Some(head);
+            Ok(())
+        })
+        .expect("head");
+    assert_eq!(
+        approve_and_apply(&fx),
+        StageOutcome::Advanced(Stage::Approve)
+    );
+    assert_eq!(runs(&count), 2);
+}
+
+#[test]
+fn a_risky_approve_reuses_the_checks_and_parks() {
+    let mut fx = Fixture::new();
+    let count = counting_config(&mut fx);
+    build_and_pass_checks(&fx, &["src-tauri/src/lib.rs"]);
+    approve_and_apply(&fx);
+    assert_eq!(runs(&count), 1);
+    assert_eq!(fx.job().park_kind.as_deref(), Some("risky-diff"));
+}

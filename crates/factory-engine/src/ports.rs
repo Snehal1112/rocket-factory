@@ -115,6 +115,8 @@ pub(crate) struct JobView {
     pub rework_base: u32,
     /// The last review summary, if any.
     pub last_review: Option<factory_core::LastReview>,
+    /// The passing checks run the final gate may reuse, if any.
+    pub checks_pass: Option<factory_core::ChecksPass>,
 }
 
 impl Engine<'_> {
@@ -143,6 +145,7 @@ impl Engine<'_> {
             builder_last: job.builder_last.clone(),
             rework_base: job.rework_base,
             last_review: job.last_review.clone(),
+            checks_pass: job.checks_pass.clone(),
         })
     }
 

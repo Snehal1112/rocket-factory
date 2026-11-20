@@ -41,8 +41,8 @@ pub const TOOL_MAP_CODEX: &str = include_str!("../assets/tool-map-codex.md");
 pub use agent_drift::{agent_drift, rules_marker};
 pub use agents::agents_json;
 pub use board::{
-    Board, BuilderLast, Draft, Job, JobTokens, LastReview, Lease, ReviewState, SeriesPos,
-    StageEntry, TaskSession, DRAFT_STAGES,
+    Board, BuilderLast, ChecksPass, Draft, Job, JobTokens, LastReview, Lease, ReviewState,
+    SeriesPos, StageEntry, TaskSession, DRAFT_STAGES,
 };
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use commitmsg::{

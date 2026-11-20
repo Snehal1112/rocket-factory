@@ -393,32 +393,43 @@ impl Engine<'_> {
     /// Re-runs the checks on the final head and applies the gates.
     /// Returns `Some` when it started a fix round or parked, and `None` when everything passed.
     fn final_gate(&self) -> Result<Option<StageOutcome>, EngineError> {
-        let report = self.final_checks()?;
-        if !report.all_passed() {
-            let findings = format!(
-                "The final checks failed. Fix these failures only.\n\n{}",
-                report.failure_text()
-            );
-            return self
-                .fix_or_park(
-                    &findings,
-                    "final checks failed",
-                    ParkKind::ChecksFailed,
-                    "checks",
-                )
-                .map(Some);
-        }
+        let reused = self.reusable_checks()?;
+        let commands: Vec<String> = match &reused {
+            Some(commands) => commands.clone(),
+            None => {
+                let report = self.final_checks()?;
+                if !report.all_passed() {
+                    let findings = format!(
+                        "The final checks failed. Fix these failures only.\n\n{}",
+                        report.failure_text()
+                    );
+                    return self
+                        .fix_or_park(
+                            &findings,
+                            "final checks failed",
+                            ParkKind::ChecksFailed,
+                            "checks",
+                        )
+                        .map(Some);
+                }
+                report.results.iter().map(|r| r.command.clone()).collect()
+            }
+        };
         let paths = self.job_changed_paths()?;
         if let Some((kind, reason)) = self.gate_checks(&paths)? {
             return self.park_gate(kind, reason, &paths).map(Some);
         }
-        let commands: Vec<&str> = report.results.iter().map(|r| r.command.as_str()).collect();
         let list = if commands.is_empty() {
             "none".to_string()
         } else {
             commands.join(", ")
         };
-        self.ruling(&format!("checks ran: {list}"))?;
+        let note = if reused.is_some() {
+            " (reused from the checks stage)"
+        } else {
+            ""
+        };
+        self.ruling(&format!("checks ran: {list}{note}"))?;
         Ok(None)
     }
 }

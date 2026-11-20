@@ -155,6 +155,9 @@ pub struct Job {
     /// The `round` value when the latest rework started, so fix rounds count from there. New in the act-on-review-findings series, absent in older boards.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rework_base: u32,
+    /// The head and commands of the last passing checks run, so the final gate can reuse it. Absent when the last run failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks_pass: Option<ChecksPass>,
     /// The GitHub issue number this job fixes for the issue queue. Absent for every other job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intake_issue: Option<u32>,
@@ -212,6 +215,13 @@ pub struct SeriesPos {
     /// made before the plans got their jobs up front.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+}
+
+/// A passing checks run: the head it ran on and the commands it ran, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChecksPass {
+    pub head: String,
+    pub commands: Vec<String>,
 }
 
 /// The latest code review of a job. New in the act-on-review-findings series, absent in older boards.
@@ -294,6 +304,7 @@ impl Job {
             provider: None,
             last_review: None,
             rework_base: 0,
+            checks_pass: None,
             intake_issue: None,
         }
     }
@@ -1020,6 +1031,23 @@ mod tests {
         let text = serde_json::to_string(&j).expect("json");
         let back: Job = serde_json::from_str(&text).expect("parse");
         assert_eq!(back.intake_issue, Some(42));
+    }
+
+    #[test]
+    fn checks_pass_is_optional_and_round_trips() {
+        let mut j = job();
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(!text.contains("checks_pass"), "{text}");
+        let back: Job = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back.checks_pass, None);
+        j.checks_pass = Some(ChecksPass {
+            head: "abc".into(),
+            commands: vec!["cargo check".into()],
+        });
+        let text = serde_json::to_string(&j).expect("json");
+        assert!(text.contains("checks_pass"), "{text}");
+        let back: Job = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back, j);
     }
 
     #[test]

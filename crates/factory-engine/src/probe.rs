@@ -75,6 +75,7 @@ fn probe_job_view() -> JobView {
         builder_last: None,
         rework_base: 0,
         last_review: None,
+        checks_pass: None,
     }
 }
 
