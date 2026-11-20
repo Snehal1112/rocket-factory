@@ -38,6 +38,7 @@ mod rework;
 mod runloop;
 mod scope;
 mod series;
+mod series_guard;
 mod spec_check;
 mod specs;
 mod store;

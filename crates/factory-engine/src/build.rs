@@ -85,6 +85,10 @@ impl Engine<'_> {
         if job.batch_snapshot.is_some() {
             return self.resume_old_batch(&job);
         }
+        if let Some(out) = self.series_guard(&job)? {
+            return Ok(out);
+        }
+        let job = self.job()?;
         if is_mid_task(&job, &tasks) {
             return self.build_task(&job, &tasks);
         }
@@ -123,6 +127,7 @@ impl Engine<'_> {
         if let Some(text) = &cold {
             self.ruling(text)?;
         }
+        let mut first_findings: Option<PathBuf> = None;
         let spec = match &job.session_id {
             _ if fresh_fix => {
                 let findings = self.fix_findings(&job)?;
@@ -132,16 +137,26 @@ impl Engine<'_> {
                 let findings = self.fix_findings(&job)?;
                 self.builder_resume_spec(&job, &cwd, &findings, session)
             }
-            _ => self.builder_first_spec(&job, &cwd),
+            _ => {
+                // A fresh build that fixes something, such as a rework after a re-cut, still gets the findings.
+                let findings = if fixing {
+                    self.fix_findings(&job).ok()
+                } else {
+                    None
+                };
+                first_findings = findings.clone();
+                self.builder_first_spec(&job, &cwd, findings.as_deref())
+            }
         };
         let tip_before = self.repo.tip(&branch).map_err(git_err)?;
         let run = match self.run_builder_guarded(spec)? {
             Ok(run) => run,
             Err(parked) => return Ok(parked),
         };
-        if !new_work {
+        let note = self.job_dir.join("rework-note.md");
+        if !new_work || first_findings.as_ref() == Some(&note) {
             // The builder has seen the note, so it must not be sent again. A missing file is fine.
-            let _ = std::fs::remove_file(self.job_dir.join("rework-note.md"));
+            let _ = std::fs::remove_file(&note);
         }
         // The time is read when the builder run returns, so the next round can tell if its cache expired.
         let ended_at = now().max(0.0) as u64;

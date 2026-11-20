@@ -534,6 +534,11 @@ fn run_job_moves_a_waiting_plan_to_build_by_itself() {
     let a = fx.plan_file("plan-01-a.md", 1, "plan-02-b.md");
     fx.plan_file("plan-02-b.md", 1, "none");
     create_job(&fx.driver, "waiting", "two plans", Some(&a), None).expect("create");
+    // Plan 2 builds only on top of plan 1, so plan 1 merges first, without the series loop.
+    assert_eq!(
+        run_job(&fx.driver, "001").expect("run plan 1"),
+        RunEnd::Merged
+    );
     assert_eq!(
         run_job(&fx.driver, "002").expect("run plan 2 alone"),
         RunEnd::Merged

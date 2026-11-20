@@ -820,7 +820,29 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
                 created.id
             }
         };
+        continue_waiting(driver, &current, pos.index)?;
     }
+}
+
+/// Moves a next plan that waited for plan `merged` back to build, so the series goes on with it.
+/// The guard checks the plan before it again, so an early move parks it again harmlessly.
+fn continue_waiting(driver: &Driver, id: &str, merged: u32) -> Result<(), EngineError> {
+    let job = driver.job(id)?;
+    let waiting = job.stage == Stage::NeedsHuman
+        && job.park_kind.as_deref() == Some(ParkKind::SeriesWaiting.as_str())
+        && !job.cancelled;
+    if !waiting {
+        return Ok(());
+    }
+    // The ruling comes first, so a crash leaves a ruling without a change and not the reverse.
+    driver
+        .ledger(&job)
+        .ruling(&format!("retry at build, plan {merged} merged"))?;
+    let now = now_secs();
+    driver
+        .store()
+        .update_job(id, |j| crate::resume_logged(j, Stage::Build, now))?;
+    Ok(())
 }
 
 #[cfg(test)]

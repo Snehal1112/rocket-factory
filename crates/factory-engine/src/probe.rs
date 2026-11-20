@@ -101,7 +101,7 @@ impl Engine<'_> {
     /// The real spec of a role, shaped for the harness, with the prompt still the role's own.
     fn probe_base_spec(&self, role: ProbeRole, work_dir: &Path) -> AgentSpec {
         match role {
-            ProbeRole::Builder => self.builder_first_spec(&probe_job_view(), work_dir),
+            ProbeRole::Builder => self.builder_first_spec(&probe_job_view(), work_dir, None),
             ProbeRole::Reviewer => self.reviewer_spec(
                 work_dir,
                 &work_dir.join("probe.diff"),

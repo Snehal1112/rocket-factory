@@ -193,9 +193,15 @@ impl Engine<'_> {
     }
 
     /// The headless builder for the first run of a job.
-    pub(crate) fn builder_first_spec(&self, job: &JobView, cwd: &Path) -> AgentSpec {
+    /// With `findings` the builder also fixes the problems listed in that file.
+    pub(crate) fn builder_first_spec(
+        &self,
+        job: &JobView,
+        cwd: &Path,
+        findings: Option<&Path>,
+    ) -> AgentSpec {
         let spec_line = self.spec_line();
-        let prompt = if self.slim_prompt(BUILDER_AGENT) {
+        let mut prompt = if self.slim_prompt(BUILDER_AGENT) {
             format!(
                 "You are the builder in a software factory. Your working directory is the job worktree, already on branch `{branch}`.\n\
                  {read} Never edit the plan.\n{spec_line}\
@@ -223,6 +229,12 @@ impl Engine<'_> {
             kb = self.kb_line(),
             )
         };
+        if let Some(path) = findings {
+            prompt.push_str(&format!(
+                "\nFix also the problems listed in {}.",
+                path.display()
+            ));
+        }
         let mut spec = AgentSpec::new(&self.job_id, "builder", self.repo.workdir_in(cwd), &prompt);
         spec.agent = Some(BUILDER_AGENT.to_string());
         spec.max_turns = Some(BUILDER_MAX_TURNS);
