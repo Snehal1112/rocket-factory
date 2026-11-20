@@ -119,8 +119,9 @@ pub enum Command {
     },
     /// Continue a parked job at the stage that parked it.
     ///
-    /// For a failed review, missing checks, a busy main, a busy merge lock or a spent sync cap. Fix
-    /// the cause first. The job then goes on like `run` until it merges or parks again.
+    /// For a failed review, missing checks, a busy main, a busy merge lock, a spent sync cap or a
+    /// series plan whose earlier plan has not merged. Fix the cause first. The job then goes on like
+    /// `run` until it merges or parks again.
     Retry {
         /// The job id, for example 7 or 007.
         id: String,

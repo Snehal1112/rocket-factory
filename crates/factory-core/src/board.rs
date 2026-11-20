@@ -335,7 +335,11 @@ impl Job {
     fn rework_hint(&self) -> String {
         match self.park_resume {
             None => "rework".to_string(),
-            Some(crate::park::ResumeAt::Review | crate::park::ResumeAt::Rereview) => {
+            Some(
+                crate::park::ResumeAt::Build
+                | crate::park::ResumeAt::Review
+                | crate::park::ResumeAt::Rereview,
+            ) => {
                 format!("factory retry {}", self.id)
             }
             Some(crate::park::ResumeAt::Merge | crate::park::ResumeAt::Sync) => {
@@ -353,6 +357,13 @@ impl Job {
 
     /// The reason approve is refused for this job, or `None` when it is allowed. CLI and API share it.
     pub fn approve_refusal(&self, without_review: bool, waive: bool) -> Option<String> {
+        if self.stage == Stage::NeedsHuman && self.park_resume == Some(crate::park::ResumeAt::Build)
+        {
+            return Some(format!(
+                "job {} waits for an earlier plan of its series: use factory retry {} after it merges, or cancel",
+                self.id, self.id
+            ));
+        }
         if waive && !self.changes_open() {
             return Some(format!(
                 "job {} has no open review findings to waive",
@@ -1083,6 +1094,18 @@ mod tests {
             source: "review".into(),
         });
         j
+    }
+
+    #[test]
+    fn approve_refusal_names_retry_on_a_build_resume_park() {
+        let mut j = job();
+        j.stage = Stage::NeedsHuman;
+        j.park_resume = Some(crate::park::ResumeAt::Build);
+        for without_review in [true, false] {
+            let m = j.approve_refusal(without_review, false).expect("refused");
+            assert!(m.contains("factory retry 001"), "{m}");
+            assert!(m.contains("earlier plan"), "{m}");
+        }
     }
 
     #[test]

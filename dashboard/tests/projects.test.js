@@ -101,6 +101,7 @@ test("jobActions follows the stage and the cancelled flag", () => {
   assert.deepEqual(projects.jobActions({ stage: "merged" }), []);
   assert.deepEqual(projects.jobActions({ stage: "needs-human", cancelled: true }), []);
   assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "review" }), ["retry", "approve", "cancel"]);
+  assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "build" }), ["retry", "cancel"]);
   assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "" }), ["approve", "rework", "cancel"]);
   assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: 5 }), ["approve", "rework", "cancel"]);
   assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "sync", cancelled: true }), []);

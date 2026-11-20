@@ -17,6 +17,7 @@ pub const PARK_FILE: &str = "park.json";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ResumeAt {
+    Build,
     Review,
     Rereview,
     Merge,
@@ -26,6 +27,7 @@ pub enum ResumeAt {
 impl ResumeAt {
     pub fn as_str(self) -> &'static str {
         match self {
+            ResumeAt::Build => "build",
             ResumeAt::Review => "review",
             ResumeAt::Rereview => "rereview",
             ResumeAt::Merge => "merge",
@@ -79,6 +81,7 @@ pub enum ParkKind {
     NoChecks,
     NoTests,
     ReviewFailed,
+    SeriesWaiting,
     Other,
 }
 
@@ -99,6 +102,7 @@ impl ParkKind {
             ParkKind::NoChecks => "no-checks",
             ParkKind::NoTests => "no-tests",
             ParkKind::ReviewFailed => "review-failed",
+            ParkKind::SeriesWaiting => "series-waiting",
             ParkKind::Other => "other",
         }
     }
@@ -107,6 +111,7 @@ impl ParkKind {
     pub fn resume(self) -> Option<ResumeAt> {
         match self {
             ParkKind::ReviewFailed | ParkKind::NoChecks => Some(ResumeAt::Review),
+            ParkKind::SeriesWaiting => Some(ResumeAt::Build),
             _ => None,
         }
     }
@@ -159,7 +164,9 @@ impl ParkKind {
             | ParkKind::NoChecks
             | ParkKind::NoTests => vec![approve, rework],
             ParkKind::BudgetStopped => vec![approve, cancel],
-            ParkKind::ReviewFailed => vec![format!("factory retry {id}"), cancel],
+            ParkKind::ReviewFailed | ParkKind::SeriesWaiting => {
+                vec![format!("factory retry {id}"), cancel]
+            }
             ParkKind::NothingChanged | ParkKind::BuilderTampered => vec![rework, cancel],
             ParkKind::Other => vec![approve, rework, cancel],
         }
@@ -329,6 +336,7 @@ mod tests {
         assert_eq!(ParkKind::NothingChanged.as_str(), "nothing-changed");
         assert_eq!(ParkKind::BuilderTampered.as_str(), "builder-tampered");
         assert_eq!(ParkKind::CommitFailed.as_str(), "commit-failed");
+        assert_eq!(ParkKind::SeriesWaiting.as_str(), "series-waiting");
         assert_eq!(ParkKind::Other.as_str(), "other");
     }
 
@@ -499,6 +507,22 @@ mod tests {
     }
 
     #[test]
+    fn a_series_waiting_park_round_trips_and_resumes_at_build() {
+        let kind = ParkKind::SeriesWaiting;
+        assert_eq!(kind.resume(), Some(ResumeAt::Build));
+        let rec = ParkRecord::new(kind, "why", "086", 1, 1, Vec::new());
+        assert_eq!(rec.next, vec!["factory retry 086", "factory cancel 086"]);
+        let text = serde_json::to_string(&rec).expect("serialize");
+        assert!(text.contains("series-waiting"), "{text}");
+        let back: ParkRecord = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back.kind, kind);
+        assert_eq!(
+            next_with_resume(kind, "086", false, None, Some(ResumeAt::Build)),
+            vec!["factory retry 086", "factory cancel 086"]
+        );
+    }
+
+    #[test]
     fn a_short_part_is_kept_whole() {
         let p = ParkPart::new("Checks", "checks.md", "FAIL cargo check");
         assert_eq!(p.text, "FAIL cargo check");
@@ -568,6 +592,7 @@ mod tests {
     #[test]
     fn resume_at_round_trips() {
         for (at, word) in [
+            (ResumeAt::Build, "build"),
             (ResumeAt::Review, "review"),
             (ResumeAt::Rereview, "rereview"),
             (ResumeAt::Merge, "merge"),

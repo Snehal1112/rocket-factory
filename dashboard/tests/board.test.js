@@ -1179,6 +1179,11 @@ test("a cancelled card with a resume stage shows no retry command", () => {
   assert.doesNotMatch(summary, /factory retry/);
 });
 
+test("a series-waiting park shows its label", () => {
+  assert.equal(board.parkKindLabel("series-waiting"), "Waiting for the earlier plan");
+  assert.equal(board.parkKindClass("series-waiting"), "chip-warn");
+});
+
 test("a review-failed park shows the Review failed label", () => {
   assert.equal(board.parkKindLabel("review-failed"), "Review failed");
   assert.equal(board.parkKindClass("review-failed"), "chip-warn");

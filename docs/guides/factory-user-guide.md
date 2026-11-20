@@ -477,7 +477,7 @@ What it prints: `merged <sha>`, or `parked: <reason>`. A `parked:` result leaves
 factory retry <ID>
 ```
 
-Continues a job parked by the driver at the stage that parked it, with no builder run. It works for a failed review (`review-failed`), a `no-checks` park, a branch tip that differs from the reviewed head, a busy main, a busy merge lock and a spent sync cap. Fix the cause first, for example map the changed paths to a check or clean your checkout, then retry. After the stage runs, the job continues like `run` and merges or parks again, and a series goes on with its next plan.
+Continues a job parked by the driver at the stage that parked it. It works for a failed review (`review-failed`), a `no-checks` park, a branch tip that differs from the reviewed head, a busy main, a busy merge lock, a spent sync cap and a series plan whose earlier plan has not merged (it continues at build). Fix the cause first, for example map the changed paths to a check or clean your checkout, then retry. After the stage runs, the job continues like `run` and merges or parks again, and a series goes on with its next plan.
 
 - It refuses a job with no resume stage (builder parks, risky diff, changes remain, merge conflict) and prints that park's own next commands. It also refuses a cancelled job.
 - If the cause is still there, the job parks again with the same reason.

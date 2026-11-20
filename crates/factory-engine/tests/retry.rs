@@ -386,6 +386,35 @@ fn tip_moved_fixture(first: &'static str) -> (MergeFixture, String) {
 }
 
 #[test]
+fn a_build_retry_moves_the_job_to_build() {
+    let builder: Effect = Box::new(|spec: &AgentSpec| {
+        std::fs::write(spec.cwd.join("docs/built.txt"), "built\n").expect("write");
+        "done".to_string()
+    });
+    let reviewer_ok: Effect = Box::new(|_: &AgentSpec| "ok\nVERDICT: APPROVE".to_string());
+    let runner = Arc::new(scripted(vec![builder, reviewer_ok]));
+    let fx = approved_job_dyn(runner.clone(), runner, Config::default());
+    force_stage(&fx, Stage::NeedsHuman);
+    park(
+        &fx,
+        factory_core::ParkKind::SeriesWaiting,
+        Some(ResumeAt::Build),
+    );
+    let end = retry_job(&fx.driver, &fx.id);
+    assert!(end.is_ok(), "{end:?}");
+    assert!(ledger(&fx).contains("retry at build"), "{}", ledger(&fx));
+    let job = fx.driver.job(&fx.id).expect("job");
+    let stages: Vec<Stage> = job.stage_history.iter().map(|h| h.stage).collect();
+    let at = stages
+        .iter()
+        .position(|s| *s == Stage::NeedsHuman)
+        .expect("needs-human");
+    assert_eq!(stages.get(at + 1), Some(&Stage::Build), "{stages:?}");
+    assert_eq!(job.park_kind, None);
+    assert_eq!(job.park_resume, None);
+}
+
+#[test]
 fn a_rereview_retry_reviews_the_whole_branch_at_the_new_tip() {
     let (fx, tip) = tip_moved_fixture("ok\nVERDICT: APPROVE");
     let end = retry_job(&fx.driver, &fx.id).expect("retry");

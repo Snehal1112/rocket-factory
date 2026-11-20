@@ -53,6 +53,13 @@ fn retry_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
     };
     let word = resume.as_str();
     match resume {
+        ResumeAt::Build => {
+            driver.ledger(&job).ruling(&format!("retry at {word}"))?;
+            let now = now_secs();
+            driver
+                .store()
+                .update_job(id, |j| crate::resume_logged(j, Stage::Build, now))?;
+        }
         ResumeAt::Review => {
             // The ruling comes first, so a crash leaves a ruling without a change and not the reverse.
             driver.ledger(&job).ruling(&format!("retry at {word}"))?;
