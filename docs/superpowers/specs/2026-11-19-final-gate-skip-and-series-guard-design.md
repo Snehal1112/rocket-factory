@@ -80,6 +80,15 @@ dirty worktree still needs a real run.
   tip, the branch and worktree are cut again from current main before the builder
   starts. A job with commits keeps its branch; the existing sync handles it.
 
+### Added after the plan review (2026-11-20)
+
+- The final checks also run again when the planned command list differs from the passing run (a config change).
+- When plan N-1 merges inside `run_series`, a `series-waiting` plan N is continued at build on its own; `factory retry` stays the manual way.
+- A cancelled predecessor keeps plan N parked; its reason says to cancel plan N too or plan the work again (`factory cleanup` never removes a series card).
+- A series lookup needs a series id; legacy series without one are never matched.
+- The re-cut applies to any job with no commits of its own, not only series plans, and a rework note still reaches the new builder.
+- A job waiting on an earlier plan cannot be approved, also not with `--without-review`.
+
 ## Left to the builder
 
 - Field name and where the head is recorded; the park kind for the series guard
