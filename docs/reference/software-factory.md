@@ -263,7 +263,7 @@ The Cargo lock check can clear a diff whose only risky paths are Cargo files. A 
 - No path crate or target leaves the project, and no build script changed.
 - No proc-macro, `links`, `build`, `cargo-features`, `[patch]` or `[replace]` change came in.
 
-Anything the check cannot settle stays risky. It only ever turns risky into normal, never the other way, and a risky path that is not a Cargo file (such as `*auth*`) keeps the diff risky without running cargo. The rust preset marks `**/.cargo/**` and `**/rust-toolchain*` risky, so those are never cleared. The ledger carries one line with the `Ruling: ` prefix:
+Anything the check cannot settle stays risky. It only ever turns risky into normal, never the other way, and a risky path that is not a Cargo file (such as `*auth*`) keeps the diff risky without running cargo. The rust preset marks `**/.cargo/**` and `**/rust-toolchain*` risky, so those are never cleared. The ledger gets one line with the `Ruling: ` prefix at each review stage, and a park repeats it in its Risk part:
 
 - `cargo lock check: no outside code changed, Cargo files are not risky`
 - `cargo lock check: outside crates added: <name version, ...|none>; removed: <name version, ...|none>, diff stays risky`
