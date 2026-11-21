@@ -198,7 +198,7 @@ fn an_outside_crate_in_the_lock_parks_naming_it() {
     assert_risky(&run_job(&fx, effect));
     assert_eq!(
         check_line(&fx),
-        "cargo lock check: outside crates added: signal-hook 0.3.17; removed: none, diff stays risky"
+        "cargo lock check: outside crates added: signal-hook 0.3.17; removed: none; source or checksum changed: none, diff stays risky"
     );
 }
 

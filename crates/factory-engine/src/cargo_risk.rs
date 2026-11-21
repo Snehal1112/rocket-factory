@@ -47,7 +47,7 @@ fn stays(reason: impl Display) -> String {
 }
 
 /// The ledger line of a lock that gained or lost outside crates.
-fn outside_note(added: &[String], removed: &[String]) -> String {
+fn outside_note(added: &[String], removed: &[String], changed: &[String]) -> String {
     let list = |names: &[String]| {
         if names.is_empty() {
             "none".to_string()
@@ -56,9 +56,10 @@ fn outside_note(added: &[String], removed: &[String]) -> String {
         }
     };
     stays(format!(
-        "outside crates added: {}; removed: {}",
+        "outside crates added: {}; removed: {}; source or checksum changed: {}",
         list(added),
-        list(removed)
+        list(removed),
+        list(changed)
     ))
 }
 
@@ -363,7 +364,11 @@ impl Engine<'_> {
                 .ok_or_else(|| stays(format!("the head {lock} is missing")))?;
             match compare_locks(&base, &tip) {
                 LockDiff::Same => {}
-                LockDiff::Changed { added, removed } => return Err(outside_note(&added, &removed)),
+                LockDiff::Changed {
+                    added,
+                    removed,
+                    changed,
+                } => return Err(outside_note(&added, &removed, &changed)),
                 LockDiff::Unknown(reason) => return Err(stays(reason)),
             }
         }
@@ -658,6 +663,15 @@ pub(crate) mod tests {
         assert_eq!(lines.next(), Some(store_key(&job.head, &config()).as_str()));
         assert_eq!(lines.next(), Some("risky"));
         assert_eq!(lines.next(), Some(note.as_str()));
+    }
+
+    #[test]
+    fn the_outside_note_names_changed_crates() {
+        let note = outside_note(&[], &[], &["libc 0.2.190".to_string()]);
+        assert_eq!(
+            note,
+            "cargo lock check: outside crates added: none; removed: none; source or checksum changed: libc 0.2.190, diff stays risky"
+        );
     }
 
     #[test]
