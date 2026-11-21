@@ -184,6 +184,9 @@ impl Engine<'_> {
 
     /// Like `risk`, with the export folder made under `temp_root`.
     pub(crate) fn risk_in(&self, paths: &[String], temp_root: &Path) -> Risk {
+        let outside = self
+            .job_changed_paths_raw()
+            .map(|raw| self.repo.out_of_scope(&raw));
         let class = classify_paths(paths, &self.config);
         if class != DiffClass::Risky {
             return Risk {
@@ -205,6 +208,11 @@ impl Engine<'_> {
         if !self.config.cargo_lock_check || !risky.iter().all(|p| cargo_clearable(p, &self.config))
         {
             return stays_risky(None);
+        }
+        match outside {
+            Ok(list) if list.is_empty() => {}
+            Ok(_) => return stays_risky(Some(stays("a changed path is outside the project"))),
+            Err(e) => return stays_risky(Some(stays(e))),
         }
         let (start, head) = match self.job_range() {
             Ok(range) => range,
@@ -285,6 +293,7 @@ impl Engine<'_> {
         let mut new_manifests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut touched: BTreeSet<String> = BTreeSet::new();
         let mut locks: Vec<&str> = Vec::new();
+        let mut deleted: Vec<&str> = Vec::new();
         for path in paths {
             let name = file_name(path);
             if name.eq_ignore_ascii_case("Cargo.toml") {
@@ -294,6 +303,8 @@ impl Engine<'_> {
                     }
                     manifests.insert(path, text);
                     touched.insert(path.clone());
+                } else {
+                    deleted.push(path);
                 }
             } else if name.eq_ignore_ascii_case("Cargo.lock") {
                 let dir = Path::new(path).parent().unwrap_or(Path::new(""));
@@ -320,6 +331,17 @@ impl Engine<'_> {
                 ))
             })?;
             roots.insert(rel.to_path_buf());
+        }
+        if roots.is_empty() {
+            return Err(stays("no Cargo manifest or lock is left to check"));
+        }
+        for path in &deleted {
+            let dir = Path::new(path).parent().unwrap_or(Path::new(""));
+            if !roots.iter().any(|r| dir.starts_with(r)) {
+                return Err(stays(format!(
+                    "{path} was deleted outside the checked workspaces"
+                )));
+            }
         }
         let root_locks: BTreeSet<String> = roots
             .iter()
@@ -544,6 +566,37 @@ pub(crate) mod tests {
         let engine = job.engine(config());
         let paths = engine.job_changed_paths().expect("paths");
         engine.risk_in(&paths, temp_root)
+    }
+
+    #[test]
+    fn a_changed_path_outside_the_project_stays_risky() {
+        let job = engine_with_job(
+            &[("apps/web/x.txt", "x\n".to_string())],
+            &[("Cargo.lock", "# lock\n".to_string())],
+        );
+        let repo = factory_git::Repo::open(&job.dir.path().join("repo"))
+            .expect("open")
+            .with_scope("web", Path::new("apps/web"));
+        let engine = Engine::new(
+            job.dir.path().join("board.json"),
+            job.job_dir.clone(),
+            "001".to_string(),
+            job.job_dir.join("plan.md"),
+            &repo,
+            &job.runner,
+            config(),
+            &job.events,
+        )
+        .expect("engine");
+        let root = tempfile::tempdir().expect("temp root");
+        let risk = engine.risk_in(&["Cargo.lock".to_string()], root.path());
+        assert!(risk.is_risky());
+        let note = risk.note.expect("note");
+        assert!(
+            note.contains("a changed path is outside the project"),
+            "{note}"
+        );
+        assert!(is_empty(root.path()));
     }
 
     #[test]

@@ -472,3 +472,14 @@ fn the_risk_part_never_lists_a_cleared_cargo_file() {
     }
     assert!(record.parts.iter().all(|p| p.title != "Risk"));
 }
+
+#[test]
+fn a_delete_only_manifest_diff_stays_risky() {
+    let fx = fixture();
+    let effect: Effect = Box::new(|spec| {
+        std::fs::remove_file(spec.cwd.join("b/Cargo.toml")).expect("remove manifest");
+        "done".to_string()
+    });
+    assert_risky(&run_job(&fx, effect));
+    assert!(ledger(&fx).contains("diff stays risky"), "{}", ledger(&fx));
+}
