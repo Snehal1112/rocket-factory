@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -166,7 +166,7 @@ pub type Effect = Box<dyn Fn(&AgentSpec) -> String + Send + Sync>;
 pub struct ScriptedRunner {
     effects: Mutex<VecDeque<Effect>>,
     /// Per-role queues from `scripted_roles`. They take the place of `effects` when set.
-    role_effects: Option<Mutex<std::collections::HashMap<String, VecDeque<Effect>>>>,
+    role_effects: Option<Mutex<HashMap<String, VecDeque<Effect>>>>,
     calls: Mutex<Vec<AgentSpec>>,
 }
 
@@ -398,7 +398,7 @@ pub fn scripted(effects: Vec<Effect>) -> ScriptedRunner {
 
 /// Like `scripted`, with the effects queued per spec role, so the order of concurrent calls does not matter.
 pub fn scripted_roles(effects: Vec<(&'static str, Effect)>) -> ScriptedRunner {
-    let mut roles: std::collections::HashMap<String, VecDeque<Effect>> = HashMap::new();
+    let mut roles: HashMap<String, VecDeque<Effect>> = HashMap::new();
     for (role, effect) in effects {
         roles.entry(role.to_string()).or_default().push_back(effect);
     }
@@ -834,7 +834,7 @@ pub fn record_head(fx: &MergeFixture, sha: &str) {
         .expect("record head");
 }
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[derive(Default)]
 pub struct FakeState {

@@ -1,5 +1,5 @@
 mod common;
-use common::{approved_job_with, reply, scripted};
+use common::{approved_job_with, reply, scripted, scripted_roles};
 use factory_engine::{sync_requested, sync_stage, SyncOutcome};
 use std::sync::Arc;
 
@@ -8,7 +8,16 @@ const CHANGES: &str = "- [blocker] fix it\nVERDICT: CHANGES";
 
 /// A fixture in round 1 with a round review already saved.
 fn fixture(effects: Vec<common::Effect>) -> common::MergeFixture {
-    let fx = approved_job_with(Arc::new(scripted(effects)));
+    fixture_from(scripted(effects))
+}
+
+/// Like `fixture`, with the effects queued per role, for flows that run both reviewers.
+fn fixture_roles(effects: Vec<(&'static str, common::Effect)>) -> common::MergeFixture {
+    fixture_from(scripted_roles(effects))
+}
+
+fn fixture_from(runner: common::ScriptedRunner) -> common::MergeFixture {
+    let fx = approved_job_with(Arc::new(runner));
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -153,7 +162,7 @@ fn a_rewrite_keeps_open_blockers_so_approve_without_review_is_still_refused() {
 fn a_second_sync_after_a_stopped_first_one_still_reviews_the_whole_branch() {
     // A first sync that stopped right after its reset left this state: stage review, pending
     // reviews, no floor, and main not merged yet.
-    let fx = with_security_agent(fixture(behind_main_effects()));
+    let fx = with_security_agent(fixture_roles(behind_main_effects()));
     common::commit_file(&fx.main, "other.md", "o");
     fx.driver
         .store()
@@ -187,7 +196,7 @@ fn saved_diffs(fx: &common::MergeFixture) -> Vec<String> {
 
 #[test]
 fn a_rebase_review_diff_starts_at_the_merge_base() {
-    let fx = with_security_agent(fixture(behind_main_effects()));
+    let fx = with_security_agent(fixture_roles(behind_main_effects()));
     common::commit_file(&fx.main, "docs/other.txt", "o\n");
     rewrite_branch(&fx);
     sync_requested(&fx.driver, &fx.id).expect("sync");
@@ -218,8 +227,11 @@ fn a_first_round_review_diff_is_unchanged() {
 }
 
 /// The effects of a requested sync of a job behind main: a message, a code review and a security review.
-fn behind_main_effects() -> Vec<common::Effect> {
-    vec![reply(APPROVE), reply(SECURITY_OK)]
+fn behind_main_effects() -> Vec<(&'static str, common::Effect)> {
+    vec![
+        ("reviewer", reply(APPROVE)),
+        ("security-review", reply(SECURITY_OK)),
+    ]
 }
 
 #[test]
@@ -239,7 +251,7 @@ fn a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head() {
         factory_core::Stage::Build,
         factory_core::Stage::NeedsHuman,
     ] {
-        let fx = with_security_agent(fixture(behind_main_effects()));
+        let fx = with_security_agent(fixture_roles(behind_main_effects()));
         common::commit_file(&fx.main, "other.md", "o");
         force_stage(&fx, stage);
         sync_requested(&fx.driver, &fx.id).expect("sync");
@@ -258,7 +270,10 @@ fn a_plain_sync_keeps_the_floor_only_in_approve_with_tip_equal_head() {
 
 #[test]
 fn commits_added_on_top_of_head_get_the_whole_branch_review() {
-    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    let fx = with_security_agent(fixture_roles(vec![
+        ("reviewer", reply(APPROVE)),
+        ("security-review", reply(SECURITY_OK)),
+    ]));
     let tip = common::commit_file(&common::worktree_of(&fx), "extra.md", "e");
     sync_requested(&fx.driver, &fx.id).expect("sync");
     let job = fx.driver.job(&fx.id).expect("job");
@@ -362,7 +377,10 @@ fn sync_requested_does_not_count_against_max_syncs() {
 
 #[test]
 fn sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch() {
-    let fx = fixture(vec![reply(APPROVE), reply(SECURITY_OK)]);
+    let fx = fixture_roles(vec![
+        ("reviewer", reply(APPROVE)),
+        ("security-review", reply(SECURITY_OK)),
+    ]);
     let fx = with_security_agent(fx);
     fx.driver
         .store()
@@ -388,7 +406,10 @@ fn sync_requested_resets_the_floor_after_a_rebase_and_reviews_the_whole_branch()
 
 #[test]
 fn a_rebase_review_runs_the_security_reviewer() {
-    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    let fx = with_security_agent(fixture_roles(vec![
+        ("reviewer", reply(APPROVE)),
+        ("security-review", reply(SECURITY_OK)),
+    ]));
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -422,7 +443,10 @@ fn a_sync_without_a_rewrite_runs_the_code_reviewer_only() {
 
 #[test]
 fn a_rewritten_branch_that_is_behind_main_gets_main_merged_before_one_review() {
-    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    let fx = with_security_agent(fixture_roles(vec![
+        ("reviewer", reply(APPROVE)),
+        ("security-review", reply(SECURITY_OK)),
+    ]));
     common::commit_file(&fx.main, "other.md", "o");
     rewrite_branch(&fx);
     assert_eq!(
@@ -589,7 +613,10 @@ fn a_checks_gate_failure_during_a_sync_keeps_its_own_park_kind() {
 
 #[test]
 fn a_changes_remain_decision_keeps_its_park_kind_after_a_sync() {
-    let fx = with_security_agent(fixture(vec![reply(CHANGES), reply(SECURITY_OK)]));
+    let fx = with_security_agent(fixture_roles(vec![
+        ("reviewer", reply(CHANGES)),
+        ("security-review", reply(SECURITY_OK)),
+    ]));
     fx.driver
         .store()
         .update_job(&fx.id, |j| {
@@ -617,7 +644,10 @@ fn a_changes_remain_decision_keeps_its_park_kind_after_a_sync() {
 
 #[test]
 fn a_passing_whole_branch_review_re_parks_a_needs_human_job() {
-    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    let fx = with_security_agent(fixture_roles(vec![
+        ("reviewer", reply(APPROVE)),
+        ("security-review", reply(SECURITY_OK)),
+    ]));
     force_stage(&fx, factory_core::Stage::NeedsHuman);
     rewrite_branch(&fx);
     assert_eq!(
@@ -636,7 +666,10 @@ fn a_passing_whole_branch_review_re_parks_a_needs_human_job() {
 
 #[test]
 fn a_rebase_review_keeps_the_round_raw_files() {
-    let fx = with_security_agent(fixture(vec![reply(APPROVE), reply(SECURITY_OK)]));
+    let fx = with_security_agent(fixture_roles(vec![
+        ("reviewer", reply(APPROVE)),
+        ("security-review", reply(SECURITY_OK)),
+    ]));
     for role in ["code", "security"] {
         std::fs::write(
             job_file(&fx, &format!("review-{role}-r1.raw.md")),

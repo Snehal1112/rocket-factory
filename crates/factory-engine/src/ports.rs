@@ -124,6 +124,7 @@ pub(crate) struct JobView {
 }
 
 /// The result of `prepare_agent`: a spec to run, or a run that is already decided.
+// A refused run is rare and short lived, so boxing it would only add noise.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Prepared {
     Ready(AgentSpec),
