@@ -213,21 +213,34 @@ pub fn path_packages_from_metadata(json: &str) -> Result<Vec<PathPackage>, Check
         .as_array()
         .ok_or_else(|| bad("no packages"))?;
     let mut out = Vec::new();
-    for p in list.iter().filter(|p| p["source"].is_null()) {
+    for p in list {
+        let source = p
+            .get("source")
+            .ok_or_else(|| bad("a package has no source"))?;
+        if !source.is_null() {
+            continue;
+        }
         let manifest = p["manifest_path"]
             .as_str()
             .ok_or_else(|| bad("a package has no manifest_path"))?;
         let mut targets = Vec::new();
-        for t in p["targets"].as_array().into_iter().flatten() {
+        let raw = p["targets"]
+            .as_array()
+            .ok_or_else(|| bad("a package has no targets"))?;
+        for t in raw {
             let src = t["src_path"]
                 .as_str()
                 .ok_or_else(|| bad("a target has no src_path"))?;
             let kinds = t["kind"]
                 .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|k| k.as_str().map(str::to_string))
-                .collect();
+                .ok_or_else(|| bad("a target has no kind"))?
+                .iter()
+                .map(|k| {
+                    k.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| bad("a kind is not text"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             targets.push(CargoTarget {
                 kinds,
                 src_path: PathBuf::from(src),
@@ -346,12 +359,16 @@ mod tests {
     }
 
     fn lock(root: &Path) {
-        let status = Command::new("cargo")
+        let out = Command::new("cargo")
             .args(["generate-lockfile", "--offline"])
             .current_dir(root)
-            .status()
+            .output()
             .expect("cargo runs");
-        assert!(status.success());
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     /// A workspace with members `a` and `b`, and its lock made.
@@ -467,6 +484,17 @@ mod tests {
         assert_eq!(pkgs[0].targets.len(), 2);
         assert_eq!(pkgs[0].targets[1].kinds, ["custom-build"]);
         assert_eq!(pkgs[0].targets[1].src_path, PathBuf::from("/r/a/build.rs"));
+    }
+
+    #[test]
+    fn metadata_with_a_bad_shape_is_an_error() {
+        let no_source = r#"{"packages":[{"manifest_path":"/r/Cargo.toml","targets":[]}]}"#;
+        let no_targets = r#"{"packages":[{"source":null,"manifest_path":"/r/Cargo.toml"}]}"#;
+        let no_kind = r#"{"packages":[{"source":null,"manifest_path":"/r/Cargo.toml","targets":[{"src_path":"/r/build.rs"}]}]}"#;
+        for json in [no_source, no_targets, no_kind] {
+            let err = path_packages_from_metadata(json).expect_err("bad shape");
+            assert!(err.to_string().starts_with("bad cargo metadata:"), "{err}");
+        }
     }
 
     #[test]
