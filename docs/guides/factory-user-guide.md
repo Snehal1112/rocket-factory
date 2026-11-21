@@ -477,8 +477,9 @@ What it prints: `merged <sha>`, or `parked: <reason>`. A `parked:` result leaves
 factory retry <ID>
 ```
 
-Continues a job parked by the driver at the stage that parked it. It works for a failed review (`review-failed`), a `no-checks` park, a branch tip that differs from the reviewed head, a busy main, a busy merge lock, a spent sync cap and a series plan whose earlier plan has not merged (it continues at build). Fix the cause first, for example map the changed paths to a check or clean your checkout, then retry. After the stage runs, the job continues like `run` and merges or parks again, and a series goes on with its next plan.
+Continues a job parked by the driver at the stage that parked it. It works for a failed review (`review-failed`), a `no-checks` park, a branch tip that differs from the reviewed head, a busy main, a busy merge lock, a spent sync cap, a `machine-waiting` park and a series plan whose earlier plan has not merged (it continues at build). Fix the cause first, for example map the changed paths to a check or clean your checkout, then retry. After the stage runs, the job continues like `run` and merges or parks again, and a series goes on with its next plan.
 
+- A `machine-waiting` park means the disk was short, the network was down or the API key was bad for 25 minutes. Fix the machine, then `factory retry <ID>`. It starts the builder again and keeps any rework note. You may also send `factory rework <ID> <note>` instead.
 - It refuses a job with no resume stage (builder parks, risky diff, changes remain, merge conflict) and prints that park's own next commands. It also refuses a cancelled job.
 - If the cause is still there, the job parks again with the same reason.
 - It takes the project lease and exits with code 75 when the project is busy, like `run`.
@@ -499,7 +500,8 @@ factory rework 028 "Handle the empty list case and add a test for it"
 - The note must not be empty, must be one line, and must be at most 200 characters.
 - The job must be in `needs-human`.
 - It also revives a cancelled job.
-- A job whose park `retry` can resume is refused with `job N parked outside the builder (<reason>); run factory retry N, or factory rework N --force <note> to send it to the builder anyway`. Add `--force` to send it to the builder anyway: `factory rework --force N "<note>"`. A cancelled job is revived without `--force`.
+- A `machine-waiting` or `builder-stopped` park accepts `rework` without `--force`, because a note helps the builder there.
+- A job whose park `retry` can resume (any other) is refused with `job N parked outside the builder (<reason>); run factory retry N, or factory rework N --force <note> to send it to the builder anyway`. Add `--force` to send it to the builder anyway: `factory rework --force N "<note>"`. A cancelled job is revived without `--force`.
 - It does not run the job. It prints `job N back to build, round <N>` for the next round, or `job N back to build, same task` for a job parked mid-task. You must run `factory run 028` afterwards.
 
 ### 6.7 `factory cancel`: give up on a job
@@ -1232,9 +1234,10 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 | `review asked for changes after N fix rounds` | The reviewer still wants changes. | `rework` with a note, or `approve --waive "<reason>"` if you disagree. A plain `approve` is refused (section 6.5). |
 | `diff has N changed lines, the cap is C` | The change is too big to auto-merge. | `approve` after reading it, or `rework` to split it up. |
 | `budget is stopped` | The job used up its token budget. | `approve` or `cancel`. Raise `budget_weighted` if the job is legitimately large. |
-| `builder stopped: ...` | The builder ended early. | `rework`. |
+| `builder stopped: ...` | The builder ended early, also after its one automatic rerun. | `rework`. |
 | `builder blocked/needs context ...` | The builder needs information. | `rework` and give it in the note. |
-| `builder made no changes` or `task N changed nothing` | Nothing was produced. | `rework`, or `cancel`. |
+| `<detail>, waited 25 min` (park `machine-waiting`) | The disk was short, the network was down or the API key was bad for 25 minutes. The card shows `machine_wait` while it waits. | Fix the machine, then `retry`. `rework` with a note also works. |
+| `builder made no changes` or `task N changed nothing` | Nothing was produced, and the branch has no commits above the base. | `rework`, or `cancel`. |
 | `builder committed on its own ...` | The builder broke the "no commits" rule. | `rework`. |
 | `builder changed <file>` | The builder touched a protected file. | `rework`, or `cancel`. |
 | `no check covers N changed code path(s)` | A changed code path matches no check rule. | Map the paths to a check, then `retry`. Or `approve` if you accept that, or `rework --force`. |
