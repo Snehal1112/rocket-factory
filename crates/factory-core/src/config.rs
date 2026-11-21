@@ -116,6 +116,8 @@ fn validate_cost_markers(markers: &[CostMarker]) -> Result<(), CoreError> {
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub risk_paths: Vec<String>,
+    /// Lets a diff that only touches Cargo files skip the risky stop when no outside code changed.
+    pub cargo_lock_check: bool,
     pub diff_cap_lines: u32,
     pub budget_weighted: u64,
     pub fix_rounds: u32,
@@ -255,6 +257,7 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             risk_paths: DEFAULT_RISK.iter().map(|s| s.to_string()).collect(),
+            cargo_lock_check: true,
             diff_cap_lines: 4000,
             budget_weighted: DEFAULT_JOB_BUDGET_WEIGHTED,
             fix_rounds: 2,
@@ -1762,6 +1765,14 @@ mod tests {
             expand_home("~b/kb", Some("/home/u")),
             Some(PathBuf::from("~b/kb"))
         );
+    }
+
+    #[test]
+    fn cargo_lock_check_defaults_on_and_parses() {
+        assert!(Config::default().cargo_lock_check);
+        let off = Config::parse("cargo_lock_check = false").expect("parses");
+        assert!(!off.cargo_lock_check);
+        Config::parse("cargo_lock_check = \"yes\"").expect_err("not a bool");
     }
 
     #[test]

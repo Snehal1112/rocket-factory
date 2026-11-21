@@ -9,6 +9,9 @@ risk_paths = [
   "**/*secret*",
   "**/*credential*",
   ".github/**",
+  # Source replacement, registries, wrappers and toolchains change what builds without touching Cargo.lock.
+  "**/.cargo/**",
+  "**/rust-toolchain*",
 ]
 unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*", ".gitignore", ".gitattributes", ".editorconfig"]
 read_first = ["CLAUDE.md"]

@@ -90,7 +90,7 @@ pub use probe::{
     Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe, KNOWN_BUILTIN_SKILLS,
 };
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
-pub use risk::{classify_paths, glob_match, DiffClass};
+pub use risk::{cargo_clearable, classify_paths, glob_match, DiffClass};
 pub use stage::Stage;
 pub use trend::{
     build_trend, GroupTrend, MarkerTrend, Side, TrendReport, MIN_JOBS_PER_SIDE, VERDICT_BAND_PCT,

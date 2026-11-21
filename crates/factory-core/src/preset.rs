@@ -522,6 +522,25 @@ mod tests {
     }
 
     #[test]
+    fn rust_preset_marks_cargo_config_and_toolchain_risky() {
+        let p = embedded("rust").expect("rust preset");
+        let cfg = Config::parse(p.config).expect("parses");
+        let class = |path: &str| crate::risk::classify_paths(&[path], &cfg);
+        for path in [
+            ".cargo/config.toml",
+            "crates/x/.cargo/config.toml",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+        ] {
+            assert_eq!(class(path), crate::risk::DiffClass::Risky, "{path}");
+        }
+        assert_eq!(
+            class("crates/factory-engine/src/build.rs"),
+            crate::risk::DiffClass::Normal
+        );
+    }
+
+    #[test]
     fn every_preset_exists_and_parses_as_config() {
         for name in PRESET_NAMES {
             let p = embedded(name).unwrap_or_else(|| panic!("{name} missing"));

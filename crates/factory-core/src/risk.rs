@@ -80,12 +80,48 @@ pub fn classify_paths<S: AsRef<str>>(paths: &[S], config: &Config) -> DiffClass 
     }
 }
 
+/// True when a risky Cargo file may be cleared by the lock check. Every glob that matches must name only Cargo files.
+pub fn cargo_clearable(path: &str, config: &Config) -> bool {
+    let lower = normalize(path).to_lowercase();
+    if has_parent_segment(&lower) {
+        return false;
+    }
+    let is_cargo_name = |name: &str| name == "cargo.toml" || name == "cargo.lock";
+    if !is_cargo_name(lower.rsplit('/').next().unwrap_or("")) {
+        return false;
+    }
+    config
+        .risk_paths
+        .iter()
+        .map(|g| g.to_lowercase())
+        .filter(|g| glob_match(g, &lower))
+        .all(|g| is_cargo_name(g.rsplit('/').next().unwrap_or("")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn class(paths: &[&str]) -> DiffClass {
         classify_paths(paths, &Config::default())
+    }
+
+    #[test]
+    fn cargo_files_under_cargo_only_globs_are_clearable() {
+        let config = Config {
+            risk_paths: vec![
+                "**/Cargo.toml".into(),
+                "**/Cargo.lock".into(),
+                "src-tauri/**".into(),
+            ],
+            ..Config::default()
+        };
+        for path in ["Cargo.lock", "crates/a/Cargo.toml", "crates/a/cargo.toml"] {
+            assert!(cargo_clearable(path, &config), "{path} is clearable");
+        }
+        for path in ["src-tauri/Cargo.toml", "crates/a/build.rs", "../Cargo.toml"] {
+            assert!(!cargo_clearable(path, &config), "{path} is not clearable");
+        }
     }
 
     #[test]
