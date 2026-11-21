@@ -288,3 +288,23 @@ fn a_file_that_is_not_utf8_is_an_error_naming_the_path() {
         "{err}"
     );
 }
+
+#[test]
+fn file_at_reads_a_file_at_an_older_commit() {
+    let fx = Fixture::on_branch("main");
+    let git = fx.git();
+    std::fs::create_dir_all(fx.path.join("dir")).expect("mkdir");
+    let first = commit_files(&git, &[("a.txt", "1"), ("dir/x.txt", "x")], "one");
+    let second = commit_files(&git, &[("a.txt", "2")], "two");
+    let repo = fx.repo();
+    assert_eq!(
+        repo.file_at(&first.to_string(), "a.txt").expect("first"),
+        Some("1".to_string())
+    );
+    assert_eq!(
+        repo.file_at(&second.to_string(), "missing")
+            .expect("absent"),
+        None
+    );
+    assert!(repo.file_at(&second.to_string(), "dir").is_err());
+}

@@ -35,7 +35,18 @@ impl Repo {
     /// The text of the file `rel` at the tip of `branch`, or `None` when the file is absent.
     pub fn file_at_branch(&self, branch: &str, rel: &str) -> Result<Option<String>> {
         let tree = self.tree_at_branch(branch)?;
-        let Some(entry) = entry_at(&tree, rel)? else {
+        self.file_in_tree(&tree, rel)
+    }
+
+    /// The text of the file `rel` at the commit `commit`, or `None` when the file is absent.
+    pub fn file_at(&self, commit: &str, rel: &str) -> Result<Option<String>> {
+        let tree = self.commit_of(commit)?.tree()?;
+        self.file_in_tree(&tree, rel)
+    }
+
+    /// The text of the regular file `rel` in `tree`, or `None` when it is absent.
+    fn file_in_tree(&self, tree: &Tree<'_>, rel: &str) -> Result<Option<String>> {
+        let Some(entry) = entry_at(tree, rel)? else {
             return Ok(None);
         };
         if !is_regular(&entry) {

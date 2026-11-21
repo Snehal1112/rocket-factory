@@ -116,3 +116,22 @@ fn export_tree_fails_for_an_unknown_branch() {
     let dest = fx.dir.path().join("export");
     assert!(fx.repo().export_tree("nope", &dest).is_err());
 }
+
+#[test]
+fn export_commit_writes_the_tree_of_that_commit() {
+    let fx = Fixture::on_branch("main");
+    let git = fx.git();
+    let first = commit_files(&git, &[("a.txt", "1")], "one");
+    commit_files(&git, &[("a.txt", "2")], "two");
+    let dest = fx.dir.path().join("export");
+    fx.repo()
+        .export_commit(&first.to_string(), &dest)
+        .expect("export");
+    assert_eq!(std::fs::read_to_string(dest.join("a.txt")).expect("a"), "1");
+    assert!(!dest.join(".git").exists());
+    let err = fx
+        .repo()
+        .export_commit(&first.to_string(), &dest)
+        .expect_err("non-empty");
+    assert!(matches!(err, GitError::Refused(_)));
+}

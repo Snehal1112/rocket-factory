@@ -252,7 +252,19 @@ impl Repo {
     ///
     /// Symlinks, submodules and `.git` entries are skipped. A `dest` that holds anything is refused.
     pub fn export_tree(&self, branch: &str, dest: &Path) -> Result<()> {
-        let tree = self.branch_commit(branch)?.tree()?;
+        let commit = self.branch_commit(branch)?;
+        self.export_from(&commit, dest)
+    }
+
+    /// Writes the tracked regular files of a commit into `dest`, with the rules of `export_tree`.
+    pub fn export_commit(&self, commit: &str, dest: &Path) -> Result<()> {
+        let commit = self.commit_of(commit)?;
+        self.export_from(&commit, dest)
+    }
+
+    /// Writes the tree of `commit` into `dest`.
+    fn export_from(&self, commit: &Commit<'_>, dest: &Path) -> Result<()> {
+        let tree = commit.tree()?;
         match std::fs::read_dir(dest) {
             Ok(mut entries) => {
                 if entries.next().is_some() {
