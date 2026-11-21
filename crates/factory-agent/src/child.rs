@@ -212,14 +212,7 @@ pub(crate) fn drive<S: AgentStream>(
     let exit_code = status.code();
     let result_text = state.result_text().unwrap_or_default();
     let label = &cfg.label;
-    let shown_result = {
-        let t = result_text.trim();
-        if t.chars().count() > 500 {
-            format!("{}...", t.chars().take(500).collect::<String>())
-        } else {
-            t.to_string()
-        }
-    };
+    let shown_result = capped(result_text.trim());
     let (stop_reason, error) = match stop {
         Some(reason) => (reason, None),
         None if !state.has_result() => {
@@ -239,10 +232,16 @@ pub(crate) fn drive<S: AgentStream>(
             } else {
                 StopReason::Failed
             };
-            let detail = if label == "claude" || result_text.is_empty() {
+            // The result text names the cause; the stderr tail stands in when it is empty.
+            let shown = if result_text.trim().is_empty() {
+                capped(stderr_tail.trim())
+            } else {
+                shown_result.clone()
+            };
+            let detail = if shown.is_empty() {
                 String::new()
             } else {
-                format!(": {}", result_text.trim())
+                format!(": {shown}")
             };
             (reason, Some(format!("{label} reported {subtype}{detail}")))
         }
@@ -333,4 +332,13 @@ fn tail_of(mut r: impl Read, keep: usize) -> String {
         }
     }
     String::from_utf8_lossy(&tail).into_owned()
+}
+
+/// Caps text at 500 chars, marking a cut with dots.
+fn capped(t: &str) -> String {
+    if t.chars().count() > 500 {
+        format!("{}...", t.chars().take(500).collect::<String>())
+    } else {
+        t.to_string()
+    }
 }

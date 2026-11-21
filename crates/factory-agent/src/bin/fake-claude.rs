@@ -161,6 +161,13 @@ fn main() {
             init("fake-1");
             result("it broke", true, "error_during_execution");
         }
+        "api-error" => {
+            // The second prompt line is the text of the error result.
+            let text = prompt.lines().nth(1).map_or("", str::trim).to_string();
+            init("fake-1");
+            result(&text, true, "success");
+            std::process::exit(1);
+        }
         "missing-session" => {
             // The real claude reports an unknown --resume id like this.
             eprintln!("No conversation found with session ID: no-such-session");

@@ -4,6 +4,7 @@ pub mod child;
 pub mod claude;
 pub mod codex;
 pub mod events;
+pub mod failure;
 pub mod run;
 pub mod runner;
 pub mod spec;
@@ -16,6 +17,7 @@ pub use claude::{
 };
 pub use codex::{codex_args, CodexRunner, CodexStream};
 pub use events::{AgentEvent, EventKind, EventSink};
+pub use failure::{classify_failure, did_no_work, FailureClass, MachineCause};
 pub use run::{AgentRun, StopReason};
 pub use runner::{AgentRunner, FakeRunner};
 pub use spec::{AgentSpec, Caps, SessionHook};

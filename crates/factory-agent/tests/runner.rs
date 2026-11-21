@@ -241,6 +241,28 @@ fn a_missing_session_resume_is_classified_as_failed() {
 }
 
 #[test]
+fn missing_session_text_reaches_error() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let mut s = spec("missing-session", tmp.path());
+    s.resume = Some("no-such-session".into());
+    let run = runner(EventSink::null("001")).run(&s);
+    let error = run.error.expect("error text");
+    assert!(error.contains("No conversation found"), "{error}");
+}
+
+#[test]
+fn claude_api_error_text_reaches_error() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let run = runner(EventSink::null("001")).run(&spec(
+        "api-error\nAPI Error: 401 Invalid API key",
+        tmp.path(),
+    ));
+    assert_eq!(run.stop_reason, StopReason::Failed);
+    let error = run.error.expect("error text");
+    assert!(error.contains("Invalid API key"), "{error}");
+}
+
+#[test]
 fn claude_success_then_nonzero_exit_is_done() {
     let tmp = tempfile::tempdir().expect("tmp");
     let run = runner(EventSink::null("001")).run(&spec("result-then-exit3", tmp.path()));
