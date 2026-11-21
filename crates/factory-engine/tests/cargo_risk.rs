@@ -165,6 +165,22 @@ fn an_internal_path_dependency_merges() {
 }
 
 #[test]
+fn the_check_line_appears_once_per_head() {
+    let fx = fixture();
+    assert_eq!(
+        run_job(&fx, change(internal_dep(), true)),
+        Decision::AutoMerge
+    );
+    let second = fx
+        .engine(&approving())
+        .review_stage()
+        .expect("review again");
+    assert_eq!(second.decision, Decision::AutoMerge);
+    let lines = ledger(&fx).matches("cargo lock check: ").count();
+    assert_eq!(lines, 1, "{}", ledger(&fx));
+}
+
+#[test]
 fn a_dependency_missing_from_the_lock_parks() {
     let fx = fixture();
     let files = vec![

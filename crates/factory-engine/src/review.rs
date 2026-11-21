@@ -98,9 +98,6 @@ impl Engine<'_> {
             no_change,
         };
         let risk = self.risk(&paths);
-        if let Some(note) = &risk.note {
-            self.ruling(note)?;
-        }
         let class = risk.class;
         let risky = risk.is_risky();
         // The first review of a risky job records its risky paths, so a park can name those that fix rounds added.

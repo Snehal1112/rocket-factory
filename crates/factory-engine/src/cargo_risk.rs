@@ -257,35 +257,50 @@ impl Engine<'_> {
             Err(e) => return stays_risky(Some(stays(e))),
         };
         let key = store_key(&head, &self.config);
-        let (same, note) = match read_store(&self.job_dir, &key) {
-            Some(found) => found,
-            None => {
-                let (same, note, store) = match self.cargo_check(paths, &start, &head, temp_root) {
-                    Ok(()) => (true, PASS_NOTE.to_string(), true),
-                    Err(stop) => (false, stop.note, stop.kind == StopKind::Content),
-                };
-                // The store only saves a later cargo run, so a failed write never changes the verdict.
-                if store {
-                    if let Err(e) = write_store(&self.job_dir, &key, same, &note) {
-                        tracing::warn!(
-                            event = "cargo_check.store",
-                            msg = %format!("cannot write {CARGO_CHECK_FILE}: {e}")
-                        );
-                    }
+        if let Some((memo_key, memo)) = &*self.cargo_memo.borrow() {
+            if *memo_key == key {
+                return memo.clone();
+            }
+        }
+        let to_risk = |same: bool, note: String| {
+            let note = (!note.is_empty()).then_some(note);
+            if same {
+                Risk {
+                    class: DiffClass::Normal,
+                    risky: Vec::new(),
+                    note,
                 }
-                (same, note)
+            } else {
+                stays_risky(note)
             }
         };
-        let note = (!note.is_empty()).then_some(note);
-        if same {
-            Risk {
-                class: DiffClass::Normal,
-                risky: Vec::new(),
-                note,
-            }
-        } else {
-            stays_risky(note)
+        // A stored verdict writes no ledger line and no memo: an earlier run already wrote the line.
+        if let Some((same, note)) = read_store(&self.job_dir, &key) {
+            return to_risk(same, note);
         }
+        let (same, note, store) = match self.cargo_check(paths, &start, &head, temp_root) {
+            Ok(()) => (true, PASS_NOTE.to_string(), true),
+            Err(stop) => (false, stop.note, stop.kind == StopKind::Content),
+        };
+        // The store only saves a later cargo run, so a failed write never changes the verdict.
+        if store {
+            if let Err(e) = write_store(&self.job_dir, &key, same, &note) {
+                tracing::warn!(
+                    event = "cargo_check.store",
+                    msg = %format!("cannot write {CARGO_CHECK_FILE}: {e}")
+                );
+            }
+        }
+        // The ledger line is best effort too, and only a run that ran cargo writes it.
+        if let Err(e) = self.ruling(&note) {
+            tracing::warn!(
+                event = "cargo_check.ledger",
+                msg = %format!("cannot write the ledger: {e}")
+            );
+        }
+        let risk = to_risk(same, note);
+        *self.cargo_memo.borrow_mut() = Some((key, risk.clone()));
+        risk
     }
 
     /// The text of a scoped path at `commit`, read from the repo.
@@ -727,6 +742,52 @@ pub(crate) mod tests {
         assert!(!job.job_dir.join(CARGO_CHECK_FILE).exists());
         let root = tempfile::tempdir().expect("clean root");
         assert!(!risk_of(&job, root.path()).is_risky());
+    }
+
+    /// How many `cargo lock check` lines the job ledger holds.
+    fn check_lines(job: &JobRepo) -> usize {
+        std::fs::read_to_string(job.job_dir.join("progress.md"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains("cargo lock check: "))
+            .count()
+    }
+
+    #[test]
+    fn a_fresh_run_writes_one_ledger_line() {
+        let outer = tempfile::tempdir().expect("temp root");
+        std::fs::write(outer.path().join("Cargo.toml"), "[workspace]\n").expect("write");
+        let inner = outer.path().join("inner");
+        std::fs::create_dir(&inner).expect("mkdir");
+        let job = passing_job();
+        let engine = job.engine(config());
+        let paths = engine.job_changed_paths().expect("paths");
+        for _ in 0..3 {
+            assert!(engine.risk_in(&paths, &inner).is_risky());
+        }
+        assert_eq!(check_lines(&job), 1);
+    }
+
+    #[test]
+    fn a_stored_verdict_writes_no_ledger_line() {
+        let job = outside_job();
+        let key = store_key(&job.head, &config());
+        write_store(&job.job_dir, &key, false, "stored note").expect("store");
+        let root = tempfile::tempdir().expect("temp root");
+        let risk = risk_of(&job, root.path());
+        assert!(risk.is_risky());
+        assert_eq!(risk.note.as_deref(), Some("stored note"));
+        assert_eq!(check_lines(&job), 0);
+    }
+
+    #[test]
+    fn a_stored_pass_writes_no_ledger_line() {
+        let job = outside_job();
+        let key = store_key(&job.head, &config());
+        write_store(&job.job_dir, &key, true, PASS_NOTE).expect("store");
+        let root = tempfile::tempdir().expect("temp root");
+        assert!(!risk_of(&job, root.path()).is_risky());
+        assert_eq!(check_lines(&job), 0);
     }
 
     #[test]
