@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use factory_agent::{SessionHook, StopReason};
+use factory_agent::{AgentRun, SessionHook, StopReason};
 use factory_core::{
     builder_rulings, builder_status, is_agent_file_name, parse_builder_status, BuilderStatus,
-    ParkKind, ParkPart, Stage, TaskSession, TaskState,
+    ParkKind, ParkPart, ResumeAt, Stage, TaskSession, TaskState,
 };
 use factory_git::Worktree;
 
@@ -30,6 +30,23 @@ enum Snapshot {
     Nothing,
     /// The builder moved HEAD off the job branch; it holds the park reason.
     OffBranch(String),
+}
+
+/// Which whole-plan builder a build pass runs.
+enum BuildArm {
+    /// A fix round in a fresh session, with its findings file.
+    FreshFix(PathBuf),
+    /// A fix round that resumes the stored session, with its findings file and the session id.
+    Resume(PathBuf, String),
+    /// The first build, with the findings of a rework when there are any.
+    First(Option<PathBuf>),
+}
+
+/// True when the run failed because its session no longer exists.
+fn session_gone(run: &AgentRun) -> bool {
+    run.error
+        .as_deref()
+        .is_some_and(|e| e.contains("No conversation found"))
 }
 
 /// The saved session id when it belongs to task `n` and the branch is still at the recorded tip.
@@ -135,15 +152,9 @@ impl Engine<'_> {
             self.ruling(text)?;
         }
         let mut first_findings: Option<PathBuf> = None;
-        let spec = match &job.session_id {
-            _ if fresh_fix => {
-                let findings = self.fix_findings(&job)?;
-                self.builder_fix_fresh_spec(&job, &cwd, &findings)
-            }
-            Some(session) if !fresh => {
-                let findings = self.fix_findings(&job)?;
-                self.builder_resume_spec(&job, &cwd, &findings, session)
-            }
+        let arm = match &job.session_id {
+            _ if fresh_fix => BuildArm::FreshFix(self.fix_findings(&job)?),
+            Some(session) if !fresh => BuildArm::Resume(self.fix_findings(&job)?, session.clone()),
             _ => {
                 // A fresh build that fixes something, such as a rework after a re-cut, still gets the findings.
                 let findings = if fixing {
@@ -152,11 +163,29 @@ impl Engine<'_> {
                     None
                 };
                 first_findings = findings.clone();
-                self.builder_first_spec(&job, &cwd, findings.as_deref())
+                BuildArm::First(findings)
             }
         };
+        let spec_for = |failed: Option<&AgentRun>| match &arm {
+            BuildArm::FreshFix(findings) => self.builder_fix_fresh_spec(&job, &cwd, findings),
+            // A resume whose session is gone reruns as a fresh fix round.
+            BuildArm::Resume(findings, _) if failed.is_some_and(session_gone) => {
+                self.builder_fix_fresh_spec(&job, &cwd, findings)
+            }
+            BuildArm::Resume(findings, session) => {
+                self.builder_resume_spec(&job, &cwd, findings, session)
+            }
+            BuildArm::First(findings) => self.builder_first_spec(&job, &cwd, findings.as_deref()),
+        };
         let tip_before = self.repo.tip(&branch).map_err(git_err)?;
-        let run = match self.run_builder_guarded(spec)? {
+        let rerun = |failed: &AgentRun| spec_for(Some(failed));
+        let run = match self.run_builder_recovering(
+            spec_for(None),
+            &rerun,
+            &mut || Ok(()),
+            &cwd,
+            None,
+        )? {
             Ok(run) => run,
             Err(parked) => return Ok(parked),
         };
@@ -189,11 +218,7 @@ impl Engine<'_> {
             self.save_builder_reply(job.round, &run.result_text)
         };
         if run.stop_reason != StopReason::Done {
-            return self.park_with(
-                ParkKind::BuilderStopped,
-                format!("builder stopped: {:?}", run.stop_reason),
-                builder_stop_parts(&run),
-            );
+            return self.park_stopped(&run, None);
         }
         if let Some(out) = self.park_if_blocked(&run, None)? {
             return Ok(out);
@@ -265,6 +290,31 @@ impl Engine<'_> {
             let _ = std::fs::remove_file(&note);
         }
         self.finish_build(&job, &base, head, previous_head)
+    }
+
+    /// Parks a builder run that did not end done, in task `task` when it is a task run. A failed run
+    /// already had its rerun, so `factory retry` builds again; other stop reasons need a rework.
+    fn park_stopped(&self, run: &AgentRun, task: Option<u32>) -> Result<StageOutcome, EngineError> {
+        let place = task.map_or(String::new(), |n| format!(" in task {n}"));
+        if run.stop_reason != StopReason::Failed {
+            return self.park_with(
+                ParkKind::BuilderStopped,
+                format!("builder stopped{place}: {:?}", run.stop_reason),
+                builder_stop_parts(run),
+            );
+        }
+        let error = crate::recover::error_line(run);
+        let reason = if error.is_empty() {
+            format!("builder stopped{place}: Failed")
+        } else {
+            format!("builder stopped{place}: Failed: {error}")
+        };
+        self.park_with_resume(
+            ParkKind::BuilderStopped,
+            reason,
+            builder_stop_parts(run),
+            Some(ResumeAt::Build),
+        )
     }
 
     /// Evidence for a builder that changed nothing. A fix round for a review or a rework leads with the review and the risk.
@@ -632,51 +682,47 @@ impl Engine<'_> {
                 Ok(())
             })?;
         }
-        let first = self.run_builder_guarded(spec);
-        let mut run = match first {
-            Ok(Ok(run)) => run,
-            Ok(Err(parked)) => {
-                self.clear_task_session()?;
-                return Ok(parked);
-            }
-            Err(e) => return Err(e),
-        };
-        if (saved.is_some() || carried.is_some()) && run.stop_reason == StopReason::Failed {
-            // A failed resume or carry, such as a missing transcript, gets one fresh builder on the worktree as it is.
-            self.clear_task_session()?;
-            let again = if saved.is_some() {
-                "fresh"
-            } else {
-                "fresh (carry failed)"
-            };
-            self.ledger_task(
-                task.n,
-                TaskState::Dispatched,
-                &format!("BASE {base}, {}, {again}", self.builder_model()),
-            )?;
+        // A rerun, such as after a missing transcript, is a fresh builder on the worktree as it is.
+        let rerun = |_: &AgentRun| {
             let mut spec = self.builder_task_spec(job, &cwd, task, &base, &tip, &earlier);
             if let Some(text) = &note {
                 spec.prompt
                     .push_str(&format!("\nA note from the user for this task:\n{text}\n"));
             }
             spec.on_session = Some(self.session_hook(task.n, &tip));
-            run = match self.run_builder_guarded(spec)? {
-                Ok(run) => run,
-                Err(parked) => {
-                    self.clear_task_session()?;
-                    return Ok(parked);
-                }
+            spec
+        };
+        let mut before_rerun = || {
+            self.clear_task_session()?;
+            let again = match (&saved, &carried) {
+                (Some(_), _) => "fresh",
+                (None, Some(_)) => "fresh (carry failed)",
+                (None, None) => return Ok(()),
             };
-        }
+            self.ledger_task(
+                task.n,
+                TaskState::Dispatched,
+                &format!("BASE {base}, {}, {again}", self.builder_model()),
+            )
+        };
+        let run = match self.run_builder_recovering(
+            spec,
+            &rerun,
+            &mut before_rerun,
+            &cwd,
+            Some(task.n),
+        )? {
+            Ok(run) => run,
+            Err(parked) => {
+                self.clear_task_session()?;
+                return Ok(parked);
+            }
+        };
         // The time is read when the last builder run returns, before checks and the snapshot.
         let ended_at = crate::ports::now() as u64;
         self.clear_task_session()?;
         if run.stop_reason != StopReason::Done {
-            return self.park_with(
-                ParkKind::BuilderStopped,
-                format!("builder stopped in task {}: {:?}", task.n, run.stop_reason),
-                builder_stop_parts(&run),
-            );
+            return self.park_stopped(&run, Some(task.n));
         }
         if let Some(out) = self.park_if_blocked(&run, Some(task.n))? {
             return Ok(out);

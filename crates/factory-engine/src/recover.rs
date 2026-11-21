@@ -4,8 +4,12 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use factory_agent::{AgentRun, MachineCause};
-use factory_core::{ParkKind, Stage};
+use factory_agent::{
+    classify_failure, did_no_work, AgentRun, AgentSpec, FailureClass, MachineCause, StopReason,
+};
+use factory_core::{
+    budget_state, parse_builder_status, BudgetState, BuilderStatus, ParkKind, Stage,
+};
 
 use crate::{Engine, EngineError, StageOutcome};
 
@@ -56,17 +60,14 @@ pub(crate) enum Probe {
     /// The machine is still down.
     StillDown,
     /// The probe ran the agent, and its run is the result.
-    #[allow(dead_code)] // The builder rerun uses it.
     Final(AgentRun),
     /// The probe parked the job.
-    #[allow(dead_code)] // The builder rerun uses it.
     Parked(StageOutcome),
 }
 
 /// How a wait ended.
 pub(crate) enum WaitEnd {
     Ready,
-    #[allow(dead_code)] // The builder rerun uses it.
     Final(AgentRun),
     Parked(StageOutcome),
 }
@@ -74,6 +75,63 @@ pub(crate) enum WaitEnd {
 /// The first `cap` characters of `text`.
 fn capped(text: &str, cap: usize) -> String {
     text.chars().take(cap).collect()
+}
+
+/// The error of a run on one line, cut to the cap of park reasons and ledger lines.
+pub(crate) fn error_line(run: &AgentRun) -> String {
+    capped(
+        &crate::ports::one_line(run.error.as_deref().unwrap_or_default()),
+        DETAIL_CAP,
+    )
+}
+
+/// Why the first builder run of a step gets its one rerun.
+enum Setback {
+    /// The machine was down: the cause and the detail the wait shows.
+    Machine(MachineCause, String),
+    /// The run failed for another reason.
+    Other,
+}
+
+/// The one rerun of a builder step and what it needs.
+struct Rerun<'r> {
+    /// The run that failed.
+    failed: &'r AgentRun,
+    spec: &'r dyn Fn(&AgentRun) -> AgentSpec,
+    before: &'r mut dyn FnMut() -> Result<(), EngineError>,
+    /// The cause word or the error, for the ledger line.
+    why: String,
+    dir: &'r Path,
+    task: Option<u32>,
+    /// True once the rerun was announced.
+    started: bool,
+}
+
+impl Rerun<'_> {
+    /// Runs the caller's step, then writes the ledger line and the event. It does so only once.
+    fn start(&mut self, e: &Engine) -> Result<(), EngineError> {
+        if self.started {
+            return Ok(());
+        }
+        self.started = true;
+        (self.before)()?;
+        let text = format!("builder failed ({}), rerunning once", self.why);
+        e.ruling(&text)?;
+        tracing::info!(event = "builder.rerun", task = ?self.task, msg = %text);
+        Ok(())
+    }
+
+    /// Checks the budget and the machine, then runs the rerun.
+    fn run(&mut self, e: &Engine) -> Result<Result<AgentRun, StageOutcome>, EngineError> {
+        if let Some(out) = e.budget_stopped()? {
+            return Ok(Err(out));
+        }
+        if let Some(out) = e.wait_while_down(self.dir)? {
+            return Ok(Err(out));
+        }
+        self.start(e)?;
+        e.run_builder_guarded((self.spec)(self.failed))
+    }
 }
 
 /// The short form `machine_wait` holds: `disk: 0.4 GB free`, `network` or `auth`.
@@ -116,16 +174,8 @@ impl Engine<'_> {
 
     /// What is down on the machine before a builder runs in `dir`, or `None` when nothing is.
     pub(crate) fn preflight(&self, dir: &Path) -> Option<(MachineCause, String)> {
-        let need = self.config.min_free_disk_mb;
-        if need > 0 {
-            let board_dir = self.board_path.parent().unwrap_or(Path::new("."));
-            for path in [dir, board_dir] {
-                if let Some(free) = (self.machine.free_mb)(path).filter(|free| *free < need) {
-                    let gb = free as f64 / 1024.0;
-                    let detail = format!("disk full: {gb:.1} GB free on {}", path.display());
-                    return Some((MachineCause::Disk, detail));
-                }
-            }
+        if let Some(detail) = self.disk_short(dir) {
+            return Some((MachineCause::Disk, detail));
         }
         if self.config.agent_cli() == "claude" {
             if let Some(key) = self.config.api_key_path() {
@@ -145,11 +195,32 @@ impl Engine<'_> {
     ) -> Result<Option<StageOutcome>, EngineError> {
         self.set_machine_wait(None);
         let dir = worktree.unwrap_or(self.repo.worktrees_dir()).to_path_buf();
-        let Some((cause, detail)) = self.preflight(&dir) else {
+        self.wait_while_down(&dir)
+    }
+
+    /// The detail when `dir` or the board folder has less free space than `min_free_disk_mb`.
+    fn disk_short(&self, dir: &Path) -> Option<String> {
+        let need = self.config.min_free_disk_mb;
+        if need == 0 {
+            return None;
+        }
+        let board_dir = self.board_path.parent().unwrap_or(Path::new("."));
+        for path in [dir, board_dir] {
+            if let Some(free) = (self.machine.free_mb)(path).filter(|free| *free < need) {
+                let gb = free as f64 / 1024.0;
+                return Some(format!("disk full: {gb:.1} GB free on {}", path.display()));
+            }
+        }
+        None
+    }
+
+    /// Waits while `preflight` finds the machine down. `Some` holds the outcome when the wait parked the job.
+    fn wait_while_down(&self, dir: &Path) -> Result<Option<StageOutcome>, EngineError> {
+        let Some((cause, detail)) = self.preflight(dir) else {
             return Ok(None);
         };
         let mut probe = || {
-            Ok(match self.preflight(&dir) {
+            Ok(match self.preflight(dir) {
                 None => Probe::Fine,
                 Some(_) => Probe::StillDown,
             })
@@ -157,6 +228,118 @@ impl Engine<'_> {
         match self.wait_for_machine(cause, &detail, &mut probe)? {
             WaitEnd::Ready | WaitEnd::Final(_) => Ok(None),
             WaitEnd::Parked(out) => Ok(Some(out)),
+        }
+    }
+
+    /// Parks the job as `budget-stopped` when its budget is used up.
+    fn budget_stopped(&self) -> Result<Option<StageOutcome>, EngineError> {
+        let used = self.job_weighted_tokens();
+        if budget_state(used, self.config.budget_weighted) != BudgetState::Stop {
+            return Ok(None);
+        }
+        self.park_with(
+            ParkKind::BudgetStopped,
+            "budget is stopped".to_string(),
+            Vec::new(),
+        )
+        .map(Some)
+    }
+
+    /// Why a builder run in `dir` gets a rerun, or `None` when it is the result as it is. A blocked or
+    /// needs-context reply while the disk is short counts as a disk failure.
+    fn setback(&self, run: &AgentRun, dir: &Path) -> Option<Setback> {
+        match classify_failure(run) {
+            Some(FailureClass::Machine(MachineCause::Disk)) => {
+                let detail = self.disk_short(dir).unwrap_or_else(|| error_line(run));
+                Some(Setback::Machine(MachineCause::Disk, detail))
+            }
+            Some(FailureClass::Machine(cause)) => Some(Setback::Machine(cause, error_line(run))),
+            Some(FailureClass::Other) => Some(Setback::Other),
+            None if run.stop_reason == StopReason::Done => {
+                let stuck = matches!(
+                    parse_builder_status(&run.result_text),
+                    Some(BuilderStatus::Blocked(_) | BuilderStatus::NeedsContext(_))
+                );
+                if !stuck {
+                    return None;
+                }
+                Some(Setback::Machine(MachineCause::Disk, self.disk_short(dir)?))
+            }
+            None => None,
+        }
+    }
+
+    /// Runs a builder like `run_builder_guarded`, and gives a failed or disk-blocked run one rerun.
+    /// A machine failure waits first: a disk wait probes the disk, a network or auth wait probes with a
+    /// builder run. `rerun` builds the spec of each later run from the failed one, and `before_rerun` runs
+    /// once, before the first later run. `Ok(Err(outcome))` is the parked outcome the caller returns.
+    pub(crate) fn run_builder_recovering(
+        &self,
+        first: AgentSpec,
+        rerun: &dyn Fn(&AgentRun) -> AgentSpec,
+        before_rerun: &mut dyn FnMut() -> Result<(), EngineError>,
+        dir: &Path,
+        task: Option<u32>,
+    ) -> Result<Result<AgentRun, StageOutcome>, EngineError> {
+        let failed = match self.run_builder_guarded(first)? {
+            Ok(run) => run,
+            Err(parked) => return Ok(Err(parked)),
+        };
+        let Some(setback) = self.setback(&failed, dir) else {
+            return Ok(Ok(failed));
+        };
+        let why = match &setback {
+            Setback::Machine(cause, _) => cause.as_str().to_string(),
+            Setback::Other => error_line(&failed),
+        };
+        let mut again = Rerun {
+            failed: &failed,
+            spec: rerun,
+            before: before_rerun,
+            why,
+            dir,
+            task,
+            started: false,
+        };
+        let (cause, detail) = match setback {
+            Setback::Other => return again.run(self),
+            Setback::Machine(cause, detail) => (cause, detail),
+        };
+        let end = if cause == MachineCause::Disk {
+            let mut probe = || {
+                Ok(match self.disk_short(dir) {
+                    None => Probe::Fine,
+                    Some(_) => Probe::StillDown,
+                })
+            };
+            self.wait_for_machine(cause, &detail, &mut probe)?
+        } else {
+            // Each probe is a builder run. A run that fails the same way and did no work means still down.
+            let mut probe = || -> Result<Probe, EngineError> {
+                if let Some(out) = self.budget_stopped()? {
+                    return Ok(Probe::Parked(out));
+                }
+                if self.preflight(dir).is_some() {
+                    return Ok(Probe::StillDown);
+                }
+                again.start(self)?;
+                Ok(match self.run_builder_guarded(rerun(&failed))? {
+                    Err(out) => Probe::Parked(out),
+                    Ok(run)
+                        if classify_failure(&run) == Some(FailureClass::Machine(cause))
+                            && did_no_work(&run) =>
+                    {
+                        Probe::StillDown
+                    }
+                    Ok(run) => Probe::Final(run),
+                })
+            };
+            self.wait_for_machine(cause, &detail, &mut probe)?
+        };
+        match end {
+            WaitEnd::Ready => again.run(self),
+            WaitEnd::Final(run) => Ok(Ok(run)),
+            WaitEnd::Parked(out) => Ok(Err(out)),
         }
     }
 

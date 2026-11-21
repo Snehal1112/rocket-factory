@@ -524,7 +524,14 @@ fn a_stopped_first_task_parks_and_a_rework_resumes_at_that_task_with_the_note() 
         "{}",
         rec.parts[0].text
     );
-    assert_eq!(rec.next, vec!["factory rework 001 <note>".to_string()]);
+    // A failed stop already had its rerun, so a retry builds again.
+    assert_eq!(
+        rec.next,
+        vec![
+            "factory retry 001".to_string(),
+            "factory rework 001 <note>".to_string()
+        ]
+    );
     assert_eq!(fx.job().task_index, 0);
     // A rework puts the job back in build and leaves a note.
     std::fs::write(fx.job_dir.join("rework-note.md"), "use the small helper").expect("note");
