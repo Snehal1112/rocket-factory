@@ -338,6 +338,21 @@ impl Job {
         )
     }
 
+    /// The refusal that approve gives while review blockers are open and a required role has no
+    /// verdict. No flag gets past it, so it offers neither `--waive` nor `--without-review`.
+    pub fn waive_blocked_message(&self) -> String {
+        let (blockers, round, file) = self
+            .last_review
+            .as_ref()
+            .map_or((0, 0, ""), |r| (r.blockers, r.round, r.file.as_str()));
+        format!(
+            "job {} has {blockers} open review blockers from round {round} ({file}) and no {} review yet: use {}, or cancel",
+            self.id,
+            self.missing_reviews().join(" and "),
+            self.rework_hint()
+        )
+    }
+
     /// The command a refusal offers instead of a plain rework. A park with a resume stage is not
     /// a builder problem, so retry or a forced rework replaces `rework`.
     fn rework_hint(&self) -> String {
@@ -373,6 +388,10 @@ impl Job {
                 "job {} waits for an earlier plan of its series: use factory retry {} after it merges, or cancel",
                 self.id, self.id
             ));
+        }
+        // A waiver covers code findings only, never a review that has no verdict.
+        if self.changes_open() && self.review_missing() {
+            return Some(self.waive_blocked_message());
         }
         if waive && !self.changes_open() {
             return Some(format!(
@@ -1107,6 +1126,51 @@ mod tests {
     }
 
     #[test]
+    fn approve_refusal_blocks_every_flag_while_a_role_has_no_verdict() {
+        for state in [
+            ReviewState::Failed,
+            ReviewState::Pending,
+            ReviewState::Running,
+        ] {
+            for resume in [None, Some(crate::park::ResumeAt::Review)] {
+                let mut j = with_last_review("changes");
+                j.set_review("code", ReviewState::Changes);
+                j.set_review("security", state);
+                j.park_resume = resume;
+                for (without_review, waive) in [(false, false), (true, false), (false, true)] {
+                    let m = j.approve_refusal(without_review, waive).expect("refused");
+                    assert!(
+                        m.contains("3 open review blockers from round 2 (review-code-r2.md)"),
+                        "{m}"
+                    );
+                    assert!(m.contains("no security review yet"), "{m}");
+                    assert!(
+                        !m.contains("--waive") && !m.contains("--without-review"),
+                        "{m}"
+                    );
+                    let hint = if resume.is_some() {
+                        "use factory retry 001, or cancel"
+                    } else {
+                        "use rework, or cancel"
+                    };
+                    assert!(m.contains(hint), "{m}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn waive_still_works_when_every_role_has_a_verdict() {
+        let mut j = with_last_review("changes");
+        j.set_review("code", ReviewState::Changes);
+        assert!(j.approve_refusal(false, true).is_none(), "no security role");
+        j.set_review("security", ReviewState::Pass);
+        assert!(j.approve_refusal(false, true).is_none());
+        j.set_review("security", ReviewState::Skipped);
+        assert!(j.approve_refusal(false, true).is_none());
+    }
+
+    #[test]
     fn approve_refusal_series_message_only_for_series_waiting() {
         let mut j = job();
         j.stage = Stage::NeedsHuman;
@@ -1242,9 +1306,16 @@ mod tests {
     #[test]
     fn without_review_is_refused_while_changes_are_open() {
         let mut j = with_last_review("changes");
-        j.set_review("code", ReviewState::Pending);
+        j.set_review("code", ReviewState::Changes);
         let m = j.approve_refusal(true, false).expect("refused");
         assert!(m.contains("--waive"), "{m}");
+        // With the code review itself unfinished, no flag is offered at all.
+        j.set_review("code", ReviewState::Pending);
+        let m = j.approve_refusal(true, false).expect("refused");
+        assert!(
+            m.contains("no code review yet") && !m.contains("--waive"),
+            "{m}"
+        );
     }
 
     #[test]

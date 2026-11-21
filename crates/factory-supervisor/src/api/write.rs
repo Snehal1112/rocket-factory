@@ -1010,10 +1010,13 @@ mod tests {
     }
 
     fn open_changes_board(f: &Fx) {
-        let job = job_json("001", "001-first").replace(
-            r#""stage":"build""#,
-            r#""stage":"needs-human","last_review":{"round":2,"verdict":"changes","blockers":2,"file":"review-2.md","source":"review"}"#,
-        );
+        // A changes verdict always leaves the code role at changes, so a waiver is allowed.
+        let job = job_json("001", "001-first")
+            .replace(
+                r#""stage":"build""#,
+                r#""stage":"needs-human","last_review":{"round":2,"verdict":"changes","blockers":2,"file":"review-2.md","source":"review"}"#,
+            )
+            .replace(r#""reviews":{}"#, r#""reviews":{"code":"changes"}"#);
         write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
     }
 
@@ -1027,6 +1030,30 @@ mod tests {
             br#"{"waive_reason":"x","without_review":true}"#,
         );
         assert_eq!(code(&r), (400, "bad_request".to_string()), "{}", r.body);
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn waive_with_a_failed_security_review_is_a_conflict() {
+        let f = fx();
+        let job = job_json("001", "001-first")
+            .replace(
+                r#""stage":"build""#,
+                r#""stage":"needs-human","last_review":{"round":2,"verdict":"changes","blockers":2,"file":"review-2.md","source":"review"}"#,
+            )
+            .replace(
+                r#""reviews":{}"#,
+                r#""reviews":{"code":"changes","security":"failed"}"#,
+            );
+        write_board(&f.home, &format!(r#"{{"jobs":[{job}]}}"#));
+        let r = post(
+            &f,
+            "/projects/good/jobs/1/approve",
+            br#"{"waive_reason":"known flake"}"#,
+        );
+        assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
+        let msg = r.body["error"]["message"].as_str().unwrap_or("");
+        assert!(msg.contains("no security review yet"), "{msg}");
         assert_eq!(queued(&f), 0);
     }
 
