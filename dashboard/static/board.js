@@ -419,6 +419,7 @@
     "no-tests": "No tests added",
     "review-failed": "Review failed",
     "series-waiting": "Waiting for the earlier plan",
+    "machine-waiting": "Waiting for the machine",
     other: "Needs a human",
   };
   const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "builder-tampered", "commit-failed"];

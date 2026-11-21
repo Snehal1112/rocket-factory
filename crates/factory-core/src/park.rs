@@ -37,7 +37,8 @@ impl ResumeAt {
 }
 
 /// The commands for a park. With a resume stage, `factory retry` comes first and the
-/// `factory rework` and `factory retry` entries of the kind are dropped. A sync park also
+/// `factory rework` and `factory retry` entries of the kind are dropped, except that a machine
+/// wait or a stopped builder keeps its rework entry. A sync park also
 /// drops `factory approve`, which cannot clear it.
 pub fn next_with_resume(
     kind: ParkKind,
@@ -54,9 +55,10 @@ pub fn next_with_resume(
     let retry = format!("factory retry {id}");
     let approve = format!("factory approve {id}");
     let drop_approve = resume == Some(ResumeAt::Sync);
+    let keep_rework = matches!(kind, ParkKind::MachineWaiting | ParkKind::BuilderStopped);
     let mut out = vec![retry.clone()];
     out.extend(next.into_iter().filter(|n| {
-        !n.starts_with(&rework)
+        (keep_rework || !n.starts_with(&rework))
             && !n.starts_with(&retry)
             && !(drop_approve && n.starts_with(&approve))
     }));
@@ -82,6 +84,7 @@ pub enum ParkKind {
     NoTests,
     ReviewFailed,
     SeriesWaiting,
+    MachineWaiting,
     Other,
 }
 
@@ -103,6 +106,7 @@ impl ParkKind {
             ParkKind::NoTests => "no-tests",
             ParkKind::ReviewFailed => "review-failed",
             ParkKind::SeriesWaiting => "series-waiting",
+            ParkKind::MachineWaiting => "machine-waiting",
             ParkKind::Other => "other",
         }
     }
@@ -111,7 +115,7 @@ impl ParkKind {
     pub fn resume(self) -> Option<ResumeAt> {
         match self {
             ParkKind::ReviewFailed | ParkKind::NoChecks => Some(ResumeAt::Review),
-            ParkKind::SeriesWaiting => Some(ResumeAt::Build),
+            ParkKind::SeriesWaiting | ParkKind::MachineWaiting => Some(ResumeAt::Build),
             _ => None,
         }
     }
@@ -167,6 +171,7 @@ impl ParkKind {
             ParkKind::ReviewFailed | ParkKind::SeriesWaiting => {
                 vec![format!("factory retry {id}"), cancel]
             }
+            ParkKind::MachineWaiting => vec![format!("factory retry {id}"), rework, cancel],
             ParkKind::NothingChanged | ParkKind::BuilderTampered => vec![rework, cancel],
             ParkKind::Other => vec![approve, rework, cancel],
         }
@@ -519,6 +524,53 @@ mod tests {
         assert_eq!(
             next_with_resume(kind, "086", false, None, Some(ResumeAt::Build)),
             vec!["factory retry 086", "factory cancel 086"]
+        );
+    }
+
+    #[test]
+    fn machine_waiting_round_trips_and_resumes_at_build() {
+        let kind = ParkKind::MachineWaiting;
+        assert_eq!(kind.as_str(), "machine-waiting");
+        assert_eq!(kind.resume(), Some(ResumeAt::Build));
+        assert_eq!(ParkKind::BuilderStopped.resume(), None);
+        let rec = ParkRecord::new(kind, "why", "001", 1, 1, Vec::new());
+        let text = serde_json::to_string(&rec).expect("serialize");
+        assert!(text.contains("machine-waiting"), "{text}");
+        let back: ParkRecord = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back.kind, kind);
+    }
+
+    #[test]
+    fn machine_waiting_next_lists_retry_rework_cancel() {
+        let want = vec![
+            "factory retry 001",
+            "factory rework 001 <note>",
+            "factory cancel 001",
+        ];
+        assert_eq!(ParkKind::MachineWaiting.next("001"), want);
+        assert_eq!(
+            next_with_resume(
+                ParkKind::MachineWaiting,
+                "001",
+                false,
+                None,
+                Some(ResumeAt::Build)
+            ),
+            want
+        );
+    }
+
+    #[test]
+    fn builder_stopped_with_build_resume_keeps_rework() {
+        assert_eq!(
+            next_with_resume(
+                ParkKind::BuilderStopped,
+                "001",
+                false,
+                None,
+                Some(ResumeAt::Build)
+            ),
+            vec!["factory retry 001", "factory rework 001 <note>"]
         );
     }
 

@@ -58,6 +58,7 @@ Defaults come from `Config::default()` in `factory-core/src/config.rs`. A value 
 | `dependents_cap` | integer | 6 | Most direct dependents a `{dependents}` check command expands to. The rest are skipped, and `checks.md` names them. |
 | `unchecked_paths` | list of globs | `[]` | Paths that no check covers on purpose. They are never reported as uncovered. Doc paths are never reported either. Matching ignores case. The rust preset sets `LICENSE`, `LICENSE-*`, `LICENSE.txt`, `COPYING`, `COPYING.*`, `.gitignore`, `.gitattributes` and `.editorconfig`, which match at the repo root only. |
 | `stall_minutes` | integer | 10 | Minutes without any stream event before the driver kills the agent. Applies to builder, reviewer, spec reviewer and KB agents. The check is approximate. |
+| `min_free_disk_mb` | integer | 2048 | Free space, in MB, that the job worktree's filesystem and the factory home's must each have before a builder starts. While either is short, the job waits up to 25 minutes, then parks `machine-waiting`. `0` turns the check off. |
 
 Weighted tokens are `input + cache_creation + output + cache_read / 10` (`factory-core/src/budget.rs`). When a builder is killed on budget it parks as `builder-stopped`. `budget-stopped` is only used when a reviewed round finds the budget gone.
 

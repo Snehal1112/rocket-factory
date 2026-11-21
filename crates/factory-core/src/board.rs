@@ -137,6 +137,12 @@ pub struct Job {
     /// The model the stored builder session ran on. New in the builder escalation series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builder_session_model: Option<String>,
+    /// Why the job waits for the machine, for the dashboard. New in the builder recovery series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_wait: Option<String>,
+    /// The round whose builder changed nothing. New in the builder recovery series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_change_round: Option<u32>,
     /// A warning about the job's spec, for the dashboard. New in the draft cards series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec_warning: Option<String>,
@@ -298,6 +304,8 @@ impl Job {
             fix_source: None,
             escalated_model: None,
             builder_session_model: None,
+            machine_wait: None,
+            no_change_round: None,
             spec_warning: None,
             task_session: None,
             builder_last: None,
@@ -357,7 +365,9 @@ impl Job {
 
     /// The reason approve is refused for this job, or `None` when it is allowed. CLI and API share it.
     pub fn approve_refusal(&self, without_review: bool, waive: bool) -> Option<String> {
-        if self.stage == Stage::NeedsHuman && self.park_resume == Some(crate::park::ResumeAt::Build)
+        if self.stage == Stage::NeedsHuman
+            && self.park_resume == Some(crate::park::ResumeAt::Build)
+            && self.park_kind.as_deref() == Some("series-waiting")
         {
             return Some(format!(
                 "job {} waits for an earlier plan of its series: use factory retry {} after it merges, or cancel",
@@ -1097,10 +1107,33 @@ mod tests {
     }
 
     #[test]
+    fn approve_refusal_series_message_only_for_series_waiting() {
+        let mut j = job();
+        j.stage = Stage::NeedsHuman;
+        j.park_resume = Some(crate::park::ResumeAt::Build);
+        j.park_kind = Some("machine-waiting".into());
+        let m = j.approve_refusal(true, false);
+        assert!(!m.unwrap_or_default().contains("earlier plan"));
+    }
+
+    #[test]
+    fn new_job_fields_are_optional() {
+        let j = job();
+        let mut v = serde_json::to_value(&j).expect("serialize");
+        assert!(v.get("machine_wait").is_none());
+        assert!(v.get("no_change_round").is_none());
+        v.as_object_mut().unwrap().remove("machine_wait");
+        let back: Job = serde_json::from_value(v).expect("loads without the fields");
+        assert_eq!(back.machine_wait, None);
+        assert_eq!(back.no_change_round, None);
+    }
+
+    #[test]
     fn approve_refusal_names_retry_on_a_build_resume_park() {
         let mut j = job();
         j.stage = Stage::NeedsHuman;
         j.park_resume = Some(crate::park::ResumeAt::Build);
+        j.park_kind = Some("series-waiting".into());
         for without_review in [true, false] {
             let m = j.approve_refusal(without_review, false).expect("refused");
             assert!(m.contains("factory retry 001"), "{m}");

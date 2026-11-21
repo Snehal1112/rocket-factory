@@ -122,6 +122,8 @@ pub struct Config {
     /// Fix rounds a risky diff may use. `None` means the same as `fix_rounds`.
     pub risky_fix_rounds: Option<u32>,
     pub stall_minutes: u32,
+    /// Free space in MB that the worktree and the factory home each need before a builder starts. 0 turns the check off.
+    pub min_free_disk_mb: u64,
     pub builder_model: String,
     pub reviewer_model: String,
     /// A stronger reviewer model for risky or large diffs. The same name as `reviewer_model` turns the switch off.
@@ -258,6 +260,7 @@ impl Default for Config {
             fix_rounds: 2,
             risky_fix_rounds: None,
             stall_minutes: 10,
+            min_free_disk_mb: 2048,
             builder_model: "claude-sonnet-5-5".to_string(),
             reviewer_model: "claude-sonnet-5-5".to_string(),
             reviewer_model_large: Some("claude-opus-5-5".to_string()),
@@ -827,6 +830,19 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn min_free_disk_mb_defaults_to_2048() {
+        assert_eq!(Config::default().min_free_disk_mb, 2048);
+    }
+
+    #[test]
+    fn min_free_disk_mb_parses() {
+        let c = Config::parse("min_free_disk_mb = 0").expect("ok");
+        assert_eq!(c.min_free_disk_mb, 0);
+        let c = Config::parse("min_free_disk_mb = 512").expect("ok");
+        assert_eq!(c.min_free_disk_mb, 512);
+    }
+
     #[test]
     fn risky_fix_rounds_defaults_to_fix_rounds() {
         let d = Config::default();
