@@ -3,6 +3,7 @@ pub mod agent_drift;
 pub mod agents;
 pub mod board;
 pub mod budget;
+pub mod cargo_lock;
 pub mod commitmsg;
 pub mod config;
 pub mod cost;
@@ -45,6 +46,10 @@ pub use board::{
     SeriesPos, StageEntry, TaskSession, DRAFT_STAGES,
 };
 pub use budget::{budget_state, weighted_tokens, BudgetState};
+pub use cargo_lock::{
+    check_path_packages, compare_locks, manifest_keys_diff, CargoTarget, CargoVerdict, LockDiff,
+    PathPackage,
+};
 pub use commitmsg::{
     append_footers, blocked_reason, build_job_message, builder_rulings, builder_status,
     check_job_subject, check_note, fallback_note, has_footer, issue_footer, note_bullets,
