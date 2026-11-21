@@ -273,6 +273,71 @@ impl Engine<'_> {
         self.finish_agent(&spec, run, started.elapsed())
     }
 
+    /// Runs several agents at the same time and returns the runs in input order.
+    /// Every spec is prepared first, so a prepare error returns before any run starts.
+    pub(crate) fn run_agents(&self, specs: Vec<AgentSpec>) -> Result<Vec<AgentRun>, EngineError> {
+        let mut prepared = Vec::with_capacity(specs.len());
+        for spec in specs {
+            prepared.push(self.prepare_agent(spec)?);
+        }
+        let ready = prepared
+            .iter()
+            .filter(|p| matches!(p, Prepared::Ready(_)))
+            .count();
+        // One run needs no thread.
+        let mut timed: Vec<Option<(AgentRun, std::time::Duration)>> = if ready == 1 {
+            prepared
+                .iter()
+                .map(|p| match p {
+                    Prepared::Ready(spec) => {
+                        let started = std::time::Instant::now();
+                        Some((self.runner.run(spec), started.elapsed()))
+                    }
+                    Prepared::Refused(_) => None,
+                })
+                .collect()
+        } else {
+            // Each thread runs under the dispatcher and span of the calling thread.
+            let dispatch = tracing::dispatcher::get_default(|d| d.clone());
+            let span = tracing::Span::current();
+            let runner = self.runner;
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = prepared
+                    .iter()
+                    .map(|p| match p {
+                        Prepared::Ready(spec) => {
+                            let (dispatch, span) = (dispatch.clone(), span.clone());
+                            Some(scope.spawn(move || {
+                                tracing::dispatcher::with_default(&dispatch, || {
+                                    span.in_scope(|| {
+                                        let started = std::time::Instant::now();
+                                        (runner.run(spec), started.elapsed())
+                                    })
+                                })
+                            }))
+                        }
+                        Prepared::Refused(_) => None,
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))))
+                    .collect()
+            })
+        };
+        let mut runs = Vec::with_capacity(prepared.len());
+        for (p, slot) in prepared.into_iter().zip(timed.iter_mut()) {
+            runs.push(match p {
+                Prepared::Ready(spec) => {
+                    let (run, elapsed) = slot.take().expect("a ready spec has a run");
+                    self.finish_agent(&spec, run, elapsed)?
+                }
+                Prepared::Refused(run) => run,
+            });
+        }
+        Ok(runs)
+    }
+
     /// Everything before a run: the lost flag, the provider, the model, the spec shape and the agents file.
     pub(crate) fn prepare_agent(&self, mut spec: AgentSpec) -> Result<Prepared, EngineError> {
         if let Some(flag) = self.lost.as_ref().filter(|flag| flag.is_set()) {

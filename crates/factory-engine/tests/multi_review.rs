@@ -486,3 +486,126 @@ fn a_failed_role_with_an_approving_role_parks() {
     let file = std::fs::read_to_string(&outcome.review_path).expect("file");
     assert!(file.contains("run failed (stalled)"), "{file}");
 }
+
+/// A scripted runner that calls a hook before it plays the reply.
+struct Hooked {
+    inner: ScriptedRunner,
+    hook: Box<dyn Fn(&factory_agent::AgentSpec) + Send + Sync>,
+}
+
+impl AgentRunner for Hooked {
+    fn run(&self, spec: &factory_agent::AgentSpec) -> factory_agent::AgentRun {
+        (self.hook)(spec);
+        self.inner.run(spec)
+    }
+}
+
+fn both_roles(security: &'static str) -> ScriptedRunner {
+    scripted_roles(vec![
+        ("reviewer", reply(CODE_OK)),
+        ("security-review", reply(security)),
+    ])
+}
+
+fn sleep_for(spec: &factory_agent::AgentSpec, role: &str, ms: u64) {
+    if spec.role == role {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
+fn agent_end<'a>(lines: &'a [serde_json::Value], role: &str) -> &'a serde_json::Value {
+    lines
+        .iter()
+        .find(|l| l["event"] == "agent.end" && l["role"] == role)
+        .unwrap_or_else(|| panic!("no agent.end for {role}: {lines:?}"))
+}
+
+#[test]
+fn reviewers_run_at_the_same_time() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let fx = reviewed_fixture(&["code", "security"]);
+    let live = Arc::new(AtomicUsize::new(0));
+    let high = Arc::new(AtomicUsize::new(0));
+    let (live_in, high_in) = (live.clone(), high.clone());
+    let runner = Hooked {
+        inner: both_roles(SECURITY_OK),
+        hook: Box::new(move |_| {
+            live_in.fetch_add(1, Ordering::SeqCst);
+            let start = std::time::Instant::now();
+            // The wait ends at the timeout, so a sequential build fails instead of hanging.
+            while live_in.load(Ordering::SeqCst) < 2 && start.elapsed().as_secs() < 2 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            high_in.fetch_max(live_in.load(Ordering::SeqCst), Ordering::SeqCst);
+            live_in.fetch_sub(1, Ordering::SeqCst);
+        }),
+    };
+    engine(&fx, &runner).review_stage().expect("review");
+    assert_eq!(high.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn merged_review_keeps_code_first_when_security_finishes_first() {
+    let fx = reviewed_fixture(&["code", "security"]);
+    let runner = Hooked {
+        inner: both_roles(SECURITY_BAD),
+        hook: Box::new(|spec| sleep_for(spec, "reviewer", 300)),
+    };
+    let outcome = engine(&fx, &runner).review_stage().expect("review");
+    assert_eq!(outcome.verdict, Verdict::Changes);
+    let file = std::fs::read_to_string(fx.job_dir.join("review-code-r1.md")).expect("file");
+    let code_at = file.find("## code review").expect("code section");
+    let security_at = file.find("## security review").expect("security section");
+    assert!(code_at < security_at, "{file}");
+    let job = fx.job();
+    assert_eq!(job.reviews.get("code"), Some(&ReviewState::Pass));
+    assert_eq!(job.reviews.get("security"), Some(&ReviewState::Changes));
+}
+
+#[test]
+fn parallel_runs_log_their_own_duration() {
+    let fx = reviewed_fixture(&["code", "security"]);
+    let runner = Hooked {
+        inner: both_roles(SECURITY_OK),
+        hook: Box::new(|spec| sleep_for(spec, "reviewer", 1200)),
+    };
+    let (res, lines) = factory_telemetry::capture("info", || {
+        tracing::info_span!("job", job_id = "001").in_scope(|| engine(&fx, &runner).review_stage())
+    });
+    res.expect("review");
+    let code_ms = agent_end(&lines, "reviewer")["duration_ms"].as_u64();
+    let security_ms = agent_end(&lines, "security-review")["duration_ms"].as_u64();
+    assert!(code_ms.expect("ms") >= 1200, "{lines:?}");
+    assert!(security_ms.expect("ms") < 1000, "{lines:?}");
+}
+
+#[test]
+fn parallel_runs_keep_the_job_span() {
+    let fx = reviewed_fixture(&["code", "security"]);
+    let runner = Hooked {
+        inner: both_roles(SECURITY_OK),
+        hook: Box::new(|spec| tracing::info!(event = "test.run", role = %spec.role)),
+    };
+    let (res, lines) = factory_telemetry::capture("info", || {
+        tracing::info_span!("job", job_id = "001").in_scope(|| engine(&fx, &runner).review_stage())
+    });
+    res.expect("review");
+    let runs: Vec<_> = lines.iter().filter(|l| l["event"] == "test.run").collect();
+    assert_eq!(runs.len(), 2, "{lines:?}");
+    assert!(runs.iter().all(|l| l["job_id"] == "001"), "{runs:?}");
+}
+
+#[test]
+fn lost_flag_starts_no_reviewer() {
+    let fx = reviewed_fixture(&["code", "security"]);
+    let runner = both_roles(SECURITY_OK);
+    let flag = Arc::new(factory_engine::LostFlag::new());
+    flag.set(factory_engine::LostReason::TakenOver);
+    let err = engine(&fx, &runner)
+        .with_lost(flag)
+        .review_stage()
+        .err()
+        .expect("lost lease");
+    assert!(err.to_string().contains("project is busy"), "{err}");
+    assert_eq!(runner.call_count(), 0);
+}

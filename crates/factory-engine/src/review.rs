@@ -186,7 +186,9 @@ impl Engine<'_> {
         let mut parts: Vec<RolePart> = Vec::new();
         let mut verdicts: Vec<Verdict> = Vec::new();
         let mut role_failed = false;
-        for role in to_run {
+        let mut specs = Vec::with_capacity(to_run.len());
+        for role in &to_run {
+            let role = *role;
             let spec = if role == "security" {
                 self.security_spec_with_model(
                     &cwd,
@@ -211,7 +213,10 @@ impl Engine<'_> {
                 j.set_review(role, ReviewState::Running);
                 Ok(())
             })?;
-            let run = self.run_agent(spec)?;
+            specs.push(spec);
+        }
+        let runs = self.run_agents(specs)?;
+        for (role, run) in to_run.into_iter().zip(runs) {
             if multi {
                 // The round and run suffix of the review file name, such as `r1-rebase`.
                 let stem = file
