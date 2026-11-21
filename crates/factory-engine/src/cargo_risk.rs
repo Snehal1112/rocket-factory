@@ -71,12 +71,16 @@ fn verdict(v: CargoVerdict) -> Result<(), String> {
     }
 }
 
-/// The config text the stored verdict is keyed by.
+/// The config text the stored verdict is keyed by. Each glob is length-prefixed so no glob text can fake a boundary.
 fn config_text(config: &Config) -> String {
+    let globs: String = config
+        .risk_paths
+        .iter()
+        .map(|g| format!("{}:{g}", g.len()))
+        .collect();
     format!(
-        "cargo_lock_check={}; risk_paths={}",
-        config.cargo_lock_check,
-        config.risk_paths.join(",")
+        "cargo_lock_check={}; risk_paths={globs}",
+        config.cargo_lock_check
     )
 }
 
@@ -185,9 +189,6 @@ impl Engine<'_> {
 
     /// Like `risk`, with the export folder made under `temp_root`.
     pub(crate) fn risk_in(&self, paths: &[String], temp_root: &Path) -> Risk {
-        let outside = self
-            .job_changed_paths_raw()
-            .map(|raw| self.repo.out_of_scope(&raw));
         let class = classify_paths(paths, &self.config);
         if class != DiffClass::Risky {
             return Risk {
@@ -210,6 +211,10 @@ impl Engine<'_> {
         {
             return stays_risky(None);
         }
+        // The git diff runs only after the cheap gate, so a diff that stays risky without cargo never pays for it.
+        let outside = self
+            .job_changed_paths_raw()
+            .map(|raw| self.repo.out_of_scope(&raw));
         match outside {
             Ok(list) if list.is_empty() => {}
             Ok(_) => return stays_risky(Some(stays("a changed path is outside the project"))),
@@ -663,6 +668,31 @@ pub(crate) mod tests {
         assert_eq!(lines.next(), Some(store_key(&job.head, &config()).as_str()));
         assert_eq!(lines.next(), Some("risky"));
         assert_eq!(lines.next(), Some(note.as_str()));
+    }
+
+    #[test]
+    fn store_key_length_prefixes_each_glob() {
+        let with = |globs: &[&str]| Config {
+            risk_paths: globs.iter().map(|g| g.to_string()).collect(),
+            ..Config::default()
+        };
+        assert_eq!(
+            store_key("abc", &with(&["**/Cargo.toml", "**/Cargo.lock"])),
+            "key abc cargo_lock_check=true; risk_paths=13:**/Cargo.toml13:**/Cargo.lock"
+        );
+        assert_ne!(
+            store_key("abc", &with(&["a,b"])),
+            store_key("abc", &with(&["a", "b"]))
+        );
+    }
+
+    #[test]
+    fn store_key_counts_bytes() {
+        let config = Config {
+            risk_paths: vec!["é/**".to_string()],
+            ..Config::default()
+        };
+        assert!(store_key("h", &config).ends_with("risk_paths=5:é/**"));
     }
 
     #[test]

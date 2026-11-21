@@ -371,7 +371,12 @@ fn a_new_config_runs_the_check_again() {
         .expect("review again");
     let stored = std::fs::read_to_string(fx.job_dir.join("cargo-check.txt")).expect("store");
     let first = stored.lines().next().expect("line 1");
-    let expected = format!("cargo_lock_check=true; risk_paths={},x/**", GLOBS.join(","));
+    let prefixed: String = GLOBS
+        .iter()
+        .chain(["x/**"].iter())
+        .map(|g| format!("{}:{g}", g.len()))
+        .collect();
+    let expected = format!("cargo_lock_check=true; risk_paths={prefixed}");
     assert!(first.starts_with("key "), "{first}");
     assert!(first.ends_with(&expected), "{first}");
 }
