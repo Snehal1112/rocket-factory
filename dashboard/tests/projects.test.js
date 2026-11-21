@@ -243,3 +243,19 @@ test("versionLabel ignores replies without a sane dashboard version", () => {
   assert.equal(projects.versionLabel({ dashboard: "<b>x</b>" }).text, "");
   assert.equal(projects.versionLabel({ dashboard: "0.1.6", factoryd: "<i>" }).text, "v0.1.6");
 });
+
+test("jobActions drops approve while open changes wait on a missing review", () => {
+  const blocked = {
+    stage: "needs-human",
+    last_review: { verdict: "changes", blockers: 3 },
+    reviews: { code: "changes", security: "failed" },
+  };
+  assert.equal(projects.approveBlocked(blocked), true);
+  assert.deepEqual(projects.jobActions(blocked), ["rework", "cancel"]);
+  assert.deepEqual(projects.jobActions({ ...blocked, park_resume: "review" }), ["retry", "cancel"]);
+  assert.deepEqual(projects.jobActions({ ...blocked, stage: "approve" }), ["cancel"]);
+  const passed = { ...blocked, reviews: { code: "changes", security: "pass" } };
+  assert.equal(projects.approveBlocked(passed), false);
+  assert.deepEqual(projects.jobActions(passed), ["approve", "rework", "cancel"]);
+  assert.deepEqual(projects.jobActions({ ...passed, park_resume: "review" }), ["retry", "approve", "cancel"]);
+});

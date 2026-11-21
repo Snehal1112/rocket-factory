@@ -101,8 +101,22 @@
     return body;
   }
 
-  // The buttons a job card shows, in order.
+  // True when open changes wait on a review with no verdict, so no approve can merge the job. Same rule
+  // as approveBlocked in board.js, which this file does not load.
+  function approveBlocked(job) {
+    const reviews = (job && job.reviews) || {};
+    const done = (state) => ["pass", "changes", "skipped"].includes(state);
+    const missing = !done(reviews.code) || ("security" in reviews && !done(reviews.security));
+    return Boolean(job && job.last_review && job.last_review.verdict === "changes") && missing;
+  }
+
+  // The buttons a job card shows, in order. A blocked job has no approve button.
   function jobActions(job) {
+    const list = baseActions(job);
+    return approveBlocked(job) ? list.filter((name) => name !== "approve") : list;
+  }
+
+  function baseActions(job) {
     if (!job || job.cancelled === true) return [];
     if (job.stage === "needs-human" && job.park_resume === "build" && job.park_kind === "series-waiting") return ["retry", "cancel"];
     if (job.stage === "needs-human" && job.park_resume === "build") return ["retry", "rework", "cancel"];
@@ -204,6 +218,7 @@
     buildReworkBody,
     buildWaiveBody,
     buildCancelBody,
+    approveBlocked,
     jobActions,
     errorText,
   };

@@ -32,8 +32,15 @@
     return Boolean(job && job.last_review && job.last_review.verdict === "changes");
   }
 
+  // True when open changes wait on a review with no verdict. No approve flag merges such a job.
+  function approveBlocked(job) {
+    return openChanges(job) && reviewMissing(job);
+  }
+
   // The approve command to show: open changes need a waiver, a review that has not run needs the flag.
+  // A blocked job gets none, so retry or rework is the only way on.
   function approveCommand(job) {
+    if (approveBlocked(job)) return "";
     if (openChanges(job)) return `factory approve ${job.id} --waive "<reason>"`;
     return reviewMissing(job) ? `factory approve ${job.id} --without-review` : `factory approve ${job.id}`;
   }
@@ -329,7 +336,9 @@
     );
   }
 
+  // A chip that copies the command. An empty command gets no chip.
   function copyChip(command) {
+    if (!command) return "";
     const safe = escapeHtml(command);
     return `<button type="button" class="cmd" data-copy="${safe}" title="Copy to the clipboard">${safe}</button>`;
   }
@@ -958,6 +967,8 @@
 
   const api = {
     STAGES,
+    approveBlocked,
+    approveCommand,
     openAgents,
     taskChoice,
     escapeHtml,

@@ -443,7 +443,7 @@ Use it after you looked at the change and accept it.
 | Option | Meaning |
 |---|---|
 | `--without-review` | Merge a `needs-human` job even though the code review never ran. |
-| `--waive "<reason>"` | Merge a `needs-human` job whose last review asked for changes. The reason is one line, not empty, at most 200 characters. It cannot be combined with `--without-review`. |
+| `--waive "<reason>"` | Merge a `needs-human` job whose last review asked for changes. The reason is one line, not empty, at most 200 characters. It cannot be combined with `--without-review`. It is refused while a required review (code, or security when the job has one) failed or has not finished: a waiver covers review findings, never a missing review. |
 
 ```bash
 factory approve 028
@@ -463,6 +463,7 @@ Refusals, each exiting with code 1:
 | `job N is in stage X, approve needs needs-human or approve` | The job is not waiting for you. |
 | `job N has no code review yet ...` | Use `rework`, or `approve --without-review` to merge anyway. |
 | `job N has B open review blockers from round R (FILE): use rework, cancel, or approve --waive "<reason>" to merge anyway` | The last review asked for changes. Use `rework`, `cancel`, or `approve --waive` to merge anyway. |
+| `job N has B open review blockers from round R (FILE) and no security review yet: use factory retry N, or cancel` | The last review asked for changes and a required review failed or never finished. No flag merges this job. Use `retry` (or `rework` when the message names it) to run the review again, or `cancel`. The dashboard shows no Approve button for it. |
 | `job N has no open review findings to waive` | `--waive` needs a last review that asked for changes. The job's last review approved, or it has none yet. Drop `--waive`, and add `--without-review` when no review ran. |
 | `job N review did not finish in round R: use rework, cancel, or approve --without-review to merge anyway` | The reviewer started but gave no verdict. |
 | `job N cannot be approved, the job changed files outside <sub>` | Monorepo projects only. Use `rework` so the builder removes those changes. |

@@ -1233,3 +1233,20 @@ test("a card at build shows the machine wait text", () => {
   const plain = board.renderCard(makeJob({ stage: "build" }));
   assert.doesNotMatch(plain, /waiting:/);
 });
+
+test("approveCommand offers nothing while open changes wait on a missing review", () => {
+  const blocked = {
+    stage: "needs-human",
+    last_review: { verdict: "changes", blockers: 3 },
+    reviews: { code: "changes", security: "failed" },
+  };
+  const job = makeJob(blocked);
+  assert.equal(board.approveBlocked(job), true);
+  assert.equal(board.approveCommand(job), "");
+  assert.doesNotMatch(board.renderCard(job), /factory approve/);
+  assert.doesNotMatch(board.renderCard(makeJob({ ...blocked, park_resume: "review" })), /factory approve/);
+  const passed = makeJob({ ...blocked, reviews: { code: "changes", security: "pass" } });
+  assert.equal(board.approveBlocked(passed), false);
+  assert.ok(board.approveCommand(passed).includes("--waive"));
+  assert.match(board.renderCard(passed), /factory approve 001 --waive/);
+});
