@@ -73,13 +73,17 @@ Example: S7 holds 030 (parked), 031-034 (stage spec). `factory cancel 030 --reas
 - The new job gets the target's `SeriesPos` with `plan_file` set to the fixed plan's path: same series id, index and total. It is made with `add_job` at stage `build` like the first plan of a new series (`runloop.rs` copies the plan into the job folder as `plan.md` there); the worktree and branch are cut at build start as for any job. Nothing of the target's branch carries over. Slug and feature come from the arguments; `--model` defaults to the target's model.
 - Spec: with `--spec`, the spec check runs as for any `new` and the spec is copied into the new job's folder. Without `--spec`, the target's `spec.md` is copied and no spec check runs.
 - The target, if not already cancelled, is cancelled with `--only` semantics and reason `cancelled: replaced by job <new id>`. The new job's ledger gets `replaces job <old id>`. Output: `created job 091 in <folder>`, then `job 030 replaced by job 091`.
-- The new job then runs like any series plan: the guard parks it while plan N-1 is unmerged; after it merges, `run_series` finds plan N+1 by series id and index (section 4) and continues it.
+- The new job then runs like any series plan: the guard parks it while plan N-1 is unmerged; after it merges, `run_series` finds plan N+1 by series id and index (section 5) and continues it.
 
-### 4. Series lookups skip cancelled jobs
+### 4. Rework of a replaced job
+
+- `factory rework <id>` (also with `--force`) on a job that was replaced is refused with `job <old> was replaced by job <new>, rework that one`, using `Board::replacement_of`. Today a rework revives a cancelled job (`commands.rs:863-864`, `:889-890`); that stays for a cancelled job that was not replaced, including a later plan cancelled by a cascade. So no series place ever holds two live jobs.
+
+### 5. Series lookups skip cancelled jobs
 
 - `wait_for_earlier_plan` picks plan N-1 among members that are not cancelled first, and falls back to a cancelled one only when no other job has that index. So a replaced plan N-1 does not park plan N for good, and an unreplaced cancel still parks it.
 - The cancelled-predecessor reason becomes `plan <n> (job <id>) was cancelled; cancel this plan, or replace plan <n> with factory new --replaces <id>`.
-- When the merged job has a series id, the `run_series` lookup of plan N+1 (`runloop.rs:789`) matches by series id and index N+1 and skips cancelled jobs, instead of by `plan_file`. So plan N-1 finds a replacement at a new path, and a replaced plan N finds the old plan N+1. Without a series id (legacy) the `plan_file` match stays. When the only job at N+1 is cancelled, the series ends there with `RunEnd::Merged`; no new job is made for it.
+- When the merged job has a series id, the `run_series` lookup of plan N+1 (`runloop.rs:789`) matches by series id and index N+1 and skips cancelled jobs, instead of by `plan_file`. So plan N-1 finds a replacement at a new path, and a replaced plan N finds the old plan N+1. Without a series id (legacy) the `plan_file` match stays. When no job at all holds index N+1 (for example a card removed by hand), the job is created as today (`runloop.rs:794-821`), with the series id and index N+1. When the only job at N+1 is cancelled, the series ends there with `RunEnd::Merged`; no new job is made for it.
 
 ## Error handling and edge cases
 
@@ -100,6 +104,9 @@ Example: S7 holds 030 (parked), 031-034 (stage spec). `factory cancel 030 --reas
 | Cleanup of a member while the series is not finished | Target only, as today. A replaced job keeps its card until the series is finished, like any cancelled member. |
 | Cancel a target that was replaced | Refused, naming the replacement. |
 | Cancel an already cancelled target | Cascades to later unmerged plans. |
+| Rework a replaced job | Refused, naming the replacement. |
+| Rework a later plan cancelled by a cascade | Revived as today; the plans after it stay cancelled. |
+| No job at index N+1 after plan N merges | Created as today, with the series id and index N+1. |
 
 ## Testing
 
@@ -111,6 +118,7 @@ Example: S7 holds 030 (parked), 031-034 (stage spec). `factory cancel 030 --reas
 - `cancel_refuses_when_a_later_plan_holds_a_live_lease`: nothing changes, refusal names the job.
 - `cancel_without_series_is_unchanged`.
 - `cancel_of_a_replaced_job_is_refused`, `cancel_of_a_cancelled_job_cascades`.
+- `rework_of_a_replaced_job_is_refused`, `rework_revives_a_cancelled_job_that_was_not_replaced` (`crates/factory-cli/tests/retry_cmd.rs`).
 - `cleanup_of_finished_series_cleans_every_cancelled_member`, `cleanup_reports_a_refused_member_and_goes_on`.
 - `new_replaces_takes_the_index_and_cancels_the_target`, `new_replaces_copies_the_target_spec_without_spec_flag`, `new_replaces_refuses_folder_merged_no_series_wrong_next_line` (one test per refusal row).
 
@@ -149,6 +157,7 @@ Commands: `cargo test -j4 -p factory-cli`, `cargo test -j4 -p factory-engine`, `
 - `--replaces` refuses a folder, a merged target, a target without a series id, a target already replaced, a live lease and a wrong `Next plan:` line.
 - After the replacement merges, the next plan of the series continues, also when the replacement plan file has a new path.
 - Cancelling a replaced job is refused; cancelling an already cancelled job cascades.
+- Reworking a replaced job is refused and names the replacement.
 - The series guard waits on the replacement, not on the cancelled job.
 - README and `software-factory.md` describe the cascade, `--only`, series cleanup and `--replaces`.
 
@@ -164,9 +173,11 @@ Commands: `cargo test -j4 -p factory-cli`, `cargo test -j4 -p factory-engine`, `
 ## Decisions
 
 - What should happen to later plans when a plan dies? Options: cancel the rest in one step (A), put a fixed plan in its place (B), re-plan the chain from plan N (C). Chosen: A and B together. Decided by: user
-- Cascade by default or on request? Options: cascade by default with `--only`, plain cancel with a `--series` flag. Chosen: cascade by default with `--only`. Decided by: call
+- Cascade by default or on request? Options: cascade by default with `--only` to opt out, one job by default with `--series` to opt in, cascade in the CLI but one job in the API. Chosen: cascade by default with `--only`, in the CLI and the API. Decided by: user
 - Replacement interface? Options: `factory new --replaces <id>`, a new `factory replace` command. Chosen: `factory new --replaces <id>`, as sketched to the user. Decided by: call
 - Spec for a replacement? Options: copy the target's spec unless `--spec` is given, always require `--spec`. Chosen: copy unless `--spec`. Decided by: call
 - Next-plan lookup? Options: series id and index, plan file path. Chosen: series id and index for series with an id. Decided by: call
 - Cancel of a replaced job? Options: refuse, cancel only that job. Chosen: refuse. Decided by: call
-- Dashboard cancel? Options: cascade with a confirm text, add an "only this plan" control. Chosen: cascade with a confirm text. Decided by: call
+- Dashboard cancel? Options: follow the CLI default with a dialog title that names the later plans, add an "also cancel the later plans" checkbox, always one job. Chosen: follow the CLI default with the dialog title. Decided by: user
+- Rework of a replaced job? Options: refuse and name the replacement, revive the old job and cancel its replacement. Chosen: refuse and name the replacement. Decided by: user
+- No job at index N+1 of a series with an id? Options: create it as today, end the series. Chosen: create it as today. Decided by: call
