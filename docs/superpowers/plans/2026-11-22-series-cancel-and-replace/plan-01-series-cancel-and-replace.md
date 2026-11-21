@@ -216,7 +216,7 @@ Expected: FAIL. `plan_two_parks_when_plan_one_was_cancelled` fails on the new re
 - [ ] **Step 8: Implement the lookups**
 
 - `wait_for_earlier_plan`: find plan N-1 with `board.series_member(sid, n)`. The cancelled reason is exactly `format!("plan {n} (job {id}) was cancelled; cancel this plan, or replace plan {n} with factory new --replaces {id}")`.
-- `run_series`: when `pos.id` is `Some(sid)`, `existing` is `board.series_member(sid, pos.index + 1)`. If that job is cancelled, return `Ok(RunEnd::Merged)`. Without a series id keep today's `plan_file` match. Keep the `None` branch that creates a late job for legacy series only (no series id).
+- `run_series`: when `pos.id` is `Some(sid)`, `existing` is `board.series_member(sid, pos.index + 1)`. If that job is cancelled, return `Ok(RunEnd::Merged)`. Without a series id keep today's `plan_file` match. When no job holds index N+1, keep the `None` branch that creates the job as today (`runloop.rs:794-821`), for series with and without an id.
 
 - [ ] **Step 9: Run the engine tests**
 
@@ -359,21 +359,22 @@ Order in `create_replacement`, so that a refusal changes nothing:
 Run: `cargo test -j4 -p factory-engine --test series_guard`
 Expected: all pass. Then `cargo test -j4 -p factory-engine` passes.
 
-### Task 3: `factory new --replaces` and the docs
+### Task 3: `factory new --replaces`, rework refusal and the docs
 
 **Files:**
 - Modify: `crates/factory-cli/src/cli.rs:63-88` (`Command::New`)
-- Modify: `crates/factory-cli/src/commands.rs:372-393` and `new_job` (`:481`)
-- Test: `crates/factory-cli/tests/new_to_merged.rs`, `crates/factory-cli/src/cli.rs` (tests)
+- Modify: `crates/factory-cli/src/commands.rs:372-393`, `new_job` (`:481`) and `rework` (`:826-895`)
+- Test: `crates/factory-cli/tests/new_to_merged.rs`, `crates/factory-cli/tests/retry_cmd.rs`, `crates/factory-cli/src/cli.rs` (tests)
 - Modify: `docs/reference/software-factory.md:45-46`, `README.md` (the `factory new` section)
 
 **Interfaces:**
 - Consumes: `factory_engine::{create_replacement, Replacement}` from the engine.
-- Produces: the CLI flag `--replaces <id>` (`replaces: Option<String>`, `requires = "plans"`, `conflicts_with = "one_job"`).
+- Consumes also: `factory_core::Board::replacement_of`, added with the series lookups.
+- Produces: the CLI flag `--replaces <id>` (`replaces: Option<String>`, `requires = "plans"`, `conflicts_with = "one_job"`), and a rework refusal for replaced jobs.
 
 - [ ] **Step 1: Read the code and docs**
 
-Read `Command::New` in `cli.rs`, `new_job` in `commands.rs` and the tests `a_job_goes_from_new_to_merged_through_the_cli` and `parked_and_cancelled` in `crates/factory-cli/tests/new_to_merged.rs`.
+Read spec section "Rework of a replaced job", `Command::New` in `cli.rs`, `new_job` and `rework` in `commands.rs`, `rework_revives_a_cancelled_job_with_resume` and `main_busy_parked` in `crates/factory-cli/tests/retry_cmd.rs`, and the tests `a_job_goes_from_new_to_merged_through_the_cli` and `parked_and_cancelled` in `crates/factory-cli/tests/new_to_merged.rs`.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -418,7 +419,41 @@ fn new_replaces_conflicts_with_one_job_and_needs_plans() {
 }
 ```
 
+In `crates/factory-cli/tests/retry_cmd.rs`, two rework tests. They build the series through the CLI with the `cli_series` shape above (copy the helper into this file, as test files do not share helpers):
+
+```rust
+#[test]
+fn rework_of_a_replaced_job_is_refused() {
+    let fx = Fixture::new();
+    let two = cli_series(&fx);
+    let fixed = fx.write_plan("plan-01-fixed.md", 1, two.to_str().expect("utf8"));
+    fx.run(&["new", "fixed", "x", "--plans", fixed.to_str().expect("utf8"), "--replaces", "1"]).expect("replace");
+    let e = fx.run(&["rework", "1", "try again"]).expect_err("replaced");
+    assert!(e.to_string().contains("job 001 was replaced by job 003, rework that one"), "{e}");
+    let e = fx.run(&["rework", "--force", "--", "1", "try again"]).expect_err("replaced, forced");
+    assert!(e.to_string().contains("was replaced by job 003"), "{e}");
+}
+
+#[test]
+fn rework_revives_a_cancelled_job_that_was_not_replaced() {
+    let fx = Fixture::new();
+    cli_series(&fx);
+    fx.run(&["cancel", "2"]).expect("cancel");
+    fx.run(&["rework", "2", "revive it"]).expect("rework");
+    let board = factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    )
+    .load()
+    .expect("board");
+    assert!(!board.find("002").expect("job").cancelled);
+}
+```
+
 - [ ] **Step 3: Run them and see them fail**
+
+Run: `cargo test -j4 -p factory-cli --test retry_cmd rework_of_a_replaced_job_is_refused`
+Expected: FAIL. The test exits with a clap error for the unknown argument `--replaces`.
 
 Run: `cargo test -j4 -p factory-cli new_replaces`
 Expected: FAIL to compile with `struct variant 'Command::New' has no field named 'replaces'`.
@@ -427,14 +462,18 @@ Expected: FAIL to compile with `struct variant 'Command::New' has no field named
 
 Add `replaces` to `Command::New` and `NewArgs`. In `new_job`, when `replaces` is `Some(id)`, normalize it with `factory_core::normalize_id`, call `create_replacement` with the slug, feature, plan, spec, model and accept-spec, and print `created job <new> in <dir>` (same estimate lines, notes and warnings as today), then `job <old> replaced by job <new>`. The doc comment on the flag reads: `Put this plan in the place of a failed series plan, which is cancelled. Needs one plan file in --plans.`
 
+In `rework`, right after the job is loaded and before the stage check, load the board and refuse when `board.replacement_of(id)` is `Some(n)`: `job <id> was replaced by job <n.id>, rework that one`. This holds with and without `--force`.
+
 - [ ] **Step 5: Run the tests**
 
 Run: `cargo test -j4 -p factory-cli new_replaces`
-Expected: 2 passed. Then `cargo test -j4 -p factory-cli` passes.
+Expected: 2 passed.
+Run: `cargo test -j4 -p factory-cli --test retry_cmd rework_`
+Expected: all pass, the two new tests included. Then `cargo test -j4 -p factory-cli` passes.
 
 - [ ] **Step 6: Update the docs**
 
-- `docs/reference/software-factory.md:45`: after the sentence on plans being copied into their job folders, add: to fix a failed plan, edit and commit its plan file, then run `factory new <slug> '<feature>' --plans <fixed plan file> --replaces <id>`. The new job takes the failed job's series id and index, starts at `build`, and the old job is cancelled with `cancelled: replaced by job <new>`. The fixed plan's `Next plan:` line must point to the same file as the original's. Without `--spec` the old job's `spec.md` is copied and no spec check runs. Refusals: a folder, a merged job, a job without a series, a live lease, a wrong `Next plan:` line, a job already replaced.
+- `docs/reference/software-factory.md:45`: after the sentence on plans being copied into their job folders, add: to fix a failed plan, edit and commit its plan file, then run `factory new <slug> '<feature>' --plans <fixed plan file> --replaces <id>`. The new job takes the failed job's series id and index, starts at `build`, and the old job is cancelled with `cancelled: replaced by job <new>`. The fixed plan's `Next plan:` line must point to the same file as the original's. Without `--spec` the old job's `spec.md` is copied and no spec check runs. Refusals: a folder, a merged job, a job without a series, a live lease, a wrong `Next plan:` line, a job already replaced. `factory rework` of a replaced job is refused too and names the replacement; a cancelled job that was not replaced is still revived by rework.
 - `docs/reference/software-factory.md:46`: the cancelled-predecessor sentence becomes: a cancelled plan before it keeps the later plan parked with `plan <n> (job <id>) was cancelled; cancel this plan, or replace plan <n> with factory new --replaces <id>`; after a replacement the check waits on the replacement. Series lookups by index prefer a job that is not cancelled.
 - `README.md`: one line under `factory new` naming `--replaces <id>` and pointing to `docs/reference/software-factory.md`.
 
