@@ -1,8 +1,11 @@
 //! The cargo workspace map: which package owns a path and which packages depend on which.
 
 use std::collections::BTreeSet;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use factory_core::{CargoTarget, PathPackage};
 
@@ -131,19 +134,75 @@ fn stderr_reason(stderr: &str) -> String {
         .to_string()
 }
 
-/// Runs `program <sub> <args>` in `dir` and returns its stdout.
-fn run_cargo(program: &str, sub: &str, args: &[&str], dir: &Path) -> Result<String, CheckError> {
-    let out = Command::new(program)
-        .arg(sub)
+/// The time limit of one cargo call, which may download crates or wait for the package cache.
+const CARGO_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Reads a child pipe to its end.
+fn read_pipe<R: Read>(reader: Option<R>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(mut r) = reader {
+        let _ = r.read_to_end(&mut buf);
+    }
+    buf
+}
+
+/// Runs `program <sub> <args>` in `dir` and returns its stdout. The call is killed after `timeout`.
+fn run_program(
+    program: &str,
+    sub: &str,
+    args: &[&str],
+    dir: &Path,
+    timeout: Duration,
+) -> Result<String, CheckError> {
+    let mut cmd = Command::new(program);
+    cmd.arg(sub)
         .args(args)
         .current_dir(dir)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = factory_procgroup::spawn(&mut cmd)
         .map_err(|e| CheckError::Cargo(format!("cargo did not start: {e}")))?;
-    if !out.status.success() {
-        let reason = stderr_reason(&String::from_utf8_lossy(&out.stderr));
-        return Err(CheckError::Cargo(format!("cargo {sub} failed: {reason}")));
+    let out_reader = child.stdout.take();
+    let err_reader = child.stderr.take();
+    let out_thread = thread::spawn(move || read_pipe(out_reader));
+    let err_thread = thread::spawn(move || read_pipe(err_reader));
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(e) => {
+                let _ = child.kill();
+                return Err(CheckError::Cargo(format!(
+                    "cargo {sub} could not wait: {e}"
+                )));
+            }
+        }
+    };
+    let stdout = out_thread.join().unwrap_or_default();
+    let stderr = err_thread.join().unwrap_or_default();
+    match status {
+        None => Err(CheckError::Cargo(format!(
+            "cargo {sub} timed out after {} s",
+            timeout.as_secs()
+        ))),
+        Some(s) if s.success() => Ok(String::from_utf8_lossy(&stdout).into_owned()),
+        Some(_) => {
+            let reason = stderr_reason(&String::from_utf8_lossy(&stderr));
+            Err(CheckError::Cargo(format!("cargo {sub} failed: {reason}")))
+        }
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Runs `program <sub> <args>` in `dir` with the cargo time limit and returns its stdout.
+fn run_cargo(program: &str, sub: &str, args: &[&str], dir: &Path) -> Result<String, CheckError> {
+    run_program(program, sub, args, dir, CARGO_TIMEOUT)
 }
 
 /// The folder of the manifest, which is where cargo looks for its config.
@@ -257,6 +316,21 @@ pub fn path_packages_from_metadata(json: &str) -> Result<Vec<PathPackage>, Check
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_slow_program_times_out() {
+        let started = Instant::now();
+        let err = run_program(
+            "sh",
+            "-c",
+            &["sleep 5"],
+            Path::new("."),
+            Duration::from_secs(1),
+        )
+        .expect_err("timeout");
+        assert_eq!(err.to_string(), "cargo -c timed out after 1 s");
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
 
     const META: &str = r#"{"packages":[
       {"name":"core","manifest_path":"/r/crates/core/Cargo.toml","dependencies":[
