@@ -82,6 +82,8 @@ impl Env {
             None,
         )
         .expect("add project");
+        // A test machine with little free disk must never wait.
+        add_setting(self, name, "min_free_disk_mb = 0");
         repo
     }
 

@@ -76,6 +76,9 @@ fn probe_job_view() -> JobView {
         rework_base: 0,
         last_review: None,
         checks_pass: None,
+        stage: factory_core::Stage::Build,
+        cancelled: false,
+        no_change_round: None,
     }
 }
 

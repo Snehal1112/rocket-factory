@@ -104,6 +104,8 @@ impl Fixture {
             }],
             // These tests cover fresh task builders. `task_carry.rs` turns the carry on itself.
             builder_carry_session: false,
+            // A test machine with little free disk must never wait. `builder_recover.rs` turns it on itself.
+            min_free_disk_mb: 0,
             ..Config::default()
         };
         let repo = Repo::open(&main).expect("open");
@@ -403,8 +405,12 @@ pub fn init_repo(main: &Path) {
 pub fn driver_for(
     main: &Path,
     runner: Arc<ScriptedRunner>,
-    config: Config,
+    mut config: Config,
 ) -> factory_engine::Driver {
+    // A test machine with little free disk must never wait, unless the test set its own limit.
+    if config.min_free_disk_mb == Config::default().min_free_disk_mb {
+        config.min_free_disk_mb = 0;
+    }
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
     factory_engine::Driver::new(factory_core::Layout::in_repo(main), config, factory)
         .expect("driver")

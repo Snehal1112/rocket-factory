@@ -55,7 +55,7 @@ fn demo_home(t: &tempfile::TempDir) -> Home {
     std::fs::write(
         dir.join("project.toml"),
         format!(
-            "repo = {:?}\npreset = \"rust\"\n",
+            "repo = {:?}\npreset = \"rust\"\n\n[settings]\nmin_free_disk_mb = 0\n",
             repo.display().to_string()
         ),
     )

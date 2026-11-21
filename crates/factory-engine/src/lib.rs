@@ -31,6 +31,7 @@ mod ports;
 mod probe;
 pub mod procinfo;
 mod project_lease;
+mod recover;
 mod repo_lock;
 mod retry;
 mod review;
@@ -96,6 +97,7 @@ pub use project_lease::{
     process_start_secs, project_lease_status, release_project_lease, LeaseTake, OwnerState,
     ProjectLease, ProjectLeaseError, ProjectLeaseStatus, START_SLACK_SECS,
 };
+pub use recover::MachineWait;
 pub use repo_lock::{lock_repo_merge, MERGE_LOCK_FILE, MERGE_LOCK_WAIT};
 pub use retry::retry_job;
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome, ReviewRun};
@@ -187,6 +189,8 @@ pub struct Engine<'a> {
     pub provider_synced: std::cell::Cell<bool>,
     /// The driver's lost flag. While it is set, no agent starts. None for an engine with no driver.
     pub lost: Option<std::sync::Arc<LostFlag>>,
+    /// The disk check, sleep and clock the machine wait uses.
+    pub machine: MachineWait,
 }
 
 impl<'a> Engine<'a> {
@@ -216,6 +220,7 @@ impl<'a> Engine<'a> {
             codex_skill_roots: Vec::new(),
             provider_synced: std::cell::Cell::new(false),
             lost: None,
+            machine: MachineWait::default(),
         })
     }
 

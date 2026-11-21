@@ -117,6 +117,11 @@ pub(crate) struct JobView {
     pub last_review: Option<factory_core::LastReview>,
     /// The passing checks run the final gate may reuse, if any.
     pub checks_pass: Option<factory_core::ChecksPass>,
+    pub stage: Stage,
+    pub cancelled: bool,
+    /// The fix round that changed nothing, if any.
+    #[allow(dead_code)] // The nothing-changed round reads it.
+    pub no_change_round: Option<u32>,
 }
 
 impl Engine<'_> {
@@ -146,6 +151,9 @@ impl Engine<'_> {
             rework_base: job.rework_base,
             last_review: job.last_review.clone(),
             checks_pass: job.checks_pass.clone(),
+            stage: job.stage,
+            cancelled: job.cancelled,
+            no_change_round: job.no_change_round,
         })
     }
 

@@ -58,7 +58,7 @@ fn scoped() -> Scoped {
     // Every docs path is risky, so a clean job parks for a human instead of merging.
     std::fs::write(
         root.join(".claude/factory/config.toml"),
-        "risk_paths = [\"docs/**\"]\n",
+        "risk_paths = [\"docs/**\"]\nmin_free_disk_mb = 0\n",
     )
     .expect("config");
     let mut layout = Layout::in_repo(&root);

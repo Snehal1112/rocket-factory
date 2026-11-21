@@ -127,7 +127,7 @@ impl Fixture {
         std::fs::create_dir_all(root.join(".claude/factory")).expect("mkdir config");
         std::fs::write(
             root.join(".claude/factory/config.toml"),
-            format!("risk_paths = [\"{risk}\"]\n"),
+            format!("risk_paths = [\"{risk}\"]\nmin_free_disk_mb = 0\n"),
         )
         .expect("config");
         let builder_calls = Arc::new(AtomicUsize::new(0));

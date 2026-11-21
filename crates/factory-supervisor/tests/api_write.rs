@@ -43,7 +43,7 @@ fn add_project(t: &tempfile::TempDir, home: &Home, name: &str) {
     std::fs::write(
         dir.join("project.toml"),
         format!(
-            "repo = {:?}\npreset = \"rust\"\n",
+            "repo = {:?}\npreset = \"rust\"\n\n[settings]\nmin_free_disk_mb = 0\n",
             repo.display().to_string()
         ),
     )

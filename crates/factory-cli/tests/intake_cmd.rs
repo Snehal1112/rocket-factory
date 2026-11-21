@@ -85,7 +85,7 @@ impl AgentRunner for Refuser {
 
 fn fixture(intake: bool) -> (Fixture, Arc<OneIssue>, Arc<Refuser>) {
     let mut fx = Fixture::new();
-    let config = format!("intake = {intake}\n");
+    let config = format!("intake = {intake}\nmin_free_disk_mb = 0\n");
     std::fs::write(fx.root.join(".claude/factory/config.toml"), config).expect("config");
     let tracker = Arc::new(OneIssue::default());
     let runner = Arc::new(Refuser {

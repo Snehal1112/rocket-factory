@@ -203,7 +203,7 @@ impl Scenario {
         // The config stays untracked, which the merge preflight allows.
         std::fs::create_dir_all(root.join(".claude/factory"))?;
         let config = format!(
-            "risk_paths = [\"secrets/**\"]\n{extra_config}\n[[checks]]\npaths = [\"**\"]\ncommands = [\"test ! -f bad.flag\"]\n"
+            "risk_paths = [\"secrets/**\"]\nmin_free_disk_mb = 0\n{extra_config}\n[[checks]]\npaths = [\"**\"]\ncommands = [\"test ! -f bad.flag\"]\n"
         );
         std::fs::write(root.join(".claude/factory/config.toml"), config)?;
         let plans = tmp.path().join("plans");

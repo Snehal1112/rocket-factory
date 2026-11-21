@@ -80,6 +80,8 @@ pub struct Driver {
     agent_files: Vec<factory_core::AgentFile>,
     /// The user-wide folders Codex lists skills from.
     codex_skill_roots: Vec<PathBuf>,
+    /// The disk check, sleep and clock every engine's machine wait uses.
+    machine: crate::MachineWait,
     /// How many `ProjectGuard`s are alive. While one is, `run_job` keeps the project lease.
     project_holds: AtomicU32,
     /// How long a lease lasts without a renewal.
@@ -328,6 +330,7 @@ impl Driver {
             merge_lock_wait: crate::MERGE_LOCK_WAIT,
             agent_files: Vec::new(),
             codex_skill_roots: Vec::new(),
+            machine: crate::MachineWait::default(),
             project_holds: AtomicU32::new(0),
             lease_ttl: LEASE_TTL_SECS,
             heartbeat: Duration::from_secs(HEARTBEAT_SECS),
@@ -394,6 +397,12 @@ impl Driver {
     /// Sets the user-wide skill folders every engine of this driver passes to Codex runs.
     pub fn with_codex_skill_roots(mut self, roots: Vec<PathBuf>) -> Driver {
         self.codex_skill_roots = roots;
+        self
+    }
+
+    /// Replaces the disk check, sleep and clock of every engine's machine wait. Meant for tests.
+    pub fn with_machine_wait(mut self, machine: crate::MachineWait) -> Driver {
+        self.machine = machine;
         self
     }
 
@@ -625,7 +634,8 @@ impl Driver {
             &events,
         )?
         .with_agent_files(self.agent_files.clone())
-        .with_codex_skill_roots(self.codex_skill_roots.clone());
+        .with_codex_skill_roots(self.codex_skill_roots.clone())
+        .with_machine_wait(self.machine.clone());
         crate::run_probe(
             &engine,
             harness,
@@ -660,7 +670,8 @@ impl Driver {
         .with_lock_wait(self.lock_wait)
         .with_lost(self.lost.clone())
         .with_agent_files(self.agent_files.clone())
-        .with_codex_skill_roots(self.codex_skill_roots.clone());
+        .with_codex_skill_roots(self.codex_skill_roots.clone())
+        .with_machine_wait(self.machine.clone());
         f(&engine)
     }
 

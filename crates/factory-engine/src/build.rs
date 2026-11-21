@@ -83,9 +83,16 @@ impl Engine<'_> {
         let tasks = parse_tasks(&std::fs::read_to_string(&self.plan_file).unwrap_or_default());
         // A board an older driver left mid-batch is recovered before any builder runs.
         if job.batch_snapshot.is_some() {
+            if let Some(out) = self.machine_gate(job.worktree.as_deref())? {
+                return Ok(out);
+            }
             return self.resume_old_batch(&job);
         }
         if let Some(out) = self.series_guard(&job)? {
+            return Ok(out);
+        }
+        // The machine must be fine before any worktree, ledger line or board write of the pass.
+        if let Some(out) = self.machine_gate(job.worktree.as_deref())? {
             return Ok(out);
         }
         let job = self.job()?;

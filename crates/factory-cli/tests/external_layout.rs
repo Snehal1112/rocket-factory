@@ -41,7 +41,7 @@ impl External {
         std::fs::create_dir_all(&home).expect("home");
         std::fs::write(
             &layout.config_file,
-            "base_branch = \"v-4.0.0\"\nrisk_paths = [\"src-tauri/**\"]\n",
+            "base_branch = \"v-4.0.0\"\nrisk_paths = [\"src-tauri/**\"]\nmin_free_disk_mb = 0\n",
         )
         .expect("config");
         let runner: Arc<dyn AgentRunner> = Arc::new(RoleRunner::new());

@@ -148,6 +148,12 @@ fn setup(extra: &[(&str, &str)]) -> Env {
         Command::Project { cmd } => project::run(&home, cmd).expect("add"),
         _ => unreachable!(),
     };
+    // A test machine with little free disk must never wait.
+    let file = home.project_dir("p").join("project.toml");
+    let text = std::fs::read_to_string(&file).expect("project file");
+    assert!(text.contains("\n[settings]\n"), "no settings table: {text}");
+    let text = text.replacen("\n[settings]\n", "\n[settings]\nmin_free_disk_mb = 0\n", 1);
+    std::fs::write(&file, text).expect("project file");
     let runner = Arc::new(Roles {
         calls: AtomicUsize::new(0),
         builder_agent: Mutex::new(None),
