@@ -88,6 +88,13 @@ fn short_form(cause: MachineCause, detail: &str) -> String {
     }
 }
 
+/// The park reason at the cap, `<detail>, waited 25 min`. The detail is cut so the whole reason fits the cap.
+fn park_reason(detail: &str) -> String {
+    let suffix = format!(", waited {} min", (WAIT_CAP / 60.0) as u64);
+    let room = DETAIL_CAP.saturating_sub(suffix.chars().count());
+    format!("{}{suffix}", capped(detail, room))
+}
+
 /// The probe times after the start, ending with one at the cap.
 fn probe_times() -> Vec<f64> {
     let mut times = PROBE_AT.to_vec();
@@ -249,9 +256,7 @@ impl Engine<'_> {
                 Probe::Parked(out) => return Ok(WaitEnd::Parked(out)),
             }
         }
-        let minutes = (WAIT_CAP / 60.0) as u64;
-        let reason = format!("{detail}, waited {minutes} min");
-        self.park_with(ParkKind::MachineWaiting, reason, Vec::new())
+        self.park_with(ParkKind::MachineWaiting, park_reason(detail), Vec::new())
             .map(WaitEnd::Parked)
     }
 
@@ -299,5 +304,15 @@ mod tests {
     fn capped_keeps_the_first_characters() {
         assert_eq!(capped("abcdef", 3), "abc");
         assert_eq!(capped("ab", 3), "ab");
+    }
+
+    #[test]
+    fn park_reason_fits_the_cap() {
+        let detail = format!("auth: {}", "x".repeat(300));
+        let reason = park_reason(&detail);
+        assert!(reason.chars().count() <= 200, "{}", reason.len());
+        assert!(reason.ends_with(", waited 25 min"), "{reason}");
+        assert!(reason.starts_with("auth: x"), "{reason}");
+        assert_eq!(park_reason("network: down"), "network: down, waited 25 min");
     }
 }

@@ -401,16 +401,22 @@ pub fn init_repo(main: &Path) {
     commit_file(main, "README.md", "hello\n");
 }
 
+/// The config a test driver gets. A test machine with little free disk must never wait, so the disk check
+/// is off unless the test set its own limit.
+pub fn test_config(mut config: Config) -> Config {
+    if config.min_free_disk_mb == Config::default().min_free_disk_mb {
+        config.min_free_disk_mb = 0;
+    }
+    config
+}
+
 /// A driver whose runner factory hands every job the same shared scripted runner.
 pub fn driver_for(
     main: &Path,
     runner: Arc<ScriptedRunner>,
-    mut config: Config,
+    config: Config,
 ) -> factory_engine::Driver {
-    // A test machine with little free disk must never wait, unless the test set its own limit.
-    if config.min_free_disk_mb == Config::default().min_free_disk_mb {
-        config.min_free_disk_mb = 0;
-    }
+    let config = test_config(config);
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
     factory_engine::Driver::new(factory_core::Layout::in_repo(main), config, factory)
         .expect("driver")
@@ -459,8 +465,12 @@ pub fn approved_job_dyn(
         commit_file(&main, ".gitignore", ".superpowers/\n");
     }
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
-    let driver = factory_engine::Driver::new(factory_core::Layout::in_repo(&main), config, factory)
-        .expect("driver");
+    let driver = factory_engine::Driver::new(
+        factory_core::Layout::in_repo(&main),
+        test_config(config),
+        factory,
+    )
+    .expect("driver");
     let wt = driver
         .repo()
         .create_worktree(&factory_git::JobRef {
@@ -524,7 +534,7 @@ pub fn approved_scoped_job_with(files: &[&str], config: Config) -> MergeFixture 
     let runner = approving_runner(3);
     let rf = runner.clone();
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| rf.clone());
-    let driver = factory_engine::Driver::new(layout, config, factory).expect("driver");
+    let driver = factory_engine::Driver::new(layout, test_config(config), factory).expect("driver");
     let wt = driver
         .repo()
         .create_worktree(&factory_git::JobRef {
@@ -681,9 +691,12 @@ impl SeriesFixture {
                 counter: std::sync::atomic::AtomicUsize::new(0),
             })
         });
-        let driver =
-            factory_engine::Driver::new(factory_core::Layout::in_repo(&main), config, factory)
-                .expect("driver");
+        let driver = factory_engine::Driver::new(
+            factory_core::Layout::in_repo(&main),
+            test_config(config),
+            factory,
+        )
+        .expect("driver");
         SeriesFixture { tmp, main, driver }
     }
 
@@ -756,7 +769,7 @@ impl SeriesFixture {
             Box::new(|_| panic!("the second driver must not run an agent"));
         factory_engine::Driver::new(
             factory_core::Layout::in_repo(&self.main),
-            Config::default(),
+            test_config(Config::default()),
             factory,
         )
         .expect("driver")

@@ -184,8 +184,12 @@ fn driver_over_branches(scoped: bool) -> (tempfile::TempDir, factory_engine::Dri
     }
     let runner = common::approving_runner(1);
     let factory: factory_engine::RunnerFactory = Box::new(move |_| runner.clone());
-    let driver = factory_engine::Driver::new(layout, factory_core::Config::default(), factory)
-        .expect("driver");
+    let driver = factory_engine::Driver::new(
+        layout,
+        common::test_config(factory_core::Config::default()),
+        factory,
+    )
+    .expect("driver");
     (tmp, driver)
 }
 

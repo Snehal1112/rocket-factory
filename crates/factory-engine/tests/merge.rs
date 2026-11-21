@@ -432,7 +432,12 @@ fn scoped_driver(
     });
     let runner = common::approving_runner(3);
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
-    factory_engine::Driver::new(layout, factory_core::Config::default(), factory).expect("driver")
+    factory_engine::Driver::new(
+        layout,
+        common::test_config(factory_core::Config::default()),
+        factory,
+    )
+    .expect("driver")
 }
 
 /// Gives the driver an approved job `001` that adds `file`, inside its project folder.

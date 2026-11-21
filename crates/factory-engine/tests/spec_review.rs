@@ -427,7 +427,7 @@ fn a_budget_stop_with_an_approve_line_still_refuses() {
     let factory: factory_engine::RunnerFactory = Box::new(|_| Arc::new(StopRunner));
     let driver = Driver::new(
         factory_core::Layout::in_repo(fx.driver.root()),
-        Config::default(),
+        common::test_config(Config::default()),
         factory,
     )
     .expect("driver");
