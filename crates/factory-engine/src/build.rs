@@ -154,10 +154,8 @@ impl Engine<'_> {
             Err(parked) => return Ok(parked),
         };
         let note = self.job_dir.join("rework-note.md");
-        if !new_work || first_findings.as_ref() == Some(&note) {
-            // The builder has seen the note, so it must not be sent again. A missing file is fine.
-            let _ = std::fs::remove_file(&note);
-        }
+        // The note goes away only when the pass advances, so a failed or parked run keeps it for the next one.
+        let note_sent = !new_work || first_findings.as_ref() == Some(&note);
         // The time is read when the builder run returns, so the next round can tell if its cache expired.
         let ended_at = now().max(0.0) as u64;
         let session = run.session_id.clone().or(job.session_id.clone());
@@ -168,12 +166,15 @@ impl Engine<'_> {
             end_ctx: run.end_ctx,
         });
         let session_model = self.session_model(&run, job.builder_session_model.clone());
-        self.update(|j| {
-            j.builder_last = builder_last;
-            j.builder_id = session;
-            j.builder_session_model = session_model;
-            Ok(())
-        })?;
+        if run.stop_reason != StopReason::Failed {
+            // A failed run reports no usable session, so the earlier session fields stay.
+            self.update(|j| {
+                j.builder_last = builder_last;
+                j.builder_id = session;
+                j.builder_session_model = session_model;
+                Ok(())
+            })?;
+        }
         // The reply to the findings may hold push-back reasons, so keep it for the reviewer and the human.
         let reply = if new_work {
             None
@@ -221,6 +222,7 @@ impl Engine<'_> {
                         &base,
                         tip_before,
                         previous_head,
+                        note_sent.then_some(note.as_path()),
                     );
                 }
                 let why = if new_work {
@@ -251,6 +253,10 @@ impl Engine<'_> {
             .changed_paths(&tip_before, &head)
             .unwrap_or_default();
         self.save_commit_note(&file, &label, &run.result_text, fallback, &files)?;
+        if note_sent {
+            // The builder has seen the note and the pass advances, so it must not be sent again.
+            let _ = std::fs::remove_file(&note);
+        }
         self.finish_build(&job, &base, head, previous_head)
     }
 
@@ -320,6 +326,7 @@ impl Engine<'_> {
         base: &str,
         head: String,
         previous_head: Option<String>,
+        sent_note: Option<&Path>,
     ) -> Result<StageOutcome, EngineError> {
         let report = self.run_checks_now()?;
         if report.all_passed() {
@@ -327,6 +334,9 @@ impl Engine<'_> {
                 "fix round {} changed nothing and the checks now pass, the earlier failure did not reproduce",
                 job.round
             ))?;
+            if let Some(note) = sent_note {
+                let _ = std::fs::remove_file(note);
+            }
             return self.finish_build(job, base, head, previous_head);
         }
         let first = report
@@ -654,10 +664,6 @@ impl Engine<'_> {
         // The time is read when the last builder run returns, before checks and the snapshot.
         let ended_at = crate::ports::now() as u64;
         self.clear_task_session()?;
-        if note.is_some() {
-            // The builder has seen the note, so it must not be sent again.
-            let _ = std::fs::remove_file(&note_path);
-        }
         if run.stop_reason != StopReason::Done {
             return self.park_with(
                 ParkKind::BuilderStopped,
@@ -723,6 +729,10 @@ impl Engine<'_> {
             ended_at,
             end_ctx: run.end_ctx,
         });
+        if note.is_some() {
+            // The builder has seen the note and the task advances, so it must not be sent again.
+            let _ = std::fs::remove_file(&note_path);
+        }
         let next = job.task_index + 1;
         let last = next as usize >= tasks.len();
         let session_model = self.session_model(&run, job.builder_session_model.clone());

@@ -428,7 +428,9 @@ fn a_failed_role_with_real_findings_starts_a_fix_round() {
     assert_eq!(fx.job().round, 2);
     let file = std::fs::read_to_string(&outcome.review_path).expect("file");
     assert!(
-        file.contains("run failed (failed): Invalid API key"),
+        file.contains(
+            "run failed (failed): claude reported success: API Error: 401 Invalid API key"
+        ),
         "{file}"
     );
 }

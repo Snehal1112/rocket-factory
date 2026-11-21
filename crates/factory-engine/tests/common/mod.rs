@@ -228,12 +228,105 @@ impl AgentRunner for RoleFailing {
             if took.is_ok() {
                 return AgentRun {
                     stop_reason: self.reason,
-                    error: Some("Invalid API key".into()),
+                    error: Some("claude reported success: API Error: 401 Invalid API key".into()),
                     ..AgentRun::done("")
                 };
             }
         }
         self.inner.run(spec)
+    }
+}
+
+/// A failed run with the given error, turns and token counts. The weighted total is the one given.
+pub fn failed_run(error: &str, turns: u32, output: u64, weighted: u64) -> AgentRun {
+    AgentRun {
+        turns,
+        weighted,
+        usage: factory_agent::Usage {
+            output_tokens: output,
+            input_tokens: weighted.saturating_sub(output),
+            ..factory_agent::Usage::default()
+        },
+        ..AgentRun::failed(error)
+    }
+}
+
+/// One scripted builder answer. The first unused step whose `when` matches is used up.
+pub struct Step {
+    pub when: fn(&AgentSpec) -> bool,
+    /// `Some` is returned as is, `None` hands the call to the inner runner.
+    pub run: Option<AgentRun>,
+}
+
+pub fn any(_: &AgentSpec) -> bool {
+    true
+}
+
+pub fn resumed(spec: &AgentSpec) -> bool {
+    spec.resume.is_some()
+}
+
+pub fn fresh(spec: &AgentSpec) -> bool {
+    spec.resume.is_none()
+}
+
+/// Answers builder calls from a list of steps and every other call from `inner`.
+pub struct BuilderScript {
+    inner: Arc<ScriptedRunner>,
+    steps: Mutex<Vec<Option<Step>>>,
+    clock: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    times: Mutex<Vec<f64>>,
+    seen: Mutex<Vec<AgentSpec>>,
+}
+
+impl BuilderScript {
+    pub fn new(inner: Arc<ScriptedRunner>, steps: Vec<Step>) -> BuilderScript {
+        BuilderScript {
+            inner,
+            steps: Mutex::new(steps.into_iter().map(Some).collect()),
+            clock: None,
+            times: Mutex::new(Vec::new()),
+            seen: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Records the clock at each builder call.
+    pub fn with_clock(mut self, clock: Arc<dyn Fn() -> f64 + Send + Sync>) -> BuilderScript {
+        self.clock = Some(clock);
+        self
+    }
+
+    /// The clock reading of each builder call, in order.
+    pub fn call_times(&self) -> Vec<f64> {
+        self.times.lock().expect("times").clone()
+    }
+
+    /// Every builder spec the script was called with, in order.
+    pub fn specs(&self) -> Vec<AgentSpec> {
+        self.seen.lock().expect("seen").clone()
+    }
+}
+
+impl AgentRunner for BuilderScript {
+    fn run(&self, spec: &AgentSpec) -> AgentRun {
+        if spec.role != "builder" {
+            return self.inner.run(spec);
+        }
+        if let Some(clock) = &self.clock {
+            self.times.lock().expect("times").push(clock());
+        }
+        self.seen.lock().expect("seen").push(spec.clone());
+        let step = {
+            let mut steps = self.steps.lock().expect("steps");
+            let at = steps
+                .iter()
+                .position(|s| s.as_ref().is_some_and(|s| (s.when)(spec)));
+            at.and_then(|i| steps[i].take())
+        };
+        match step {
+            Some(Step { run: Some(run), .. }) => run,
+            _ => self.inner.run(spec),
+        }
     }
 }
 
