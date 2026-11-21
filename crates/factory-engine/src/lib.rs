@@ -192,6 +192,8 @@ pub struct Engine<'a> {
     pub lost: Option<std::sync::Arc<LostFlag>>,
     /// The disk check, sleep and clock the machine wait uses.
     pub machine: MachineWait,
+    /// The last Cargo check verdict of this engine with its store key, so one run writes one ledger line.
+    pub(crate) cargo_memo: std::cell::RefCell<Option<(String, cargo_risk::Risk)>>,
 }
 
 impl<'a> Engine<'a> {
@@ -222,6 +224,7 @@ impl<'a> Engine<'a> {
             provider_synced: std::cell::Cell::new(false),
             lost: None,
             machine: MachineWait::default(),
+            cargo_memo: std::cell::RefCell::new(None),
         })
     }
 

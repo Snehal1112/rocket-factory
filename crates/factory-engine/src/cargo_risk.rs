@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use factory_checks::{locked_path_packages, workspace_root};
 use factory_core::{
-    cargo_clearable, check_path_packages, classify_paths, compare_locks, manifest_keys_diff,
-    write_atomic, CargoVerdict, Config, CoreError, DiffClass, LockDiff,
+    cargo_clearable, check_path_packages, classify_paths, compare_locks, deleted_member,
+    manifest_keys_diff, write_atomic, CargoVerdict, Config, CoreError, DiffClass, LockDiff,
 };
 
 use crate::ports::one_line;
@@ -46,8 +46,40 @@ fn stays(reason: impl Display) -> String {
     one_line(&format!("cargo lock check: {reason}, diff stays risky"))
 }
 
-/// The ledger line of a lock that gained or lost outside crates.
-fn outside_note(added: &[String], removed: &[String], changed: &[String]) -> String {
+/// Whether a stopped check says something about the commit or only about this run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopKind {
+    /// The commit's own content decided it, so the verdict is stored.
+    Content,
+    /// The environment failed, so the verdict is never stored.
+    Transient,
+}
+
+/// A check that stopped, with its ledger line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Stop {
+    pub note: String,
+    pub kind: StopKind,
+}
+
+/// A stop that the commit's content caused.
+fn content(reason: impl Display) -> Stop {
+    Stop {
+        note: stays(reason),
+        kind: StopKind::Content,
+    }
+}
+
+/// A stop that a failing environment caused.
+fn transient(reason: impl Display) -> Stop {
+    Stop {
+        note: stays(reason),
+        kind: StopKind::Transient,
+    }
+}
+
+/// The stop of a lock that gained or lost outside crates.
+fn outside_note(added: &[String], removed: &[String], changed: &[String]) -> Stop {
     let list = |names: &[String]| {
         if names.is_empty() {
             "none".to_string()
@@ -55,7 +87,7 @@ fn outside_note(added: &[String], removed: &[String], changed: &[String]) -> Str
             names.join(", ")
         }
     };
-    stays(format!(
+    content(format!(
         "outside crates added: {}; removed: {}; source or checksum changed: {}",
         list(added),
         list(removed),
@@ -63,11 +95,11 @@ fn outside_note(added: &[String], removed: &[String], changed: &[String]) -> Str
     ))
 }
 
-/// Turns a structural verdict into a stop with its ledger line.
-fn verdict(v: CargoVerdict) -> Result<(), String> {
+/// Turns a structural verdict into a content stop with its ledger line.
+fn verdict(v: CargoVerdict) -> Result<(), Stop> {
     match v {
         CargoVerdict::Same => Ok(()),
-        CargoVerdict::Changed(reason) | CargoVerdict::Unknown(reason) => Err(stays(reason)),
+        CargoVerdict::Changed(reason) | CargoVerdict::Unknown(reason) => Err(content(reason)),
     }
 }
 
@@ -139,7 +171,7 @@ fn cargo_file_above(dir: &Path) -> bool {
 struct ExportDir(PathBuf);
 
 impl ExportDir {
-    fn create(temp_root: &Path, job_id: &str) -> Result<ExportDir, String> {
+    fn create(temp_root: &Path, job_id: &str) -> Result<ExportDir, Stop> {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -151,7 +183,7 @@ impl ExportDir {
         );
         let path = temp_root.join(name);
         std::fs::create_dir(&path)
-            .map_err(|e| stays(format!("cannot make the export folder: {e}")))?;
+            .map_err(|e| transient(format!("cannot make the export folder: {e}")))?;
         Ok(ExportDir(path))
     }
 }
@@ -225,74 +257,123 @@ impl Engine<'_> {
             Err(e) => return stays_risky(Some(stays(e))),
         };
         let key = store_key(&head, &self.config);
-        let (same, note) = match read_store(&self.job_dir, &key) {
-            Some(found) => found,
-            None => {
-                let (same, note) = match self.cargo_check(paths, &start, &head, temp_root) {
-                    Ok(()) => (true, PASS_NOTE.to_string()),
-                    Err(note) => (false, note),
-                };
-                // The store only saves a later cargo run, so a failed write never changes the verdict.
-                if let Err(e) = write_store(&self.job_dir, &key, same, &note) {
-                    tracing::warn!(
-                        event = "cargo_check.store",
-                        msg = %format!("cannot write {CARGO_CHECK_FILE}: {e}")
-                    );
+        if let Some((memo_key, memo)) = &*self.cargo_memo.borrow() {
+            if *memo_key == key {
+                return memo.clone();
+            }
+        }
+        let to_risk = |same: bool, note: String| {
+            let note = (!note.is_empty()).then_some(note);
+            if same {
+                Risk {
+                    class: DiffClass::Normal,
+                    risky: Vec::new(),
+                    note,
                 }
-                (same, note)
+            } else {
+                stays_risky(note)
             }
         };
-        let note = (!note.is_empty()).then_some(note);
-        if same {
-            Risk {
-                class: DiffClass::Normal,
-                risky: Vec::new(),
-                note,
-            }
-        } else {
-            stays_risky(note)
+        // A stored verdict writes no ledger line and no memo: an earlier run already wrote the line.
+        if let Some((same, note)) = read_store(&self.job_dir, &key) {
+            return to_risk(same, note);
         }
+        let (same, note, store) = match self.cargo_check(paths, &start, &head, temp_root) {
+            Ok(()) => (true, PASS_NOTE.to_string(), true),
+            Err(stop) => (false, stop.note, stop.kind == StopKind::Content),
+        };
+        // The store only saves a later cargo run, so a failed write never changes the verdict.
+        if store {
+            if let Err(e) = write_store(&self.job_dir, &key, same, &note) {
+                tracing::warn!(
+                    event = "cargo_check.store",
+                    msg = %format!("cannot write {CARGO_CHECK_FILE}: {e}")
+                );
+            }
+        }
+        // The ledger line is best effort too, and only a run that ran cargo writes it.
+        if let Err(e) = self.ruling(&note) {
+            tracing::warn!(
+                event = "cargo_check.ledger",
+                msg = %format!("cannot write the ledger: {e}")
+            );
+        }
+        let risk = to_risk(same, note);
+        *self.cargo_memo.borrow_mut() = Some((key, risk.clone()));
+        risk
     }
 
     /// The text of a scoped path at `commit`, read from the repo.
-    fn cargo_file(&self, commit: &str, scoped: &str) -> Result<Option<String>, String> {
+    fn cargo_file(&self, commit: &str, scoped: &str) -> Result<Option<String>, Stop> {
         let rel = self.repo.workdir_in(Path::new("")).join(scoped);
         let rel = rel.to_string_lossy();
         self.repo
             .file_at(commit, &rel)
-            .map_err(|e| stays(format!("cannot read {rel}: {e}")))
+            .map_err(|e| transient(format!("cannot read {rel}: {e}")))
     }
 
-    /// Runs the lock, cargo and structural checks on a clean export of `head`. `Err` holds the ledger line.
+    /// Checks a deleted manifest against the base lock of the checked root with the longest matching prefix.
+    fn check_deleted(
+        &self,
+        path: &str,
+        start: &str,
+        roots: &BTreeSet<PathBuf>,
+    ) -> Result<(), Stop> {
+        let dir = Path::new(path).parent().unwrap_or(Path::new(""));
+        let Some(root) = roots
+            .iter()
+            .filter(|r| dir.starts_with(r))
+            .max_by_key(|r| r.components().count())
+        else {
+            return Err(content(format!(
+                "{path} was deleted outside the checked workspaces"
+            )));
+        };
+        let lock = root.join("Cargo.lock").to_string_lossy().into_owned();
+        let manifest = self
+            .cargo_file(start, path)?
+            .ok_or_else(|| content(format!("the base {path} is missing")))?;
+        let base_lock = self
+            .cargo_file(start, &lock)?
+            .ok_or_else(|| content(format!("the base {lock} is missing")))?;
+        match deleted_member(&manifest, &base_lock) {
+            CargoVerdict::Same => Ok(()),
+            CargoVerdict::Changed(reason) | CargoVerdict::Unknown(reason) => {
+                Err(content(format!("{path}: {reason}")))
+            }
+        }
+    }
+
+    /// Runs the lock, cargo and structural checks on a clean export of `head`. `Err` holds the stop and its ledger line.
     fn cargo_check(
         &self,
         paths: &[String],
         start: &str,
         head: &str,
         temp_root: &Path,
-    ) -> Result<(), String> {
+    ) -> Result<(), Stop> {
         let modules = self
             .repo
             .file_at(head, ".gitmodules")
-            .map_err(|e| stays(format!("cannot read .gitmodules: {e}")))?;
+            .map_err(|e| transient(format!("cannot read .gitmodules: {e}")))?;
         if modules.is_some() {
-            return Err(stays("the repo has git submodules"));
+            return Err(content("the repo has git submodules"));
         }
         let temp_root = temp_root
             .canonicalize()
-            .map_err(|e| stays(format!("cannot resolve the temp folder: {e}")))?;
+            .map_err(|e| transient(format!("cannot resolve the temp folder: {e}")))?;
         // A shared temp folder can gain a Cargo file between this check and the cargo calls. That gap is accepted.
         if cargo_file_above(&temp_root) {
-            return Err(stays("a Cargo file sits above the export folder"));
+            return Err(transient("a Cargo file sits above the export folder"));
         }
         let export = ExportDir::create(&temp_root, &self.job_id)?;
         self.repo
             .export_commit(head, &export.0)
-            .map_err(|e| stays(format!("cannot export the head commit: {e}")))?;
+            .map_err(|e| transient(format!("cannot export the head commit: {e}")))?;
         let project = self.repo.workdir_in(&export.0);
         let project = project
             .canonicalize()
-            .map_err(|e| stays(format!("the project folder is missing in the export: {e}")))?;
+            .map_err(|e| transient(format!("the project folder is missing in the export: {e}")))?;
 
         // The changed manifests present at head, and the manifests that name the touched workspaces.
         let mut manifests: BTreeMap<&str, String> = BTreeMap::new();
@@ -316,7 +397,9 @@ impl Engine<'_> {
                 let dir = Path::new(path).parent().unwrap_or(Path::new(""));
                 let manifest = dir.join("Cargo.toml").to_string_lossy().into_owned();
                 if self.cargo_file(head, &manifest)?.is_none() {
-                    return Err(stays(format!("{path} has no Cargo.toml beside it at head")));
+                    return Err(content(format!(
+                        "{path} has no Cargo.toml beside it at head"
+                    )));
                 }
                 locks.push(path);
                 touched.insert(manifest);
@@ -326,12 +409,12 @@ impl Engine<'_> {
         // The workspace roots, relative to the project folder.
         let mut roots: BTreeSet<PathBuf> = BTreeSet::new();
         for manifest in &touched {
-            let root = workspace_root(&project.join(manifest)).map_err(stays)?;
+            let root = workspace_root(&project.join(manifest)).map_err(transient)?;
             let root = root
                 .canonicalize()
-                .map_err(|e| stays(format!("cannot resolve the workspace root: {e}")))?;
+                .map_err(|e| transient(format!("cannot resolve the workspace root: {e}")))?;
             let rel = root.strip_prefix(&project).map_err(|_| {
-                stays(format!(
+                content(format!(
                     "workspace root {} is outside the project",
                     shown(&root, &export.0)
                 ))
@@ -339,22 +422,17 @@ impl Engine<'_> {
             roots.insert(rel.to_path_buf());
         }
         if roots.is_empty() {
-            return Err(stays("no Cargo manifest or lock is left to check"));
+            return Err(content("no Cargo manifest or lock is left to check"));
         }
         for path in &deleted {
-            let dir = Path::new(path).parent().unwrap_or(Path::new(""));
-            if !roots.iter().any(|r| dir.starts_with(r)) {
-                return Err(stays(format!(
-                    "{path} was deleted outside the checked workspaces"
-                )));
-            }
+            self.check_deleted(path, start, &roots)?;
         }
         let root_locks: BTreeSet<String> = roots
             .iter()
             .map(|r| r.join("Cargo.lock").to_string_lossy().into_owned())
             .collect();
         if let Some(lock) = locks.iter().find(|l| !root_locks.contains(**l)) {
-            return Err(stays(format!(
+            return Err(content(format!(
                 "{lock} is not the lock of a touched workspace"
             )));
         }
@@ -363,10 +441,10 @@ impl Engine<'_> {
         for lock in &root_locks {
             let base = self
                 .cargo_file(start, lock)?
-                .ok_or_else(|| stays(format!("the base {lock} is missing")))?;
+                .ok_or_else(|| content(format!("the base {lock} is missing")))?;
             let tip = self
                 .cargo_file(head, lock)?
-                .ok_or_else(|| stays(format!("the head {lock} is missing")))?;
+                .ok_or_else(|| content(format!("the head {lock} is missing")))?;
             match compare_locks(&base, &tip) {
                 LockDiff::Same => {}
                 LockDiff::Changed {
@@ -374,14 +452,14 @@ impl Engine<'_> {
                     removed,
                     changed,
                 } => return Err(outside_note(&added, &removed, &changed)),
-                LockDiff::Unknown(reason) => return Err(stays(reason)),
+                LockDiff::Unknown(reason) => return Err(content(reason)),
             }
         }
 
         let changed: BTreeSet<PathBuf> = paths.iter().map(|p| project.join(p)).collect();
         for root in &roots {
             let packages =
-                locked_path_packages(&project.join(root).join("Cargo.toml")).map_err(stays)?;
+                locked_path_packages(&project.join(root).join("Cargo.toml")).map_err(transient)?;
             verdict(check_path_packages(
                 &project,
                 &packages,
@@ -654,6 +732,77 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_transient_failure_is_not_stored() {
+        let outer = tempfile::tempdir().expect("temp root");
+        std::fs::write(outer.path().join("Cargo.toml"), "[workspace]\n").expect("write");
+        let inner = outer.path().join("inner");
+        std::fs::create_dir(&inner).expect("mkdir");
+        let job = passing_job();
+        assert!(risk_of(&job, &inner).is_risky());
+        assert!(!job.job_dir.join(CARGO_CHECK_FILE).exists());
+        let root = tempfile::tempdir().expect("clean root");
+        assert!(!risk_of(&job, root.path()).is_risky());
+    }
+
+    /// How many `cargo lock check` lines the job ledger holds.
+    fn check_lines(job: &JobRepo) -> usize {
+        std::fs::read_to_string(job.job_dir.join("progress.md"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains("cargo lock check: "))
+            .count()
+    }
+
+    #[test]
+    fn a_fresh_run_writes_one_ledger_line() {
+        let outer = tempfile::tempdir().expect("temp root");
+        std::fs::write(outer.path().join("Cargo.toml"), "[workspace]\n").expect("write");
+        let inner = outer.path().join("inner");
+        std::fs::create_dir(&inner).expect("mkdir");
+        let job = passing_job();
+        let engine = job.engine(config());
+        let paths = engine.job_changed_paths().expect("paths");
+        for _ in 0..3 {
+            assert!(engine.risk_in(&paths, &inner).is_risky());
+        }
+        assert_eq!(check_lines(&job), 1);
+    }
+
+    #[test]
+    fn a_stored_verdict_writes_no_ledger_line() {
+        let job = outside_job();
+        let key = store_key(&job.head, &config());
+        write_store(&job.job_dir, &key, false, "stored note").expect("store");
+        let root = tempfile::tempdir().expect("temp root");
+        let risk = risk_of(&job, root.path());
+        assert!(risk.is_risky());
+        assert_eq!(risk.note.as_deref(), Some("stored note"));
+        assert_eq!(check_lines(&job), 0);
+    }
+
+    #[test]
+    fn a_stored_pass_writes_no_ledger_line() {
+        let job = outside_job();
+        let key = store_key(&job.head, &config());
+        write_store(&job.job_dir, &key, true, PASS_NOTE).expect("store");
+        let root = tempfile::tempdir().expect("temp root");
+        assert!(!risk_of(&job, root.path()).is_risky());
+        assert_eq!(check_lines(&job), 0);
+    }
+
+    #[test]
+    fn a_content_verdict_is_stored() {
+        let job = outside_job();
+        let root = tempfile::tempdir().expect("temp root");
+        assert!(risk_of(&job, root.path()).is_risky());
+        let stored = std::fs::read_to_string(job.job_dir.join(CARGO_CHECK_FILE)).expect("store");
+        let mut lines = stored.lines().skip(1);
+        assert_eq!(lines.next(), Some("risky"));
+        let note = lines.next().expect("note line");
+        assert!(note.contains("outside crates added: libc 0.2.1"), "{note}");
+    }
+
+    #[test]
     fn a_stored_verdict_for_another_head_is_ignored() {
         let job = outside_job();
         let other = "0".repeat(40);
@@ -697,9 +846,10 @@ pub(crate) mod tests {
 
     #[test]
     fn the_outside_note_names_changed_crates() {
-        let note = outside_note(&[], &[], &["libc 0.2.190".to_string()]);
+        let stop = outside_note(&[], &[], &["libc 0.2.190".to_string()]);
+        assert_eq!(stop.kind, StopKind::Content);
         assert_eq!(
-            note,
+            stop.note,
             "cargo lock check: outside crates added: none; removed: none; source or checksum changed: libc 0.2.190, diff stays risky"
         );
     }

@@ -47,8 +47,8 @@ pub use board::{
 };
 pub use budget::{budget_state, weighted_tokens, BudgetState};
 pub use cargo_lock::{
-    check_path_packages, compare_locks, manifest_keys_diff, CargoTarget, CargoVerdict, LockDiff,
-    PathPackage,
+    check_path_packages, compare_locks, deleted_member, manifest_keys_diff, CargoTarget,
+    CargoVerdict, LockDiff, PathPackage,
 };
 pub use commitmsg::{
     append_footers, blocked_reason, build_job_message, builder_rulings, builder_status,

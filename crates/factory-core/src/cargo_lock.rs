@@ -112,6 +112,38 @@ pub fn compare_locks(base: &str, head: &str) -> LockDiff {
     }
 }
 
+/// Says whether a deleted manifest was a path package of the base lock.
+pub fn deleted_member(base_manifest: &str, base_lock: &str) -> CargoVerdict {
+    let manifest: toml::Value = match base_manifest.parse() {
+        Ok(v) => v,
+        Err(e) => return CargoVerdict::Unknown(format!("the base manifest does not parse: {e}")),
+    };
+    let Some(name) = manifest
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+    else {
+        return CargoVerdict::Unknown("the base manifest has no package name".to_string());
+    };
+    let lock: toml::Value = match base_lock.parse() {
+        Ok(v) => v,
+        Err(e) => return CargoVerdict::Unknown(format!("the base Cargo.lock does not parse: {e}")),
+    };
+    let Some(packages) = lock.get("package").and_then(|p| p.as_array()) else {
+        return CargoVerdict::Unknown("the base Cargo.lock has no packages".to_string());
+    };
+    let listed = packages.iter().any(|pkg| {
+        pkg.get("name").and_then(|n| n.as_str()) == Some(name) && pkg.get("source").is_none()
+    });
+    if listed {
+        CargoVerdict::Same
+    } else {
+        CargoVerdict::Unknown(format!(
+            "crate {name} is not a path package of the base lock"
+        ))
+    }
+}
+
 /// Manifest keys that can run or pull in code from outside the project.
 const RISKY_KEYS: &[&[&str]] = &[
     &["package", "build"],
@@ -206,6 +238,53 @@ mod tests {
         format!(
             "name = \"signal-hook\"\nversion = \"0.3.17\"\nsource = \"{REG}\"\nchecksum = \"cccc\""
         )
+    }
+
+    fn package_manifest(name: &str) -> String {
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n")
+    }
+
+    #[test]
+    fn a_deleted_member_in_the_base_lock_is_same() {
+        let manifest = package_manifest("old");
+        let base = lock(&[ROOT, "name = \"old\"\nversion = \"0.1.0\""]);
+        assert_eq!(deleted_member(&manifest, &base), CargoVerdict::Same);
+    }
+
+    #[test]
+    fn a_deleted_virtual_manifest_is_unknown() {
+        let verdict = deleted_member("[workspace]\nmembers = [\"x\"]\n", &lock(&[ROOT]));
+        assert!(matches!(verdict, CargoVerdict::Unknown(_)));
+    }
+
+    #[test]
+    fn a_deleted_crate_missing_from_the_lock_is_unknown() {
+        let verdict = deleted_member(&package_manifest("old"), &lock(&[ROOT]));
+        let CargoVerdict::Unknown(reason) = verdict else {
+            panic!("expected Unknown, got {verdict:?}");
+        };
+        assert!(reason.contains("old"), "{reason}");
+    }
+
+    #[test]
+    fn a_deleted_crate_with_a_source_entry_is_unknown() {
+        let verdict = deleted_member(&package_manifest("libc"), &lock(&[&libc_a()]));
+        let CargoVerdict::Unknown(reason) = verdict else {
+            panic!("expected Unknown, got {verdict:?}");
+        };
+        assert!(reason.contains("libc"), "{reason}");
+    }
+
+    #[test]
+    fn an_unparsable_base_lock_is_unknown() {
+        let verdict = deleted_member(&package_manifest("old"), "not = [toml");
+        assert!(matches!(verdict, CargoVerdict::Unknown(_)));
+    }
+
+    #[test]
+    fn an_unparsable_base_manifest_is_unknown() {
+        let verdict = deleted_member("[package", &lock(&[ROOT]));
+        assert!(matches!(verdict, CargoVerdict::Unknown(_)));
     }
 
     #[test]
