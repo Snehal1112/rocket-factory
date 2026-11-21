@@ -632,6 +632,35 @@ fn network_failure_probes_until_back() {
 }
 
 #[test]
+fn network_wait_reaches_the_rerun_when_the_ledger_is_read_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = disk_fixture();
+    let ledger_path = fx.job_dir.join("progress.md");
+    let path = ledger_path.clone();
+    let m = fake_machine(
+        |_| 10_000,
+        move |n, _| {
+            if n == 1 {
+                let _ = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&path);
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444))
+                    .expect("read only");
+            }
+        },
+    );
+    let s = script(
+        vec![change_effect()],
+        vec![step(Some(failed_run(NETWORK, 0, 0, 0)))],
+    )
+    .with_clock(m.elapsed.clone());
+    let _ = fx.engine(&s).with_machine_wait(m.wait).build_stage();
+    // The rerun started although the ledger could not be written.
+    assert_eq!(s.call_times().len(), 2, "{:?}", s.call_times());
+}
+
+#[test]
 fn auth_failure_with_readable_key_file_waits() {
     use std::os::unix::fs::PermissionsExt;
     let mut fx = disk_fixture();

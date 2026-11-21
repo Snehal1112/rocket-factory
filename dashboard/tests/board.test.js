@@ -1209,12 +1209,22 @@ test("a review-failed park shows the Review failed label", () => {
 });
 
 test("a machine-waiting park shows its label and offers retry", () => {
-  assert.equal(board.parkKindLabel("machine-waiting"), "machine waiting");
+  assert.equal(board.parkKindLabel("machine-waiting"), "Waiting for the machine");
   const html = board.renderCard(
     makeJob({ stage: "needs-human", park_kind: "machine-waiting", park_resume: "build", reason: "machine did not recover" }),
   );
   assert.match(html, /factory retry 001/);
   assert.doesNotMatch(html, /factory approve/);
+});
+
+test("machine-waiting and builder-stopped cards offer rework, series-waiting does not", () => {
+  for (const kind of ["machine-waiting", "builder-stopped"]) {
+    const html = board.renderCard(makeJob({ stage: "needs-human", park_kind: kind, park_resume: "build" }));
+    assert.match(html, /factory rework 001/, kind);
+    assert.doesNotMatch(html, /factory approve/, kind);
+  }
+  const series = board.renderCard(makeJob({ stage: "needs-human", park_kind: "series-waiting", park_resume: "build" }));
+  assert.doesNotMatch(series, /factory rework/);
 });
 
 test("a card at build shows the machine wait text", () => {

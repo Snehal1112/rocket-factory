@@ -40,7 +40,8 @@ fn retry_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
             job.stage
         )));
     }
-    if job.batch_snapshot.is_some() {
+    // A machine park comes before the batch recovery, so its retry reruns the gate and then the recovery.
+    if job.batch_snapshot.is_some() && job.park_kind.as_deref() != Some("machine-waiting") {
         return Err(EngineError::Refused(format!(
             "job {id} has a pending batch commit, use rework to finish it"
         )));

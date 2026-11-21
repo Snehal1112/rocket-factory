@@ -342,6 +342,26 @@ fn retry_refuses_a_pending_batch_commit() {
     assert!(refusal(&fx).contains("pending batch commit"));
 }
 
+#[test]
+fn retry_accepts_a_machine_park_with_a_pending_batch_commit() {
+    let fx = common::approved_job();
+    park(
+        &fx,
+        factory_core::ParkKind::MachineWaiting,
+        Some(ResumeAt::Build),
+    );
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.batch_snapshot = Some("abc123".into());
+            Ok(())
+        })
+        .expect("snapshot");
+    if let Err(EngineError::Refused(text)) = retry_job(&fx.driver, &fx.id) {
+        assert!(!text.contains("pending batch commit"), "{text}");
+    }
+}
+
 const SECURITY_OK: &str = "No findings.\nVERDICT: APPROVE";
 
 /// Gives the driver a security agent, or the missing one parks the job as `review-failed`.

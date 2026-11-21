@@ -859,7 +859,13 @@ impl Engine<'_> {
         if changed {
             self.finish_build(job, &base, new_tip, job.head.clone(), false)
         } else {
-            self.finish_build(job, &base, new_tip, None, true)
+            // Only a round whose branch tip equals the head of the previous round changed nothing.
+            let no_change = job.head.as_deref() == Some(new_tip.as_str());
+            if no_change {
+                self.finish_build(job, &base, new_tip, None, true)
+            } else {
+                self.finish_build(job, &base, new_tip, job.head.clone(), false)
+            }
         }
     }
 

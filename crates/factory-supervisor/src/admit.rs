@@ -102,7 +102,8 @@ pub fn queue_retry(home: &Home, name: &str, raw_id: &str, now_ms: u64) -> Result
             job.stage
         )));
     }
-    if job.batch_snapshot.is_some() {
+    // A machine park comes before the batch recovery, so its retry reruns the gate and then the recovery.
+    if job.batch_snapshot.is_some() && job.park_kind.as_deref() != Some("machine-waiting") {
         return Err(conflict(format!(
             "job {id} has a pending batch commit, use rework to finish it"
         )));

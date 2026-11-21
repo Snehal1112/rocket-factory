@@ -43,6 +43,11 @@
     return job.park_resume === "build" ? "" : copyChip(approveCommand(job));
   }
 
+  // The rework chip beside retry for a park that resumes at build, except series-waiting, which has no work to redo.
+  function retryRework(job) {
+    return job.park_resume === "build" && job.park_kind !== "series-waiting" ? copyChip(`factory rework ${job.id} <note>`) : "";
+  }
+
   // True when a retry can resume the parked job. A cancelled job has none.
   function canRetry(job) {
     return job.cancelled !== true && typeof job.park_resume === "string" && job.park_resume !== "";
@@ -419,7 +424,7 @@
     "no-tests": "No tests added",
     "review-failed": "Review failed",
     "series-waiting": "Waiting for the earlier plan",
-    "machine-waiting": "machine waiting",
+    "machine-waiting": "Waiting for the machine",
     other: "Needs a human",
   };
   const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "builder-tampered", "commit-failed"];
@@ -752,7 +757,7 @@
             : reviewMissing(job)
               ? `<p class="review-missing">${Object.values(job.reviews || {}).includes("failed") ? "The review did not finish." : "The review has not run."}</p>`
               : "") +
-          `<p class="hint">${canRetry(job) ? copyChip(`factory retry ${job.id}`) + retryApprove(job) : copyChip(approveCommand(job)) + copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
+          `<p class="hint">${canRetry(job) ? copyChip(`factory retry ${job.id}`) + retryApprove(job) + retryRework(job) : copyChip(approveCommand(job)) + copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
         : job.stage === "build" && typeof job.machine_wait === "string" && job.machine_wait.trim() !== ""
           ? `<p class="reason machine-wait">${escapeHtml(`waiting: ${job.machine_wait.trim()}`)}</p>`
           : "";

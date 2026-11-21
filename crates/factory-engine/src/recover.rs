@@ -116,7 +116,7 @@ impl Rerun<'_> {
         self.started = true;
         (self.before)()?;
         let text = format!("builder failed ({}), rerunning once", self.why);
-        e.ruling(&text)?;
+        e.ruling_best_effort(&text);
         tracing::info!(event = "builder.rerun", task = ?self.task, msg = %text);
         Ok(())
     }

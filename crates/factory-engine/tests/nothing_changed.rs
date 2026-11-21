@@ -190,6 +190,9 @@ fn last_task_that_changes_nothing_goes_to_review() {
         e.build_stage().expect("task 1"),
         StageOutcome::Advanced(Stage::Build)
     );
+    // The previous round ended at this tip, as in a rework round, so task 2 changes nothing for the round.
+    let tip = fx.repo.tip(&fx.job().branch).expect("tip");
+    set_job(&fx, |j| j.head = Some(tip));
     assert_eq!(
         e.build_stage().expect("task 2"),
         StageOutcome::Advanced(Stage::Review)
@@ -212,6 +215,27 @@ fn last_task_that_changes_nothing_goes_to_review() {
     assert!(reviewer_diff(&spec).contains("a.txt"), "{}", spec.prompt);
     assert!(
         spec.prompt.contains(&reply.display().to_string()),
+        "{}",
+        spec.prompt
+    );
+}
+
+#[test]
+fn last_task_that_changes_nothing_after_new_commits_is_not_a_no_change_round() {
+    let fx = task_fixture(TWO_TASKS);
+    let builder = scripted(vec![change("a.txt", 3), say(REPLY)]);
+    let e = fx.engine(&builder);
+    e.build_stage().expect("task 1");
+    assert_eq!(
+        e.build_stage().expect("task 2"),
+        StageOutcome::Advanced(Stage::Review)
+    );
+    assert_eq!(fx.job().no_change_round, None);
+    let (spec, _) = checks_and_review(&fx, APPROVE);
+    assert!(
+        !spec
+            .prompt
+            .contains("The builder changed nothing this round"),
         "{}",
         spec.prompt
     );
