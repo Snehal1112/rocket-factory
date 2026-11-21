@@ -122,13 +122,19 @@ impl ParkKind {
 
     /// Like `next`, but a park that offers approve says what a plain approve would hit: while the
     /// review has not run or did not finish it offers `approve --without-review`, while changes are open
-    /// `approve --waive`. `verdict` is the word of the last review, if any.
+    /// `approve --waive`, and while changes are open and a review has no verdict no approve at all.
+    /// `verdict` is the word of the last review, if any.
     pub fn next_for(self, id: &str, review_missing: bool, verdict: Option<&str>) -> Vec<String> {
         let mut next = self.next(id);
         let approve = format!("factory approve {id}");
         let Some(at) = next.iter().position(|n| *n == approve) else {
             return next;
         };
+        // A waiver never covers a review with no verdict, so such a park offers no approve at all.
+        if verdict == Some("changes") && review_missing {
+            next.remove(at);
+            return next;
+        }
         if verdict == Some("changes") {
             next[at] = format!("factory approve {id} --waive \"<reason>\"");
             return next;
@@ -427,6 +433,19 @@ mod tests {
         );
         assert!(
             !next.contains(&"factory approve 012".to_string()),
+            "{next:?}"
+        );
+    }
+
+    #[test]
+    fn next_offers_no_approve_while_changes_wait_on_a_missing_review() {
+        let next = ParkKind::ChangesRemain.next_for("012", true, Some("changes"));
+        assert!(
+            next.iter().all(|n| !n.starts_with("factory approve")),
+            "{next:?}"
+        );
+        assert!(
+            next.contains(&"factory rework 012 <note>".to_string()),
             "{next:?}"
         );
     }

@@ -106,14 +106,16 @@ pub enum Command {
     /// Merge a job that waits on you.
     ///
     /// The job must be in needs-human or approve. A job whose review did not run, or asked for
-    /// changes, needs --without-review or --waive.
+    /// changes, needs --without-review or --waive. A job with open changes and a review that has no
+    /// verdict cannot be approved: retry or rework it.
     Approve {
         /// The job id, for example 7 or 007.
         id: String,
         /// Merge a needs-human job even though its code review has not run.
         #[arg(long)]
         without_review: bool,
-        /// Merge a job whose review left open blockers, with a one-line reason.
+        /// Merge a job whose review left open blockers, with a one-line reason. Refused while a
+        /// required review has no verdict.
         #[arg(long, conflicts_with = "without_review")]
         waive: Option<String>,
     },
