@@ -219,6 +219,47 @@ fn a_metadata_failure_after_a_same_lock_keeps_the_diff_risky() {
         line.starts_with("cargo lock check: cargo metadata failed:"),
         "{line}"
     );
+    assert!(!fx.job_dir.join("cargo-check.txt").exists());
+}
+
+/// A builder that deletes `gone`, writes `files` and regenerates the lock.
+fn delete_and_change(gone: Vec<&'static str>, files: Vec<(&'static str, String)>) -> Effect {
+    Box::new(move |spec| {
+        for g in &gone {
+            let path = spec.cwd.join(g);
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).expect("remove dir");
+            } else {
+                std::fs::remove_file(&path).expect("remove file");
+            }
+        }
+        write_files(&spec.cwd, &files);
+        lock_in(&spec.cwd);
+        "done".to_string()
+    })
+}
+
+#[test]
+fn a_deleted_member_crate_merges() {
+    let fx = fixture();
+    let files = vec![(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\"]\nresolver = \"2\"\n".to_string(),
+    )];
+    let decision = run_job(&fx, delete_and_change(vec!["b"], files));
+    assert_eq!(decision, Decision::AutoMerge);
+    assert!(ledger(&fx).contains(PASS_LINE), "{}", ledger(&fx));
+}
+
+#[test]
+fn a_deleted_nested_workspace_manifest_parks() {
+    let fx = fixture();
+    commit_workspace(&fx, "nested/");
+    let files = vec![("a/Cargo.toml", package("a", "# a note\n"))];
+    let effect = delete_and_change(vec!["nested/Cargo.toml"], files);
+    assert_risky(&run_job(&fx, effect));
+    let line = check_line(&fx);
+    assert!(line.contains("nested/Cargo.toml"), "{line}");
 }
 
 #[test]
