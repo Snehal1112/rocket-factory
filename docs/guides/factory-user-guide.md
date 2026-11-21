@@ -69,7 +69,7 @@ There is also a `/factory` slash command for Claude Code. It runs the interview 
 | Worktree | A second working copy of your repository on the job's own branch. It keeps your checkout clean. |
 | Stage | Where a job is: `spec`, `build`, `review`, `approve`, `merged` or `needs-human`. |
 | needs-human | The job stopped and wants you. The reason is printed, along with what you can do next. Also called "parked". |
-| Risky diff | A change touching a sensitive path such as `Cargo.toml`, authentication or secrets. It always needs your approval. |
+| Risky diff | A change touching a sensitive path such as `Cargo.toml`, authentication or secrets. It always needs your approval. A Cargo-only change that adds no outside crate is not risky; the ledger shows a `cargo lock check:` line with the reason. |
 | Preset | A starter rule set for a language: `rust`, `go`, `ruby`, `csharp` or `node`. |
 | Project | A repository (or a folder inside one) registered with the factory. |
 | Factory home | The folder where the factory keeps its data: `$FACTORY_HOME`, else `~/.factory`. |
@@ -1230,7 +1230,7 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 
 | Reason shown | Plain meaning | What you can do |
 |---|---|---|
-| `risky diff: risky paths (K): ...` | The change touched a sensitive file. This always needs you. | Read the diff. Then `approve`, or `rework` with a note. |
+| `risky diff: risky paths (K): ...` | The change touched a sensitive file. This always needs you. A change to Cargo files only that adds no outside crate no longer parks here; the ledger says why with a `cargo lock check: ...` line. | Read the diff. Then `approve`, or `rework` with a note. |
 | `checks failed after N fix rounds` | The tests still fail after the fix rounds. | `rework` with a hint. |
 | `review asked for changes after N fix rounds` | The reviewer still wants changes. | `rework` with a note, or `approve --waive "<reason>"` if you disagree. A plain `approve` is refused (section 6.5). |
 | `diff has N changed lines, the cap is C` | The change is too big to auto-merge. | `approve` after reading it, or `rework` to split it up. |

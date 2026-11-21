@@ -256,6 +256,21 @@ Auto-merge needs all of: no check failure, the latest reviewer verdict is exactl
 
 Risky means the diff touches any `risk_paths` entry: the collection trust gate, auth, secrets or `{{process.env}}`, persistence formats, `src-tauri/`, `DomainEvent`, `Cargo.toml`, `Cargo.lock`, `package.json`, `tauri.conf.json`, CSP or the harness hooks. A missing or broken config makes every diff risky.
 
+The Cargo lock check can clear a diff whose only risky paths are Cargo files. A path counts as a Cargo file only when every `risk_paths` glob that matches it names Cargo files alone (`Cargo.toml`, `Cargo.lock`). Such a diff counts as normal when all of these hold:
+
+- The lock gains and loses no outside crate.
+- `cargo metadata --locked` passes in a clean export of the head commit, made under the system temp folder and removed afterwards.
+- No path crate or target leaves the project, and no build script changed.
+- No proc-macro, `links`, `build`, `cargo-features`, `[patch]` or `[replace]` change came in.
+
+Anything the check cannot settle stays risky. It only ever turns risky into normal, never the other way, and a risky path that is not a Cargo file (such as `*auth*`) keeps the diff risky without running cargo. The rust preset marks `**/.cargo/**` and `**/rust-toolchain*` risky, so those are never cleared. The ledger carries one line with the `Ruling: ` prefix:
+
+- `cargo lock check: no outside code changed, Cargo files are not risky`
+- `cargo lock check: outside crates added: <name version, ...|none>; removed: <name version, ...|none>, diff stays risky`
+- `cargo lock check: <reason>, diff stays risky`
+
+The verdict is stored in `cargo-check.txt` in the job folder: line 1 is `key <head sha> <config text>`, line 2 is `same` or `risky`, line 3 is the ledger note. A stored verdict is reused only for the same head and the same `cargo_lock_check` and `risk_paths` values. The setting `cargo_lock_check` (default true) turns the check off; see `project-toml-reference.md`.
+
 A risky diff gets the same fix rounds as any other (`risky_fix_rounds`, default `fix_rounds`; 0 parks at once). It never auto-merges: after an approve the final checks run on the exact head, and then the job parks as `risky-diff` for a human approve. The park evidence leads with the review. For `risky-diff` and `changes-remain` the parts are, in order:
 
 - `Review`: `verdict <word>, round <N>`, then the open `[blocker]` lines (the whole reply when a CHANGES has none), or `findings file missing`.
