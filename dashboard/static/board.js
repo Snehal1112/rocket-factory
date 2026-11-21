@@ -419,7 +419,7 @@
     "no-tests": "No tests added",
     "review-failed": "Review failed",
     "series-waiting": "Waiting for the earlier plan",
-    "machine-waiting": "Waiting for the machine",
+    "machine-waiting": "machine waiting",
     other: "Needs a human",
   };
   const PARK_RED = ["checks-failed", "changes-remain", "builder-stopped", "builder-blocked", "builder-tampered", "commit-failed"];
@@ -753,7 +753,9 @@
               ? `<p class="review-missing">${Object.values(job.reviews || {}).includes("failed") ? "The review did not finish." : "The review has not run."}</p>`
               : "") +
           `<p class="hint">${canRetry(job) ? copyChip(`factory retry ${job.id}`) + retryApprove(job) : copyChip(approveCommand(job)) + copyChip(`factory rework ${job.id} <note>`)}${copyChip(`factory cancel ${job.id}`)}</p>`
-        : "";
+        : job.stage === "build" && typeof job.machine_wait === "string" && job.machine_wait.trim() !== ""
+          ? `<p class="reason machine-wait">${escapeHtml(`waiting: ${job.machine_wait.trim()}`)}</p>`
+          : "";
     const warning = job.spec_warning
       ? `<details class="spec-warning"${job.stage === "needs-human" ? " open" : ""}><summary>Spec warnings (${String(job.spec_warning).split("; ").filter((part) => part.trim() !== "").length})</summary><p class="reason">${escapeHtml(job.spec_warning)}</p></details>`
       : "";

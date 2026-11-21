@@ -176,6 +176,13 @@ pub struct Job {
         skip_serializing_if = "Option::is_none"
     )]
     pub park_resume: Option<String>,
+    /// Short text that says what the machine lacks while the job waits at build. A bad value is dropped.
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub machine_wait: Option<String>,
     /// Unix seconds the job parked. A bad value is dropped.
     #[serde(
         default,
@@ -347,6 +354,22 @@ mod tests {
         assert_eq!(without.park_resume, None);
         let json = serde_json::to_string(&without).expect("job serializes");
         assert!(!json.contains("park_resume"), "{json}");
+    }
+
+    #[test]
+    fn machine_wait_is_optional_and_round_trips() {
+        let with = job_with(serde_json::json!({ "machine_wait": "network" }));
+        assert_eq!(with.machine_wait.as_deref(), Some("network"));
+        let json = serde_json::to_string(&with).expect("job serializes");
+        assert!(json.contains("\"machine_wait\":\"network\""), "{json}");
+        let without = job_with(serde_json::json!({}));
+        assert_eq!(without.machine_wait, None);
+        let json = serde_json::to_string(&without).expect("job serializes");
+        assert!(!json.contains("machine_wait"), "{json}");
+        assert_eq!(
+            job_with(serde_json::json!({ "machine_wait": 5 })).machine_wait,
+            None
+        );
     }
 
     #[test]

@@ -1256,4 +1256,14 @@ mod tests {
         assert_eq!(json["drafts"][0]["stale"], true);
         Ok(())
     }
+
+    #[test]
+    fn project_state_carries_machine_wait() -> TestResult {
+        let s = setup()?;
+        let board = r#"{"jobs":[{"id":"001","dir":"2026-10-13-001-x","slug":"s","created":"2026-10-13","feature":"f","branch":"b","stage":"build","round":0,"stage_since":1.0,"reviews":{},"machine_wait":"disk: 0.4 GB free"}]}"#;
+        std::fs::write(s._repo.path().join("state/board.json"), board)?;
+        let json: Value = serde_json::from_slice(&get(&s.app, "/api/projects/alpha/state").body)?;
+        assert_eq!(json["jobs"][0]["machine_wait"], "disk: 0.4 GB free");
+        Ok(())
+    }
 }

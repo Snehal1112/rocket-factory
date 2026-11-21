@@ -141,6 +141,8 @@ pub fn jobs(home: &Home, deps: &ApiDeps, name: &str) -> ApiResponse {
                 "series": j.series.as_ref().map(|s| json!({"id": s.id, "index": s.index, "total": s.total})),
                 "cancelled": j.cancelled,
                 "parkResume": j.park_resume.map(|r| r.as_str()),
+                "parkKind": j.park_kind,
+                "machineWait": j.machine_wait,
             })
         })
         .collect();
@@ -319,6 +321,20 @@ mod tests {
         let r = get(&home, "/projects/good/jobs");
         assert_eq!(r.status, 200, "{}", r.body);
         assert_eq!(r.body["jobs"][0]["parkResume"], "rereview");
+    }
+
+    #[test]
+    fn jobs_read_includes_park_kind_and_machine_wait() {
+        let (_t, home) = fixture();
+        let job = job_json("001", "001-first").replace(
+            r#""stage":"build""#,
+            r#""stage":"build","park_kind":"machine-waiting","machine_wait":"network""#,
+        );
+        write_board(&home, &format!(r#"{{"jobs":[{job}]}}"#));
+        let r = get(&home, "/projects/good/jobs");
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(r.body["jobs"][0]["parkKind"], "machine-waiting");
+        assert_eq!(r.body["jobs"][0]["machineWait"], "network");
     }
 
     #[test]

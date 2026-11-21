@@ -387,6 +387,7 @@ mod tests {
             intake_issue: None,
             park_kind: None,
             park_resume: None,
+            machine_wait: None,
             park_at: None,
             park_summary: None,
             estimate: None,

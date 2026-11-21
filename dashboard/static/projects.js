@@ -104,7 +104,8 @@
   // The buttons a job card shows, in order.
   function jobActions(job) {
     if (!job || job.cancelled === true) return [];
-    if (job.stage === "needs-human" && job.park_resume === "build") return ["retry", "cancel"];
+    if (job.stage === "needs-human" && job.park_resume === "build" && job.park_kind === "series-waiting") return ["retry", "cancel"];
+    if (job.stage === "needs-human" && job.park_resume === "build") return ["retry", "rework", "cancel"];
     if (job.stage === "needs-human" && typeof job.park_resume === "string" && job.park_resume !== "") return ["retry", "approve", "cancel"];
     if (job.stage === "needs-human") return ["approve", "rework", "cancel"];
     if (job.stage === "approve") return ["approve", "cancel"];

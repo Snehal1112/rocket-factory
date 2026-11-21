@@ -1207,3 +1207,19 @@ test("a review-failed park shows the Review failed label", () => {
   const html = board.renderCard(makeJob({ stage: "needs-human", park_kind: "review-failed" }));
   assert.match(html, /Review failed/);
 });
+
+test("a machine-waiting park shows its label and offers retry", () => {
+  assert.equal(board.parkKindLabel("machine-waiting"), "machine waiting");
+  const html = board.renderCard(
+    makeJob({ stage: "needs-human", park_kind: "machine-waiting", park_resume: "build", reason: "machine did not recover" }),
+  );
+  assert.match(html, /factory retry 001/);
+  assert.doesNotMatch(html, /factory approve/);
+});
+
+test("a card at build shows the machine wait text", () => {
+  const html = board.renderCard(makeJob({ stage: "build", machine_wait: "network" }));
+  assert.match(html, /waiting: network/);
+  const plain = board.renderCard(makeJob({ stage: "build" }));
+  assert.doesNotMatch(plain, /waiting:/);
+});
