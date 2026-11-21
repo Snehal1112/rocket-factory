@@ -477,10 +477,11 @@ What it prints: `merged <sha>`, or `parked: <reason>`. A `parked:` result leaves
 factory retry <ID>
 ```
 
-Continues a job parked by the driver at the stage that parked it. It works for a failed review (`review-failed`), a `no-checks` park, a branch tip that differs from the reviewed head, a busy main, a busy merge lock, a spent sync cap, a `machine-waiting` park and a series plan whose earlier plan has not merged (it continues at build). Fix the cause first, for example map the changed paths to a check or clean your checkout, then retry. After the stage runs, the job continues like `run` and merges or parks again, and a series goes on with its next plan.
+Continues a job parked by the driver at the stage that parked it. It works for a failed review (`review-failed`), a `no-checks` park, a branch tip that differs from the reviewed head, a busy main, a busy merge lock, a spent sync cap, a `machine-waiting` park, a `builder-stopped` park after a failed builder run and a series plan whose earlier plan has not merged (it continues at build). Fix the cause first, for example map the changed paths to a check or clean your checkout, then retry. After the stage runs, the job continues like `run` and merges or parks again, and a series goes on with its next plan.
 
 - A `machine-waiting` park means the disk was short, the network was down or the API key was bad for 25 minutes. Fix the machine, then `factory retry <ID>`. It starts the builder again and keeps any rework note. You may also send `factory rework <ID> <note>` instead.
-- It refuses a job with no resume stage (builder parks, risky diff, changes remain, merge conflict) and prints that park's own next commands. It also refuses a cancelled job.
+- A `builder-stopped` park whose reason reads `builder stopped: Failed: <error>` comes after the builder failed twice. `retry` runs it again. A `builder-stopped` park for a budget stop, turn limit or stall has no resume stage: use `rework`.
+- It refuses a job with no resume stage (other builder parks, risky diff, changes remain, merge conflict) and prints that park's own next commands. It also refuses a cancelled job.
 - If the cause is still there, the job parks again with the same reason.
 - It takes the project lease and exits with code 75 when the project is busy, like `run`.
 - An approval you gave before the park (also `--without-review` or `--waive`) carries over when the branch tip has not changed.
@@ -1234,7 +1235,7 @@ It shows the reason, some evidence and the `next:` commands that are valid for t
 | `review asked for changes after N fix rounds` | The reviewer still wants changes. | `rework` with a note, or `approve --waive "<reason>"` if you disagree. A plain `approve` is refused (section 6.5). |
 | `diff has N changed lines, the cap is C` | The change is too big to auto-merge. | `approve` after reading it, or `rework` to split it up. |
 | `budget is stopped` | The job used up its token budget. | `approve` or `cancel`. Raise `budget_weighted` if the job is legitimately large. |
-| `builder stopped: ...` | The builder ended early, also after its one automatic rerun. | `rework`. |
+| `builder stopped: ...` | The builder ended early. `Failed: <error>` means it failed twice. | `retry` for `Failed`, else `rework`. |
 | `builder blocked/needs context ...` | The builder needs information. | `rework` and give it in the note. |
 | `<detail>, waited 25 min` (park `machine-waiting`) | The disk was short, the network was down or the API key was bad for 25 minutes. The card shows `machine_wait` while it waits. | Fix the machine, then `retry`. `rework` with a note also works. |
 | `builder made no changes` or `task N changed nothing` | Nothing was produced, and the branch has no commits above the base. | `rework`, or `cancel`. |
