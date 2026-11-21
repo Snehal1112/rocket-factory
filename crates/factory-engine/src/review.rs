@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
 use factory_core::{
-    budget_state, classify_paths, combine_verdicts, open_blockers, parse_verdict, DiffClass,
-    LastReview, ParkKind, ResumeAt, ReviewState, Stage, Verdict, REVIEW_ROLES,
+    budget_state, combine_verdicts, open_blockers, parse_verdict, DiffClass, LastReview, ParkKind,
+    ResumeAt, ReviewState, Stage, Verdict, REVIEW_ROLES,
 };
 
 use crate::decide::{decide, risk_summary, DecideInput, Decision};
@@ -106,15 +106,8 @@ impl Engine<'_> {
         // The first review of a risky job records its risky paths, so a park can name those that fix rounds added.
         let first_risky = self.job_dir.join(crate::park::RISKY_PATHS_FILE);
         if risky && !first_risky.exists() {
-            let list: Vec<String> = paths
-                .iter()
-                .filter(|p| {
-                    classify_paths(std::slice::from_ref(*p), &self.config) == DiffClass::Risky
-                })
-                .cloned()
-                .collect();
             // Like the other evidence files, this one is best effort and never stops the review.
-            let _ = std::fs::write(&first_risky, list.join("\n") + "\n");
+            let _ = std::fs::write(&first_risky, risk.risky.join("\n") + "\n");
         }
         let round_lines = round_diff.changed_lines();
         let job_model = self.job_model();
@@ -310,12 +303,12 @@ impl Engine<'_> {
             checks_ok,
             verdict: &verdict,
             class,
-            risky_summary: risk_summary(&paths, &self.config),
+            risky_summary: risk_summary(&risk.risky, &self.config),
             diff_lines: whole.changed_lines(),
             diff_cap: self.config.diff_cap_lines as usize,
             budget: budget_state(self.job_weighted_tokens(), self.config.budget_weighted),
             round: job.round,
-            fix_rounds: self.config.fix_rounds_for(class == DiffClass::Risky),
+            fix_rounds: self.config.fix_rounds_for(risky),
             rework_base: job.rework_base,
             role_failed,
         };

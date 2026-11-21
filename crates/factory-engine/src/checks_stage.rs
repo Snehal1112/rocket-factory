@@ -4,8 +4,8 @@ use factory_checks::{
     append_notes, plan_checks_in, run_checks, write_checks_md, CheckPlan, ChecksReport, Workspace,
 };
 use factory_core::{
-    classify_paths, code_paths_of, has_test_marker, has_test_path, uncovered_paths, ChecksPass,
-    Config, DiffClass, ParkKind, ParkPart, ReviewState, Stage,
+    code_paths_of, has_test_marker, has_test_path, uncovered_paths, ChecksPass, Config, ParkKind,
+    ParkPart, ReviewState, Stage,
 };
 
 use crate::decide::fix_rounds_used;
@@ -280,7 +280,7 @@ impl Engine<'_> {
         let job = self.job()?;
         let used = fix_rounds_used(job.round, job.rework_base);
         let paths = self.job_changed_paths()?;
-        let risky = classify_paths(&paths, &self.config) == DiffClass::Risky;
+        let risky = self.risk(&paths).is_risky();
         if used >= self.config.fix_rounds_for(risky) {
             let title = if kind == ParkKind::ChecksFailed {
                 "Failing checks"

@@ -606,4 +606,23 @@ pub(crate) mod tests {
         assert_eq!(lines.next(), Some("risky"));
         assert_eq!(lines.next(), Some(note.as_str()));
     }
+
+    #[test]
+    fn a_park_card_uses_the_cargo_verdict() {
+        let job = outside_job();
+        let engine = job.engine(config());
+        let paths = engine.job_changed_paths().expect("paths");
+        let key = store_key(&job.head, &config());
+
+        write_store(&job.job_dir, &key, true, PASS_NOTE).expect("store");
+        assert!(!engine.is_risky());
+        assert!(engine.risk_part(&paths).is_none());
+
+        let note =
+            "cargo lock check: outside crates added: libc 0.2.1; removed: none, diff stays risky";
+        write_store(&job.job_dir, &key, false, note).expect("store");
+        assert!(engine.is_risky());
+        let part = engine.risk_part(&paths).expect("risk part");
+        assert!(part.text.ends_with(note), "{}", part.text);
+    }
 }

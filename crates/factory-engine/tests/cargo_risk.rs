@@ -375,3 +375,100 @@ fn a_new_config_runs_the_check_again() {
     assert!(first.starts_with("key "), "{first}");
     assert!(first.ends_with(&expected), "{first}");
 }
+
+fn changes() -> ScriptedRunner {
+    scripted(vec![Box::new(|_| {
+        "1. [blocker] a/src/lib.rs:1 bad\nVERDICT: CHANGES".to_string()
+    })])
+}
+
+/// The change that adds an outside crate to the lock.
+fn outside_crate() -> Effect {
+    Box::new(|spec| {
+        let path = spec.cwd.join("Cargo.lock");
+        let mut text = std::fs::read_to_string(&path).expect("read lock");
+        text.push_str(
+            "\n[[package]]\nname = \"signal-hook\"\nversion = \"0.3.17\"\n\
+             source = \"registry+https://github.com/rust-lang/crates.io-index\"\n\
+             checksum = \"8621587d4798caf8eb44879d42e56b9a93ea5dcd315a6487c357130095b62801\"\n",
+        );
+        std::fs::write(&path, text).expect("write lock");
+        "done".to_string()
+    })
+}
+
+#[test]
+fn a_cleared_round_then_an_outside_crate_hits_the_risky_cap() {
+    let mut fx = fixture();
+    fx.config.fix_rounds = 2;
+    fx.config.risky_fix_rounds = Some(1);
+    let runner = scripted(vec![change(internal_dep(), true)]);
+    fx.engine(&runner).build_stage().expect("build");
+    fx.engine(&runner).checks_stage().expect("checks");
+    let review = fx.engine(&changes()).review_stage().expect("review");
+    assert_eq!(review.decision, Decision::FixRound);
+    fx.engine(&changes())
+        .apply_decision(&review)
+        .expect("apply");
+    assert!(!fx.job_dir.join("risky-paths.txt").exists());
+
+    let runner = scripted(vec![outside_crate()]);
+    fx.engine(&runner).build_stage().expect("fix build");
+    fx.engine(&runner).checks_stage().expect("checks");
+    let review = fx.engine(&approving()).review_stage().expect("review");
+    assert_risky(&review.decision);
+    fx.engine(&approving())
+        .apply_decision(&review)
+        .expect("apply");
+
+    let list = std::fs::read_to_string(fx.job_dir.join("risky-paths.txt")).expect("risky paths");
+    assert!(list.contains("Cargo.lock"), "{list}");
+    let record = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    let risk = record
+        .parts
+        .iter()
+        .find(|p| p.title == "Risk")
+        .expect("risk part");
+    assert!(risk.text.contains("Cargo.lock"), "{}", risk.text);
+    assert!(!risk.text.contains("added by fix rounds"), "{}", risk.text);
+    assert!(risk.text.contains("signal-hook 0.3.17"), "{}", risk.text);
+}
+
+#[test]
+fn a_failing_check_on_a_cleared_diff_uses_normal_fix_rounds() {
+    let mut fx = fixture();
+    fx.config.fix_rounds = 2;
+    fx.config.risky_fix_rounds = Some(0);
+    fx.config.checks = vec![factory_core::CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["false".into()],
+        ..factory_core::CheckRule::default()
+    }];
+    let runner = scripted(vec![change(internal_dep(), true)]);
+    fx.engine(&runner).build_stage().expect("build");
+    let out = fx.engine(&runner).checks_stage().expect("checks");
+    assert_eq!(
+        out,
+        factory_engine::StageOutcome::Advanced(factory_core::Stage::Build)
+    );
+    assert_eq!(fx.job().round, 2);
+}
+
+#[test]
+fn the_risk_part_never_lists_a_cleared_cargo_file() {
+    let mut fx = fixture();
+    fx.config.fix_rounds = 0;
+    let runner = scripted(vec![change(internal_dep(), true)]);
+    fx.engine(&runner).build_stage().expect("build");
+    fx.engine(&runner).checks_stage().expect("checks");
+    let review = fx.engine(&changes()).review_stage().expect("review");
+    fx.engine(&changes())
+        .apply_decision(&review)
+        .expect("apply");
+    let record = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
+    assert_eq!(record.kind, ParkKind::ChangesRemain);
+    for part in &record.parts {
+        assert!(!part.text.contains("risky paths"), "{}", part.text);
+    }
+    assert!(record.parts.iter().all(|p| p.title != "Risk"));
+}

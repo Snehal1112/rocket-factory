@@ -3,8 +3,7 @@
 use std::path::Path;
 
 use factory_core::{
-    classify_paths, next_with_resume, open_blockers, park_summary, DiffClass, ParkKind, ParkPart,
-    ParkRecord, ResumeAt,
+    next_with_resume, open_blockers, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt,
 };
 
 use crate::decide::risk_summary;
@@ -317,7 +316,7 @@ impl Engine<'_> {
     /// True when the whole job diff touches a risky path. A diff that cannot be read counts as not risky.
     pub(crate) fn is_risky(&self) -> bool {
         self.job_changed_paths()
-            .is_ok_and(|p| classify_paths(&p, &self.config) == DiffClass::Risky)
+            .is_ok_and(|p| self.risk(&p).is_risky())
     }
 
     /// The Review part, then the Risk part when the diff is risky.
@@ -358,22 +357,26 @@ impl Engine<'_> {
 
     /// The risky paths, and the ones fix rounds added after the first review. `None` when the diff is not risky.
     pub(crate) fn risk_part(&self, paths: &[String]) -> Option<ParkPart> {
-        if classify_paths(paths, &self.config) != DiffClass::Risky {
+        let risk = self.risk(paths);
+        if !risk.is_risky() {
             return None;
         }
-        let mut text = risk_summary(paths, &self.config);
+        let mut text = risk_summary(&risk.risky, &self.config);
         if let Ok(first) = std::fs::read_to_string(self.job_dir.join(RISKY_PATHS_FILE)) {
-            let added: Vec<&str> = paths
+            let added: Vec<&str> = risk
+                .risky
                 .iter()
-                .filter(|p| {
-                    classify_paths(std::slice::from_ref(*p), &self.config) == DiffClass::Risky
-                })
                 .map(String::as_str)
                 .filter(|p| !first.lines().any(|l| l == *p))
                 .collect();
             if !added.is_empty() {
                 text.push_str(&format!("\nadded by fix rounds: {}", added.join(", ")));
             }
+        }
+        // The check's ledger line repeats here, so the card says why the Cargo files stay risky.
+        if let Some(note) = &risk.note {
+            text.push('\n');
+            text.push_str(note);
         }
         Some(ParkPart::new("Risk", "driver", &text))
     }
