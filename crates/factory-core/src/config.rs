@@ -34,6 +34,8 @@ const DEFAULT_RISK: &[&str] = &[
     "src-tauri/**",
     "**/Cargo.toml",
     "**/Cargo.lock",
+    "**/.cargo/**",
+    "**/rust-toolchain*",
     "**/package.json",
     "**/tauri.conf.json",
     "**/*auth*",
@@ -833,6 +835,13 @@ fn check_branch_name(name: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_risk_lists_cargo_config_and_toolchain() {
+        let paths = Config::default().risk_paths;
+        assert!(paths.iter().any(|p| p == "**/.cargo/**"), "{paths:?}");
+        assert!(paths.iter().any(|p| p == "**/rust-toolchain*"), "{paths:?}");
+    }
+
     #[test]
     fn min_free_disk_mb_defaults_to_2048() {
         assert_eq!(Config::default().min_free_disk_mb, 2048);

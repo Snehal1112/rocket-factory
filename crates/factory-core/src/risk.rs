@@ -90,12 +90,16 @@ pub fn cargo_clearable(path: &str, config: &Config) -> bool {
     if !is_cargo_name(lower.rsplit('/').next().unwrap_or("")) {
         return false;
     }
-    config
+    let matching: Vec<String> = config
         .risk_paths
         .iter()
         .map(|g| g.to_lowercase())
         .filter(|g| glob_match(g, &lower))
-        .all(|g| is_cargo_name(g.rsplit('/').next().unwrap_or("")))
+        .collect();
+    !matching.is_empty()
+        && matching
+            .iter()
+            .all(|g| is_cargo_name(g.rsplit('/').next().unwrap_or("")))
 }
 
 #[cfg(test)]
@@ -104,6 +108,16 @@ mod tests {
 
     fn class(paths: &[&str]) -> DiffClass {
         classify_paths(paths, &Config::default())
+    }
+
+    #[test]
+    fn a_cargo_path_no_glob_matches_is_not_clearable() {
+        let config = Config {
+            risk_paths: Vec::new(),
+            ..Config::default()
+        };
+        assert!(!cargo_clearable("Cargo.toml", &config));
+        assert!(!cargo_clearable("crates/a/Cargo.lock", &config));
     }
 
     #[test]

@@ -263,13 +263,13 @@ The Cargo lock check can clear a diff whose only risky paths are Cargo files. A 
 - No path crate or target leaves the project, and no build script changed.
 - No proc-macro, `links`, `build`, `cargo-features`, `[patch]` or `[replace]` change came in.
 
-Anything the check cannot settle stays risky. It only ever turns risky into normal, never the other way, and a risky path that is not a Cargo file (such as `*auth*`) keeps the diff risky without running cargo. The rust preset marks `**/.cargo/**` and `**/rust-toolchain*` risky, so those are never cleared. The ledger gets one line with the `Ruling: ` prefix at each review stage, and a park repeats it in its Risk part:
+Anything the check cannot settle stays risky. It only ever turns risky into normal, never the other way, and a risky path that is not a Cargo file (such as `*auth*`) keeps the diff risky without running cargo. The built-in list and the rust preset mark `**/.cargo/**` and `**/rust-toolchain*` risky, so those are never cleared. The ledger gets one line with the `Ruling: ` prefix at each review stage, and a park repeats it in its Risk part:
 
 - `cargo lock check: no outside code changed, Cargo files are not risky`
-- `cargo lock check: outside crates added: <name version, ...|none>; removed: <name version, ...|none>, diff stays risky`
+- `cargo lock check: outside crates added: <name version, ...|none>; removed: <name version, ...|none>; source or checksum changed: <name version, ...|none>, diff stays risky`
 - `cargo lock check: <reason>, diff stays risky`
 
-The verdict is stored in `cargo-check.txt` in the job folder: line 1 is `key <head sha> <config text>`, line 2 is `same` or `risky`, line 3 is the ledger note. A stored verdict is reused only for the same head and the same `cargo_lock_check` and `risk_paths` values. The setting `cargo_lock_check` (default true) turns the check off; see `project-toml-reference.md`.
+The verdict is stored in `cargo-check.txt` in the job folder: line 1 is `key <head sha> cargo_lock_check=<bool>; risk_paths=<len>:<glob>...` with `<len>` the glob's byte length, line 2 is `same` or `risky`, line 3 is the ledger note. A stored verdict is reused only for the same head and the same `cargo_lock_check` and `risk_paths` values. The setting `cargo_lock_check` (default true) turns the check off; see `project-toml-reference.md`.
 
 A risky diff gets the same fix rounds as any other (`risky_fix_rounds`, default `fix_rounds`; 0 parks at once). It never auto-merges: after an approve the final checks run on the exact head, and then the job parks as `risky-diff` for a human approve. The park evidence leads with the review. For `risky-diff` and `changes-remain` the parts are, in order:
 

@@ -7,10 +7,12 @@ use std::path::{Path, PathBuf};
 pub enum LockDiff {
     /// No outside crate was added, removed or changed.
     Same,
-    /// Outside crates differ; both lists hold sorted `name version` strings.
+    /// Outside crates differ; each list holds sorted `name version` strings.
+    /// A crate in both differences (new checksum or source) is only in `changed`.
     Changed {
         added: Vec<String>,
         removed: Vec<String>,
+        changed: Vec<String>,
     },
     /// The lock could not be read, so nothing can be said.
     Unknown(String),
@@ -92,12 +94,21 @@ pub fn compare_locks(base: &str, head: &str) -> LockDiff {
         Ok(set) => set,
         Err(reason) => return LockDiff::Unknown(reason),
     };
-    let added = entry_names(head.difference(&base));
-    let removed = entry_names(base.difference(&head));
-    if added.is_empty() && removed.is_empty() {
+    let mut added: BTreeSet<String> = entry_names(head.difference(&base)).into_iter().collect();
+    let mut removed: BTreeSet<String> = entry_names(base.difference(&head)).into_iter().collect();
+    let changed: Vec<String> = added.intersection(&removed).cloned().collect();
+    for name in &changed {
+        added.remove(name);
+        removed.remove(name);
+    }
+    if added.is_empty() && removed.is_empty() && changed.is_empty() {
         LockDiff::Same
     } else {
-        LockDiff::Changed { added, removed }
+        LockDiff::Changed {
+            added: added.into_iter().collect(),
+            removed: removed.into_iter().collect(),
+            changed,
+        }
     }
 }
 
@@ -212,7 +223,8 @@ mod tests {
             compare_locks(&base, &head),
             LockDiff::Changed {
                 added: vec!["signal-hook 0.3.17".into()],
-                removed: vec![]
+                removed: vec![],
+                changed: vec![],
             }
         );
     }
@@ -225,7 +237,8 @@ mod tests {
             compare_locks(&base, &head),
             LockDiff::Changed {
                 added: vec!["libc 0.2.191".into()],
-                removed: vec!["libc 0.2.190".into()]
+                removed: vec!["libc 0.2.190".into()],
+                changed: vec![],
             }
         );
     }
@@ -233,8 +246,40 @@ mod tests {
     #[test]
     fn a_changed_checksum_is_changed() {
         let other = libc_a().replace("aaaa", "dddd");
-        let diff = compare_locks(&lock(&[&libc_a()]), &lock(&[&other]));
-        assert!(matches!(diff, LockDiff::Changed { .. }));
+        assert_eq!(
+            compare_locks(&lock(&[&libc_a()]), &lock(&[&other])),
+            LockDiff::Changed {
+                added: vec![],
+                removed: vec![],
+                changed: vec!["libc 0.2.190".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn a_changed_source_lists_it_as_changed() {
+        let other = libc_a().replace(REG, "git+https://example.com/libc#abc");
+        assert_eq!(
+            compare_locks(&lock(&[&libc_a()]), &lock(&[&other])),
+            LockDiff::Changed {
+                added: vec![],
+                removed: vec![],
+                changed: vec!["libc 0.2.190".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn a_checksum_change_beside_an_added_crate_splits_the_lists() {
+        let other = libc_a().replace("aaaa", "dddd");
+        assert_eq!(
+            compare_locks(&lock(&[ROOT, &libc_a()]), &lock(&[ROOT, &other, &hook()])),
+            LockDiff::Changed {
+                added: vec!["signal-hook 0.3.17".into()],
+                removed: vec![],
+                changed: vec!["libc 0.2.190".into()],
+            }
+        );
     }
 
     #[test]

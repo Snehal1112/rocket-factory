@@ -198,7 +198,7 @@ fn an_outside_crate_in_the_lock_parks_naming_it() {
     assert_risky(&run_job(&fx, effect));
     assert_eq!(
         check_line(&fx),
-        "cargo lock check: outside crates added: signal-hook 0.3.17; removed: none, diff stays risky"
+        "cargo lock check: outside crates added: signal-hook 0.3.17; removed: none; source or checksum changed: none, diff stays risky"
     );
 }
 
@@ -371,7 +371,12 @@ fn a_new_config_runs_the_check_again() {
         .expect("review again");
     let stored = std::fs::read_to_string(fx.job_dir.join("cargo-check.txt")).expect("store");
     let first = stored.lines().next().expect("line 1");
-    let expected = format!("cargo_lock_check=true; risk_paths={},x/**", GLOBS.join(","));
+    let prefixed: String = GLOBS
+        .iter()
+        .chain(["x/**"].iter())
+        .map(|g| format!("{}:{g}", g.len()))
+        .collect();
+    let expected = format!("cargo_lock_check=true; risk_paths={prefixed}");
     assert!(first.starts_with("key "), "{first}");
     assert!(first.ends_with(&expected), "{first}");
 }
