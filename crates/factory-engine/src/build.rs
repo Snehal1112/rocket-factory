@@ -112,7 +112,16 @@ impl Engine<'_> {
         if let Some(out) = self.machine_gate(job.worktree.as_deref())? {
             return Ok(out);
         }
-        let job = self.job()?;
+        let mut job = self.job()?;
+        // A no-change mark of an older round ends when the next build round begins. A review retried in the
+        // same round keeps it. The write is best effort, because the review compares the round anyway.
+        if job.no_change_round.is_some_and(|r| r < job.round) {
+            let _ = self.update(|j| {
+                j.no_change_round = None;
+                Ok(())
+            });
+            job = self.job()?;
+        }
         if is_mid_task(&job, &tasks) {
             return self.build_task(&job, &tasks);
         }
@@ -253,9 +262,22 @@ impl Engine<'_> {
                         &job,
                         &base,
                         tip_before,
-                        previous_head,
                         note_sent.then_some(note.as_path()),
                     );
+                }
+                // Work already on the branch goes to the reviewer with the builder's reason.
+                if self.has_commits(&base, &tip_before)? {
+                    self.ruling(
+                        "builder changed nothing; it says the work is already on the branch",
+                    )?;
+                    if new_work {
+                        self.save_builder_reply(job.round, &run.result_text);
+                    }
+                    if note_sent {
+                        // The builder has seen the note and the pass advances, so it must not be sent again.
+                        let _ = std::fs::remove_file(&note);
+                    }
+                    return self.finish_build(&job, &base, tip_before, None, true);
                 }
                 let why = if new_work {
                     "builder made no changes"
@@ -289,7 +311,13 @@ impl Engine<'_> {
             // The builder has seen the note and the pass advances, so it must not be sent again.
             let _ = std::fs::remove_file(&note);
         }
-        self.finish_build(&job, &base, head, previous_head)
+        self.finish_build(&job, &base, head, previous_head, false)
+    }
+
+    /// True when the branch holds commits above the base at `tip`.
+    fn has_commits(&self, base: &str, tip: &str) -> Result<bool, EngineError> {
+        let commits = self.repo.commits_above(base, tip).map_err(git_err)?;
+        Ok(!commits.is_empty())
     }
 
     /// Parks a builder run that did not end done, in task `task` when it is a task run. A failed run
@@ -375,14 +403,31 @@ impl Engine<'_> {
         Some(text)
     }
 
+    /// Appends the reply of task `n` to `builder-r{round}.md` under its own heading. A write error is dropped,
+    /// because the reply is evidence and never stops the build.
+    fn append_task_reply(&self, round: u32, n: u32, reply: &str) {
+        use std::io::Write;
+        let text: String = reply.trim().chars().take(REPLY_CAP).collect();
+        let text = if text.is_empty() {
+            "The builder wrote no reply."
+        } else {
+            text.as_str()
+        };
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.job_dir.join(format!("builder-r{round}.md")))
+            .and_then(|mut f| write!(f, "## Task {n}\n\n{text}\n\n"));
+    }
+
     /// A fix round that started from failed checks changed nothing. The checks run again once: when they pass,
-    /// the earlier failure did not reproduce and the unchanged head goes to the reviewer, else the job parks.
+    /// the earlier failure did not reproduce and the unchanged head goes to the reviewer with the whole branch,
+    /// else the job parks.
     fn nothing_changed_after_checks(
         &self,
         job: &JobView,
         base: &str,
         head: String,
-        previous_head: Option<String>,
         sent_note: Option<&Path>,
     ) -> Result<StageOutcome, EngineError> {
         let report = self.run_checks_now()?;
@@ -394,7 +439,7 @@ impl Engine<'_> {
             if let Some(note) = sent_note {
                 let _ = std::fs::remove_file(note);
             }
-            return self.finish_build(job, base, head, previous_head);
+            return self.finish_build(job, base, head, None, true);
         }
         let first = report
             .failures()
@@ -741,10 +786,19 @@ impl Engine<'_> {
         let wt = self.job_worktree(job, &cwd, &base, &branch);
         let subject = snapshot_subject(task.n, &task.title);
         let place = format!(" in task {}", task.n);
-        let new_tip = match self.snapshot(&wt, &subject, &place, &tip)? {
-            Snapshot::Made(sha) => sha,
+        let (new_tip, changed) = match self.snapshot(&wt, &subject, &place, &tip)? {
+            Snapshot::Made(sha) => (sha, true),
             Snapshot::OffBranch(reason) => {
                 return self.park_with(ParkKind::BuilderCommitted, reason, Vec::new())
+            }
+            // Work that earlier tasks already committed lets the task advance on the unchanged tip.
+            Snapshot::Nothing if self.has_commits(&base, &tip)? => {
+                self.ruling(&format!(
+                    "task {} changed nothing; it says the work is already on the branch",
+                    task.n
+                ))?;
+                self.append_task_reply(job.round, task.n, &run.result_text);
+                (tip.clone(), false)
             }
             Snapshot::Nothing => {
                 return self.park_with(
@@ -754,17 +808,19 @@ impl Engine<'_> {
                 )
             }
         };
-        // A git error gives an empty file list, so the note never fails the task.
-        let files = self.repo.changed_paths(&tip, &new_tip).unwrap_or_default();
-        self.save_commit_note(
-            &format!("task-{}.md", task.n),
-            &format!("task {}", task.n),
-            &run.result_text,
-            &task.title,
-            &files,
-        )?;
+        if changed {
+            // A git error gives an empty file list, so the note never fails the task.
+            let files = self.repo.changed_paths(&tip, &new_tip).unwrap_or_default();
+            self.save_commit_note(
+                &format!("task-{}.md", task.n),
+                &format!("task {}", task.n),
+                &run.result_text,
+                &task.title,
+                &files,
+            )?;
+            self.note_task_checks(task.n, &tip, &new_tip)?;
+        }
         let short = short_sha(&new_tip).to_string();
-        self.note_task_checks(task.n, &tip, &new_tip)?;
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;
         tracing::info!(
             event = "task.end",
@@ -800,7 +856,11 @@ impl Engine<'_> {
         if !last {
             return Ok(StageOutcome::Advanced(Stage::Build));
         }
-        self.finish_build(job, &base, new_tip, job.head.clone())
+        if changed {
+            self.finish_build(job, &base, new_tip, job.head.clone(), false)
+        } else {
+            self.finish_build(job, &base, new_tip, None, true)
+        }
     }
 
     /// Recovers a job an older driver stopped in the middle of its batch commit. The branch either still
@@ -903,16 +963,18 @@ impl Engine<'_> {
             j.batch_snapshot = None;
             Ok(())
         })?;
-        self.finish_build(job, base, head, job.head.clone())
+        self.finish_build(job, base, head, job.head.clone(), false)
     }
 
-    /// Checks the diff cap, records the head and moves the job to review.
+    /// Checks the diff cap, records the head and moves the job to review. `no_change` marks a round whose
+    /// builder changed nothing, so the review shows the whole branch and the builder's reply.
     fn finish_build(
         &self,
         job: &JobView,
         base: &str,
         head: String,
         previous_head: Option<String>,
+        no_change: bool,
     ) -> Result<StageOutcome, EngineError> {
         let from = self.range_start(base, &head)?;
         let info = self
@@ -936,6 +998,7 @@ impl Engine<'_> {
         self.update(|j| {
             j.prev_head = previous_head;
             j.head = Some(h);
+            j.no_change_round = no_change.then_some(job.round);
             crate::ports::set_stage_logged(j, Stage::Review, None, false, now())
         })?;
         self.ruling(&format!("head of round {} is {head}", job.round))?;

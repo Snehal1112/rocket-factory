@@ -120,7 +120,6 @@ pub(crate) struct JobView {
     pub stage: Stage,
     pub cancelled: bool,
     /// The fix round that changed nothing, if any.
-    #[allow(dead_code)] // The nothing-changed round reads it.
     pub no_change_round: Option<u32>,
 }
 

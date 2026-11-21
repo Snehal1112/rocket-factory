@@ -1081,18 +1081,20 @@ fn rework_sends_the_note_and_the_open_findings() -> TestResult {
 }
 
 #[test]
-fn rework_after_nothing_changed_carries_the_review() -> TestResult {
+fn rework_after_a_no_change_round_carries_the_review() -> TestResult {
+    // A fix round that changes nothing on a branch with commits goes to review, which then hits the cap.
     let sc = reworkable(
         1,
         vec![
             build(vec![("secrets/token.txt", "x\n")], 1_000),
             review(CHANGES),
             build(vec![], 400),
+            review(CHANGES),
         ],
     )?;
     let end = sc.start(&sc.plan_b, false)?;
     assert!(end.starts_with("needs-human"), "{end}");
-    assert_eq!(sc.job("1")?.park_kind.as_deref(), Some("nothing-changed"));
+    assert_eq!(sc.job("1")?.park_kind.as_deref(), Some("changes-remain"));
     sc.run(&["rework", "1", "try again"])?;
     let round = sc.job("1")?.round;
     let text = std::fs::read_to_string(job_file(&sc, &format!("changes-r{round}.md")))?;

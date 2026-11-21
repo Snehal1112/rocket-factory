@@ -67,7 +67,13 @@ impl Engine<'_> {
         // The reviewer sees only the new work of this round. Risk and size judge the whole job diff.
         // A review with no floor covers the whole branch, so it starts at the merge base with main.
         let whole_base = self.range_start(&base, &head)?;
-        let round_base = job.prev_head.clone().unwrap_or_else(|| whole_base.clone());
+        // A round whose builder changed nothing has no new work, so its review covers the whole branch.
+        let no_change = run_kind == ReviewRun::Round && job.no_change_round == Some(job.round);
+        let round_base = if no_change {
+            whole_base.clone()
+        } else {
+            job.prev_head.clone().unwrap_or_else(|| whole_base.clone())
+        };
         // The file names carry both short shas, so the round diff and the whole diff never overwrite each other.
         let round_diff = self
             .repo
@@ -89,6 +95,7 @@ impl Engine<'_> {
             notes: self.builder_notes(),
             plan_outline: plan_outline(&plan),
             no_tests,
+            no_change,
         };
         let class = classify_paths(&paths, &self.config);
         let risky = class == DiffClass::Risky;

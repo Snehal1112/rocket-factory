@@ -1,6 +1,6 @@
 mod common;
 
-use common::{amend_head, commit_file, scripted, Effect, Fixture};
+use common::{commit_file, scripted, Effect, Fixture};
 use factory_core::{ParkKind, ParkRecord, Stage};
 use factory_engine::{merge_stage, MergeResult, StageOutcome};
 
@@ -56,28 +56,30 @@ fn nothing_changed_without_a_reply_says_so() {
 
 #[test]
 fn a_nothing_changed_park_after_a_rewrite_lists_sync() {
-    // A fix round on an unrewritten branch does not offer sync.
+    // The park needs a branch with no commits above the base. With the reviewed head moved to the base, the
+    // branch is not rewritten and sync is not offered.
     let fx = Fixture::new();
     let first = scripted(vec![change_effect("a.txt")]);
     fx.engine(&first).build_stage().expect("first");
     start_fix_round(&fx);
+    fx.reset_branch_to_base();
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    job.head = job.base.clone();
+    board.save(&fx.board_path).expect("save");
     let runner = scripted(vec![Box::new(|_| "no change".to_string())]);
     fx.engine(&runner).build_stage().expect("fix");
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");
     assert_eq!(rec.kind, ParkKind::NothingChanged);
     assert!(!rec.next.iter().any(|n| n.contains("factory sync")));
 
-    // The same park after the reviewed head left the branch lists sync.
+    // The same park after the reviewed head left the branch lists sync. Resetting the branch to the base
+    // drops the reviewed head from it.
     let fx = Fixture::new();
     let first = scripted(vec![change_effect("a.txt")]);
     fx.engine(&first).build_stage().expect("first");
     start_fix_round(&fx);
-    let board = factory_core::Board::load(&fx.board_path).expect("load");
-    let wt = board.find("001").expect("job").worktree.clone();
-    amend_head(
-        std::path::Path::new(&wt.expect("worktree")),
-        "feat(test): reworded outside the factory",
-    );
+    fx.reset_branch_to_base();
     let runner = scripted(vec![Box::new(|_| "no change".to_string())]);
     fx.engine(&runner).build_stage().expect("fix");
     let rec = ParkRecord::read(&fx.job_dir).expect("park.json");

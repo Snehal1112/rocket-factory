@@ -85,6 +85,8 @@ fn resume_with_no_changes_parks_the_job() {
     job.round = 2;
     job.set_stage(Stage::Build, None, true, 1.0).expect("stage");
     board.save(&fx.board_path).expect("save");
+    // Only a branch with no commits above the base parks; one with commits goes to review.
+    fx.reset_branch_to_base();
     match e.build_stage().expect("resume") {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
         other => panic!("unexpected {other:?}"),
@@ -139,16 +141,30 @@ fn a_no_change_fix_round_after_failed_checks_parks_as_checks_failed_when_they_st
     assert_eq!(rec.next, vec!["factory rework 001 <note>"]);
 }
 
+/// Runs the checks and one approving review, and returns the reviewer prompt.
+fn review_prompt(fx: &Fixture) -> String {
+    let checks = scripted(vec![]);
+    fx.engine(&checks).checks_stage().expect("checks");
+    let reviewer = scripted(vec![reply_effect("ok\nVERDICT: APPROVE")]);
+    fx.engine(&reviewer).review_stage().expect("review");
+    reviewer.last_spec_for("reviewer").expect("spec").prompt
+}
+
 #[test]
-fn a_no_change_fix_round_after_a_review_still_parks_as_nothing_changed() {
+fn a_no_change_fix_round_after_a_review_goes_to_review() {
     let fx = Fixture::new();
     let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
-    fix_round_from(&fx, &runner, Some("review"));
-    match fx.engine(&runner).build_stage().expect("resume") {
-        StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
-        other => panic!("unexpected {other:?}"),
-    }
-    assert_eq!(fx.job().park_kind.as_deref(), Some("nothing-changed"));
+    let head = fix_round_from(&fx, &runner, Some("review"));
+    let out = fx.engine(&runner).build_stage().expect("resume");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let job = fx.job();
+    assert_eq!(job.head, head, "the head is unchanged");
+    assert_eq!(job.no_change_round, Some(2));
+    let reply = fx.job_dir.join("builder-r2.md");
+    let saved = std::fs::read_to_string(&reply).expect("builder-r2.md");
+    assert!(saved.contains("nothing to do"), "{saved}");
+    let prompt = review_prompt(&fx);
+    assert!(prompt.contains(&reply.display().to_string()), "{prompt}");
 }
 
 fn reply_effect(text: &'static str) -> Effect {
@@ -156,25 +172,18 @@ fn reply_effect(text: &'static str) -> Effect {
 }
 
 #[test]
-fn a_resume_that_pushes_back_on_everything_parks_with_the_reply_as_a_part() {
+fn a_resume_that_pushes_back_on_everything_goes_to_review_with_the_reply() {
     let fx = Fixture::new();
     let reason = "Finding 1 is wrong: the lease is released in Drop, see lease.rs:40.";
     let runner = scripted(vec![change_effect("a.txt", 3), reply_effect(reason)]);
     fix_round_from(&fx, &runner, Some("review"));
-    match fx.engine(&runner).build_stage().expect("resume") {
-        StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
-        other => panic!("unexpected {other:?}"),
-    }
-    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
-    assert_eq!(rec.kind, factory_core::ParkKind::NothingChanged);
-    assert_eq!(rec.parts.len(), 1, "{:?}", rec.parts);
-    assert!(
-        rec.parts[0].text.contains("lease is released in Drop"),
-        "{}",
-        rec.parts[0].text
-    );
-    let saved = std::fs::read_to_string(fx.job_dir.join("builder-r2.md")).expect("builder-r2.md");
+    let out = fx.engine(&runner).build_stage().expect("resume");
+    assert_eq!(out, StageOutcome::Advanced(Stage::Review));
+    let reply = fx.job_dir.join("builder-r2.md");
+    let saved = std::fs::read_to_string(&reply).expect("builder-r2.md");
     assert!(saved.contains("lease is released in Drop"), "{saved}");
+    let prompt = review_prompt(&fx);
+    assert!(prompt.contains(&reply.display().to_string()), "{prompt}");
 }
 
 #[test]
@@ -445,28 +454,22 @@ fn the_last_task_call_records_head_and_moves_to_review() {
 }
 
 #[test]
-fn a_task_that_changes_nothing_parks_the_job_with_its_number() {
+fn a_last_task_that_changes_nothing_goes_to_review_with_its_number() {
     let fx = two_task_fixture();
     let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
-    match e.build_stage().expect("task 2") {
-        StageOutcome::NeedsHuman(r) => {
-            assert!(r.contains("task 2"), "{r}");
-            assert!(r.contains("changed nothing"), "{r}");
-        }
-        other => panic!("unexpected {other:?}"),
-    }
-    let rec = factory_core::ParkRecord::read(&fx.job_dir).expect("park.json");
-    assert_eq!(rec.kind, factory_core::ParkKind::NothingChanged);
-    assert!(
-        rec.reason.contains("task 2 changed nothing"),
-        "{}",
-        rec.reason
+    assert_eq!(
+        e.build_stage().expect("task 2"),
+        StageOutcome::Advanced(Stage::Review)
     );
-    assert_eq!(fx.job().park_kind.as_deref(), Some("nothing-changed"));
-    assert!(!rec.next.is_empty());
-    assert_eq!(fx.job().task_index, 1);
+    let ledger = fx.ledger();
+    assert!(
+        ledger.contains("task 2 changed nothing; it says the work is already on the branch"),
+        "{ledger}"
+    );
+    assert_eq!(fx.job().park_kind, None);
+    assert_eq!(fx.job().task_index, 2);
 }
 
 #[test]
@@ -751,6 +754,8 @@ fn a_fix_round_that_changes_nothing_parks_without_a_committer_run() {
     let first = scripted(vec![change_effect("a.txt", 3)]);
     fx.engine(&first).build_stage().expect("first");
     start_fix_round(&fx);
+    // Only a branch with no commits above the base parks; one with commits goes to review.
+    fx.reset_branch_to_base();
     let second = scripted(vec![silent_effect()]);
     match fx.engine(&second).build_stage().expect("fix") {
         StageOutcome::NeedsHuman(r) => assert!(r.contains("no changes on resume"), "{r}"),
@@ -1069,16 +1074,21 @@ fn a_three_task_plan_keeps_three_snapshots_and_runs_no_committer() {
 }
 
 #[test]
-fn an_empty_task_still_parks() {
+fn an_empty_middle_task_advances() {
     let fx = three_task_fixture();
     let runner = scripted(vec![change_effect("a.txt", 3), silent_effect()]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
-    match e.build_stage().expect("task 2") {
-        StageOutcome::NeedsHuman(r) => assert!(r.contains("task 2 changed nothing"), "{r}"),
-        other => panic!("unexpected {other:?}"),
-    }
-    assert_eq!(fx.job().task_index, 1);
+    assert_eq!(
+        e.build_stage().expect("task 2"),
+        StageOutcome::Advanced(Stage::Build)
+    );
+    assert!(
+        fx.ledger().contains("task 2 changed nothing"),
+        "{}",
+        fx.ledger()
+    );
+    assert_eq!(fx.job().task_index, 2);
 }
 
 /// Leaves the state an older driver left when its batch committer stopped right after the soft reset:

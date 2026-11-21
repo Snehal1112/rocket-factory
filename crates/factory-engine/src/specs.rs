@@ -530,6 +530,9 @@ pub struct ReviewerExtra {
     pub plan_outline: String,
     /// True when a code diff adds no test path and no test marker.
     pub no_tests: bool,
+    /// True when the builder changed nothing this round, so the diff is the whole branch. Only a plain review
+    /// run sets it, never a sync or rebase review.
+    pub no_change: bool,
 }
 
 impl Engine<'_> {
@@ -645,20 +648,36 @@ impl Engine<'_> {
         };
         // Round 2 and later review only the fix, so the reviewer does not reopen settled ground.
         // It needs earlier findings to judge, so a round without a review file is a normal review.
-        let rereview = if earlier.is_some() {
-            "This is a scoped re-review. Give a verdict for each earlier finding: fixed, not fixed, or wrong. \
-             A finding that is fixed is tagged `[fixed]` and keeps no other tag. \
-             A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. \
-             Inspect the fix diff only. Report anything you notice outside it under `Out-of-scope observations`, without changing the verdict.\n"
+        // A round whose builder changed nothing has no fix diff, so the reviewer judges the whole branch.
+        let scope = if extra.no_change {
+            "The builder changed nothing this round and says why in its reply. The diff is the whole branch. \
+             Judge each earlier finding against it and the reply."
         } else {
-            ""
+            "Inspect the fix diff only."
+        };
+        let rereview = if earlier.is_some() {
+            format!(
+                "This is a scoped re-review. Give a verdict for each earlier finding: fixed, not fixed, or wrong. \
+                 A finding that is fixed is tagged `[fixed]` and keeps no other tag. \
+                 A finding that is not fixed keeps its original `[blocker]` or `[minor]` tag. \
+                 {scope} Report anything you notice outside it under `Out-of-scope observations`, without changing the verdict.\n"
+            )
+        } else {
+            String::new()
         };
         // The builder's reply to the findings, when it wrote one, holds its push-back reasons.
         let builder_reply = self.job_dir.join(format!("builder-r{round}.md"));
-        let reply_line = if rereview.is_empty() || !builder_reply.exists() {
+        let reply_line = if !builder_reply.exists() {
             String::new()
-        } else {
+        } else if !rereview.is_empty() {
             format!("The builder's reply to those findings is at {}. It may explain why a finding was not changed.\n", builder_reply.display())
+        } else if extra.no_change {
+            format!(
+                "The builder changed nothing this round. Its reply, which says why, is at {}.\n",
+                builder_reply.display()
+            )
+        } else {
+            String::new()
         };
         let rules_line = if rules.is_empty() {
             String::new()

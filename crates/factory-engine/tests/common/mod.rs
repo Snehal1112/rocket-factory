@@ -147,6 +147,17 @@ impl Fixture {
             .update_job("001", |j| j.resume(factory_core::Stage::Build, 1.0))
             .expect("resume to build");
     }
+
+    /// Resets the job branch in its worktree back to the base, so the branch holds no commits above it.
+    pub fn reset_branch_to_base(&self) {
+        let job = self.job();
+        let wt = Repository::open(job.worktree.expect("worktree")).expect("open worktree");
+        let base = wt
+            .revparse_single(&job.base.expect("base"))
+            .expect("base commit");
+        wt.reset(&base, git2::ResetType::Hard, None)
+            .expect("reset to base");
+    }
 }
 
 pub type Effect = Box<dyn Fn(&AgentSpec) -> String + Send + Sync>;

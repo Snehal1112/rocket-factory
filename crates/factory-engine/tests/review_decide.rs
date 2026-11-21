@@ -778,6 +778,7 @@ fn round_two_still_carries_review_focus() {
         notes: vec!["builder task 1: kept the old name".into()],
         plan_outline: String::new(),
         no_tests: false,
+        no_change: false,
     };
     let prompt = direct_prompt(2, &extra);
     assert!(prompt.contains("Check the lease handling."), "{prompt}");
@@ -802,6 +803,7 @@ fn rereview_uses_the_latest_review_file() {
         notes: vec!["builder task 1: kept the old name".into()],
         plan_outline: String::new(),
         no_tests: false,
+        no_change: false,
     };
     let prompt = direct_prompt_with(3, &extra, &["review-code-r1.md"]);
     assert!(prompt.contains("scoped re-review"), "{prompt}");
@@ -1130,6 +1132,8 @@ fn nothing_changed_after_a_review_fix_shows_the_review() {
     let e = fx.engine(&rr);
     let out = e.review_stage().expect("review");
     e.apply_decision(&out).expect("apply");
+    // Only a branch with no commits above the base parks; one with commits goes to review.
+    fx.reset_branch_to_base();
     let silent: Effect = Box::new(|_| "no change needed".to_string());
     let rr2 = scripted(vec![silent]);
     assert!(matches!(
