@@ -165,6 +165,8 @@ pub type Effect = Box<dyn Fn(&AgentSpec) -> String + Send + Sync>;
 /// Plays one effect per call and records every spec it was given.
 pub struct ScriptedRunner {
     effects: Mutex<VecDeque<Effect>>,
+    /// Per-role queues from `scripted_roles`. They take the place of `effects` when set.
+    role_effects: Option<Mutex<std::collections::HashMap<String, VecDeque<Effect>>>>,
     calls: Mutex<Vec<AgentSpec>>,
 }
 
@@ -197,7 +199,14 @@ impl ScriptedRunner {
 impl AgentRunner for ScriptedRunner {
     fn run(&self, spec: &AgentSpec) -> AgentRun {
         self.calls.lock().expect("calls").push(spec.clone());
-        let next = self.effects.lock().expect("effects").pop_front();
+        let next = match &self.role_effects {
+            Some(roles) => roles
+                .lock()
+                .expect("effects")
+                .get_mut(&spec.role)
+                .and_then(VecDeque::pop_front),
+            None => self.effects.lock().expect("effects").pop_front(),
+        };
         match next {
             Some(effect) => AgentRun {
                 session_id: Some("sess-1".to_string()),
@@ -382,6 +391,20 @@ impl AgentRunner for Tagged {
 pub fn scripted(effects: Vec<Effect>) -> ScriptedRunner {
     ScriptedRunner {
         effects: Mutex::new(effects.into()),
+        role_effects: None,
+        calls: Mutex::new(Vec::new()),
+    }
+}
+
+/// Like `scripted`, with the effects queued per spec role, so the order of concurrent calls does not matter.
+pub fn scripted_roles(effects: Vec<(&'static str, Effect)>) -> ScriptedRunner {
+    let mut roles: std::collections::HashMap<String, VecDeque<Effect>> = HashMap::new();
+    for (role, effect) in effects {
+        roles.entry(role.to_string()).or_default().push_back(effect);
+    }
+    ScriptedRunner {
+        effects: Mutex::new(VecDeque::new()),
+        role_effects: Some(Mutex::new(roles)),
         calls: Mutex::new(Vec::new()),
     }
 }

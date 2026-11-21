@@ -1,6 +1,6 @@
 mod common;
 
-use common::{scripted, Effect, Fixture, RoleFailing, ScriptedRunner};
+use common::{scripted, scripted_roles, Effect, Fixture, RoleFailing, ScriptedRunner};
 use factory_agent::{AgentRunner, StopReason};
 use factory_core::{
     parse_verdict, AgentFile, Board, CheckRule, Config, Job, ParkKind, ResumeAt, ReviewState,
@@ -88,7 +88,7 @@ fn agent_calls(runner: &ScriptedRunner) -> usize {
 #[test]
 fn security_changes_start_a_fix_round_holding_its_findings() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_BAD)]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply(SECURITY_BAD))]);
     let e = engine(&fx, &runner);
     let outcome = e.review_stage().expect("review");
     assert_eq!(outcome.verdict, Verdict::Changes);
@@ -108,7 +108,7 @@ fn security_changes_start_a_fix_round_holding_its_findings() {
 #[test]
 fn both_reviewers_approve_and_the_job_merges() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_OK)]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply(SECURITY_OK))]);
     let outcome = engine(&fx, &runner).review_stage().expect("review");
     assert_eq!(outcome.verdict, Verdict::Approve);
     assert!(matches!(outcome.decision, Decision::AutoMerge));
@@ -120,9 +120,9 @@ fn both_reviewers_approve_and_the_job_merges() {
 #[test]
 fn both_roles_run_when_the_first_asks_for_changes() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let runner = scripted(vec![
-        reply("- [blocker] bad\nVERDICT: CHANGES"),
-        reply(SECURITY_OK),
+    let runner = scripted_roles(vec![
+        ("reviewer", reply("- [blocker] bad\nVERDICT: CHANGES")),
+        ("security-review", reply(SECURITY_OK)),
     ]);
     engine(&fx, &runner).review_stage().expect("review");
     assert_eq!(runner.specs_for("reviewer").len(), 1);
@@ -132,7 +132,7 @@ fn both_roles_run_when_the_first_asks_for_changes() {
 #[test]
 fn one_missing_verdict_is_a_fix_round() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let runner = scripted(vec![reply(CODE_OK), reply("looks fine to me")]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply("looks fine to me"))]);
     let outcome = engine(&fx, &runner).review_stage().expect("review");
     assert_eq!(outcome.verdict, Verdict::Missing);
     assert!(matches!(outcome.decision, Decision::FixRound));
@@ -141,7 +141,7 @@ fn one_missing_verdict_is_a_fix_round() {
 #[test]
 fn the_review_file_has_one_section_per_role_and_one_verdict_line() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_BAD)]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply(SECURITY_BAD))]);
     let outcome = engine(&fx, &runner).review_stage().expect("review");
     let file = std::fs::read_to_string(&outcome.review_path).expect("file");
     let verdict_lines: Vec<&str> = file.lines().filter(|l| l.starts_with("VERDICT:")).collect();
@@ -197,7 +197,7 @@ fn security_for(files: &[&'static str], code_paths: Option<Vec<String>>) -> (usi
         base.config.code_paths = code_paths;
     }
     let fx = reviewed_fixture_with(base, &["code", "security"], files);
-    let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_OK)]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply(SECURITY_OK))]);
     engine(&fx, &runner).review_stage().expect("review");
     let state = fx
         .job()
@@ -260,7 +260,7 @@ fn a_sync_review_runs_the_code_reviewer_only() {
 #[test]
 fn security_usage_is_logged_under_its_own_role() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_OK)]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply(SECURITY_OK))]);
     engine(&fx, &runner).review_stage().expect("review");
     let usage = std::fs::read_to_string(fx.job_dir.join("usage.jsonl")).expect("usage");
     assert!(usage.contains("\"security-review\""), "{usage}");
@@ -269,7 +269,7 @@ fn security_usage_is_logged_under_its_own_role() {
 #[test]
 fn a_missing_security_agent_parks_as_review_failed() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_OK)]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply(SECURITY_OK))]);
     let outcome = fx.engine(&runner).review_stage().expect("review");
     assert_eq!(agent_calls(&runner), 0);
     assert_eq!(outcome.resume, Some(ResumeAt::Review));
@@ -290,7 +290,7 @@ fn a_risky_diff_still_goes_to_a_human_after_both_approve() {
     let mut base = Fixture::new();
     base.config.risk_paths = vec!["secrets/**".into()];
     let fx = reviewed_fixture_with(base, &["code", "security"], &["secrets/key.txt"]);
-    let runner = scripted(vec![reply(CODE_OK), reply(SECURITY_OK)]);
+    let runner = scripted_roles(vec![("reviewer", reply(CODE_OK)), ("security-review", reply(SECURITY_OK))]);
     let outcome = engine(&fx, &runner).review_stage().expect("review");
     assert_eq!(outcome.verdict, Verdict::Approve);
     match outcome.decision {
@@ -412,8 +412,9 @@ fn the_final_checks_record_the_gates_again() {
 #[test]
 fn a_failed_role_with_real_findings_starts_a_fix_round() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let inner = Arc::new(scripted(vec![reply(
-        "- [blocker] bad at a.txt:1\nVERDICT: CHANGES",
+    let inner = Arc::new(scripted_roles(vec![(
+        "reviewer",
+        reply("- [blocker] bad at a.txt:1\nVERDICT: CHANGES"),
     )]));
     let failing = RoleFailing::new("security-review", StopReason::Failed, 1, inner);
     let e = engine(&fx, &failing);
@@ -438,7 +439,7 @@ fn a_failed_role_with_real_findings_starts_a_fix_round() {
 #[test]
 fn a_failed_role_with_an_approving_role_parks() {
     let fx = reviewed_fixture(&["code", "security"]);
-    let inner = Arc::new(scripted(vec![reply(CODE_OK)]));
+    let inner = Arc::new(scripted_roles(vec![("reviewer", reply(CODE_OK))]));
     let failing = RoleFailing::new("security-review", StopReason::Stalled, 1, inner);
     let round = fx.job().round;
     let e = engine(&fx, &failing);

@@ -123,6 +123,13 @@ pub(crate) struct JobView {
     pub no_change_round: Option<u32>,
 }
 
+/// The result of `prepare_agent`: a spec to run, or a run that is already decided.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Prepared {
+    Ready(AgentSpec),
+    Refused(AgentRun),
+}
+
 impl Engine<'_> {
     pub(crate) fn job(&self) -> Result<JobView, EngineError> {
         let board = Board::load(&self.board_path).map_err(core_err)?;
@@ -255,7 +262,18 @@ impl Engine<'_> {
     }
 
     /// Runs one agent and adds its token usage to the job tally. The runner never fails, a failure is a stop reason.
-    pub(crate) fn run_agent(&self, mut spec: AgentSpec) -> Result<AgentRun, EngineError> {
+    pub(crate) fn run_agent(&self, spec: AgentSpec) -> Result<AgentRun, EngineError> {
+        let spec = match self.prepare_agent(spec)? {
+            Prepared::Ready(spec) => spec,
+            Prepared::Refused(run) => return Ok(run),
+        };
+        let started = std::time::Instant::now();
+        let run = self.runner.run(&spec);
+        self.finish_agent(&spec, run, started.elapsed())
+    }
+
+    /// Everything before a run: the lost flag, the provider, the model, the spec shape and the agents file.
+    pub(crate) fn prepare_agent(&self, mut spec: AgentSpec) -> Result<Prepared, EngineError> {
         if let Some(flag) = self.lost.as_ref().filter(|flag| flag.is_set()) {
             return Err(flag.error());
         }
@@ -269,22 +287,30 @@ impl Engine<'_> {
             }
         }
         if let Err(e) = self.shape_spec(&mut spec) {
-            return Ok(AgentRun::failed(&e));
+            return Ok(Prepared::Refused(AgentRun::failed(&e)));
         }
         // Claude takes its agents from the file in the job folder, outside the repo.
         if self.config.agent_cli() != "codex" && !self.agent_files.is_empty() {
             spec.agents_file = Some(self.write_agents_json()?);
         }
         tracing::info!(event = "agent.start", role = %spec.role, model = spec.model.as_deref().unwrap_or(""));
-        let started = std::time::Instant::now();
-        let run = self.runner.run(&spec);
+        Ok(Prepared::Ready(spec))
+    }
+
+    /// Everything after a run: the end log, the job's token tally and the usage row.
+    pub(crate) fn finish_agent(
+        &self,
+        spec: &AgentSpec,
+        run: AgentRun,
+        elapsed: std::time::Duration,
+    ) -> Result<AgentRun, EngineError> {
         tracing::info!(
             event = "agent.end",
             role = %spec.role,
             model = spec.model.as_deref().unwrap_or(""),
             stop_reason = ?run.stop_reason,
             weighted_tokens = run.weighted,
-            duration_ms = started.elapsed().as_millis() as u64,
+            duration_ms = elapsed.as_millis() as u64,
             input = run.usage.input_tokens,
             cache_creation = run.usage.cache_creation_input_tokens,
             cache_read = run.usage.cache_read_input_tokens,
@@ -306,7 +332,7 @@ impl Engine<'_> {
             );
             Ok(())
         })?;
-        self.log_usage(&spec, &run, started.elapsed().as_secs());
+        self.log_usage(spec, &run, elapsed.as_secs());
         Ok(run)
     }
 

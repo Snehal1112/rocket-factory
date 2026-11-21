@@ -5,7 +5,7 @@ use crate::run::AgentRun;
 use crate::spec::AgentSpec;
 
 /// Runs one agent to completion. Failures are returned as `StopReason::Failed`, never as a panic.
-pub trait AgentRunner {
+pub trait AgentRunner: Send + Sync {
     fn run(&self, spec: &AgentSpec) -> AgentRun;
 }
 
