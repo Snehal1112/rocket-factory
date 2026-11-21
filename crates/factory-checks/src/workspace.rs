@@ -1,8 +1,10 @@
 //! The cargo workspace map: which package owns a path and which packages depend on which.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use factory_core::{CargoTarget, PathPackage};
 
 use crate::CheckError;
 
@@ -119,6 +121,126 @@ impl Workspace {
     }
 }
 
+/// The reason line of cargo's stderr: the first `error` line, else the first non-empty one.
+fn stderr_reason(stderr: &str) -> String {
+    let lines = || stderr.lines().map(str::trim).filter(|l| !l.is_empty());
+    lines()
+        .find(|l| l.starts_with("error"))
+        .or_else(|| lines().next())
+        .unwrap_or("no message")
+        .to_string()
+}
+
+/// Runs `program <sub> <args>` in `dir` and returns its stdout.
+fn run_cargo(program: &str, sub: &str, args: &[&str], dir: &Path) -> Result<String, CheckError> {
+    let out = Command::new(program)
+        .arg(sub)
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| CheckError::Cargo(format!("cargo did not start: {e}")))?;
+    if !out.status.success() {
+        let reason = stderr_reason(&String::from_utf8_lossy(&out.stderr));
+        return Err(CheckError::Cargo(format!("cargo {sub} failed: {reason}")));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The folder of the manifest, which is where cargo looks for its config.
+fn manifest_dir(manifest: &Path) -> Result<&Path, CheckError> {
+    manifest
+        .parent()
+        .ok_or_else(|| CheckError::Cargo(format!("no folder for {}", manifest.display())))
+}
+
+/// The workspace root folder that owns `manifest`.
+pub fn workspace_root(manifest: &Path) -> Result<PathBuf, CheckError> {
+    let dir = manifest_dir(manifest)?;
+    let path = manifest.to_string_lossy();
+    let out = run_cargo(
+        "cargo",
+        "locate-project",
+        &[
+            "--workspace",
+            "--message-format",
+            "plain",
+            "--manifest-path",
+            &path,
+        ],
+        dir,
+    )?;
+    Path::new(out.trim())
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| CheckError::Cargo("cargo locate-project printed no path".into()))
+}
+
+/// Proves the lock current with `--locked` and lists the path packages, with canonical paths.
+pub fn locked_path_packages(root_manifest: &Path) -> Result<Vec<PathPackage>, CheckError> {
+    let dir = manifest_dir(root_manifest)?;
+    let path = root_manifest.to_string_lossy();
+    let json = run_cargo(
+        "cargo",
+        "metadata",
+        &[
+            "--locked",
+            "--format-version",
+            "1",
+            "--manifest-path",
+            &path,
+        ],
+        dir,
+    )?;
+    let canon = |p: &Path| {
+        p.canonicalize()
+            .map_err(|e| CheckError::Cargo(format!("cannot resolve {}: {e}", p.display())))
+    };
+    let mut packages = path_packages_from_metadata(&json)?;
+    for pkg in &mut packages {
+        pkg.manifest_path = canon(&pkg.manifest_path)?;
+        for t in &mut pkg.targets {
+            t.src_path = canon(&t.src_path)?;
+        }
+    }
+    Ok(packages)
+}
+
+/// Parses `cargo metadata` output: the packages with no source, which are the path packages.
+pub fn path_packages_from_metadata(json: &str) -> Result<Vec<PathPackage>, CheckError> {
+    let bad = |m: &str| CheckError::Cargo(format!("bad cargo metadata: {m}"));
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| bad(&e.to_string()))?;
+    let list = value["packages"]
+        .as_array()
+        .ok_or_else(|| bad("no packages"))?;
+    let mut out = Vec::new();
+    for p in list.iter().filter(|p| p["source"].is_null()) {
+        let manifest = p["manifest_path"]
+            .as_str()
+            .ok_or_else(|| bad("a package has no manifest_path"))?;
+        let mut targets = Vec::new();
+        for t in p["targets"].as_array().into_iter().flatten() {
+            let src = t["src_path"]
+                .as_str()
+                .ok_or_else(|| bad("a target has no src_path"))?;
+            let kinds = t["kind"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|k| k.as_str().map(str::to_string))
+                .collect();
+            targets.push(CargoTarget {
+                kinds,
+                src_path: PathBuf::from(src),
+            });
+        }
+        out.push(PathPackage {
+            manifest_path: PathBuf::from(manifest),
+            targets,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +331,148 @@ mod tests {
                 .starts_with("workspace map: cargo metadata failed: "),
             "{err}"
         );
+    }
+
+    fn write_tree(root: &Path, files: &[(&str, &str)]) {
+        for (name, body) in files {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            std::fs::write(path, body).expect("write");
+        }
+    }
+
+    fn manifest(name: &str, extra: &str) -> String {
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{extra}")
+    }
+
+    fn lock(root: &Path) {
+        let status = Command::new("cargo")
+            .args(["generate-lockfile", "--offline"])
+            .current_dir(root)
+            .status()
+            .expect("cargo runs");
+        assert!(status.success());
+    }
+
+    /// A workspace with members `a` and `b`, and its lock made.
+    fn two_members() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = manifest("a", "");
+        let b = manifest("b", "");
+        write_tree(
+            dir.path(),
+            &[
+                ("Cargo.toml", "[workspace]\nmembers = [\"a\", \"b\"]\n"),
+                ("a/Cargo.toml", a.as_str()),
+                ("a/src/lib.rs", ""),
+                ("a/build.rs", "fn main() {}\n"),
+                ("b/Cargo.toml", b.as_str()),
+                ("b/src/lib.rs", ""),
+            ],
+        );
+        lock(dir.path());
+        dir
+    }
+
+    #[test]
+    fn workspace_root_finds_the_root_of_a_member() {
+        let dir = two_members();
+        let root = workspace_root(&dir.path().join("a/Cargo.toml")).expect("root");
+        assert_eq!(
+            root.canonicalize().expect("canon"),
+            dir.path().canonicalize().expect("canon")
+        );
+    }
+
+    #[test]
+    fn a_nested_workspace_gives_its_own_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = format!("{}\n[workspace]\n", manifest("a", ""));
+        write_tree(
+            dir.path(),
+            &[
+                (
+                    "Cargo.toml",
+                    "[workspace]\nmembers = []\nexclude = [\"a\"]\n",
+                ),
+                ("a/Cargo.toml", a.as_str()),
+                ("a/src/lib.rs", ""),
+            ],
+        );
+        let root = workspace_root(&dir.path().join("a/Cargo.toml")).expect("root");
+        assert_eq!(
+            root.canonicalize().expect("canon"),
+            dir.path().join("a").canonicalize().expect("canon")
+        );
+    }
+
+    #[test]
+    fn a_current_lock_lists_the_path_packages() {
+        let dir = two_members();
+        let pkgs = locked_path_packages(&dir.path().join("Cargo.toml")).expect("packages");
+        let base = dir.path().canonicalize().expect("canon");
+        let manifests: Vec<_> = pkgs.iter().map(|p| p.manifest_path.clone()).collect();
+        assert!(manifests.contains(&base.join("a/Cargo.toml")));
+        assert!(manifests.contains(&base.join("b/Cargo.toml")));
+        let a = pkgs
+            .iter()
+            .find(|p| p.manifest_path == base.join("a/Cargo.toml"))
+            .expect("a");
+        assert!(a
+            .targets
+            .iter()
+            .any(|t| t.kinds == ["custom-build"] && t.src_path.ends_with("a/build.rs")));
+    }
+
+    #[test]
+    fn a_dependency_the_lock_lacks_fails_under_locked() {
+        let dir = two_members();
+        let a = manifest("a", "\n[dependencies]\nc = { path = \"../c\" }\n");
+        let c = manifest("c", "");
+        write_tree(
+            dir.path(),
+            &[
+                ("a/Cargo.toml", a.as_str()),
+                ("c/Cargo.toml", c.as_str()),
+                ("c/src/lib.rs", ""),
+            ],
+        );
+        let err = locked_path_packages(&dir.path().join("Cargo.toml")).expect_err("stale lock");
+        assert!(
+            err.to_string().starts_with("cargo metadata failed:"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_missing_cargo_is_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err =
+            run_cargo("cargo-does-not-exist", "metadata", &[], dir.path()).expect_err("no program");
+        assert!(err.to_string().starts_with("cargo did not start:"), "{err}");
+    }
+
+    #[test]
+    fn metadata_json_keeps_only_path_packages() {
+        let json = r#"{"packages":[
+          {"name":"serde","source":"registry+https://github.com/rust-lang/crates.io-index",
+           "manifest_path":"/h/serde/Cargo.toml",
+           "targets":[{"kind":["lib"],"src_path":"/h/serde/src/lib.rs"}]},
+          {"name":"a","source":null,"manifest_path":"/r/a/Cargo.toml",
+           "targets":[{"kind":["lib"],"src_path":"/r/a/src/lib.rs"},
+                      {"kind":["custom-build"],"src_path":"/r/a/build.rs"}]}]}"#;
+        let pkgs = path_packages_from_metadata(json).expect("parse");
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!(pkgs[0].manifest_path, PathBuf::from("/r/a/Cargo.toml"));
+        assert_eq!(pkgs[0].targets.len(), 2);
+        assert_eq!(pkgs[0].targets[1].kinds, ["custom-build"]);
+        assert_eq!(pkgs[0].targets[1].src_path, PathBuf::from("/r/a/build.rs"));
+    }
+
+    #[test]
+    fn stderr_reason_prefers_the_error_line() {
+        let err = "warning: x\n    Blocking waiting for file lock\nerror: failed to select\n";
+        assert_eq!(stderr_reason(err), "error: failed to select");
+        assert_eq!(stderr_reason("\nonly line\n"), "only line");
     }
 }

@@ -9,7 +9,9 @@ pub use plan::{
 };
 pub use run::{append_notes, run_checks, trim_tail, write_checks_md, CheckResult, ChecksReport};
 
-pub use workspace::{Package, Workspace};
+pub use workspace::{
+    locked_path_packages, path_packages_from_metadata, workspace_root, Package, Workspace,
+};
 
 use thiserror::Error;
 
@@ -27,4 +29,6 @@ pub enum CheckError {
     Write(String),
     #[error("workspace map: {0}")]
     Workspace(String),
+    #[error("{0}")]
+    Cargo(String),
 }
