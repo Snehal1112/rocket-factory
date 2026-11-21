@@ -834,7 +834,12 @@ fn rework(ctx: &CliCtx, id: &str, note: &str, force: bool) -> Result<String, Cli
         )));
     }
     // A park the driver can resume goes to retry. A cancelled job is revived by rework as before.
-    if !force && !job.cancelled && job.park_resume.is_some() {
+    // Machine and builder-stopped parks keep rework open, since a note helps the builder there.
+    let builder_park = matches!(
+        job.park_kind.as_deref(),
+        Some("machine-waiting" | "builder-stopped")
+    );
+    if !force && !job.cancelled && job.park_resume.is_some() && !builder_park {
         let why = job
             .reason
             .as_deref()

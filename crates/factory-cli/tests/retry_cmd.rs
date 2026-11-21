@@ -100,6 +100,32 @@ fn rework_refuses_a_park_with_resume_and_names_retry() {
     assert_eq!(job(&fx).stage, factory_core::Stage::NeedsHuman);
 }
 
+/// A main-busy park with its kind and resume point changed.
+fn parked_as(kind: &str, resume: factory_core::ResumeAt) -> Fixture {
+    let fx = main_busy_parked();
+    store(&fx)
+        .update_job("001", |j| {
+            j.park_kind = Some(kind.into());
+            j.park_resume = Some(resume);
+            Ok(())
+        })
+        .expect("kind");
+    fx
+}
+
+#[test]
+fn plain_rework_is_allowed_on_machine_and_stopped_parks() {
+    for kind in ["machine-waiting", "builder-stopped"] {
+        let fx = parked_as(kind, factory_core::ResumeAt::Build);
+        fx.run(&["rework", "1", "fix x"])
+            .unwrap_or_else(|e| panic!("{kind}: {e:?}"));
+        assert_eq!(job(&fx).stage, factory_core::Stage::Build, "{kind}");
+    }
+    let fx = parked_as("review-failed", factory_core::ResumeAt::Merge);
+    let text = refusal(fx.run(&["rework", "1", "fix x"]));
+    assert!(text.contains("parked outside the builder"), "{text}");
+}
+
 #[test]
 fn rework_force_sends_it_to_the_builder() {
     let fx = main_busy_parked();
