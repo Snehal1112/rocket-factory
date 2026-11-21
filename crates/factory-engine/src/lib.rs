@@ -2,6 +2,7 @@
 
 mod agents_file;
 mod build;
+mod cargo_risk;
 mod carry;
 mod checks_stage;
 mod clock;

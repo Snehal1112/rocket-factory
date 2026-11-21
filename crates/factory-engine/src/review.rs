@@ -97,8 +97,12 @@ impl Engine<'_> {
             no_tests,
             no_change,
         };
-        let class = classify_paths(&paths, &self.config);
-        let risky = class == DiffClass::Risky;
+        let risk = self.risk(&paths);
+        if let Some(note) = &risk.note {
+            self.ruling(note)?;
+        }
+        let class = risk.class;
+        let risky = risk.is_risky();
         // The first review of a risky job records its risky paths, so a park can name those that fix rounds added.
         let first_risky = self.job_dir.join(crate::park::RISKY_PATHS_FILE);
         if risky && !first_risky.exists() {
