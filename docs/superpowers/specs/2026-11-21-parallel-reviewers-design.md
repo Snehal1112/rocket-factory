@@ -35,7 +35,7 @@ A review round that holds both roles runs the code reviewer, then the security r
 - **The review loop** first prepares every role and sets each to `Running` on the board, then runs them in parallel, then finishes each and handles its reply in `to_run` order (code, then security), as the loop body does today. With one role in `to_run`, no thread is spawned.
 - **A prepare error** (lost flag, provider sync) returns before any run starts, as today. A `shape_spec` failure gives that role a failed run, as today, and the other role still runs.
 - **Thread safety:** `AgentRunner` gets `Send + Sync` as supertraits. `ClaudeRunner`, `CodexRunner` and `FakeRunner` already are (`OnceLock`, `AtomicU64`, `Mutex`). Test runners that are not get a `Mutex` or atomic in place of their `Cell`/`RefCell`.
-- **Tracing:** each thread enters the span that was current when it was spawned (`Span::current()` captured before the scope), so lines logged inside the runner keep the job.
+- **Tracing:** each thread runs under the parent's dispatcher and enters the span that was current when it was spawned (both captured before the scope), so lines logged inside the runner keep the job. The dispatcher matters because `factory_telemetry::capture` installs its subscriber for the current thread only.
 - **Durations:** each run measures its own elapsed time inside its thread and hands it to finish, so `agent.end` `duration_ms` and the usage row stay per role.
 - **Cancel and shutdown:** each run is its own process group, already registered under the registry mutex (`factory-procgroup`), so a cancel or signal kills both.
 - **Events:** `EventSink::emit` writes one line per `write_all` in append mode, so lines from two runs do not mix.
