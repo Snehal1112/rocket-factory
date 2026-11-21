@@ -50,7 +50,7 @@ plan N fails (parked or blocked)
 - `factory cancel <id>` on a job whose series has an id cancels the target and every member with a higher index that is neither merged nor cancelled. Lower indexes are never touched.
 - New flag `--only`: cancel just the target, as today.
 - An already cancelled target cascades the same way, so an old cancel can still clear its later plans. A target that was replaced (another member that is not cancelled holds its series id and index) is refused: `job <old> was replaced by job <new>, cancel that one`, so its later plans, which now follow the replacement, are never cancelled through it.
-- The live-lease rule covers every job to be cancelled. If any of them holds a live lease and `--force` is not given, nothing is cancelled and the refusal names that job. `--force` releases the project lease for the target only, as today.
+- The live-lease rule covers every job to be cancelled. If any of them holds a live lease and `--force` is not given, nothing is cancelled and the refusal names that job. With `--force`, the project lease is released for whichever cancelled job holds it, the target or a later plan, and the output says `project lease released` as today.
 - Each later job gets reason `cancelled: plan <n> (job <id>) was cancelled` and its own ledger ruling and `operator.cancel` event, emitted inside that job's `job_span`, with an extra field `cascade_from = <target id>`. The target keeps the user's reason.
 - Output: `job 030 cancelled`, then one line per later job, `job 031 cancelled (later plan of S7)`.
 - A job without a series id (single plan, legacy series) behaves exactly as today.
@@ -71,7 +71,7 @@ Example: S7 holds 030 (parked), 031-034 (stage spec). `factory cancel 030 --reas
 - The fixed plan's `Next plan:` line must resolve to the same path as the `Next plan:` line of the target's plan file (`series.plan_file`), or be `none` when the target's is `none`. Otherwise `new` refuses and names the expected line. The fixed plan may live at any path; the usual case is the original plan file edited in place and committed.
 - Only that one plan is checked (task count, `Commit:` line, placeholders, the plan lint of `new`); the chain behind it is not walked again and no job is made for it.
 - The new job gets the target's `SeriesPos` with `plan_file` set to the fixed plan's path: same series id, index and total. It is made with `add_job` at stage `build` like the first plan of a new series (`runloop.rs` copies the plan into the job folder as `plan.md` there); the worktree and branch are cut at build start as for any job. Nothing of the target's branch carries over. Slug and feature come from the arguments; `--model` defaults to the target's model.
-- Spec: with `--spec`, the spec check runs as for any `new` and the spec is copied into the new job's folder. Without `--spec`, the target's `spec.md` is copied and no spec check runs.
+- Spec: with `--spec`, the spec check runs on that file with the fixed plan, as for any `new`. Without `--spec`, the same check runs on the target's `spec.md` (in its job folder) with the fixed plan, so the risky-path rule and the spec reviewer still apply; `--accept-spec` works as for any `new`. A target without `spec.md` and no `--spec` is refused: `job <id> has no spec.md, pass --spec`. The checked spec text is copied into the new job's folder.
 - The target, if not already cancelled, is cancelled with `--only` semantics and reason `cancelled: replaced by job <new id>`. The new job's ledger gets `replaces job <old id>`. Output: `created job 091 in <folder>`, then `job 030 replaced by job 091`.
 - The new job then runs like any series plan: the guard parks it while plan N-1 is unmerged; after it merges, `run_series` finds plan N+1 by series id and index (section 5) and continues it.
 
@@ -99,6 +99,9 @@ Example: S7 holds 030 (parked), 031-034 (stage spec). `factory cancel 030 --reas
 | `--replaces` a job without a series id | Refused: `job <id> is not in a series`. |
 | `--replaces` a job with a live lease | Refused, as cancel does. |
 | `--replaces` with a wrong `Next plan:` line | Refused, naming the expected line. |
+| `--replaces` without `--spec`, target has no `spec.md` | Refused: `job <id> has no spec.md, pass --spec`. |
+| `--replaces` without `--spec`, fixed plan touches a risk path the old spec has no user decision for | Refused by the spec check, as for any `new`; nothing changes. |
+| Forced cascade where a later plan holds the project lease | The lease is released for that job. |
 | `--replaces` a job that was already replaced | Refused: `job <old> was replaced by job <new>, replace that one`. A job counts as replaced when another member that is not cancelled holds its series id and index. |
 | Replace a plan whose later plans were cancelled by a cascade | Allowed; the later plans stay cancelled. Their reason says so; the user plans them again. |
 | Cleanup of a member while the series is not finished | Target only, as today. A replaced job keeps its card until the series is finished, like any cancelled member. |
@@ -120,7 +123,7 @@ Example: S7 holds 030 (parked), 031-034 (stage spec). `factory cancel 030 --reas
 - `cancel_of_a_replaced_job_is_refused`, `cancel_of_a_cancelled_job_cascades`.
 - `rework_of_a_replaced_job_is_refused`, `rework_revives_a_cancelled_job_that_was_not_replaced` (`crates/factory-cli/tests/retry_cmd.rs`).
 - `cleanup_of_finished_series_cleans_every_cancelled_member`, `cleanup_reports_a_refused_member_and_goes_on`.
-- `new_replaces_takes_the_index_and_cancels_the_target`, `new_replaces_copies_the_target_spec_without_spec_flag`, `new_replaces_refuses_folder_merged_no_series_wrong_next_line` (one test per refusal row).
+- `new_replaces_takes_the_index_and_cancels_the_target`, `new_replaces_checks_the_target_spec_without_spec_flag`, `new_replaces_without_spec_applies_the_risky_path_rule`, `forced_cascade_releases_a_project_lease_held_by_a_later_plan`, `new_replaces_refuses_folder_merged_no_series_wrong_next_line` (one test per refusal row).
 
 `factory-engine`:
 
@@ -154,6 +157,7 @@ Commands: `cargo test -j4 -p factory-cli`, `cargo test -j4 -p factory-engine`, `
 - Dashboard and supervisor cancel cascade by default; the API accepts `only`.
 - `factory cleanup <id>` on a finished series cleans every cancelled member.
 - `factory new --replaces <id> --plans <file>` makes a job at the target's series index and cancels only the target.
+- Without `--spec`, `--replaces` runs the spec check on the target's `spec.md` with the fixed plan, and refuses a target without `spec.md`.
 - `--replaces` refuses a folder, a merged target, a target without a series id, a target already replaced, a live lease and a wrong `Next plan:` line.
 - After the replacement merges, the next plan of the series continues, also when the replacement plan file has a new path.
 - Cancelling a replaced job is refused; cancelling an already cancelled job cascades.
@@ -175,7 +179,8 @@ Commands: `cargo test -j4 -p factory-cli`, `cargo test -j4 -p factory-engine`, `
 - What should happen to later plans when a plan dies? Options: cancel the rest in one step (A), put a fixed plan in its place (B), re-plan the chain from plan N (C). Chosen: A and B together. Decided by: user
 - Cascade by default or on request? Options: cascade by default with `--only` to opt out, one job by default with `--series` to opt in, cascade in the CLI but one job in the API. Chosen: cascade by default with `--only`, in the CLI and the API. Decided by: user
 - Replacement interface? Options: `factory new --replaces <id>`, a new `factory replace` command. Chosen: `factory new --replaces <id>`, as sketched to the user. Decided by: call
-- Spec for a replacement? Options: copy the target's spec unless `--spec` is given, always require `--spec`. Chosen: copy unless `--spec`. Decided by: call
+- Spec check for a replacement without `--spec`? Options: run the check on the target's spec.md with the fixed plan, always require `--spec`, skip the check. Chosen: run the check on the target's spec.md. Decided by: user
+- Project lease on a forced cascade? Options: release it for any cancelled job that holds it, only for the target. Chosen: any cancelled job. Decided by: call
 - Next-plan lookup? Options: series id and index, plan file path. Chosen: series id and index for series with an id. Decided by: call
 - Cancel of a replaced job? Options: refuse, cancel only that job. Chosen: refuse. Decided by: call
 - Dashboard cancel? Options: follow the CLI default with a dialog title that names the later plans, add an "also cancel the later plans" checkbox, always one job. Chosen: follow the CLI default with the dialog title. Decided by: user

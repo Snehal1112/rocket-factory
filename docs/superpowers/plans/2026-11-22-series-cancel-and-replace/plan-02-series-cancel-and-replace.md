@@ -140,6 +140,7 @@ The other cases share this shape: build the state, run the command, assert the o
 | `cancel_of_a_replaced_job_is_refused` | `cli_series`; `new fixed x --plans <fixed> --replaces 1` (job 003) | `cancel 1` | error contains `job 001 was replaced by job 003, cancel that one`; 002 not cancelled |
 | `cancel_without_series_is_unchanged` | `parked_and_cancelled(&fx, "hello")` | `cancel 1`, then on a fresh fixture `cancel 1 --only` | both outputs are exactly `job 001 cancelled` |
 | `cancel_ignores_a_stale_lease_on_a_later_plan` | `cli_three`; set job 003's lease to `factory_core::Lease { owner: "other".into(), expires: 1.0 }` through `BoardStore::update_job` | `cancel 1` | all three cancelled |
+| `forced_cascade_releases_a_project_lease_held_by_a_later_plan` | `cli_three`; take the project lease for job 003 with `factory_engine::acquire_project_lease` as `retry_is_busy_when_the_project_is_held` in `retry_cmd.rs` does | `cancel 1 --force` | output contains `project lease released`; `project_lease_status` of the state folder is no longer held by 003 |
 | `cancel_of_a_draft_slug_still_removes_the_draft` | in `draft_cards.rs`, the draft fixture used by its existing `cancel <slug>` test | `cancel <slug>` | the same output and board as that existing test |
 
 In `operator_events.rs` add `cancel_cascade_logs_one_event_per_job_with_cascade_from`: a three-plan series made with `new` (as `cli_three` does), `factory_telemetry::capture("info", || sc.run(&["cancel", "1"]))`, then `events(&lines, "operator.cancel")` has 3 entries; the entries for `002` and `003` have `["cascade_from"] == "001"` and the entry for `001` has no `cascade_from` key.
@@ -160,6 +161,7 @@ Expected: FAIL. `cancel_cascades_to_later_unmerged_plans` sees output `job 001 c
   2. The set is the target, plus, unless `only`, every job with the same series id, a higher index, not merged and not cancelled, in index order.
   3. Without `force`, if any job in the set has `lease_is_live(job, now)`, refuse with `job <that id> has a live lease, use --force to cancel anyway` and change nothing. For the target alone keep today's text `job has a live lease, use --force to cancel anyway`.
   4. Mark each job as `cancel` does today: `set_stage_logged(j, Stage::NeedsHuman, Some(text), false, now)`, `cancelled = true`, clear `lease`, `task_session`, `builder_last`. The target's text is `cancelled: <reason>`; a later job's is `cancelled: plan <target index> (job <target id>) was cancelled`.
+- With `--force`, after the board write, call `force_release_project_lease(state_dir, <id>, ctx.lock_wait)` for each job in the set and print `project lease released` once when any call cleared it.
 - After the board write, per job in order: a ledger ruling with its text folded to one line, and `operator.cancel` inside `factory_engine::job_span(<that id>)`. Later jobs log `cascade_from = <target id>` as well.
 - Output: `job <target> cancelled`, then one line `job <id> cancelled (later plan of <sid>)` per later job, then the existing `project lease released` line when `--force` released it.
 
