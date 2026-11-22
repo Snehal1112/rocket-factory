@@ -57,3 +57,19 @@ fn check_coverage_note_comes_after_the_upgrade_steps() {
     let note = text.find("## Check coverage").expect("note heading");
     assert!(note > steps);
 }
+
+#[test]
+fn reference_docs_carry_the_size_s_fixes() {
+    let sf = read("docs/reference/software-factory.md");
+    assert!(sf.contains("a `.claude/agents/<name>.md` tracked on the base branch still wins"));
+    assert!(sf.contains("`cancelled`") && sf.contains("skipped"));
+    assert!(sf.contains("gave no verdict") && sf.contains("did not finish"));
+    assert!(sf.contains("in the `spec`, `build` or `review` stage"));
+    let claude = read("CLAUDE.md");
+    assert!(!claude.contains(
+        "These files in `.claude/` are copies of Rocket's factory files. Tests read them."
+    ));
+    assert!(claude.contains("Only `.claude/factory/config.toml` is read by tests"));
+    let dash = read("dashboard/README.md");
+    assert!(!dash.contains("There is no hook.\n\n- `.superpowers/sdd/<job dir>/gates.jsonl`"));
+}
