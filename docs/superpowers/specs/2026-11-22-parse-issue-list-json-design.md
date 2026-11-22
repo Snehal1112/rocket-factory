@@ -14,14 +14,14 @@ Intake picks the next labelled issue to build. It asks the tracker for the label
 
 | Piece | Where | Today |
 |---|---|---|
-| Parser | `crates/factory-engine/src/tracker.rs:352-377` | `value.as_array().into_iter().flatten()`: a non-array value yields nothing, so `Ok(vec![])`. |
+| Parser | `crates/factory-engine/src/tracker.rs:352-378` | `value.as_array().into_iter().flatten()`: a non-array value yields nothing, so `Ok(vec![])`. |
 | Number | `crates/factory-engine/src/tracker.rs:359` | `u32::try_from(issue["number"].as_u64()?).ok()?`: a missing, non-integer or over-`u32` number skips the entry. |
 | Invalid JSON | `crates/factory-engine/src/tracker.rs:353-354` | Returns `Err("gh printed invalid JSON: ...")`. |
-| Sibling parser | `crates/factory-engine/src/tracker.rs:328-347` | `parse_found` already returns `Err("gh printed unexpected JSON: expected an array")` for a non-array reply. |
+| Sibling parser | `crates/factory-engine/src/tracker.rs:328-348` | `parse_found` already returns `Err("gh printed unexpected JSON: expected an array")` for a non-array reply. |
 | Caller | `crates/factory-engine/src/tracker.rs:529-531` | `GhTracker::list_labelled` returns `parse_issue_list(&self.run(&list_labelled_args(label))?)`. |
 | Intake | `crates/factory-engine/src/intake.rs:209-211` | `pick_issue` maps a `list_labelled` error to `intake: cannot list the labelled issues: <e>` and returns it. |
 | Intake test | `crates/factory-engine/tests/intake.rs` `a_tracker_failure_before_the_claim_leaves_the_labels_alone` | A `list_labelled` error fails the pass, makes no `edit_labels` call and runs no drafter. |
-| Parser test | `crates/factory-engine/src/tracker.rs` `parse_issue_list_reads_labels_and_dates` (line 786) | Two entries with labels and dates, plus `nope` giving an `invalid JSON` error. |
+| Parser tests | `crates/factory-engine/src/tracker.rs` `parse_issue_list_reads_labels_and_dates` (line 786) and `parse_issue_list_reads_updated_at` (line 972) | Entries with labels and dates, plus `nope` giving an `invalid JSON` error. `mod tests` also holds `const NOT_AN_ARRAY` (line 668) with the `expected an array` text. |
 
 Gap: a non-array reply reads as an empty queue, and no test covers it. The skip of an entry with a bad number is also untested.
 
@@ -56,7 +56,7 @@ Example: `{"message":"Bad credentials"}` gives `Err("gh printed unexpected JSON:
 - An entry whose `number` is missing, a string, or over `u32::MAX` is skipped. The rest of the list is still returned.
 - An array element that is not an object has no number, so it is skipped.
 - `u32::MAX` (`4294967295`) is a usable number.
-- A missing or null body, title or date reads as an empty string, and missing labels read as an empty list.
+- A missing body or date reads as an empty string and missing labels read as an empty list (unchanged, already pinned by `parse_issue_list_reads_labels_and_dates` and `parse_issue_list_reads_updated_at`).
 
 The doc comment on `parse_issue_list` is updated to say a non-array reply is an error and an entry without a usable number is skipped.
 
@@ -91,7 +91,7 @@ Unit tests in `crates/factory-engine/src/tracker.rs` `mod tests`, next to `parse
 - `parse_issue_list_skips_a_non_object_element`: `[1, {...#4...}]` gives a list holding only `#4`.
 - `parse_issue_list_keeps_u32_max`: an entry with number `4294967295` gives a list holding that number.
 
-`parse_issue_list_reads_labels_and_dates` must keep passing unchanged.
+`parse_issue_list_reads_labels_and_dates` and `parse_issue_list_reads_updated_at` must keep passing unchanged.
 
 Commands:
 
@@ -118,7 +118,7 @@ cargo test -j4 -p factory-engine --test intake
 - An entry whose number is missing, a string or over `u32::MAX` is still skipped, and the other entries are returned.
 - A non-object array element is skipped.
 - `u32::MAX` is accepted as a number.
-- The nine new tests and `parse_issue_list_reads_labels_and_dates` pass.
+- The nine new tests, `parse_issue_list_reads_labels_and_dates` and `parse_issue_list_reads_updated_at` pass.
 - `cargo test -j4 -p factory-engine --test intake` passes unchanged.
 
 ## Out of scope
@@ -136,4 +136,5 @@ cargo test -j4 -p factory-engine --test intake
 - Fix the similar gap in `parse_view` in this job? Options: follow-up ticket, fix both here, ignore it. Chosen: follow-up ticket. Decided by: user
 - Edit `parse_issue_list` in place, the same way `parse_found` was fixed for #62, rather than a typed serde struct. Decided by: call
 - Reuse the exact error text `gh printed unexpected JSON: expected an array` from `parse_found`. Decided by: call
+- No shared helper with `parse_found`: the repeated check is two lines, and extracting it would touch `parse_found`, which is out of scope. Decided by: call
 - Only unit tests are added; intake's handling of a `list_labelled` error is already pinned by `a_tracker_failure_before_the_claim_leaves_the_labels_alone`. Decided by: call
