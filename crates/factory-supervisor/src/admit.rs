@@ -116,6 +116,52 @@ pub fn queue_run(
     Ok(req.id)
 }
 
+/// Checks that job `raw_id` of project `name` can be approved, then queues an approve request.
+/// The child would refuse a bad approve and nobody reads that refusal, so the checks run here.
+/// Returns the request id.
+pub fn queue_approve(
+    home: &Home,
+    name: &str,
+    raw_id: &str,
+    without_review: bool,
+    waive_reason: Option<&str>,
+    now_ms: u64,
+) -> Result<String, Refusal> {
+    let layout = project_layout(home, name)?;
+    let id = job_id(raw_id)?;
+    let board = Board::load(&layout.board_file())
+        .map_err(|e| Refusal::Failed(format!("the board of this project cannot be read: {e}")))?;
+    let job = board
+        .jobs
+        .iter()
+        .find(|j| j.id == id)
+        .ok_or_else(|| Refusal::NotFound(format!("no job {id} in project {name}")))?;
+    if job.cancelled {
+        return Err(Refusal::Conflict(format!("job {id} was cancelled")));
+    }
+    if job.stage != Stage::NeedsHuman && job.stage != Stage::Approve {
+        return Err(Refusal::Conflict(format!(
+            "job {id} is in stage {}, approve needs needs-human or approve",
+            job.stage
+        )));
+    }
+    // The review rules inside apply to needs-human only, the open-changes rule to both stages.
+    if let Some(why) = job.approve_refusal(without_review, waive_reason.is_some()) {
+        return Err(Refusal::Conflict(why));
+    }
+    refuse_if_queued(home, name, &id)?;
+    let bad = |e: crate::request::RequestError| Refusal::BadRequest(e.to_string());
+    let mut req = Request::new(name, Action::Approve, &id, false, now_ms).map_err(bad)?;
+    if without_review {
+        req = req.without_review().map_err(bad)?;
+    }
+    if let Some(reason) = waive_reason {
+        req = req.waive(reason).map_err(bad)?;
+    }
+    enqueue(home, &req)?;
+    Ok(req.id)
+}
+
 /// Checks that job `raw_id` of project `name` can be retried, then queues a retry request.
 /// Returns the request id.
 pub fn queue_retry(home: &Home, name: &str, raw_id: &str, now_ms: u64) -> Result<String, Refusal> {
@@ -187,6 +233,110 @@ mod tests {
                 other => panic!("{other:?}"),
             })
             .collect()
+    }
+
+    fn board(home: &Home, stage: &str, cancelled: bool, review: &str) {
+        let job = job_json("001", "001-first")
+            .replace(
+                r#""stage":"build""#,
+                &format!(r#""stage":"{stage}","cancelled":{cancelled}"#),
+            )
+            .replace(
+                r#""reviews":{}"#,
+                &format!(r#""reviews":{{"code":"{review}"}}"#),
+            );
+        write_board(home, &format!(r#"{{"jobs":[{job}]}}"#));
+    }
+
+    const TWICE: &str = "job 001 already has an approve or retry queued";
+
+    #[test]
+    fn queue_approve_pads_and_refuses_a_second_approve() {
+        let (_t, home) = fixture();
+        board(&home, "approve", false, "pass");
+        queue_approve(&home, "good", "1", false, None, 1).expect("queued");
+        let err = queue_approve(&home, "good", "001", false, None, 2).expect_err("refused");
+        assert_eq!(err, Refusal::Conflict(TWICE.into()));
+        assert_eq!(jobs(&home), vec![(Action::Approve, "001".to_string())]);
+    }
+
+    #[test]
+    fn queue_retry_refuses_after_an_unpadded_approve() {
+        let (_t, home) = fixture();
+        parked(&home, RESUME_MERGE);
+        queue_approve(&home, "good", "1", true, None, 1).expect("queued");
+        let err = queue_retry(&home, "good", "1", 2).expect_err("refused");
+        assert_eq!(err, Refusal::Conflict(TWICE.into()));
+        assert_eq!(queue::list(&home).len(), 1);
+    }
+
+    #[test]
+    fn queue_approve_refuses_an_approve_after_a_retry() {
+        let (_t, home) = fixture();
+        parked(&home, RESUME_MERGE);
+        queue_retry(&home, "good", "1", 1).expect("queued");
+        let err = queue_approve(&home, "good", "1", true, None, 2).expect_err("refused");
+        assert_eq!(err, Refusal::Conflict(TWICE.into()));
+        assert_eq!(queue::list(&home).len(), 1);
+    }
+
+    #[test]
+    fn queue_run_and_approve_do_not_block_each_other() {
+        let (_t, home) = fixture();
+        board(&home, "approve", false, "pass");
+        queue_run(&home, "good", "1", false, 1).expect("queued");
+        queue_approve(&home, "good", "1", false, None, 2).expect("queued");
+        assert_eq!(queue::list(&home).len(), 2);
+
+        let (_t2, home2) = fixture();
+        board(&home2, "approve", false, "pass");
+        queue_approve(&home2, "good", "1", false, None, 1).expect("queued");
+        queue_run(&home2, "good", "1", false, 2).expect("queued");
+        assert_eq!(queue::list(&home2).len(), 2);
+    }
+
+    #[test]
+    fn queue_approve_checks_the_board() {
+        let (_t, home) = fixture();
+        board(&home, "build", false, "pass");
+        assert_eq!(
+            queue_approve(&home, "good", "1", false, None, 1),
+            Err(Refusal::Conflict(
+                "job 001 is in stage build, approve needs needs-human or approve".into()
+            ))
+        );
+        board(&home, "approve", true, "pass");
+        assert_eq!(
+            queue_approve(&home, "good", "1", false, None, 1),
+            Err(Refusal::Conflict("job 001 was cancelled".into()))
+        );
+        board(&home, "approve", false, "pass");
+        assert_eq!(
+            queue_approve(&home, "good", "2", false, None, 1),
+            Err(Refusal::NotFound("no job 002 in project good".into()))
+        );
+        board(&home, "needs-human", false, "pending");
+        let layout = project_layout(&home, "good").expect("layout");
+        let loaded = Board::load(&layout.board_file()).expect("board");
+        let why = loaded.jobs[0]
+            .approve_refusal(false, false)
+            .expect("refused");
+        assert_eq!(
+            queue_approve(&home, "good", "1", false, None, 1),
+            Err(Refusal::Conflict(why))
+        );
+        assert!(queue::list(&home).is_empty());
+    }
+
+    #[test]
+    fn queue_approve_passes_the_flags() {
+        let (_t, home) = fixture();
+        board(&home, "needs-human", false, "pending");
+        queue_approve(&home, "good", "1", true, None, 1).expect("queued");
+        match &queue::list(&home)[0] {
+            queue::QueueItem::Ok(r) => assert!(r.without_review),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
