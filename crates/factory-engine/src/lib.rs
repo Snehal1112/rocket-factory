@@ -104,8 +104,8 @@ pub use retry::retry_job;
 pub use review::{apply_decision, final_checks, review_stage, ReviewOutcome, ReviewRun};
 pub use rework::ReworkKind;
 pub use runloop::{
-    create_job, create_job_with_spec, create_job_with_spec_accepting, job_span, run_job,
-    run_series, RunEnd, SpecMode,
+    create_job, create_job_with_spec, create_job_with_spec_accepting, create_replacement, job_span,
+    run_job, run_series, Replacement, RunEnd, SpecMode,
 };
 pub use scope::scope_violation;
 pub use series::{parse_series, parse_series_with, Series, SeriesError, SeriesPlan, MAX_PLANS};

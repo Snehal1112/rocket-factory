@@ -630,6 +630,127 @@ pub fn create_job_with_spec_accepting(
     Ok(first)
 }
 
+/// One fixed plan that takes the series place of a failed plan.
+#[derive(Debug, Clone, Copy)]
+pub struct Replacement<'a> {
+    /// The job whose place is taken.
+    pub target: &'a str,
+    pub slug: &'a str,
+    pub feature: &'a str,
+    /// The fixed plan file.
+    pub plan: &'a Path,
+    /// The spec to check. Without it the target's own `spec.md` is checked.
+    pub spec: Option<&'a Path>,
+    /// The model of the new job. Without it the target's model is used.
+    pub model: Option<&'a str>,
+    pub accept_spec: Option<&'a str>,
+}
+
+/// Makes one job at the series place of `r.target` from a fixed plan, then cancels the target.
+/// Every refusal comes before the board changes, so a refused call leaves nothing behind.
+pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, EngineError> {
+    let id = r.target;
+    if !r.plan.is_file() {
+        return Err(EngineError::Invalid(
+            "--replaces needs one plan file, not a folder".to_string(),
+        ));
+    }
+    let board = driver.store().load()?;
+    let target = board.find(id)?.clone();
+    if target.stage == Stage::Merged {
+        return Err(EngineError::Invalid(format!("job {id} is already merged")));
+    }
+    let Some(pos) = target.series.clone().filter(|s| s.id.is_some()) else {
+        return Err(EngineError::Invalid(format!("job {id} is not in a series")));
+    };
+    if let Some(new) = board.replacement_of(&target.id) {
+        return Err(EngineError::Invalid(format!(
+            "job {id} was replaced by job {}, replace that one",
+            new.id
+        )));
+    }
+    if crate::lease_is_live(&target, now_secs()) {
+        return Err(EngineError::Invalid(format!("job {id} has a live lease")));
+    }
+    // The frozen copy is the reference, because the usual fix edits the working file in place.
+    let target_dir = driver.job_dir(&target);
+    let expected = crate::series::frozen_next(
+        driver.root(),
+        &target_dir.join("plan.md"),
+        Path::new(&pos.plan_file),
+    )?;
+    let fixed = crate::series::parse_one_plan(driver.root(), r.plan)?;
+    let found = fixed.plans[0].next.as_deref().map(crate::series::canon);
+    if found != expected.as_deref().map(crate::series::canon) {
+        let line = expected.map_or("none".to_string(), |p| p.display().to_string());
+        return Err(EngineError::Invalid(format!(
+            "the fixed plan must end with Next plan: {line}"
+        )));
+    }
+    let own_spec = target_dir.join("spec.md");
+    let spec = match r.spec {
+        Some(spec) => spec,
+        None if own_spec.is_file() => own_spec.as_path(),
+        None => {
+            return Err(EngineError::Invalid(format!(
+                "job {id} has no spec.md, pass --spec"
+            )))
+        }
+    };
+    let Validated {
+        plan_warnings,
+        spec_text,
+        accepted,
+        ..
+    } = validate_series(
+        driver,
+        r.plan,
+        Some(spec),
+        r.accept_spec,
+        None,
+        |root, p| crate::series::parse_one_plan(root, p).map_err(EngineError::from),
+    )?;
+    let new_pos = SeriesPos {
+        plan_file: crate::series::canon(r.plan).to_string_lossy().into_owned(),
+        ..pos
+    };
+    let mut new = add_job(
+        driver,
+        r.slug,
+        r.feature,
+        &factory_core::parse_issues(r.feature),
+        Some(new_pos),
+        Stage::Build,
+        r.model.or(target.model.as_deref()),
+    )?;
+    if let Some(text) = &spec_text {
+        std::fs::write(driver.job_dir(&new).join("spec.md"), text)?;
+    }
+    let text = format!("cancelled: replaced by job {}", new.id);
+    if !target.cancelled {
+        let now = now_secs();
+        driver.store().update_job(id, |j| {
+            crate::set_stage_logged(j, Stage::NeedsHuman, Some(&text), false, now)?;
+            j.cancelled = true;
+            j.lease = None;
+            j.task_session = None;
+            j.builder_last = None;
+            Ok(())
+        })?;
+        driver.ledger(&target).ruling(&text)?;
+    }
+    driver
+        .ledger(&new)
+        .ruling(&format!("replaces job {}", target.id))?;
+    if let Some(reason) = &accepted {
+        new = record_accepted(driver, r.slug, new, reason);
+    }
+    for warning in &plan_warnings {
+        new = add_warning(driver, r.slug, new, warning);
+    }
+    Ok(new)
+}
+
 /// Parks a job that has no plan, naming the file that was expected.
 fn park_missing_plan(driver: &Driver, job: &Job) -> Result<(), EngineError> {
     let text = format!("expected {}", driver.job_dir(job).join("plan.md").display());

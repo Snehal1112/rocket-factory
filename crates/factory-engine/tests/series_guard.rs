@@ -8,7 +8,9 @@ use std::time::Duration;
 use common::{reply, scripted, Effect, Fixture, SeriesFixture};
 use factory_agent::AgentSpec;
 use factory_core::{ResumeAt, SeriesPos, Stage};
-use factory_engine::{create_job, retry_job, run_job, run_series, BoardStore, RunEnd};
+use factory_engine::{
+    create_job, create_replacement, retry_job, run_job, run_series, BoardStore, Replacement, RunEnd,
+};
 use factory_git::Worktree;
 
 fn ledger_of(fx: &SeriesFixture, id: &str) -> String {
@@ -81,13 +83,7 @@ fn plan_two_parks_when_plan_one_was_cancelled() {
 /// The job is made from a lone plan, so `create_job` does not walk the chain behind `plan`.
 fn stand_in(fx: &SeriesFixture, id: &str, plan: &Path) -> String {
     let old = fx.driver.job(id).expect("job");
-    fx.driver
-        .store()
-        .update_job(id, |j| {
-            j.cancelled = true;
-            j.set_stage(Stage::NeedsHuman, Some("cancelled"), true, 2.0)
-        })
-        .expect("cancel");
+    cancel(fx, id);
     let lone = lone_plan(fx, &format!("stand-in-{id}"));
     let made = create_job(&fx.driver, "fixed", "fixed plan", Some(&lone), None).expect("create");
     let mut pos = old.series.expect("series");
@@ -436,4 +432,261 @@ fn an_interrupted_recut_is_finished() {
     let fresh = job.worktree.expect("fresh worktree");
     assert!(Path::new(&fresh).join("built.txt").exists());
     assert!(job.head.is_some(), "the job built");
+}
+
+fn replace<'a>(target: &'a str, plan: &'a Path) -> Replacement<'a> {
+    Replacement {
+        target,
+        slug: "fixed",
+        feature: "fixed plan",
+        plan,
+        spec: None,
+        model: None,
+        accept_spec: None,
+    }
+}
+
+/// The spec text of `an_explicit_spec_path_replaces_the_spec_beside_the_plans` in tests/runloop.rs.
+const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n";
+
+/// A fixture with `src-tauri/**` as a risk path and no spec reviewer, as `risky_config` in runloop.rs.
+fn risky_fixture() -> SeriesFixture {
+    let config = factory_core::Config {
+        risk_paths: vec!["src-tauri/**".to_string()],
+        spec_review: false,
+        ..factory_core::Config::default()
+    };
+    SeriesFixture::with_config("fine\nVERDICT: APPROVE", config)
+}
+
+fn write_target_spec(fx: &SeriesFixture, id: &str, text: &str) {
+    let job = fx.driver.job(id).expect("job");
+    std::fs::write(fx.driver.job_dir(&job).join("spec.md"), text).expect("spec");
+}
+
+fn cancel(fx: &SeriesFixture, id: &str) {
+    fx.driver
+        .store()
+        .update_job(id, |j| {
+            j.cancelled = true;
+            j.set_stage(Stage::NeedsHuman, Some("cancelled"), true, 2.0)
+        })
+        .expect("cancel");
+}
+
+#[test]
+fn create_replacement_takes_the_index_and_cancels_the_target() {
+    let fx = risky_fixture();
+    let (one, _two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    let fixed = fx.plan_file("plan-01-fixed.md", 2, "plan-02-b.md");
+    let made = create_replacement(&fx.driver, &replace(&one, &fixed)).expect("replace");
+    let old = fx.driver.job(&one).expect("old");
+    let new = fx.driver.job(&made.id).expect("new");
+    assert!(old.cancelled);
+    assert_eq!(
+        old.reason.as_deref(),
+        Some(format!("cancelled: replaced by job {}", made.id).as_str())
+    );
+    let (op, np) = (
+        old.series.expect("old pos"),
+        new.series.clone().expect("new pos"),
+    );
+    assert_eq!((np.id, np.index, np.total), (op.id, op.index, op.total));
+    assert_eq!(
+        std::fs::canonicalize(&np.plan_file).expect("canon"),
+        std::fs::canonicalize(&fixed).expect("canon")
+    );
+    assert_eq!(new.stage, Stage::Build);
+    assert!(ledger_of(&fx, &made.id).contains(&format!("replaces job {one}")));
+    assert!(ledger_of(&fx, &one).contains(&format!("replaced by job {}", made.id)));
+    let plan_md =
+        std::fs::read_to_string(fx.driver.job_dir(&new).join("plan.md")).expect("plan.md");
+    assert!(plan_md.contains("### Task 2"), "the fixed plan was copied");
+    assert_eq!(
+        fx.driver.store().load().expect("board").jobs.len(),
+        3,
+        "one new job only"
+    );
+}
+
+#[test]
+fn create_replacement_checks_the_target_spec_without_a_spec_path() {
+    let fx = risky_fixture();
+    let (one, _two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+    let made = create_replacement(&fx.driver, &replace(&one, &fixed)).expect("replace");
+    let job = fx.driver.job(&made.id).expect("new");
+    let text = std::fs::read_to_string(fx.driver.job_dir(&job).join("spec.md")).expect("spec");
+    assert_eq!(text, GOOD_SPEC);
+    write_target_spec(&fx, &made.id, "# Spec\n\n## Goal\n\nshort\n");
+    let again = fx.plan_file("plan-01-again.md", 1, "plan-02-b.md");
+    create_replacement(&fx.driver, &replace(&made.id, &again))
+        .expect_err("the old spec is checked");
+    assert!(!fx.driver.job(&made.id).expect("job").cancelled);
+}
+
+#[test]
+fn create_replacement_without_spec_applies_the_risky_path_rule() {
+    let fx = risky_fixture();
+    let (one, _two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    let next = fx.tmp.path().join("plans/plan-02-b.md");
+    let fixed = fx.tmp.path().join("plans/plan-01-risky.md");
+    std::fs::write(
+        &fixed,
+        format!(
+            "# Plan\n\n### Task 1: t\n\n**Files:**\n- Modify: `src-tauri/src/lib.rs`\n\nNext plan: {}\n",
+            next.display()
+        ),
+    )
+    .expect("plan");
+    let err = create_replacement(&fx.driver, &replace(&one, &fixed)).expect_err("risky");
+    assert!(err.to_string().contains("risky"), "{err}");
+    assert!(!fx.driver.job(&one).expect("old").cancelled);
+    assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 2);
+}
+
+#[test]
+fn create_replacement_of_an_unstarted_plan_makes_one_job() {
+    let fx = risky_fixture();
+    let (_one, two) = two_plans(&fx);
+    write_target_spec(&fx, &two, GOOD_SPEC);
+    let fixed = fx.plan_file("plan-02-fixed.md", 1, "none");
+    let made = create_replacement(&fx.driver, &replace(&two, &fixed)).expect("replace");
+    let old = fx.driver.job(&two).expect("old");
+    assert!(old.cancelled);
+    assert!(!fx.driver.repo().branch_exists(&old.branch));
+    let new = fx.driver.job(&made.id).expect("new");
+    assert_eq!(new.series.expect("pos").index, 2);
+}
+
+#[test]
+fn run_series_continues_a_waiting_plan_after_its_replaced_predecessor_merges() {
+    let fx = risky_fixture();
+    let (one, two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    cancel(&fx, &one);
+    assert!(matches!(
+        run_series(&fx.driver, &two).expect("series"),
+        RunEnd::NeedsHuman(_)
+    ));
+    assert_waiting(&fx, &two);
+    let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+    let made = create_replacement(&fx.driver, &replace(&one, &fixed)).expect("replace");
+    assert_eq!(
+        run_series(&fx.driver, &made.id).expect("series"),
+        RunEnd::Merged
+    );
+    assert_eq!(fx.driver.job(&two).expect("job").stage, Stage::Merged);
+}
+
+#[test]
+fn create_replacement_with_a_refused_spec_changes_nothing() {
+    let fx = risky_fixture();
+    let (one, _two) = two_plans(&fx);
+    let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+    let bad = fx.tmp.path().join("bad-spec.md");
+    std::fs::write(&bad, "# Spec\n\n## Goal\n\nshort\n").expect("spec");
+    let mut r = replace(&one, &fixed);
+    r.spec = Some(bad.as_path());
+    create_replacement(&fx.driver, &r).expect_err("refused spec");
+    assert!(!fx.driver.job(&one).expect("old").cancelled);
+    assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 2);
+}
+
+#[test]
+fn new_replaces_accepts_a_relative_next_line_that_resolves_to_the_same_file() {
+    let fx = risky_fixture();
+    let (one, _two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    let fixed = fx.tmp.path().join("plans/plan-01-rel.md");
+    std::fs::write(
+        &fixed,
+        "# Plan\n\n### Task 1: t\n\nNext plan: plan-02-b.md\n",
+    )
+    .expect("plan");
+    create_replacement(&fx.driver, &replace(&one, &fixed)).expect("relative next resolves");
+}
+
+#[test]
+fn create_replacement_refusals() {
+    let rows = [
+        ("folder", "needs one plan file"),
+        ("merged", "is already merged"),
+        ("no_series", "is not in a series"),
+        ("live_lease", "live lease"),
+        ("wrong_next", "Next plan: "),
+        ("edited_in_place", "Next plan: "),
+        ("wrong_next_on_last", "Next plan: none"),
+        ("already_replaced", "was replaced by job"),
+        ("no_spec", "has no spec.md, pass --spec"),
+    ];
+    for (row, text) in rows {
+        let fx = risky_fixture();
+        let (one, two) = two_plans(&fx);
+        write_target_spec(&fx, &one, GOOD_SPEC);
+        write_target_spec(&fx, &two, GOOD_SPEC);
+        let plans = fx.tmp.path().join("plans");
+        let second = plans.join("plan-02-b.md");
+        let ok_fix = || fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+        let (target, fixed) = match row {
+            "folder" => (one.clone(), plans.clone()),
+            "merged" => {
+                fx.driver
+                    .store()
+                    .update_job(&one, |j| j.set_stage(Stage::Merged, None, true, 2.0))
+                    .expect("merged");
+                (one.clone(), ok_fix())
+            }
+            "no_series" => {
+                let lone = lone_plan(&fx, "p1");
+                let job = create_job(&fx.driver, "lone", "lone", Some(&lone), None).expect("job");
+                write_target_spec(&fx, &job.id, GOOD_SPEC);
+                (job.id, lone)
+            }
+            "live_lease" => {
+                factory_engine::acquire_lease(
+                    fx.driver.store(),
+                    &one,
+                    "other",
+                    600.0,
+                    factory_engine::now_secs(),
+                )
+                .expect("lease");
+                (one.clone(), ok_fix())
+            }
+            "wrong_next" => (one.clone(), fx.plan_file("plan-01-fixed.md", 1, "none")),
+            "edited_in_place" => (one.clone(), fx.plan_file("plan-01-a.md", 1, "none")),
+            "wrong_next_on_last" => (
+                two.clone(),
+                fx.plan_file("plan-02-fixed.md", 1, "plan-01-a.md"),
+            ),
+            "already_replaced" => {
+                let fixed = ok_fix();
+                create_replacement(&fx.driver, &replace(&one, &fixed)).expect("first");
+                (one.clone(), fixed)
+            }
+            "no_spec" => {
+                let job = fx.driver.job(&one).expect("job");
+                std::fs::remove_file(fx.driver.job_dir(&job).join("spec.md")).expect("rm spec");
+                (one.clone(), ok_fix())
+            }
+            other => panic!("unknown row {other}"),
+        };
+        let before = fx.driver.store().load().expect("board").jobs.len();
+        let err = create_replacement(&fx.driver, &replace(&target, &fixed))
+            .expect_err(row)
+            .to_string();
+        assert!(err.contains(text), "{row}: {err}");
+        if row == "wrong_next" || row == "edited_in_place" {
+            assert!(err.contains(&second.display().to_string()), "{row}: {err}");
+        }
+        assert_eq!(
+            fx.driver.store().load().expect("board").jobs.len(),
+            before,
+            "{row}: the board changed"
+        );
+    }
 }
