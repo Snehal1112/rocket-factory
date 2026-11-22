@@ -219,35 +219,6 @@ impl Engine<'_> {
         self.park_with(kind, reason, parts)
     }
 
-    /// Runs the mapped checks over the diff from `from` to `to` and writes `out` in the job dir. It returns
-    /// `None` when no check is mapped to the changed paths. It then writes only the plan notes, if there are any.
-    pub(crate) fn run_checks_between(
-        &self,
-        from: &str,
-        to: &str,
-        out: &str,
-    ) -> Result<Option<ChecksReport>, EngineError> {
-        let raw = self.repo.changed_paths(from, to).map_err(git_err)?;
-        let workdir = self.repo.workdir_in(&self.worktree()?);
-        let plan = self.plan_for(&self.repo.scoped_paths(&raw), &workdir);
-        if plan.commands.is_empty() {
-            // A plan with notes but no command still leaves its notes, so a capped-away check is not silent.
-            if !plan.notes.is_empty() {
-                let md = self.job_dir.join(out);
-                write_checks_md(&md, &ChecksReport { results: vec![] })
-                    .map_err(|e| EngineError::Check(e.to_string()))?;
-                append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
-            }
-            return Ok(None);
-        }
-        let report = run_checks(&workdir, &plan);
-        log_check_results(&report);
-        let md = self.job_dir.join(out);
-        write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
-        append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
-        Ok(Some(report))
-    }
-
     /// Plans the checks. The cargo workspace map is loaded only when a command needs it, and a
     /// failed load falls back to the folder rule with a note in `checks.md`.
     fn plan_for(&self, scoped: &[String], workdir: &Path) -> CheckPlan {

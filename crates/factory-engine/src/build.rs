@@ -604,19 +604,6 @@ impl Engine<'_> {
         Ok(())
     }
 
-    /// Runs the checks over one task's diff and notes the result in the ledger. It is informational only:
-    /// a failure or an error never parks the job and never starts a fix round.
-    fn note_task_checks(&self, n: u32, from: &str, to: &str) -> Result<(), EngineError> {
-        match self.run_checks_between(from, to, &format!("checks-task{n}.md")) {
-            Ok(None) => Ok(()),
-            Ok(Some(report)) => match report.failures().first() {
-                None => self.ruling(&format!("task {n} checks: pass")),
-                Some(f) => self.ruling(&format!("task {n} checks: fail {}", f.command)),
-            },
-            Err(e) => self.ruling(&format!("task {n} checks: not run, {e}")),
-        }
-    }
-
     /// A hook that saves the builder session of task `task` on the board while the run goes on.
     /// It uses its own store, because the stream thread calls it. A failed write is logged and dropped.
     fn session_hook(&self, task: u32, tip: &str) -> SessionHook {
@@ -818,7 +805,6 @@ impl Engine<'_> {
                 &task.title,
                 &files,
             )?;
-            self.note_task_checks(task.n, &tip, &new_tip)?;
         }
         let short = short_sha(&new_tip).to_string();
         self.ledger_task(task.n, TaskState::ImplementerDone, &short)?;

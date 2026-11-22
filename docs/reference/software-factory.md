@@ -383,6 +383,7 @@ Data flow: `factory driver -> .superpowers/factory/{board.json,events.jsonl} -> 
 - The dashboard reads the ledger marker `per-task builders` to show each task's true state (`review` after its implementer is done, `active` while dispatched, `pending` before). Jobs without the marker keep the stage-based display.
 - The driver now passes `--agent factory-builder` for the whole-plan, task and fix builders. Before this it never did.
 - Token model (modelled, not measured): a fresh agent for task k pays off when the context it would have inherited, P_k, exceeds `(9F + (n_k+9)S) / n_k` (F = fixed start of about 19K to 38K tokens, S = spec plus plan size, n_k = turns of the task). Estimated saving: about 11 percent on a 2-task run, about 17 percent on a 3-task run, slightly negative on very short plans. The main gain is accurate per-task state on the card.
+- No checks run between tasks. The checks stage runs the mapped checks once over the whole branch after the last task and writes `checks.md`. Job folders from before this change may still hold `checks-task{n}.md` files and `task N checks` ledger lines; nothing reads them.
 
 ## Builder escalation and the fresh fix builder
 
