@@ -33,6 +33,8 @@ struct CreateBody {
     series: Option<bool>,
     slug: Option<String>,
     accept_spec: Option<String>,
+    one_job: Option<bool>,
+    accept_over_budget: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,6 +264,18 @@ fn create_timeout(home: &Home, name: &str) -> Duration {
     Duration::from_secs((u64::from(stall) + 2) * 60)
 }
 
+/// True when a line of the command's message (stderr, or stdout when stderr is blank) starts with
+/// the budget refusal text.
+fn needs_consent(out: &CliOutput) -> bool {
+    let text = if out.stderr.trim().is_empty() {
+        &out.stdout
+    } else {
+        &out.stderr
+    };
+    text.lines()
+        .any(|l| l.trim_start().starts_with(factory_engine::NEEDS_CONSENT))
+}
+
 /// `POST /projects/{p}/jobs`.
 pub fn create(home: &Home, deps: &ApiDeps, name: &str, body: &[u8]) -> ApiResponse {
     match create_inner(home, deps, name, body) {
@@ -277,6 +291,11 @@ fn create_inner(
 ) -> Result<ApiResponse, ApiResponse> {
     enabled(home, name)?;
     let b: CreateBody = parse(body)?;
+    let one_job = b.one_job == Some(true);
+    let accept_over_budget = b.accept_over_budget == Some(true);
+    if accept_over_budget && !one_job {
+        return Err(bad("accept_over_budget needs one_job"));
+    }
     let spec = existing_path(&b.spec, "spec", false)?;
     let plans = existing_path(&b.plans, "plans", true)?;
     if let Some(m) = &b.model {
@@ -309,13 +328,21 @@ fn create_inner(
     if let Some(reason) = &b.accept_spec {
         args.push(format!("--accept-spec={reason}"));
     }
+    if one_job {
+        args.push("--one-job".to_string());
+    }
+    if accept_over_budget {
+        args.push("--accept-over-budget".to_string());
+    }
     args.extend(["--".to_string(), slug, feature]);
     let run = deps
         .cli
         .run_with_timeout(name, &args, create_timeout(home, name));
     // A spec refusal ends with the shared override hint, so it is a conflict the caller can resolve.
+    // So is a budget refusal, which starts a line. The CLI may print `note:` lines before it.
     let hint = factory_engine::SPEC_OVERRIDE_HINT;
-    let refused = matches!(&run, Ok(o) if o.code == 1 && (o.stderr.contains(hint) || o.stdout.contains(hint)));
+    let refused = matches!(&run, Ok(o) if o.code == 1
+        && (o.stderr.contains(hint) || o.stdout.contains(hint) || needs_consent(o)));
     let out = finished(run, refused)?;
     let job = created_id(&out.stdout).ok_or_else(|| {
         error_response(
@@ -1162,6 +1189,63 @@ mod tests {
             .expect("accept-spec arg");
         let dashes = args.iter().position(|a| a == "--").expect("--");
         assert!(at < dashes, "{args:?}");
+    }
+
+    #[test]
+    fn create_passes_one_job_and_accept_over_budget_before_the_separator() {
+        let f = fx();
+        f.cli
+            .reply_stdout("created job 007 in 2026-10-17-007-work\n");
+        let mut body = create_body(&f);
+        body["one_job"] = json!(true);
+        body["accept_over_budget"] = json!(true);
+        let r = post(&f, "/projects/good/jobs", body.to_string().as_bytes());
+        assert_eq!(r.status, 201, "{}", r.body);
+        let args = &f.cli.calls()[0].1;
+        let sep = args.iter().position(|a| a == "--").expect("separator");
+        let one = args.iter().position(|a| a == "--one-job").expect("one-job");
+        let over = args
+            .iter()
+            .position(|a| a == "--accept-over-budget")
+            .expect("over");
+        assert!(one < sep && over < sep, "{args:?}");
+    }
+
+    #[test]
+    fn create_refuses_accept_over_budget_without_one_job() {
+        let f = fx();
+        for one_job in [None, Some(false)] {
+            let mut body = create_body(&f);
+            body["accept_over_budget"] = json!(true);
+            if let Some(v) = one_job {
+                body["one_job"] = json!(v);
+            }
+            let r = post(&f, "/projects/good/jobs", body.to_string().as_bytes());
+            assert_eq!(code(&r), (400, "bad_request".to_string()), "{one_job:?}");
+            let message = r.body["error"]["message"].as_str().unwrap_or("");
+            assert!(
+                message.contains("accept_over_budget needs one_job"),
+                "{message}"
+            );
+        }
+        assert!(f.cli.calls().is_empty());
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn create_answers_needs_consent_with_a_conflict() {
+        let f = fx();
+        let refusal = "needs consent: this job is estimated at 2 weighted tokens and the budget is 1; raise budget_weighted in project.toml or pass --accept-over-budget\n";
+        for stderr in [refusal.to_string(), format!("note: x\n{refusal}")] {
+            f.cli.reply(1, "", &stderr);
+            let mut body = create_body(&f);
+            body["one_job"] = json!(true);
+            let r = post(&f, "/projects/good/jobs", body.to_string().as_bytes());
+            assert_eq!(code(&r), (409, "conflict".to_string()), "{}", r.body);
+            let message = r.body["error"]["message"].as_str().unwrap_or("");
+            assert!(message.contains("--accept-over-budget"), "{message}");
+        }
+        assert_eq!(queued(&f), 0);
     }
 
     #[test]

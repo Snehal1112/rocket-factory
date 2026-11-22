@@ -61,6 +61,17 @@ test("buildCreateBody returns the body with run and series", () => {
   assert.deepEqual(projects.buildCreateBody(FORM), { spec: "/a/spec.md", plans: "/a/plans", run: true, series: true });
 });
 
+test("buildCreateBody adds one_job only when checked", () => {
+  assert.deepEqual(projects.buildCreateBody({ ...FORM, oneJob: true }), {
+    spec: "/a/spec.md",
+    plans: "/a/plans",
+    run: true,
+    series: true,
+    one_job: true,
+  });
+  assert.equal("one_job" in projects.buildCreateBody({ ...FORM, oneJob: false }), false);
+});
+
 test("buildCreateBody keeps model and slug only when given", () => {
   const body = projects.buildCreateBody({ ...FORM, model: " sonnet ", slug: "my-job", run: false, series: false });
   assert.deepEqual(body, { spec: "/a/spec.md", plans: "/a/plans", model: "sonnet", slug: "my-job", run: false, series: false });
