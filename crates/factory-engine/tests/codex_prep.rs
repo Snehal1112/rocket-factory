@@ -56,6 +56,20 @@ fn run_agent_prepends_the_agent_file_and_the_codex_preface() {
 }
 
 #[test]
+fn codex_role_text_names_no_factory_skill() {
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let text = agent_text(&runner, "builder");
+    assert!(text.contains("## Harness notes: Codex"), "{text}");
+    assert!(!text.contains("### Model option"), "{text}");
+    assert!(!text.contains("$factory"), "{text}");
+}
+
+#[test]
 fn kb_gets_the_skill_sentence() {
     let fx = with_kb(codex(Fixture::new()));
     let runner = scripted(vec![write_effect(), reply("No relevant changes")]);

@@ -39,6 +39,36 @@ pub const TOOL_MAP_CLAUDE: &str = include_str!("../assets/tool-map-claude.md");
 /// The Codex harness notes, appended to the Codex skill and agent text.
 pub const TOOL_MAP_CODEX: &str = include_str!("../assets/tool-map-codex.md");
 
+/// The Codex map without its command-only `### Model option` section.
+pub fn codex_runtime_tool_map() -> String {
+    without_section(TOOL_MAP_CODEX, "### Model option")
+}
+
+/// Drops the `heading` line and its body, up to the next `### ` or `## ` line or the end.
+fn without_section(map: &str, heading: &str) -> String {
+    if !map.lines().any(|l| l == heading) {
+        return map.to_string();
+    }
+    let mut kept: Vec<&str> = Vec::new();
+    let mut skipping = false;
+    for line in map.lines() {
+        if line == heading {
+            skipping = true;
+        } else if skipping && (line.starts_with("### ") || line.starts_with("## ")) {
+            skipping = false;
+        }
+        if !skipping {
+            kept.push(line);
+        }
+    }
+    while kept.last().is_some_and(|l| l.trim().is_empty()) {
+        kept.pop();
+    }
+    let mut out = kept.join("\n");
+    out.push('\n');
+    out
+}
+
 pub use agent_drift::{agent_drift, rules_marker};
 pub use agents::agents_json;
 pub use board::{
@@ -99,3 +129,30 @@ pub use trend::{
 pub use verdict::{
     combine_verdicts, open_blockers, open_minors, parse_verdict, Verdict, REVIEW_ROLES,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_runtime_tool_map_drops_only_the_model_option_section() {
+        let map = codex_runtime_tool_map();
+        assert!(!map.contains("### Model option"));
+        assert!(!map.contains("$factory"));
+        assert!(!map.contains("this Codex skill"));
+        assert!(map.contains("## Harness notes: Codex"));
+        assert!(map.contains("### Task list"));
+        assert!(map.contains("### Commit"));
+        for heading in TOOL_MAP_CODEX
+            .lines()
+            .filter(|l| l.starts_with("### ") && *l != "### Model option")
+        {
+            assert!(map.contains(heading), "lost {heading}");
+        }
+        let middle = "## H\n\n### A\n\na\n\n### Model option\n\nm\n\n### B\n\nb\n";
+        let cut = without_section(middle, "### Model option");
+        assert_eq!(cut, "## H\n\n### A\n\na\n\n### B\n\nb\n");
+        let plain = "## H\n\n### A\n\na\n";
+        assert_eq!(without_section(plain, "### Model option"), plain);
+    }
+}

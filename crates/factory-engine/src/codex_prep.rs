@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use factory_agent::AgentSpec;
 use factory_core::agents::strip_frontmatter;
-use factory_core::{codex_worktree_skills_dir, Config, TOOL_MAP_CODEX};
+use factory_core::{codex_runtime_tool_map, codex_worktree_skills_dir, Config};
 use factory_git::Repo;
 
 use crate::codex_skills::{allowed, codex_skill_args, discover_skills, FoundSkill};
@@ -21,7 +21,7 @@ fn has_role(role: &str, prefix: &str) -> bool {
 
 /// Codex agent text: the preface first so its rules win, then the tool map, then the agent body.
 fn codex_agent_text(preface: &str, body: &str) -> String {
-    format!("{preface}\n\n{TOOL_MAP_CODEX}\n\n{body}")
+    format!("{preface}\n\n{}\n\n{body}", codex_runtime_tool_map())
 }
 
 /// The Codex preface. With allowed skills the catalog may be used, subagents stay off either way.
