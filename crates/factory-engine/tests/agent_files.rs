@@ -423,7 +423,7 @@ fn six_files() -> Vec<AgentFile> {
     [
         "builder",
         "code-reviewer",
-        "committer",
+        "intake-drafter",
         "kb-refresher",
         "security-reviewer",
         "spec-reviewer",
@@ -469,7 +469,7 @@ fn a_tracked_agent_text_wins_in_the_agents_file() {
         .expect("build");
     let json = agents_of(&runner.last_spec_for("builder").expect("builder"));
     assert!(prompt_of(&json, "factory-builder").contains("TRACKED-TEXT"));
-    assert!(prompt_of(&json, "factory-committer").contains("RESOLVED committer"));
+    assert!(prompt_of(&json, "factory-intake-drafter").contains("RESOLVED intake-drafter"));
     assert_eq!(json.as_object().expect("object").len(), 6);
 }
 
@@ -499,7 +499,7 @@ fn a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents() {
     );
     for name in [
         "code-reviewer",
-        "committer",
+        "intake-drafter",
         "kb-refresher",
         "spec-reviewer",
     ] {
@@ -628,7 +628,7 @@ fn a_job_that_deletes_the_tracked_agent_files_reaches_review() {
         .expect("review");
     let spec = reviewer.last_spec_for("reviewer").expect("reviewer");
     assert_eq!(
-        agents_prompt(&spec, "factory-committer").as_deref(),
-        Some("TRACKED factory-committer.md")
+        agents_prompt(&spec, "factory-intake-drafter").as_deref(),
+        Some("TRACKED factory-intake-drafter.md")
     );
 }
