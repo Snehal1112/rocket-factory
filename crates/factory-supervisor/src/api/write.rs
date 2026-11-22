@@ -59,6 +59,7 @@ struct ApproveBody {
 struct CancelBody {
     reason: Option<String>,
     force: Option<bool>,
+    only: Option<bool>,
 }
 
 fn bad(message: &str) -> ApiResponse {
@@ -523,6 +524,9 @@ fn cancel_inner(
     let mut args = vec!["cancel".to_string(), format!("--reason={reason}")];
     if b.force.unwrap_or(false) {
         args.push("--force".to_string());
+    }
+    if b.only.unwrap_or(false) {
+        args.push("--only".to_string());
     }
     args.extend(["--".to_string(), id]);
     let out = finished(deps.cli.run(name, &args), true)?;
@@ -1494,6 +1498,26 @@ mod tests {
             "bad_request"
         );
         assert_eq!(f.cli.calls().len(), 1);
+    }
+
+    #[test]
+    fn cancel_body_only_adds_the_flag() {
+        let f = fx();
+        f.cli.reply_stdout("job 001 cancelled\n");
+        let r = post(&f, "/projects/good/jobs/1/cancel", br#"{"only":true}"#);
+        assert_eq!(r.status, 200);
+        assert_eq!(
+            f.cli.calls()[0].1,
+            vec![
+                "cancel".to_string(),
+                "--reason=cancelled by user".to_string(),
+                "--only".to_string(),
+                "--".to_string(),
+                "001".to_string()
+            ]
+        );
+        let r = post(&f, "/projects/good/jobs/1/cancel", br#"{"only":"yes"}"#);
+        assert_eq!(code(&r), (400, "bad_request".to_string()));
     }
 
     #[test]

@@ -676,7 +676,7 @@ fn swap_in(
     })?;
     if !checked.map_err(EngineError::Invalid)? {
         let _span = job_span(id).entered();
-        record_cancel(driver, &driver.job(id)?, &reason, false)?;
+        record_cancel(driver, &driver.job(id)?, &reason, false, None)?;
     }
     Ok(())
 }
@@ -691,19 +691,31 @@ pub fn mark_cancelled(job: &mut Job, text: &str, now: f64) -> Result<(), factory
     Ok(())
 }
 
-/// Logs the `operator.cancel` event and writes the ledger ruling of a cancel with `reason`.
+/// Logs the `operator.cancel` event and writes the ledger ruling of a cancel with `reason`. A job
+/// cancelled with the plan before it carries that plan's job id as `cascade_from`.
 pub fn record_cancel(
     driver: &Driver,
     job: &Job,
     reason: &str,
     force: bool,
+    cascade_from: Option<&str>,
 ) -> Result<(), EngineError> {
-    tracing::info!(
-        event = "operator.cancel",
-        reason = %factory_telemetry::cap_message(reason),
-        force,
-        msg = "job cancelled"
-    );
+    let capped = factory_telemetry::cap_message(reason);
+    match cascade_from {
+        Some(from) => tracing::info!(
+            event = "operator.cancel",
+            reason = %capped,
+            force,
+            cascade_from = from,
+            msg = "job cancelled"
+        ),
+        None => tracing::info!(
+            event = "operator.cancel",
+            reason = %capped,
+            force,
+            msg = "job cancelled"
+        ),
+    }
     // The reason is folded into one line, because the ledger takes one line.
     let text = format!("cancelled: {reason}");
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");

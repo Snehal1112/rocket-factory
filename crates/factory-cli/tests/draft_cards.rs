@@ -56,6 +56,15 @@ fn cancel_by_slug_removes_the_card_and_keeps_the_spec_file() {
 }
 
 #[test]
+fn cancel_of_a_draft_slug_still_removes_the_draft() {
+    let fx = Fixture::new();
+    fx.run(&["spec", "start", "demo", "f"]).expect("start");
+    let out = fx.run(&["cancel", "demo", "--only"]).expect("cancel");
+    assert!(out.contains("draft demo cancelled"), "{out}");
+    assert!(fx.run(&["spec", "resume", "demo"]).is_err());
+}
+
+#[test]
 fn cancel_by_number_still_cancels_a_job() {
     let fx = Fixture::new();
     fx.run(&["new", "hello", "f"]).expect("new");
