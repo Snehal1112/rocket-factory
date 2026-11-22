@@ -24,7 +24,7 @@
 
 ## Review Focus
 
-1. A bot login such as `github-actions[bot]`: a user expects it accepted. Pinned by `check_login_accepts_bot_logins`.
+1. A bot login such as `github-actions[bot]`: a user expects it accepted. Pinned by `check_login_accepts_bot_logins`. The literal `null` in any case is rejected, so intake fails closed. Pinned as rows of `check_login_rejects_malformed_logins`.
 2. Two lines of output (`o/r\nx/y`), a path step (`../x`, `o/..`) or URL syntax (`o/r?x=1`, `o/r#a`, `o%2Fr/x`): a user expects the repository name rejected. Pinned as rows of `check_repo_name_rejects_malformed_names`.
 3. A name with an empty side (`/r`, `o/`): a user expects it rejected. Pinned as rows of `check_repo_name_rejects_malformed_names`.
 4. Empty output: a user expects the existing `printed no repository name` error, not the new one. Pinned by `repo_name_keeps_the_empty_output_error`.
@@ -91,7 +91,7 @@ fn repo_name_rejects_a_malformed_gh_reply() {
 |---|---|---|
 | `check_repo_name_accepts_owner_and_name` | `"o/r"`, `"Snehal1112/rocket-factory"` | each `.expect("valid")` |
 | `check_login_accepts_bot_logins` | `"alice"`, `"a-b"`, `"github-actions[bot]"` | each `.expect("valid")` |
-| `check_login_rejects_malformed_logins` | `"a b"`, `"a/b"`, `"a\nb"`, `"a:b"`, `"a?b"`, `"a_b"`, `"[bot]"` | each `expect_err` equals ``format!("gh api user printed an unusable login: `{login}`")`` |
+| `check_login_rejects_malformed_logins` | `"a b"`, `"a/b"`, `"a\nb"`, `"a:b"`, `"a?b"`, `"a_b"`, `"[bot]"`, `"null"`, `"NULL"` | each `expect_err` equals ``format!("gh api user printed an unusable login: `{login}`")`` |
 | `repo_name_keeps_the_empty_output_error` | `fake_gh(dir.path(), "true")` (prints nothing), then `tracker.repo_name()` | `expect_err` equals `gh repo view printed no repository name` |
 | `current_user_rejects_a_malformed_gh_reply` | `fake_gh(dir.path(), "echo 'a b'")`, then `tracker.current_user()` | `expect_err` equals ``gh api user printed an unusable login: `a b` `` (no trailing space) |
 
@@ -104,7 +104,7 @@ Expected: the build fails with ``cannot find function `check_repo_name` in this 
 
 - In `crates/factory-core/src/commitmsg.rs`, change `fn is_repo_name` to `pub fn is_repo_name`, and add `is_repo_name` to the `pub use commitmsg::{...}` list in `crates/factory-core/src/lib.rs`. Leave its body alone.
 - `check_repo_name`: split on `/`. Accept only exactly two parts, each passing `factory_core::is_repo_name` and not equal to `.` or `..`. Otherwise return the unusable-name error.
-- `check_login`: strip one optional `[bot]` suffix with `strip_suffix`. Accept only a non-empty rest whose characters are all ASCII alphanumeric or `-`. Otherwise return the unusable-login error.
+- `check_login`: strip one optional `[bot]` suffix with `strip_suffix`. Accept only a non-empty rest whose characters are all ASCII alphanumeric or `-`, and reject the whole login when it equals `null` ignoring ASCII case (`eq_ignore_ascii_case`). Otherwise return the unusable-login error.
 - In `GhTracker::repo_name` and `GhTracker::current_user`, call the helper after the existing empty check and before returning `Ok`, so empty output keeps its old error.
 - Give both helpers a one-line doc comment.
 

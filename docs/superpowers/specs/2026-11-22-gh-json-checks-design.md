@@ -109,10 +109,10 @@ pub(crate) fn check_login(login: &str) -> Result<(), String>
 - Both checks are allowlists: they accept only the characters a real name can hold, and reject everything else.
 - `check_repo_name` splits on `/` and accepts only exactly two parts. Each part must pass `factory_core::is_repo_name` (letters, digits, `-`, `_` and `.`, non-empty, `crates/factory-core/src/commitmsg.rs:74-82`) and must not be `.` or `..`. Otherwise it returns ``Err(format!("gh repo view printed an unusable repository name: `{name}`"))``.
 - `is_repo_name` becomes `pub` in `crates/factory-core/src/commitmsg.rs` and is added to the `pub use commitmsg::{...}` list in `crates/factory-core/src/lib.rs`, so there is one rule. Its behaviour does not change.
-- `check_login` strips one optional `[bot]` suffix, then accepts only a non-empty rest made of ASCII letters, digits and `-`. Otherwise it returns ``Err(format!("gh api user printed an unusable login: `{login}`"))``. Bot logins such as `github-actions[bot]` pass, and `[bot]` alone fails.
+- `check_login` strips one optional `[bot]` suffix, then accepts only a non-empty rest made of ASCII letters, digits and `-`. Otherwise it returns ``Err(format!("gh api user printed an unusable login: `{login}`"))``. Bot logins such as `github-actions[bot]` pass, and `[bot]` alone fails. The exact text `null` (any case) also fails, even though it fits the allowlist: when `intake_trusted` is empty this login is the only trusted user (`crates/factory-engine/src/intake.rs:202-205`), so a reply that reads like a missing value must fail closed.
 - The empty-output errors and their texts stay as they are.
 
-Example: `o/r` and `Snehal1112/rocket-factory` pass, while `o/r/x`, `o r/x`, `/r`, `o/`, `../x`, `o/..`, `o/r?x=1`, `o/r#a`, `o%2Fr/x` and `o/r\nx/y` each fail. `alice`, `a-b` and `github-actions[bot]` pass, while `a b`, `a/b`, `a\nb`, `a:b`, `a?b`, `a_b` and `[bot]` fail.
+Example: `o/r` and `Snehal1112/rocket-factory` pass, while `o/r/x`, `o r/x`, `/r`, `o/`, `../x`, `o/..`, `o/r?x=1`, `o/r#a`, `o%2Fr/x` and `o/r\nx/y` each fail. `alice`, `a-b` and `github-actions[bot]` pass, while `a b`, `a/b`, `a\nb`, `a:b`, `a?b`, `a_b`, `[bot]`, `null` and `NULL` fail.
 
 ## Error handling and edge cases
 
@@ -139,7 +139,7 @@ Example: `o/r` and `Snehal1112/rocket-factory` pass, while `o/r/x`, `o r/x`, `/r
 | the last matching event with `"actor":null` | `Ok(None)`, as today |
 | `repo_name` output `o/r` | `Ok("o/r")` |
 | `repo_name` output `o/r/x`, `o r/x`, `../x` or `o/r?x=1` | unusable repository name error |
-| `current_user` output `a b`, `a:b` or `[bot]` | unusable login error |
+| `current_user` output `a b`, `a:b`, `[bot]` or `null` | unusable login error |
 | empty output from either | the existing `printed no ...` error |
 
 ## Testing
@@ -227,8 +227,8 @@ cargo test -j4 -p factory-engine --test log_events
 - What does a bad `labels` value do to an issue-list entry? Options: skip that entry, fail the whole list, keep reading it as empty. Chosen: skip that entry. Decided by: user
 - Should the repo name and login shape be checked? Options: check the shape, tests only, drop it. Chosen: check the shape. Decided by: user
 - How are the repo name and login checked, after the factory spec review found that a reject-a-few-characters check lets `../x`, `o/r?x=1` and `a:b` through? Options: allowlist reusing `is_repo_name`, allowlist with a copied rule, keep the denylist. Chosen: allowlist reusing `is_repo_name`. Decided by: user
-- A login spelled `null` is accepted: it is a valid GitHub login, and a missing key gives empty output, not the text `null` (checked with `gh api user --jq .nosuchkey`). Decided by: call
+- Is the literal login `null` accepted? Options: reject it, accept it. Chosen: reject it, any case, so intake fails closed; a real user named `null` lists themselves in `intake_trusted`. Decided by: user
 - How is the work split? Options: 2 plans in one job, 2 plans in 2 jobs, 1 plan. Chosen: 2 plans in one job (`--one-job`). Decided by: user
-- A null actor still gives `None`, because GitHub shows a deleted user as null. Decided by: call
+- What does a null actor on the last matching label event give? Options: keep `None` so intake skips the issue, make it an error. Chosen: keep `None`, as GitHub shows a deleted user as null. Decided by: user
 - The shape checks are pure helpers next to the parsers, so they can be tested without a fake `gh`; each also gets one fake-gh test. Decided by: call
 - The existing fixtures gain the fields real `gh` always prints (`labels`, `created_at`) instead of the code tolerating their absence. Decided by: call
