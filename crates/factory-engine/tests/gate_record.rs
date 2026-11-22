@@ -541,6 +541,29 @@ fn merge_lines(fx: &common::MergeFixture) -> Vec<factory_core::gate_record::Gate
     read(&fx.driver.job_dir(&job))
 }
 
+#[test]
+fn an_unsigned_final_merge_writes_the_reason_in_the_merge_gate() {
+    let fx = recording_merge_fixture(common::approving_runner(3));
+    common::failing_signer(&fx.main, fx.tmp.path());
+    force_stage(&fx, factory_core::Stage::Review);
+    fx.driver.checks(&fx.id).expect("checks");
+    let outcome = fx.driver.review(&fx.id).expect("review");
+    fx.driver.apply(&fx.id, &outcome).expect("apply");
+    let merged = factory_engine::merge_stage(&fx.driver, &fx.id).expect("merge");
+    let factory_engine::MergeResult::Merged(sha) = merged else {
+        panic!("expected a merge, got {merged:?}");
+    };
+    let lines = merge_lines(&fx);
+    let merge = lines
+        .iter()
+        .find(|l| l.gate == GateKey::Merge)
+        .expect("merge line");
+    assert_eq!(merge.result, GateResult::Pass);
+    assert!(merge.detail.starts_with(&sha[..7]), "{}", merge.detail);
+    assert!(merge.detail.contains(", unsigned: "), "{}", merge.detail);
+    assert!(merge.detail.contains("exited with 2"), "{}", merge.detail);
+}
+
 fn force_stage(fx: &common::MergeFixture, stage: factory_core::Stage) {
     fx.driver
         .store()

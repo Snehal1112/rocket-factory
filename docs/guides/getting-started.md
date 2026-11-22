@@ -469,6 +469,7 @@ A job that parks as `no-checks` shows in `factory --project <name> status`.
 - Linux and macOS are supported.
 - The dead-owner checks for locks and the adoption of running jobs after a `factoryd` restart use one process library on both systems. They only see processes on this machine.
 - Windows is not supported for `factoryd`.
+- If `commit.gpgsign` is on, the driver signs its commits without a prompt. Keep the GPG agent's passphrase cached (or use an SSH agent) so background runs can sign. A commit that cannot be signed is made unsigned and reported in the ledger.
 
 ## 17. Where to read more
 
