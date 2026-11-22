@@ -80,15 +80,20 @@ fn kb_folder(add_dirs: &[PathBuf]) -> Option<&Path> {
 }
 
 impl Engine<'_> {
-    /// Rewrites a spec for the Codex runner. A missing agent file is an error, and the caller fails the run.
-    pub(crate) fn prepare_for_codex(&self, spec: &mut AgentSpec) -> Result<(), EngineError> {
+    /// The skills a Codex run in `cwd` can find: the user roots and the worktree's own folder.
+    pub(crate) fn codex_found_skills(&self, cwd: &Path) -> Vec<FoundSkill> {
         let mut roots = self.codex_skill_roots.clone();
         let worktree = self
             .repo
-            .worktree_root_of(&spec.cwd)
-            .unwrap_or_else(|| spec.cwd.clone());
+            .worktree_root_of(cwd)
+            .unwrap_or_else(|| cwd.to_path_buf());
         roots.push(codex_worktree_skills_dir(&worktree));
-        let found = discover_skills(&roots);
+        discover_skills(&roots)
+    }
+
+    /// Rewrites a spec for the Codex runner. A missing agent file is an error, and the caller fails the run.
+    pub(crate) fn prepare_for_codex(&self, spec: &mut AgentSpec) -> Result<(), EngineError> {
+        let found = self.codex_found_skills(&spec.cwd);
         let allow = self.config.skill_allow_for(&spec.role);
         spec.codex_config = codex_skill_args(&found, &allow);
         if let Some(name) = spec.agent.clone() {

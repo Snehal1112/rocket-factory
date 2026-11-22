@@ -117,8 +117,9 @@ pub use park::{
     ParkRecord, ResumeAt, PARK_FILE, PART_CAP,
 };
 pub use probe::{
-    allowed_skill_entries, evaluate, expected_channels, parse_probe_answer, probe_prompt, Channel,
-    Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe, KNOWN_BUILTIN_SKILLS,
+    allowed_skill_entries, evaluate, evaluate_with_absent, expected_channels, parse_probe_answer,
+    probe_prompt, Channel, Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe,
+    KNOWN_BUILTIN_SKILLS, NOT_INSTALLED,
 };
 pub use resolve::{resolve, AgentFile, BaseTipFiles, Resolved};
 pub use risk::{cargo_clearable, classify_paths, glob_match, DiffClass};
