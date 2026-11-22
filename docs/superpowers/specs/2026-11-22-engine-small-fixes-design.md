@@ -94,6 +94,7 @@ The minor step reads, for round `N = last_review.round`: `review-code-rN.md`, th
 | `checks.md` is a directory, checks fail | Report returned, a `checks-failed` park, ruling names the write error. |
 | A passing `checks.md` from an earlier run, then a failing run whose write fails | The old file is removed first, so no stale PASS remains. |
 | `set_stage_logged` logs `stage.change` and the board save then fails | The event is logged without a saved move, as `merge.rs` does today; accepted. |
+| Checks pass but `checks.md` cannot be written | `checks_pass` is set, the file is missing, and the later review decision (`latest_checks_ok`) returns an io error instead of deciding; never a stale pass. |
 | No worktree for checks | `Err` as today, "final checks could not run". |
 | All checks pass after a failing run | `checks-failures.md` is removed. |
 | `checks-failures.md` missing on an old job | Rework falls back to `FAIL` lines. |
@@ -166,5 +167,5 @@ A record write is made to fail by making the job folder read-only after setup. T
 - A waiver step whose record write fails stops filing further blockers in that run. Decided by: call
 - Read order of review files for minors: round, rebase, syncs ascending, then last_review.file if not yet read. Decided by: call
 - `checks-failures.md` gets no extra cap beyond the 60-line tail. Decided by: call
-- `run_checks_now` removes the old `checks.md` and `checks-failures.md` before writing, so a failed write leaves no stale evidence. Decided by: call
-- A `stage.change` event logged inside a board update whose save then fails is accepted, as in `merge.rs`. Decided by: call
+- Does `run_checks_now` remove the old `checks.md` and `checks-failures.md` before writing, and what happens after a passing run whose write fails? Options: remove first and let the review decision error on the missing file, remove first and do not record the pass, keep the stale file. Chosen: remove first; a missing `checks.md` never counts as a pass, so `latest_checks_ok` errors and the review step stops rather than deciding. Decided by: user
+- Is a `stage.change` event logged inside a board update whose save then fails accepted? Options: accept as in `merge.rs:90-101`, log only after the save. Chosen: accept. Decided by: user
