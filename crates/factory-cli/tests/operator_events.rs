@@ -85,6 +85,29 @@ fn cancel_logs_reason_and_force() -> TestResult {
 }
 
 #[test]
+fn cancel_cascade_logs_one_event_per_job_with_cascade_from() -> TestResult {
+    let sc = Scenario::new("", vec![])?;
+    let plan_c = sc.tmp.path().join("plans/plan-03-c.md");
+    std::fs::write(&plan_c, "# C\n\n### Task 1: c\n\nNext plan: none\n")?;
+    std::fs::write(
+        &sc.plan_b,
+        format!("# B\n\n### Task 1: b\n\nNext plan: {}\n", plan_c.display()),
+    )?;
+    sc.run(&["new", "hello", "x", "--plans", &sc.plan_a.to_string_lossy()])?;
+    let (out, lines) = factory_telemetry::capture("info", || sc.run(&["cancel", "1"]));
+    out?;
+    let found = events(&lines, "operator.cancel");
+    assert_eq!(found.len(), 3, "{lines:?}");
+    for (event, id) in found.iter().zip(["001", "002", "003"]) {
+        assert_eq!(event["job_id"], id);
+    }
+    assert!(found[0].get("cascade_from").is_none(), "{}", found[0]);
+    assert_eq!(found[1]["cascade_from"], "001");
+    assert_eq!(found[2]["cascade_from"], "001");
+    Ok(())
+}
+
+#[test]
 fn a_second_cancel_updates_the_reason() -> TestResult {
     let sc = parked()?;
     sc.run(&["cancel", "1", "--reason", "first"])?;

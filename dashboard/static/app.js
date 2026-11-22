@@ -482,7 +482,9 @@
     actKind = waive ? "waive" : kind;
     actJob = id;
     actProject = project;
-    const titles = { rework: `Rework job ${id}`, cancel: `Cancel job ${id}`, waive: `Approve job ${id} with open blockers` };
+    const job = findJob(id);
+    const cancelTitle = job ? FactoryProjects.cancelTitle(job) : `Cancel job ${id}`;
+    const titles = { rework: `Rework job ${id}`, cancel: cancelTitle, waive: `Approve job ${id} with open blockers` };
     const labels = { rework: "Note for the builder ", cancel: "Reason (optional) ", waive: "Why merge with open blockers? " };
     byId("act-title").textContent = titles[actKind];
     byId("act-note-label").firstChild.textContent = labels[actKind];

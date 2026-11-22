@@ -162,6 +162,13 @@ test("buildCancelBody keeps reason and force only when set", () => {
   assert.deepEqual(projects.buildCancelBody(" why ", true), { reason: "why", force: true });
 });
 
+test("cancelTitle names the later plans of a series", () => {
+  assert.equal(projects.cancelTitle({ id: "030" }), "Cancel job 030");
+  assert.equal(projects.cancelTitle({ id: "030", series: { id: "S7", index: 1, total: 5 } }), "Cancel job 030 and the later plans of S7");
+  assert.equal(projects.cancelTitle({ id: "034", series: { id: "S7", index: 5, total: 5 } }), "Cancel job 034");
+  assert.equal(projects.cancelTitle({ id: "040", series: { index: 1, total: 2 } }), "Cancel job 040");
+});
+
 const budget = (limit, used, resetsAt = "2026-10-18T00:00:00Z") => ({ days: 14, projects: [], dailyBudget: { limit, used, resetsAt } });
 
 test("budgetStrip is none without a dailyBudget", () => {

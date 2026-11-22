@@ -273,16 +273,55 @@ fn create_replacement_takes_the_index_and_cancels_the_target() {
     assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 3, "one new job only");
 }
 
+/// The spec text of `an_explicit_spec_path_replaces_the_spec_beside_the_plans` in tests/runloop.rs.
+const GOOD_SPEC: &str = "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n";
+
+/// A fixture with `src-tauri/**` as a risk path and no spec reviewer, as `risky_config` in runloop.rs.
+fn risky_fixture() -> SeriesFixture {
+    let config = factory_core::Config {
+        risk_paths: vec!["src-tauri/**".to_string()],
+        spec_review: false,
+        ..factory_core::Config::default()
+    };
+    SeriesFixture::with_config("fine\nVERDICT: APPROVE", config)
+}
+
+fn write_target_spec(fx: &SeriesFixture, id: &str, text: &str) {
+    let job = fx.driver.job(id).expect("job");
+    std::fs::write(fx.driver.job_dir(&job).join("spec.md"), text).expect("spec");
+}
+
 #[test]
-fn create_replacement_copies_the_target_spec_without_a_spec_path() {
-    let fx = SeriesFixture::new("fine\nVERDICT: APPROVE");
+fn create_replacement_checks_the_target_spec_without_a_spec_path() {
+    let fx = risky_fixture();
     let (one, _two) = two_plans(&fx);
-    let old = fx.driver.job(&one).expect("old");
-    std::fs::write(fx.driver.job_dir(&old).join("spec.md"), "# Old spec\n").expect("spec");
+    write_target_spec(&fx, &one, GOOD_SPEC);
     let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
     let made = create_replacement(&fx.driver, &replace(&one, &fixed)).expect("replace");
     let text = std::fs::read_to_string(fx.driver.job_dir(&made).join("spec.md")).expect("spec");
-    assert_eq!(text, "# Old spec\n");
+    assert_eq!(text, GOOD_SPEC);
+    write_target_spec(&fx, &made.id, "# Spec\n\n## Goal\n\nshort\n");
+    let again = fx.plan_file("plan-01-again.md", 1, "plan-02-b.md");
+    create_replacement(&fx.driver, &replace(&made.id, &again)).expect_err("the old spec is checked");
+    assert!(!fx.driver.job(&made.id).expect("job").cancelled);
+}
+
+#[test]
+fn create_replacement_without_spec_applies_the_risky_path_rule() {
+    let fx = risky_fixture();
+    let (one, _two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    let next = fx.tmp.path().join("plans/plan-02-b.md");
+    let fixed = fx.tmp.path().join("plans/plan-01-risky.md");
+    std::fs::write(
+        &fixed,
+        format!("# Plan\n\n### Task 1: t\n\n**Files:**\n- Modify: `src-tauri/src/lib.rs`\n\nNext plan: {}\n", next.display()),
+    )
+    .expect("plan");
+    let err = create_replacement(&fx.driver, &replace(&one, &fixed)).expect_err("risky");
+    assert!(err.to_string().contains("risky"), "{err}");
+    assert!(!fx.driver.job(&one).expect("old").cancelled);
+    assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 2);
 }
 
 #[test]
@@ -324,6 +363,8 @@ fn create_replacement_with_a_refused_spec_changes_nothing() {
 }
 ```
 
+Every test except `no_spec` first writes `GOOD_SPEC` into the target's `spec.md` with `write_target_spec` and uses `risky_fixture()` (no spec reviewer), because a replacement without `--spec` checks the target's spec. Apply this to `create_replacement_takes_the_index_and_cancels_the_target`, `create_replacement_of_an_unstarted_plan_makes_one_job`, `run_series_continues_a_waiting_plan_after_its_replaced_predecessor_merges` and the relative-next test too.
+
 Refusals share one shape. Add `create_replacement_refusals`, which loops over this table and, for each row, builds the state, calls `create_replacement` with `expect_err`, asserts `err.to_string().contains(<text>)` and asserts the board still has the same number of jobs:
 
 | Row | Setup | Message contains |
@@ -333,8 +374,10 @@ Refusals share one shape. Add `create_replacement_refusals`, which loops over th
 | `no_series` | a single-plan job from `lone_plan(&fx, "p1")` | `is not in a series` |
 | `live_lease` | `factory_engine::acquire_lease(&fx.driver.store(), &one, "other", 600.0, factory_engine::now_secs())` | `live lease` |
 | `wrong_next` | fixed plan of plan 1 with `Next plan: none` | `Next plan: ` and the path of `plan-02-b.md` |
+| `edited_in_place` | edit the original `plan-01-a.md` in place so its `Next plan:` is `none`, pass it as the fixed plan | `Next plan: ` and the path of `plan-02-b.md` (the frozen copy is the reference) |
 | `wrong_next_on_last` | target plan 2, fixed plan with next `plan-01-a.md` | `Next plan: none` |
 | `already_replaced` | `create_replacement` of plan 1 once, then again on the old id | `was replaced by job` |
+| `no_spec` | target has no `spec.md` in its job folder and `spec: None` | `has no spec.md, pass --spec` |
 
 Also add `new_replaces_accepts_a_relative_next_line_that_resolves_to_the_same_file`: write the fixed plan by hand into `fx.tmp.path().join("plans/plan-01-rel.md")` with the line `Next plan: plan-02-b.md` (relative), call `create_replacement` and assert `.expect("relative next resolves")`.
 
@@ -348,9 +391,9 @@ Expected: FAIL to compile with `unresolved imports 'factory_engine::create_repla
 Order in `create_replacement`, so that a refusal changes nothing:
 1. `r.plan` must be a file, else `EngineError::Invalid("--replaces needs one plan file, not a folder")`.
 2. Load the board. The target must exist, not be merged (`job <id> is already merged`), have a series id (`job <id> is not in a series`) and no live lease (`job <id> has a live lease`). When `board.replacement_of(target)` is `Some(n)`, refuse with `job <old> was replaced by job <n>, replace that one`.
-3. Expected next: `read_plan` of the target's `series.plan_file` gives `next`. The fixed plan's `next` (from `parse_one_plan`) must equal it after `canonicalize` on both sides, or both be `None`. Otherwise refuse with `the fixed plan must end with Next plan: <expected path or none>`.
-4. `validate_series(driver, r.plan, r.spec, r.accept_spec, None, |root, p| parse_one_plan(root, p).map_err(EngineError::from))`.
-5. `add_job(driver, r.slug, r.feature, &factory_core::parse_issues(r.feature), Some(pos), Stage::Build, r.model.or(target.model.as_deref()))`, where `pos` is the target's `SeriesPos` with `plan_file` set to the canonical fixed plan path. Copy the validated spec text into `spec.md`, else copy the target's `spec.md` when it exists.
+3. Expected next: read the `Next plan:` line of the target's frozen plan, `driver.job_dir(&target).join("plan.md")`, and resolve a relative target as `read_plan` does but from the path `series.plan_file` (so it matches the original folder). Do not read the working file at `series.plan_file`: the usual fix edits it in place, so it would always match. The fixed plan's `next` (from `parse_one_plan`) must equal the expected one after `canonicalize` on both sides, or both be `None`. Otherwise refuse with `the fixed plan must end with Next plan: <expected path or none>`. Add a small `pub(crate) fn frozen_next(root: &Path, frozen: &Path, origin: &Path) -> Result<Option<PathBuf>, SeriesError>` in `series.rs` for this, reusing `resolve`.
+4. The spec to check is `r.spec`, else the target's `spec.md` in its job folder (`driver.job_dir(&target).join("spec.md")`); when neither exists refuse with `job <id> has no spec.md, pass --spec`. Call `validate_series(driver, r.plan, Some(spec), r.accept_spec, None, |root, p| parse_one_plan(root, p).map_err(EngineError::from))`, so the risky-path rule and the spec reviewer run as for any `new`.
+5. `add_job(driver, r.slug, r.feature, &factory_core::parse_issues(r.feature), Some(pos), Stage::Build, r.model.or(target.model.as_deref()))`, where `pos` is the target's `SeriesPos` with `plan_file` set to the canonical fixed plan path. Write the validated spec text (`Validated.spec_text`) into the new job's `spec.md`.
 6. If the target is not cancelled, mark it cancelled in one `update_job` (stage `NeedsHuman`, reason `cancelled: replaced by job <new id>`, clear `lease`, `task_session` and `builder_last`, as `cancel` in `crates/factory-cli/src/commands.rs:910` does). Write the ruling `cancelled: replaced by job <new id>` to the target's ledger and `replaces job <old id>` to the new job's ledger.
 7. Return the new job, with plan warnings added as `create_job_with_spec_accepting` adds them.
 
@@ -473,7 +516,7 @@ Expected: all pass, the two new tests included. Then `cargo test -j4 -p factory-
 
 - [ ] **Step 6: Update the docs**
 
-- `docs/reference/software-factory.md:45`: after the sentence on plans being copied into their job folders, add: to fix a failed plan, edit and commit its plan file, then run `factory new <slug> '<feature>' --plans <fixed plan file> --replaces <id>`. The new job takes the failed job's series id and index, starts at `build`, and the old job is cancelled with `cancelled: replaced by job <new>`. The fixed plan's `Next plan:` line must point to the same file as the original's. Without `--spec` the old job's `spec.md` is copied and no spec check runs. Refusals: a folder, a merged job, a job without a series, a live lease, a wrong `Next plan:` line, a job already replaced. `factory rework` of a replaced job is refused too and names the replacement; a cancelled job that was not replaced is still revived by rework.
+- `docs/reference/software-factory.md:45`: after the sentence on plans being copied into their job folders, add: to fix a failed plan, edit and commit its plan file, then run `factory new <slug> '<feature>' --plans <fixed plan file> --replaces <id>`. The new job takes the failed job's series id and index, starts at `build`, and the old job is cancelled with `cancelled: replaced by job <new>`. The fixed plan's `Next plan:` line must point to the same file as the original's. Without `--spec` the spec check (risky-path rule and spec reviewer) runs on the old job's `spec.md` with the fixed plan, and that spec is copied. Refusals: a folder, a merged job, a job without a series, a live lease, a wrong `Next plan:` line, a job already replaced, no `spec.md` and no `--spec`. `factory rework` of a replaced job is refused too and names the replacement; a cancelled job that was not replaced is still revived by rework.
 - `docs/reference/software-factory.md:46`: the cancelled-predecessor sentence becomes: a cancelled plan before it keeps the later plan parked with `plan <n> (job <id>) was cancelled; cancel this plan, or replace plan <n> with factory new --replaces <id>`; after a replacement the check waits on the replacement. Series lookups by index prefer a job that is not cancelled.
 - `README.md`: one line under `factory new` naming `--replaces <id>` and pointing to `docs/reference/software-factory.md`.
 

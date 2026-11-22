@@ -630,6 +630,217 @@ pub fn create_job_with_spec_accepting(
     Ok(first)
 }
 
+/// Copies the checked spec into the new job and cancels the target, in one board write that checks the
+/// target again. A run or a second replacement that started since the first check makes it refuse.
+fn swap_in(
+    driver: &Driver,
+    id: &str,
+    new: &Job,
+    spec_text: Option<&str>,
+) -> Result<(), EngineError> {
+    if let Some(text) = spec_text {
+        std::fs::write(driver.job_dir(new).join("spec.md"), text)?;
+    }
+    let reason = format!("replaced by job {}", new.id);
+    let now = now_secs();
+    let checked = driver.store().update(|board| {
+        let target = board.find(id)?;
+        if target.stage == Stage::Merged {
+            return Ok(Err(format!("job {id} is already merged")));
+        }
+        if crate::lease_is_live(target, now) {
+            return Ok(Err(format!("job {id} has a live lease")));
+        }
+        let place = target.series.clone();
+        let rival = board.jobs.iter().find(|j| {
+            j.id != id
+                && j.id != new.id
+                && !j.cancelled
+                && j.series.as_ref().is_some_and(|s| {
+                    place
+                        .as_ref()
+                        .is_some_and(|p| s.id == p.id && s.index == p.index)
+                })
+        });
+        if let Some(rival) = rival {
+            return Ok(Err(format!(
+                "job {id} was replaced by job {}, replace that one",
+                rival.id
+            )));
+        }
+        let was_cancelled = target.cancelled;
+        if !was_cancelled {
+            mark_cancelled(board.find_mut(id)?, &format!("cancelled: {reason}"), now)?;
+        }
+        Ok(Ok(was_cancelled))
+    })?;
+    if !checked.map_err(EngineError::Invalid)? {
+        let _span = job_span(id).entered();
+        record_cancel(driver, &driver.job(id)?, &reason, false, None)?;
+    }
+    Ok(())
+}
+
+/// Stops a job as the operator's cancel does: needs-human, flagged cancelled, no lease or sessions.
+pub fn mark_cancelled(job: &mut Job, text: &str, now: f64) -> Result<(), factory_core::CoreError> {
+    crate::set_stage_logged(job, Stage::NeedsHuman, Some(text), false, now)?;
+    job.cancelled = true;
+    job.lease = None;
+    job.task_session = None;
+    job.builder_last = None;
+    Ok(())
+}
+
+/// Logs the `operator.cancel` event and writes the ledger ruling of a cancel with `reason`. A job
+/// cancelled with the plan before it carries that plan's job id as `cascade_from`.
+pub fn record_cancel(
+    driver: &Driver,
+    job: &Job,
+    reason: &str,
+    force: bool,
+    cascade_from: Option<&str>,
+) -> Result<(), EngineError> {
+    let capped = factory_telemetry::cap_message(reason);
+    match cascade_from {
+        Some(from) => tracing::info!(
+            event = "operator.cancel",
+            reason = %capped,
+            force,
+            cascade_from = from,
+            msg = "job cancelled"
+        ),
+        None => tracing::info!(
+            event = "operator.cancel",
+            reason = %capped,
+            force,
+            msg = "job cancelled"
+        ),
+    }
+    // The reason is folded into one line, because the ledger takes one line.
+    let text = format!("cancelled: {reason}");
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    driver.ledger(job).ruling(&one_line)?;
+    Ok(())
+}
+
+/// One fixed plan that takes the series place of a failed plan.
+#[derive(Debug, Clone, Copy)]
+pub struct Replacement<'a> {
+    /// The job whose place is taken.
+    pub target: &'a str,
+    pub slug: &'a str,
+    pub feature: &'a str,
+    /// The fixed plan file.
+    pub plan: &'a Path,
+    /// The spec to check. Without it the target's own `spec.md` is checked.
+    pub spec: Option<&'a Path>,
+    /// The model of the new job. Without it the target's model is used.
+    pub model: Option<&'a str>,
+    pub accept_spec: Option<&'a str>,
+}
+
+/// Makes one job at the series place of `r.target` from a fixed plan, then cancels the target.
+/// Every refusal comes before the board changes, so a refused call leaves nothing behind.
+pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, EngineError> {
+    let id = r.target;
+    if r.plan.is_dir() {
+        return Err(EngineError::Invalid(
+            "--replaces needs one plan file, not a folder".to_string(),
+        ));
+    }
+    let board = driver.store().load()?;
+    let target = board.find(id)?.clone();
+    if target.stage == Stage::Merged {
+        return Err(EngineError::Invalid(format!("job {id} is already merged")));
+    }
+    let Some(pos) = target.series.clone().filter(|s| s.id.is_some()) else {
+        return Err(EngineError::Invalid(format!("job {id} is not in a series")));
+    };
+    if let Some(new) = board.replacement_of(&target.id) {
+        return Err(EngineError::Invalid(format!(
+            "job {id} was replaced by job {}, replace that one",
+            new.id
+        )));
+    }
+    if crate::lease_is_live(&target, now_secs()) {
+        return Err(EngineError::Invalid(format!("job {id} has a live lease")));
+    }
+    // The frozen copy is the reference, because the usual fix edits the working file in place.
+    let target_dir = driver.job_dir(&target);
+    let expected = crate::series::frozen_next(
+        driver.root(),
+        &target_dir.join("plan.md"),
+        Path::new(&pos.plan_file),
+    )?;
+    let fixed = crate::series::parse_one_plan(driver.root(), r.plan)?;
+    let found = fixed.plans[0].next.as_deref().map(crate::series::canon);
+    if found != expected.as_deref().map(crate::series::canon) {
+        let line = expected.map_or("none".to_string(), |p| p.display().to_string());
+        return Err(EngineError::Invalid(format!(
+            "the fixed plan must end with Next plan: {line}"
+        )));
+    }
+    let own_spec = target_dir.join("spec.md");
+    let spec = match r.spec {
+        Some(spec) => spec,
+        None if own_spec.is_file() => own_spec.as_path(),
+        None => {
+            return Err(EngineError::Invalid(format!(
+                "job {id} has no spec.md, pass --spec"
+            )))
+        }
+    };
+    let Validated {
+        plan_warnings,
+        spec_text,
+        accepted,
+        ..
+    } = validate_series(
+        driver,
+        r.plan,
+        Some(spec),
+        r.accept_spec,
+        None,
+        |root, p| crate::series::parse_one_plan(root, p).map_err(EngineError::from),
+    )?;
+    let new_pos = SeriesPos {
+        plan_file: crate::series::canon(r.plan).to_string_lossy().into_owned(),
+        ..pos
+    };
+    let mut new = add_job(
+        driver,
+        r.slug,
+        r.feature,
+        &factory_core::parse_issues(r.feature),
+        Some(new_pos),
+        Stage::Build,
+        r.model.or(target.model.as_deref()),
+    )?;
+    // The board may have changed while the spec was checked, so the new job goes if the swap fails.
+    if let Err(e) = swap_in(driver, id, &new, spec_text.as_deref()) {
+        let _ = driver.store().update(|board| {
+            board.jobs.retain(|j| j.id != new.id);
+            Ok(())
+        });
+        let _ = std::fs::remove_dir_all(driver.job_dir(&new));
+        return Err(e);
+    }
+    driver.ledger(&new).ruling(&format!("replaces job {id}"))?;
+    if spec_text
+        .as_deref()
+        .is_some_and(|text| user_decisions(text) == 0)
+    {
+        new = add_warning(driver, r.slug, new, NO_USER_DECISION);
+    }
+    if let Some(reason) = &accepted {
+        new = record_accepted(driver, r.slug, new, reason);
+    }
+    for warning in &plan_warnings {
+        new = add_warning(driver, r.slug, new, warning);
+    }
+    Ok(new)
+}
+
 /// Parks a job that has no plan, naming the file that was expected.
 fn park_missing_plan(driver: &Driver, job: &Job) -> Result<(), EngineError> {
     let text = format!("expected {}", driver.job_dir(job).join("plan.md").display());
@@ -786,11 +997,17 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
         // Resume: the next job may already exist from an earlier run.
         let board = driver.store().load()?;
         let next_name = next.to_string_lossy().into_owned();
-        let existing = board.jobs.iter().find(|j| {
-            j.series.as_ref().is_some_and(|s| {
-                s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1
-            })
-        });
+        let existing = match pos.id.as_deref() {
+            Some(sid) => board.series_member(sid, pos.index + 1),
+            None => board.jobs.iter().find(|j| {
+                j.series.as_ref().is_some_and(|s| {
+                    s.id.is_none() && s.plan_file == next_name && s.index == pos.index + 1
+                })
+            }),
+        };
+        if existing.is_some_and(|j| j.cancelled) {
+            return Ok(RunEnd::Merged);
+        }
         current = match existing {
             Some(j) => j.id.clone(),
             None => {

@@ -125,6 +125,7 @@ A draft card tracks a spec that is still being written, before any job exists. I
 - `factory spec stage <slug> <interviewing|writing-spec|writing-plans>` moves the card to another stage.
 - `factory spec resume <slug>` prints the `draft`, `stage` and `file <spec path> (exists|missing)` lines.
 - `factory cancel <slug>` removes the card and keeps the spec file. A numeric argument still means a job.
+- `factory cleanup <id>` of a cancelled series member, once every member of the series is merged or cancelled, also cleans every other cancelled member, one line each (`job <id>: ...`). `--discard-commits` applies to all of them, and a member whose cleanup is refused keeps its card while the others go on.
 - `factory status` lists the cards in a `drafts:` block.
 - `factory intake` also uses a card. It sits at `drafting-from-issue` with the issue number while the spec is drafted from the GitHub issue, and moves to `draft-failed` with a note when drafting fails. The dashboard shows it in the Spec column like any other draft, with an issue chip.
 - `factory new` adopts the draft with the same slug and removes it. When no list item of the spec's `## Decisions` section says `Decided by: user`, or the spec has no `## Decisions` section at all, it prints `warning: no decision in this spec was answered by the user` after `created job ...`. The job still runs. A single plan file with no spec text gets no warning.
@@ -182,6 +183,10 @@ one job for the whole spec instead. The driver combines the plans. Plans are sti
 each, but the driver does not enforce that cap on this path. The 6 plan cap and the chain rules (`Next plan:` lines)
 still apply. The flag needs `--plans`, and with a single plan it has no effect and
 `new` prints a `note:` line.
+
+To fix one failed plan of a series, `factory new <slug> '<feature>' --plans <fixed plan file> --replaces <id>`
+puts the fixed plan in that plan's place and cancels the failed job. It conflicts with `--one-job`. See
+`docs/reference/software-factory.md`.
 
 - The estimate is `110K + 100K per task` in weighted tokens, compared with `budget_weighted`.
 - Over budget, `new` creates nothing, prints a `needs consent:` line with the estimate and the budget on stderr and
@@ -543,7 +548,7 @@ for the job children: `FACTORY_BIN`, else next to `factoryd`.
 | `POST /projects/{p}/jobs/{id}/approve` | `{"without_review"?, "waive_reason"?}` (a boolean, an empty body is fine). Needs a job in `needs-human` or `approve` that is not cancelled. A job in either stage with open review changes is `409 conflict` unless `waive_reason` is sent, and stays `409 conflict` with any body while a required review (code, or security when the job has one) has no verdict. A `needs-human` job whose code review is pending or absent (the checks never passed or the reviewer never ran) is `409 conflict` with the message `job 020 has no code review yet ...`, unless `without_review` is `true`, which queues `factory approve --without-review`. It is `409` when an approve or retry request for the job is already queued or running. Queues an approve request. `202 {"requestId"}` |
 | `POST /projects/{p}/jobs/{id}/retry` | An empty body or `{}`; any field is `400`. Continues a parked job at the stage that parked it. `409 conflict` when the job is cancelled, is not in `needs-human`, has a pending batch commit, or has no resume stage (`parkResume` is `null`) (`job 020 has no resume stage, see its park for the next command`). For a `merge` or `sync` resume without an earlier approval, it is also `409` with the refusal text of a plain approve (for example open review changes). It is `409` too when an approve or retry request for the job is already queued or running. Queues a retry request, which waits for the daily budget like a run. `202 {"requestId"}` |
 | `POST /projects/{p}/jobs/{id}/rework` | `{"note": "one line, 200 characters at most", "force"?}` (`force` is a boolean). Runs `factory rework`, or `factory rework --force` when `force` is `true`, which is how a park with a resume stage is reworked. `200 {"output"}` |
-| `POST /projects/{p}/jobs/{id}/cancel` | `{"reason"?, "force"?}` (`force` is a boolean, an empty body is fine). Runs `factory cancel`, never a signal. A refusal by the command, such as a live job lease without `force`, is `409 conflict`. `200 {"output"}` |
+| `POST /projects/{p}/jobs/{id}/cancel` | `{"reason"?, "force"?, "only"?}` (`force` and `only` are booleans, an empty body is fine). Runs `factory cancel`, never a signal. Without `only`, the cancel also cancels the later unmerged plans of the job's series; `only: true` passes `--only`. A refusal by the command, such as a live job lease without `force`, is `409 conflict`. `200 {"output"}` |
 | `GET /events?project={p}` | Server-sent events, see below |
 
 A project that cannot take work (broken `project.toml`, missing repo) answers `409 project_disabled`. A failed

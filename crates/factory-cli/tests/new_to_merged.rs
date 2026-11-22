@@ -583,7 +583,7 @@ fn series_pair(sibling: Sibling) -> (Fixture, factory_core::Home) {
             Ok(())
         })
         .expect("series");
-    fx.run(&["cancel", "1"]).expect("cancel");
+    fx.run(&["cancel", "1", "--only"]).expect("cancel");
     if matches!(sibling, Sibling::Cancelled) {
         fx.run(&["cancel", "2"]).expect("cancel sibling");
     }
@@ -631,8 +631,9 @@ fn cleanup_removes_cancelled_card_when_series_sibling_is_merged() {
 fn cleanup_removes_cancelled_card_when_series_sibling_is_cancelled() {
     let (fx, _home) = series_pair(Sibling::Cancelled);
     let out = cleanup_one(&fx);
-    assert!(out.ends_with("; card removed from the board"), "{out}");
-    assert_eq!(board_ids(&fx), only_second());
+    assert!(out.contains("; card removed from the board"), "{out}");
+    assert!(out.contains("job 002: "), "{out}");
+    assert!(board_ids(&fx).is_empty());
 }
 
 #[test]
@@ -1212,4 +1213,313 @@ fn rework_writes_the_user_note_for_a_mid_task_rework() -> TestResult {
     );
     assert!(job_file(&sc, "rework-note.md").exists());
     Ok(())
+}
+
+/// A two-plan series made through the CLI. Returns the path of plan 2.
+fn cli_series(fx: &Fixture) -> std::path::PathBuf {
+    let two = fx.write_plan("plan-02-b.md", 1, "none");
+    let one = fx.write_plan("plan-01-a.md", 1, two.to_str().expect("utf8"));
+    let spec = fx.tmp.path().join("spec.md");
+    std::fs::write(&spec, "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n").expect("spec");
+    fx.run(&[
+        "new",
+        "a",
+        "two plans",
+        "--plans",
+        one.to_str().expect("utf8"),
+        "--spec",
+        spec.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    two
+}
+
+#[test]
+fn new_replaces_prints_the_replacement_and_cancels_the_target() {
+    let fx = Fixture::new();
+    let two = cli_series(&fx);
+    let fixed = fx.write_plan("plan-01-fixed.md", 1, two.to_str().expect("utf8"));
+    let out = fx
+        .run(&[
+            "new",
+            "fixed",
+            "fixed plan",
+            "--plans",
+            fixed.to_str().expect("utf8"),
+            "--replaces",
+            "1",
+        ])
+        .expect("replace");
+    let mut lines = out.lines();
+    assert!(
+        lines
+            .next()
+            .expect("first")
+            .starts_with("created job 003 in "),
+        "{out}"
+    );
+    assert!(out.contains("job 001 replaced by job 003"), "{out}");
+    let show = fx.run(&["show", "1"]).expect("show");
+    assert!(show.contains("\"cancelled\": true"), "{show}");
+}
+
+/// A three-plan series made through the CLI: jobs 001, 002, 003.
+fn cli_three(fx: &Fixture) {
+    let three = fx.write_plan("plan-03-c.md", 1, "none");
+    let two = fx.write_plan("plan-02-b.md", 1, three.to_str().expect("utf8"));
+    let one = fx.write_plan("plan-01-a.md", 1, two.to_str().expect("utf8"));
+    fx.run(&[
+        "new",
+        "a",
+        "three plans",
+        "--plans",
+        one.to_str().expect("utf8"),
+    ])
+    .expect("new");
+}
+
+fn board_store(fx: &Fixture) -> factory_engine::BoardStore {
+    factory_engine::BoardStore::new(
+        &factory_core::Layout::in_repo(&fx.root).board_file(),
+        std::time::Duration::from_secs(15),
+    )
+}
+
+fn job_of(fx: &Fixture, id: &str) -> factory_core::Job {
+    board_store(fx)
+        .load()
+        .expect("board")
+        .find(id)
+        .expect("job")
+        .clone()
+}
+
+fn set_merged(fx: &Fixture, id: &str) {
+    board_store(fx)
+        .update_job(id, |j| {
+            j.set_stage(
+                factory_core::Stage::Merged,
+                None,
+                false,
+                factory_engine::now_secs(),
+            )
+        })
+        .expect("merged");
+}
+
+#[test]
+fn cancel_cascades_to_later_unmerged_plans() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    let out = fx
+        .run(&["cancel", "1", "--reason", "plan asked for missing code"])
+        .expect("cancel");
+    let sid = job_of(&fx, "001").series.expect("pos").id.expect("sid");
+    assert_eq!(
+        out,
+        format!("job 001 cancelled\njob 002 cancelled (later plan of {sid})\njob 003 cancelled (later plan of {sid})")
+    );
+    assert_eq!(
+        job_of(&fx, "001").reason.as_deref(),
+        Some("cancelled: plan asked for missing code")
+    );
+    for id in ["002", "003"] {
+        let j = job_of(&fx, id);
+        assert!(j.cancelled, "{id}");
+        assert_eq!(
+            j.reason.as_deref(),
+            Some("cancelled: plan 1 (job 001) was cancelled")
+        );
+    }
+}
+
+#[test]
+fn cancel_only_leaves_later_plans() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    assert_eq!(
+        fx.run(&["cancel", "1", "--only"]).expect("cancel"),
+        "job 001 cancelled"
+    );
+    assert!(!job_of(&fx, "002").cancelled);
+    assert!(!job_of(&fx, "003").cancelled);
+}
+
+#[test]
+fn cancel_refuses_when_a_later_plan_holds_a_live_lease() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    fx.hold_lease("003", "other");
+    let e = fx.run(&["cancel", "1"]).expect_err("lease");
+    assert!(e.to_string().contains("job 003 has a live lease"), "{e}");
+    for id in ["001", "002", "003"] {
+        assert!(!job_of(&fx, id).cancelled, "{id} unchanged");
+    }
+}
+
+#[test]
+fn cancel_middle_plan_keeps_earlier_merged() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    set_merged(&fx, "001");
+    fx.run(&["cancel", "2"]).expect("cancel");
+    assert!(!job_of(&fx, "001").cancelled);
+    assert_eq!(job_of(&fx, "001").stage, factory_core::Stage::Merged);
+    assert!(job_of(&fx, "002").cancelled);
+    let three = job_of(&fx, "003");
+    assert!(three.cancelled);
+    assert_eq!(
+        three.reason.as_deref(),
+        Some("cancelled: plan 2 (job 002) was cancelled")
+    );
+}
+
+#[test]
+fn cancel_never_touches_a_merged_later_plan() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    set_merged(&fx, "003");
+    let out = fx.run(&["cancel", "1"]).expect("cancel");
+    assert!(!out.contains("003"), "{out}");
+    assert!(job_of(&fx, "001").cancelled);
+    assert!(job_of(&fx, "002").cancelled);
+    let three = job_of(&fx, "003");
+    assert!(!three.cancelled);
+    assert_eq!(three.stage, factory_core::Stage::Merged);
+}
+
+#[test]
+fn cancel_skips_an_already_cancelled_later_plan() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    fx.run(&["cancel", "3", "--only"]).expect("cancel 3");
+    let out = fx.run(&["cancel", "1"]).expect("cancel");
+    assert!(out.contains("job 002 cancelled"), "{out}");
+    assert!(!out.contains("003"), "{out}");
+}
+
+#[test]
+fn cancel_of_a_cancelled_job_cascades() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    fx.run(&["cancel", "1", "--only"]).expect("cancel only");
+    fx.run(&["cancel", "1"]).expect("cancel again");
+    assert!(job_of(&fx, "002").cancelled);
+    assert!(job_of(&fx, "003").cancelled);
+}
+
+#[test]
+fn cancel_of_a_replaced_job_is_refused() {
+    let fx = Fixture::new();
+    let two = cli_series(&fx);
+    let fixed = fx.write_plan("plan-01-fixed.md", 1, two.to_str().expect("utf8"));
+    fx.run(&[
+        "new",
+        "fixed",
+        "x",
+        "--plans",
+        fixed.to_str().expect("utf8"),
+        "--replaces",
+        "1",
+    ])
+    .expect("replace");
+    let e = fx.run(&["cancel", "1"]).expect_err("replaced");
+    assert!(
+        e.to_string()
+            .contains("job 001 was replaced by job 003, cancel that one"),
+        "{e}"
+    );
+    assert!(!job_of(&fx, "002").cancelled);
+}
+
+#[test]
+fn cancel_without_series_is_unchanged() {
+    for args in [&["cancel", "1"][..], &["cancel", "1", "--only"][..]] {
+        let fx = Fixture::new();
+        parked_and_cancelled(&fx, "hello");
+        assert_eq!(fx.run(args).expect("cancel"), "job 001 cancelled");
+    }
+}
+
+#[test]
+fn cancel_ignores_a_stale_lease_on_a_later_plan() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    board_store(&fx)
+        .update_job("003", |j| {
+            j.lease = Some(factory_core::Lease {
+                owner: "other".into(),
+                expires: 1.0,
+            });
+            Ok(())
+        })
+        .expect("lease");
+    fx.run(&["cancel", "1"]).expect("cancel");
+    for id in ["001", "002", "003"] {
+        assert!(job_of(&fx, id).cancelled, "{id}");
+    }
+}
+
+#[test]
+fn forced_cascade_keeps_a_project_lease_held_by_a_later_plan() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    let state = factory_core::Layout::in_repo(&fx.root).state_dir;
+    factory_engine::acquire_project_lease(
+        &state,
+        "003",
+        "someone-else",
+        600.0,
+        factory_engine::now_secs(),
+        std::time::Duration::from_secs(5),
+    )
+    .expect("project lease");
+    let out = fx.run(&["cancel", "1", "--force"]).expect("cancel");
+    assert!(!out.contains("project lease released"), "{out}");
+    for id in ["001", "002", "003"] {
+        assert!(job_of(&fx, id).cancelled, "{id}");
+    }
+    match factory_engine::project_lease_status(&state, factory_engine::now_secs()) {
+        factory_engine::ProjectLeaseStatus::Held { job, .. } => assert_eq!(job, "003"),
+        other => panic!("project lease not held by 003: {other:?}"),
+    }
+}
+
+#[test]
+fn cleanup_of_finished_series_cleans_every_cancelled_member() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let out = fx
+        .run(&["cleanup", "1", "--discard-commits"])
+        .expect("cleanup");
+    assert!(out.contains("job 002: "), "{out}");
+    assert!(out.contains("job 003: "), "{out}");
+    assert!(board_ids(&fx).is_empty(), "{out}");
+}
+
+#[test]
+fn cleanup_of_unfinished_series_cleans_only_the_target() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    fx.run(&["cancel", "3", "--only"]).expect("cancel");
+    let out = fx.run(&["cleanup", "3"]).expect("cleanup");
+    assert!(!out.contains("\njob "), "{out}");
+    assert_eq!(board_ids(&fx).len(), 3);
+}
+
+#[test]
+fn cleanup_reports_a_refused_member_and_goes_on() {
+    let fx = Fixture::with_risk_path("docs/**");
+    cli_three(&fx);
+    set_merged(&fx, "001");
+    assert!(fx
+        .run(&["run", "2"])
+        .expect("run")
+        .starts_with("needs-human"));
+    fx.run(&["cancel", "2"]).expect("cancel");
+    let out = fx.run(&["cleanup", "3"]).expect("cleanup");
+    assert!(out.contains("job 002: "), "{out}");
+    assert!(out.contains("--discard-commits"), "{out}");
+    assert_eq!(board_ids(&fx), vec!["001".to_string(), "002".to_string()]);
 }
