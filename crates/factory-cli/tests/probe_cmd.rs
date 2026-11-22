@@ -356,6 +356,60 @@ fn a_cross_harness_probe_uses_the_harness_default_model() {
     );
 }
 
+/// Probes every role and returns the report text with each spec the runner saw, by role.
+fn probed_all_roles(fx: &Fixture, harness: &str) -> (String, Vec<(String, Option<String>)>) {
+    let answers = vec![AgentRun::done("MARKER: NONE"); 4];
+    let runner = Arc::new(FakeRunner::new(answers));
+    let ctx = ctx_with(fx, runner.clone());
+    let (Ok(text) | Err(CliError::ProbeFailed(text))) = probe(&ctx, &["--harness", harness]) else {
+        panic!("expected a report");
+    };
+    let specs = runner
+        .calls()
+        .into_iter()
+        .map(|s| (s.role, s.model))
+        .collect();
+    (text, specs)
+}
+
+#[test]
+fn a_codex_probe_sends_the_codex_model_to_every_role() {
+    let fx = Fixture::new();
+    let (text, specs) = probed_all_roles(&fx, "codex");
+    assert_eq!(specs.len(), 4, "{specs:?}");
+    for (role, model) in &specs {
+        assert_eq!(
+            model.as_deref(),
+            Some(factory_core::project::CODEX_DEFAULT_MODEL),
+            "{role}"
+        );
+    }
+    assert_eq!(text.matches("model: gpt-5.6-luna").count(), 4, "{text}");
+}
+
+#[test]
+fn a_claude_probe_of_a_codex_project_sends_the_claude_models_to_every_role() {
+    let fx = Fixture::new();
+    write_config(
+        &fx,
+        "agent_cli = \"codex\"\nbuilder_model = \"gpt-x\"\nreviewer_model = \"gpt-y\"\nkb_model = \"gpt-z\"",
+    );
+    let (_, specs) = probed_all_roles(&fx, "claude");
+    let d = factory_core::Config::default();
+    let model_of = |role: &str| {
+        specs
+            .iter()
+            .find(|(r, _)| r == role)
+            .and_then(|(_, m)| m.clone())
+            .unwrap_or_else(|| panic!("no model for {role}: {specs:?}"))
+    };
+    assert_eq!(model_of("builder"), d.builder_model);
+    assert_eq!(model_of("kb"), d.kb_model);
+    assert_eq!(model_of("reviewer"), d.reviewer_model);
+    let large = d.reviewer_model_large.unwrap_or(d.reviewer_model.clone());
+    assert_eq!(model_of("spec-reviewer"), large);
+}
+
 #[test]
 fn a_same_harness_probe_keeps_the_project_models() {
     let fx = Fixture::new();
