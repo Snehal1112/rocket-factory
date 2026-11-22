@@ -468,7 +468,7 @@ pub(crate) fn builder_blocked_parts(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     type Order = std::cell::RefCell<Vec<&'static str>>;
@@ -644,7 +644,7 @@ mod tests {
 
     /// Builds an engine in a temp repo. `seed` runs on the board path first, then `body` gets the
     /// job folder and the board path.
-    fn with_engine(seed: impl FnOnce(&Path), body: impl FnOnce(&Engine, &Path, &Path)) {
+    pub(crate) fn with_engine(seed: impl FnOnce(&Path), body: impl FnOnce(&Engine, &Path, &Path)) {
         let dir = tempfile::tempdir().expect("temp dir");
         let board_path = dir.path().join("board.json");
         seed(&board_path);
