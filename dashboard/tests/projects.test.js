@@ -109,6 +109,13 @@ test("jobActions follows the stage and the cancelled flag", () => {
   assert.deepEqual(projects.jobActions({ stage: "needs-human", park_resume: "sync", cancelled: true }), []);
 });
 
+test("jobActions offers rework on a checks-failed park with a resume", () => {
+  const job = { stage: "needs-human", park_resume: "rereview", park_kind: "checks-failed" };
+  assert.deepEqual(projects.jobActions(job), ["retry", "rework", "cancel"]);
+  const other = { stage: "needs-human", park_resume: "rereview", park_kind: "review-failed" };
+  assert.deepEqual(projects.jobActions(other), ["retry", "approve", "cancel"]);
+});
+
 test("a reply for a stale project is dropped", () => {
   assert.equal(projects.acceptReply("alpha", "alpha"), true);
   assert.equal(projects.acceptReply("alpha", "beta"), false);

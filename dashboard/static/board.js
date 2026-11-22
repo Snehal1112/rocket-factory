@@ -45,14 +45,17 @@
     return reviewMissing(job) ? `factory approve ${job.id} --without-review` : `factory approve ${job.id}`;
   }
 
-  // The approve chip beside retry. A series-waiting park resumes at build and cannot be approved, only retried.
+  // The approve chip beside retry. A park that resumes at build, or a failed check, offers rework instead.
   function retryApprove(job) {
-    return job.park_resume === "build" ? "" : copyChip(approveCommand(job));
+    return job.park_resume === "build" || job.park_kind === "checks-failed" ? "" : copyChip(approveCommand(job));
   }
 
-  // The rework chip beside retry for a park that resumes at build, except series-waiting, which has no work to redo.
+  // The rework chip beside retry for a park that resumes at build, except series-waiting, which has no work to redo,
+  // and for the kinds that keep rework. It mirrors ParkKind::keeps_rework in crates/factory-core/src/park.rs.
+  const KEEPS_REWORK = ["machine-waiting", "builder-stopped", "checks-failed"];
   function retryRework(job) {
-    return job.park_resume === "build" && job.park_kind !== "series-waiting" ? copyChip(`factory rework ${job.id} <note>`) : "";
+    const open = (job.park_resume === "build" && job.park_kind !== "series-waiting") || KEEPS_REWORK.includes(job.park_kind);
+    return open ? copyChip(`factory rework ${job.id} <note>`) : "";
   }
 
   // True when a retry can resume the parked job. A cancelled job has none.

@@ -1,5 +1,6 @@
 use crate::error::CoreError;
 use crate::fsutil::write_atomic;
+use crate::park::ParkKind;
 use crate::stage::Stage;
 use crate::verdict::REVIEW_ROLES;
 use serde::{Deserialize, Serialize};
@@ -356,6 +357,14 @@ impl Job {
     /// The command a refusal offers instead of a plain rework. A park with a resume stage is not
     /// a builder problem, so retry or a forced rework replaces `rework`.
     fn rework_hint(&self) -> String {
+        let keeps_rework = self
+            .park_kind
+            .as_deref()
+            .and_then(ParkKind::from_name)
+            .is_some_and(ParkKind::keeps_rework);
+        if keeps_rework {
+            return "rework".to_string();
+        }
         match self.park_resume {
             None => "rework".to_string(),
             Some(
@@ -1088,6 +1097,18 @@ mod tests {
             m.contains("use rework") && m.contains("approve --without-review"),
             "{m}"
         );
+    }
+
+    #[test]
+    fn rework_hint_is_rework_for_a_checks_failed_park() {
+        let mut j = Job::new("001", "d", "s", "2026-10-17", "f", 1.0);
+        j.stage = Stage::NeedsHuman;
+        j.set_review("code", ReviewState::Pending);
+        j.park_kind = Some("checks-failed".into());
+        j.park_resume = Some(crate::park::ResumeAt::Rereview);
+        let m = j.review_missing_message();
+        assert!(m.contains("use rework, or approve"), "{m}");
+        assert!(!m.contains("factory retry 001"), "{m}");
     }
 
     #[test]

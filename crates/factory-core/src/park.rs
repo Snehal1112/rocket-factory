@@ -37,9 +37,9 @@ impl ResumeAt {
 }
 
 /// The commands for a park. With a resume stage, `factory retry` comes first and the
-/// `factory rework` and `factory retry` entries of the kind are dropped, except that a machine
-/// wait or a stopped builder keeps its rework entry. A sync park also
-/// drops `factory approve`, which cannot clear it.
+/// `factory rework` and `factory retry` entries of the kind are dropped, except that a kind that
+/// `keeps_rework` keeps its rework entry. A sync park also drops `factory approve`, which cannot
+/// clear it.
 pub fn next_with_resume(
     kind: ParkKind,
     id: &str,
@@ -55,7 +55,7 @@ pub fn next_with_resume(
     let retry = format!("factory retry {id}");
     let approve = format!("factory approve {id}");
     let drop_approve = resume == Some(ResumeAt::Sync);
-    let keep_rework = matches!(kind, ParkKind::MachineWaiting | ParkKind::BuilderStopped);
+    let keep_rework = kind.keeps_rework();
     let mut out = vec![retry.clone()];
     out.extend(next.into_iter().filter(|n| {
         (keep_rework || !n.starts_with(&rework))
@@ -109,6 +109,39 @@ impl ParkKind {
             ParkKind::MachineWaiting => "machine-waiting",
             ParkKind::Other => "other",
         }
+    }
+
+    /// The kind whose `as_str` name this is, or `None` for an unknown name.
+    pub fn from_name(name: &str) -> Option<ParkKind> {
+        Some(match name {
+            "checks-failed" => ParkKind::ChecksFailed,
+            "changes-remain" => ParkKind::ChangesRemain,
+            "risky-diff" => ParkKind::RiskyDiff,
+            "diff-too-large" => ParkKind::DiffTooLarge,
+            "budget-stopped" => ParkKind::BudgetStopped,
+            "builder-stopped" => ParkKind::BuilderStopped,
+            "builder-blocked" => ParkKind::BuilderBlocked,
+            "builder-committed" => ParkKind::BuilderCommitted,
+            "nothing-changed" => ParkKind::NothingChanged,
+            "builder-tampered" => ParkKind::BuilderTampered,
+            "commit-failed" => ParkKind::CommitFailed,
+            "no-checks" => ParkKind::NoChecks,
+            "no-tests" => ParkKind::NoTests,
+            "review-failed" => ParkKind::ReviewFailed,
+            "series-waiting" => ParkKind::SeriesWaiting,
+            "machine-waiting" => ParkKind::MachineWaiting,
+            "other" => ParkKind::Other,
+            _ => return None,
+        })
+    }
+
+    /// True for the parks a builder can fix, so a plain rework stays open next to a retry.
+    /// The dashboard mirrors this rule in `projects.js` and `board.js`.
+    pub fn keeps_rework(self) -> bool {
+        matches!(
+            self,
+            ParkKind::MachineWaiting | ParkKind::BuilderStopped | ParkKind::ChecksFailed
+        )
     }
 
     /// The stage a plain retry continues from, if this kind has one.
@@ -590,6 +623,68 @@ mod tests {
                 Some(ResumeAt::Build)
             ),
             vec!["factory retry 001", "factory rework 001 <note>"]
+        );
+    }
+
+    #[test]
+    fn keeps_rework_covers_builder_fixable_parks() {
+        for kind in [
+            ParkKind::MachineWaiting,
+            ParkKind::BuilderStopped,
+            ParkKind::ChecksFailed,
+        ] {
+            assert!(kind.keeps_rework(), "{kind:?}");
+        }
+        for kind in [
+            ParkKind::ReviewFailed,
+            ParkKind::NoChecks,
+            ParkKind::SeriesWaiting,
+            ParkKind::Other,
+        ] {
+            assert!(!kind.keeps_rework(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn from_name_reads_every_as_str_name() {
+        let all = [
+            ParkKind::ChecksFailed,
+            ParkKind::ChangesRemain,
+            ParkKind::RiskyDiff,
+            ParkKind::DiffTooLarge,
+            ParkKind::BudgetStopped,
+            ParkKind::BuilderStopped,
+            ParkKind::BuilderBlocked,
+            ParkKind::BuilderCommitted,
+            ParkKind::NothingChanged,
+            ParkKind::BuilderTampered,
+            ParkKind::CommitFailed,
+            ParkKind::NoChecks,
+            ParkKind::NoTests,
+            ParkKind::ReviewFailed,
+            ParkKind::SeriesWaiting,
+            ParkKind::MachineWaiting,
+            ParkKind::Other,
+        ];
+        for kind in all {
+            assert_eq!(ParkKind::from_name(kind.as_str()), Some(kind), "{kind:?}");
+        }
+        assert_eq!(ParkKind::from_name("nope"), None);
+    }
+
+    #[test]
+    fn a_checks_failed_park_with_a_resume_offers_retry_and_rework() {
+        let next = next_with_resume(
+            ParkKind::ChecksFailed,
+            "001",
+            false,
+            None,
+            Some(ResumeAt::Rereview),
+        );
+        assert_eq!(next[0], "factory retry 001");
+        assert!(
+            next.iter().any(|n| n.starts_with("factory rework 001 ")),
+            "{next:?}"
         );
     }
 

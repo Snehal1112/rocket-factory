@@ -127,6 +127,13 @@ fn plain_rework_is_allowed_on_machine_and_stopped_parks() {
 }
 
 #[test]
+fn plain_rework_is_allowed_on_a_checks_failed_park() {
+    let fx = parked_as("checks-failed", factory_core::ResumeAt::Rereview);
+    fx.run(&["rework", "1", "fix x"]).expect("rework");
+    assert_eq!(job(&fx).stage, factory_core::Stage::Build);
+}
+
+#[test]
 fn rework_force_sends_it_to_the_builder() {
     let fx = main_busy_parked();
     let out = fx
