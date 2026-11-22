@@ -29,7 +29,7 @@ Effects today:
 | `parse_view` | `crates/factory-engine/src/tracker.rs:306-322` | A missing `labels` gives `[]`, a label without `name` is dropped, and a missing or unknown `state` reads as open (`is_some_and(eq_ignore_ascii_case("closed"))`). |
 | `labels_of`, `is_closed` | `crates/factory-engine/src/tracker.rs` `impl Tracker for GhTracker` | Both call `parse_view(&self.run(&view_args(issue))?)`. |
 | Ticket step | `crates/factory-engine/src/tickets.rs:278` and `:450` | An `Err` from `labels_of` or `is_closed` is reported with `report.fail` and the step stops. |
-| `parse_issue_list` labels | `crates/factory-engine/src/tracker.rs:362-367` | `issue["labels"].as_array().into_iter().flatten()` drops a bad label value without a sign. |
+| `parse_issue_list` labels | `crates/factory-engine/src/tracker.rs:363-368` | `issue["labels"].as_array().into_iter().flatten()` drops a bad label value without a sign. |
 | `parse_actor` | `crates/factory-engine/src/tracker.rs:382-405` | Each top-level value is an array page or one event. A value that is not an event counts as a non-matching event, and a matching event without `created_at` gets `at: ""`. A null actor gives `None`. |
 | Events filter | `crates/factory-engine/src/tracker.rs:274` `EVENTS_JQ` | Prints `{event, label: {name}, actor: {login}, created_at}` per labeled event. |
 | Intake | `crates/factory-engine/src/intake.rs:171-193` `eligible` | An `Err` from `labelled_by` is a logged skip of that one issue. |
@@ -73,10 +73,10 @@ The signature stays `pub(crate) fn parse_view(json: &str) -> Result<(Vec<String>
 
 - The reply must be an object with a `labels` array. Otherwise return `Err("gh printed unexpected JSON: expected a labels array".to_string())`. This also covers a reply that is not an object, because indexing gives `Null`.
 - Every element of `labels` must have a string `name`. Otherwise return `Err("gh printed unexpected JSON: a label has no name".to_string())`.
-- `state` must be a string equal to `OPEN` or `CLOSED`, ignoring case. Otherwise return ``Err(format!("gh printed an unusable issue state: `{state}`"))``, where `{state}` is the raw JSON value from `serde_json::Value`'s `Display`, for example `null` or `"MERGED"`. `CLOSED` gives `true` and `OPEN` gives `false`.
+- `state` must be a string equal to `OPEN`, `CLOSED` or `MERGED`, ignoring case. Otherwise return ``Err(format!("gh printed an unusable issue state: `{state}`"))``, where `{state}` is the raw JSON value from `serde_json::Value`'s `Display`, for example `null` or `"DRAFT"`. `CLOSED` and `MERGED` give `true`, and `OPEN` gives `false`. `gh issue view` on a pull request prints `MERGED` with exit 0 (checked on #47), and a feature text can cite a PR number, so a merged PR reads as done.
 - The labels check runs first, then the state check.
 
-Example: `{"message":"Not Found"}` gives `Err("gh printed unexpected JSON: expected a labels array")`. `{"labels":[],"state":"MERGED"}` gives ``Err("gh printed an unusable issue state: `\"MERGED\"`")``.
+Example: `{"message":"Not Found"}` gives `Err("gh printed unexpected JSON: expected a labels array")`. `{"labels":[],"state":"DRAFT"}` gives ``Err("gh printed an unusable issue state: `\"DRAFT\"`")``, and `{"labels":[],"state":"MERGED"}` gives `Ok(([], true))`.
 
 ### 2. `parse_issue_list` labels
 
@@ -110,7 +110,7 @@ pub(crate) fn check_login(login: &str) -> Result<(), String>
 - `check_login` accepts only text with no whitespace character and no `/`. Otherwise it returns ``Err(format!("gh api user printed an unusable login: `{login}`"))``. Bot logins such as `github-actions[bot]` pass.
 - The empty-output errors and their texts stay as they are.
 
-Example: `o/r` passes, while `o/r/x`, `o r/x`, `/r` and `two\nlines` each fail. `alice` passes, while `null x` and `a/b` fail.
+Example: `o/r` passes, while `o/r/x`, `o r/x`, `/r` and `o/r\nx/y` each fail. `alice` passes, while `a b`, `a/b` and `a\nb` fail.
 
 ## Error handling and edge cases
 
@@ -122,7 +122,8 @@ Example: `o/r` passes, while `o/r/x`, `o r/x`, `/r` and `two\nlines` each fail. 
 | `parse_view` on `[]` | `expected a labels array` error |
 | `parse_view` on `{"labels":[{"id":1}],"state":"OPEN"}` | `a label has no name` error |
 | `parse_view` on `{"labels":[]}` | ``unusable issue state: `null` `` |
-| `parse_view` on `{"labels":[],"state":"MERGED"}` | ``unusable issue state: `"MERGED"` `` |
+| `parse_view` on `{"labels":[],"state":"MERGED"}` | `Ok(([], true))` |
+| `parse_view` on `{"labels":[],"state":"DRAFT"}` | ``unusable issue state: `"DRAFT"` `` |
 | `parse_view` on `not json` | `invalid JSON` error (unchanged) |
 | issue-list entry without `labels`, plus a good `#4` | only `#4` |
 | issue-list entry with `"labels":"x"`, plus a good `#4` | only `#4` |
@@ -150,6 +151,7 @@ All the new tests go in `crates/factory-engine/src/tracker.rs` `mod tests`.
 - `parse_view_rejects_an_unknown_state`
 - `parse_view_rejects_an_array_reply`
 - `parse_view_reads_a_lowercase_state`
+- `parse_view_reads_a_merged_state_as_closed`
 
 `parse_issue_list`:
 - `parse_issue_list_skips_an_entry_without_labels`
@@ -176,7 +178,7 @@ Repo name and login:
 - `current_user_rejects_a_malformed_gh_reply`: fake gh that prints `a b`
 - `repo_name_keeps_the_empty_output_error`: fake gh that prints nothing, so the error is still `gh repo view printed no repository name`
 
-Both fake-gh tests are built with `fake_gh`, as `edit_labels_reports_another_label_create_error` does.
+All three fake-gh tests are built with `fake_gh`, as `edit_labels_reports_another_label_create_error` does.
 
 Commands:
 
@@ -184,6 +186,7 @@ Commands:
 cargo test -j4 -p factory-engine --lib tracker
 cargo test -j4 -p factory-engine --test tickets
 cargo test -j4 -p factory-engine --test intake
+cargo test -j4 -p factory-engine --test log_events
 ```
 
 ## Files changed
@@ -199,13 +202,13 @@ cargo test -j4 -p factory-engine --test intake
 
 ## Acceptance criteria
 
-- `parse_view` returns the `expected a labels array`, `a label has no name` or `unusable issue state` error for the cases in the table, and accepts `OPEN` or `CLOSED` in any case.
+- `parse_view` returns the `expected a labels array`, `a label has no name` or `unusable issue state` error for the cases in the table, accepts `OPEN`, `CLOSED` or `MERGED` in any case, and reads `MERGED` as closed.
 - `parse_issue_list` skips an entry whose `labels` is missing, is not an array, or holds an element without a string `name`, and keeps the others.
 - `parse_actor` returns `expected label events` for any top-level value that is not an event or an array of events, and returns the without-a-time error for a matching labeled event that has no `created_at`.
 - `parse_actor` still gives `Ok(None)` for empty input, for `[]` and for a null actor on the last matching event.
 - `repo_name` and `current_user` reject malformed output with the unusable-name and unusable-login errors, and keep the empty-output errors.
 - All new tests and all existing `tracker` tests pass, with only the fixture changes listed in Testing.
-- `cargo test -j4 -p factory-engine --test tickets` and `--test intake` pass unchanged.
+- `cargo test -j4 -p factory-engine --test tickets`, `--test intake` and `--test log_events` pass unchanged.
 
 ## Out of scope
 
@@ -216,6 +219,7 @@ cargo test -j4 -p factory-engine --test intake
 
 - Which gh JSON gaps does this job fix? Options: parse_view, parse_actor, parse_issue_list labels, repo_name and current_user. Chosen: all four, with no follow-up tickets. Decided by: user
 - How strict is parse_view? Options: strict on labels and state, strict on state only, missing state only. Chosen: strict on both. Decided by: user
+- How is `MERGED` read, which `gh issue view` prints for a merged PR? Options: as closed, rejected, as open. Chosen: as closed. Decided by: user
 - What changes in parse_actor? Options: error on non-event values and on a matching event without a time, only non-event values, only a missing time. Chosen: error on both. Decided by: user
 - What does a bad `labels` value do to an issue-list entry? Options: skip that entry, fail the whole list, keep reading it as empty. Chosen: skip that entry. Decided by: user
 - Should the repo name and login shape be checked? Options: check the shape, tests only, drop it. Chosen: check the shape. Decided by: user
