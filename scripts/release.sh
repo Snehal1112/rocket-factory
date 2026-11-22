@@ -35,6 +35,7 @@ CRATES=(
     factory-cli
     factory-supervisor
     factory-telemetry
+    factory-procgroup
 )
 PKG_ARGS=()
 for c in "${CRATES[@]}"; do

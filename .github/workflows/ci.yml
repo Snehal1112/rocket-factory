@@ -17,11 +17,16 @@ env:
     -p factory-cli
     -p factory-supervisor
     -p factory-telemetry
+    -p factory-procgroup
 
 jobs:
   check:
-    name: Driver workspace
-    runs-on: ubuntu-latest
+    name: Driver workspace (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -41,8 +46,12 @@ jobs:
           cargo test -j4 $PKGS
 
   dashboard:
-    name: Dashboard
-    runs-on: ubuntu-latest
+    name: Dashboard (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

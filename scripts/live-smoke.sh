@@ -131,7 +131,7 @@ build_fixture() {
 # real factory home through `project show` and never the key file.
 key_lines_of() {
     FACTORY_HOME="$real_home" factory project show "$1" 2>/dev/null |
-        sed -n 's/^ *\(\(api_key_file\|allow_api_key\) = .*\)$/\1/p' |
+        sed -nE 's/^ *((api_key_file|allow_api_key) = .*)$/\1/p' |
         grep -v '(default)$' || true
 }
 
@@ -171,12 +171,19 @@ register_project() {
     local toml="$FACTORY_HOME/projects/$PROJECT/project.toml"
     [ -f "$toml" ] || fail "project.toml not found at $toml."
     cp "$toml" "$work/project.toml.orig"
-    # The budget key goes into [settings], the check table at the end of the file.
-    sed -i 's/^\[settings\]$/[settings]\nbudget_weighted = 300000/' "$toml"
+    # The budget key and the key lines go into [settings], the check table at the end of the file.
+    # awk writes a new file, because BSD sed on macOS has no GNU `sed -i`.
+    : >"$work/key-lines"
     if [ -n "$key_lines" ]; then
         printf '%s\n' "$key_lines" >"$work/key-lines"
-        sed -i "/^\[settings\]\$/r $work/key-lines" "$toml"
     fi
+    awk -v keys="$work/key-lines" '
+        { print }
+        /^\[settings\]$/ {
+            while ((getline line < keys) > 0) print line
+            print "budget_weighted = 300000"
+        }
+    ' "$toml" >"$toml.new" && mv "$toml.new" "$toml"
     echo "$credentials"
     cat >>"$toml" <<'EOF'
 
