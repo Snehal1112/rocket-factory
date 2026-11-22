@@ -986,10 +986,16 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         for name in PRESET_NAMES {
             let p = embedded(name).expect("preset");
-            assert!(p.agents.iter().all(|(n, _)| *n != "factory-committer.md"));
-            assert!(files_of(dir.path(), p)
-                .iter()
-                .all(|(_, _, _, key)| !key.ends_with("commit-context.md")));
+            assert!(
+                p.agents.iter().all(|(n, _)| *n != "factory-committer.md"),
+                "{name} ships factory-committer.md"
+            );
+            assert!(
+                files_of(dir.path(), p)
+                    .iter()
+                    .all(|(_, _, _, key)| !key.ends_with("commit-context.md")),
+                "{name} ships commit-context.md"
+            );
         }
     }
 
