@@ -20,11 +20,11 @@ Issue 132 keeps the open parts of issues 4 (one-job), 121 (merge message), 123 (
 |---|---|---|
 | Job creation | `add_job_marked` (`crates/factory-engine/src/runloop.rs:32-110`) pushes the job to the board (`:52-71`), then creates the folder (`:74`), the ledger (`:75-78`) and the series `plan.md` copy (`:80`). `create_one_job_accepting` (`one_job.rs:127-140`) writes `plan.md` and `spec.md` after `add_job`. `create_job_with_spec_accepting` (`runloop.rs:510-628`) adds each series job, then writes its `spec.md`. | A failed write leaves a job on the board, which later parks as "no plan.md". In a series, the jobs made before the failure stay. Only `create_replacement` (`runloop.rs:820-827`) cleans up after itself, with inline code. |
 | Count check | `one_job.rs:118-125` refuses when `parse_checkbox_tasks(&combined.text).len() != combined.tasks`. | No test can reach it, because `combine_plans` never produces a mismatch. |
-| `[x]` marks | `split_plan` (`combine.rs:334-355`) strips `- [ ] ` and `- [x] ` when a checkbox plan is written as headings, which happens only when the plans mix both forms (`combine.rs:70-72`). | The dropped mark is neither documented nor tested, and the mixed-form warning has no test. |
+| `[x]` marks | `split_plan` (`combine.rs:265`, the `as_headings` branch at `:334-355`) strips `- [ ] ` and `- [x] ` when a checkbox plan is written as headings, which happens only when the plans mix both forms (`combine.rs:70-72`). | The dropped mark is neither documented nor tested, and the mixed-form warning has no test. |
 | Task cap | `parse_series_with(root, start, max_tasks)` (`series.rs:130`). Tests cover `None` and the default `Some(3)`. | No test of another cap. |
 | factoryd create | `CreateBody` (`crates/factory-supervisor/src/api/write.rs:25-36`) has `deny_unknown_fields` and no one-job field. A `needs consent:` exit 1 maps to 500 (`finished`, `write.rs:192-212`). The dashboard form (`dashboard/static/dashboard.html:28-40`, `projects.js:61-77`) has no one-job input. | A one-job cannot be created over the API or from the dashboard. |
 | Ruling repeats | `job_message` (`jobmsg.rs:51-64`, `:118-130`) appends its "plan **Commit:** line refused" and "fixed message used" rulings on every call. It runs at each merge attempt (`compat.rs:703`). | A retried merge writes the same ruling twice. |
-| Fixed message | `jobmsg.rs:118-130` falls back to `fixed_message` when `validate_message` fails. A plan title ending in `.` reaches it: `title_subject` keeps the period and `validate_message` (`commitmsg.rs:28`) refuses it. | No test. |
+| Fixed message | `jobmsg.rs:118-130` falls back to `fixed_message` when `validate_message` fails. No input reaches it today: `title_subject` drops a trailing period (`cut_text`, `commitmsg.rs:608`) and the `**Commit:**` line is checked first. It stays as a guard. | No test pins that a title ending in a period still gets a real subject. |
 | Loose test | `a_plan_without_a_commit_line_uses_the_plan_title` (`tests/job_message.rs:146`) asserts with `\|\|`. | It does not pin the exact `title_subject` output. |
 | Footers | `build_job_message` (`commitmsg.rs:705-751`) drops a footer equal to a body line, but not a footer repeated in `m.footers`. The `- and N more changes` line goes to `blocks.last_mut()` (`:729-733`), which can be a title-only section. | Repeated footers, and a misplaced "and N more" line. |
 | Fix round with no session | `build.rs:150`: `new_work = !fresh_fix && (fresh \|\| job.session_id.is_none())`. `session_id` is cleared by `sync_provider` (`ports.rs:425`) and `clear_tree_fields` (`series_guard.rs:113`). | A fix round on an existing worktree with no session is committed as `wip: build the plan`, and its note is written to `build.md`, which a later build overwrites. |
@@ -56,13 +56,13 @@ build ─ fix round with no session ─ "wip: fix round N", round-N.md
 ### 1. Roll back a failed job creation (issue 4)
 
 In `crates/factory-engine/src/runloop.rs`:
-- `pub(crate) fn remove_new_jobs(driver: &Driver, jobs: &[Job])`: one board write that drops every job whose id is in `jobs`, then `remove_dir_all` on each job folder. Each failure is logged as a `tracing::warn!` with `event = "job.rollback"` and never returned, so the caller's error is the one reported.
+- `pub(crate) fn remove_new_jobs(driver: &Driver, jobs: &[Job])`: one board write that drops every job whose id is in `jobs`, then `remove_dir_all` on each job folder. A folder that does not exist is skipped without a warning. Each other failure is logged as a `tracing::warn!` with `event = "job.rollback"` and never returned, so the caller's error is the one reported.
 - `pub(crate) fn rolled_back<T>(driver: &Driver, f: impl FnOnce(&mut Vec<Job>) -> Result<T, EngineError>) -> Result<T, EngineError>`: runs `f` with an empty list that `f` fills with each job it creates. When `f` returns `Err`, it calls `remove_new_jobs` on the list and returns the error. When `f` returns `Ok`, it changes nothing.
 
 Callers:
 - `add_job_marked`: after the board push, the folder, ledger and series `plan.md` copy run in one block. When it fails, `remove_new_jobs(driver, &[job])` runs and the error is returned. The estimate write stays best effort.
 - `create_one_job_accepting`: `add_job` and the `plan.md` and `spec.md` writes run inside `rolled_back`.
-- `create_job_with_spec_accepting`: every `add_job` and `copy_spec` of the series, and the plan-less `add_job`, run inside `rolled_back`.
+- `create_job_with_spec_accepting`: every `add_job` and `copy_spec` of the series run inside `rolled_back`. The plan-less `add_job` needs no wrapper, because `add_job_marked` removes its own job on a failed write.
 - `create_replacement`: its inline cleanup (`runloop.rs:820-827`) becomes `remove_new_jobs(driver, std::slice::from_ref(&new))`.
 
 `adopt_draft`, the warnings and `record_accepted` stay outside the rollback, as today: their failures keep the job.
@@ -84,7 +84,7 @@ A test of `parse_series_with(root, start, Some(2))` accepts 2 tasks and refuses 
 - `CreateBody` gains `one_job: Option<bool>` and `accept_over_budget: Option<bool>`.
 - `accept_over_budget: true` without `one_job: true` answers 400 `bad_request` with "accept_over_budget needs one_job", and runs nothing. This mirrors the CLI's `requires = "one_job"`.
 - `one_job: true` adds `--one-job`, and `accept_over_budget: true` adds `--accept-over-budget`. Both go before `--`, after `--accept-spec`.
-- `factory_engine` exports `pub const NEEDS_CONSENT: &str = "needs consent:"`. `create_inner` treats an exit 1 whose stderr, or stdout when stderr is blank, starts with `NEEDS_CONSENT` after `trim_start` as a conflict. It answers 409 `conflict` with the tail of the text, as a spec refusal does.
+- `factory_engine` exports `pub const NEEDS_CONSENT: &str = "needs consent:"`. `create_inner` treats an exit 1 as a conflict when any line of stderr, or of stdout when stderr is blank, starts with `NEEDS_CONSENT` after `trim_start`. Under `--project` the CLI may print `note:` lines first. It answers 409 `conflict` with the tail of the text, as a spec refusal does.
 - The dashboard form gets a checkbox `nj-onejob`, "One job", unchecked by default. `buildCreateBody` adds `one_job: true` only when it is checked, so a body without it is unchanged.
 - README's `POST /projects/{p}/jobs` row documents both fields and the 409.
 
@@ -112,13 +112,13 @@ In `build.rs`: `let new_work = !fresh_fix && (fresh || (job.session_id.is_none()
 | Case | Behaviour |
 |---|---|
 | Folder creation fails after the board push | The job is removed from the board and the error is returned. |
-| `plan.md` write fails on the one-job path | The job and its folder are removed, and the write error is returned. |
+| `plan.md` write fails on the one-job path | The job and its folder are removed, and the write error is returned. This runs through `rolled_back`, which `a_failed_creation_removes_every_job_it_made` tests. No test makes the write itself fail. |
 | The third job of a series fails | The first two jobs and their folders are removed too. |
 | The rollback's own board write fails | It is logged, and the original error is returned. |
 | `adopt_draft` fails | The job stays, as today. |
 | `accept_over_budget` without `one_job` | 400, nothing runs. |
 | `one_job: false` | No flag, same as leaving it out. |
-| `needs consent:` refusal | 409 `conflict` with the estimate text. |
+| `needs consent:` refusal | 409 `conflict` with the estimate text, also when `note:` lines come first. |
 | Any other `factory new` failure | 500 `failed`, as today. |
 | `job_message` called twice | Each ruling appears once in the ledger. |
 | Ledger missing when the ruling is checked | Read as empty, so the ruling is written. |
@@ -146,7 +146,7 @@ factory-engine, `tests/series.rs`: `parse_series_with_a_cap_of_two_refuses_three
 
 factory-engine, `tests/job_message.rs`:
 - `a_second_merge_message_writes_the_refused_line_ruling_once`
-- `a_title_ending_in_a_period_gets_the_fixed_message_once`
+- `a_title_ending_in_a_period_drops_the_period`
 - `a_plan_without_a_commit_line_uses_the_plan_title` (exact subject)
 - `a_plan_without_a_heading_uses_the_feature` (exact subject)
 - `a_task_job_with_a_fix_round_merges_with_its_sections_and_review_fixes`
@@ -166,7 +166,7 @@ factory-git, `tests/stage.rs`: `staged_tree_is_leaves_the_index_and_files_alone`
 factory-supervisor, `src/api/write.rs` `mod tests`:
 - `create_passes_one_job_and_accept_over_budget_before_the_separator`
 - `create_refuses_accept_over_budget_without_one_job`
-- `create_answers_needs_consent_with_a_conflict`
+- `create_answers_needs_consent_with_a_conflict`, also with a `note:` line first
 
 factory-cli: `tests/global_command.rs` `the_command_asks_for_a_commit_line_in_every_plan` asserts that step 3 names the spec's `**Commit:**` line, and `tests/plugin_files.rs` passes after the sync.
 
@@ -204,7 +204,7 @@ Commands: `cargo test -j4 -p factory-engine`, `cargo test -j4 -p factory-core`, 
 - factoryd passes `--one-job` and `--accept-over-budget`, refuses the second without the first, and answers `needs consent:` with 409.
 - The dashboard sends `one_job: true` only when its checkbox is checked.
 - A repeated `job_message` call writes each ruling once.
-- The fixed-message fallback and the exact title and feature subjects are tested.
+- A title ending in a period, and the exact title and feature subjects, are tested.
 - `build_job_message` lists each footer once and puts "and N more" under bullets.
 - A fix round with no session is committed as `wip: fix round N` with `round-N.md`.
 - A task job with a fix round merges with its task sections and "Review fixes" in the merge commit.
@@ -233,4 +233,4 @@ Commands: `cargo test -j4 -p factory-engine`, `cargo test -j4 -p factory-core`, 
 - A ruling is written once by checking the ledger for the same line, not by moving it out of `job_message`. Decided by: call
 - The fix-round signal is `job.round > 1` on an existing worktree, so a fresh worktree keeps the build path. Decided by: call
 - Repeated footers keep their first place. "and N more" goes under the last block with bullets. Decided by: call
-- The fixed-message fallback is tested with a plan title that ends in a period, the one input that reaches it. Decided by: call
+- The fixed-message fallback stays as an untested guard, because no input reaches it. A test pins that a title ending in a period gets a real subject. Decided by: call
