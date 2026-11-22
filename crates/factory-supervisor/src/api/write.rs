@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use factory_core::project;
-use factory_core::{slugify, Board, Config, Home, Layout, Stage};
+use factory_core::{slugify, Config, Home, Layout};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -360,11 +360,6 @@ fn create_inner(
     })
 }
 
-/// Answers 409 when an approve or retry request for the job is already queued or running.
-fn refuse_if_queued(home: &Home, name: &str, id: &str) -> Result<(), ApiResponse> {
-    admit::refuse_if_queued(home, name, id).map_err(refusal)
-}
-
 /// `POST /projects/{p}/jobs/{id}/approve`.
 pub fn approve(home: &Home, deps: &ApiDeps, name: &str, id: &str, body: &[u8]) -> ApiResponse {
     match approve_inner(home, deps, name, id, body) {
@@ -379,7 +374,7 @@ fn approve_inner(
     id: &str,
     body: &[u8],
 ) -> Result<ApiResponse, ApiResponse> {
-    let layout = enabled(home, name)?;
+    enabled(home, name)?;
     let id = job_id(id)?;
     // No body at all means the defaults.
     let b: ApproveBody = if body.is_empty() {
@@ -391,49 +386,15 @@ fn approve_inner(
     if let Some(reason) = &b.waive_reason {
         one_line(reason, "waive reason")?;
     }
-    let board = Board::load(&layout.board_file()).map_err(|e| {
-        error_response(
-            500,
-            "failed",
-            &format!("the board of this project cannot be read: {e}"),
-        )
-    })?;
-    let job = board.jobs.iter().find(|j| j.id == id).ok_or_else(|| {
-        error_response(404, "not_found", &format!("no job {id} in project {name}"))
-    })?;
-    if job.cancelled {
-        return Err(error_response(
-            409,
-            "conflict",
-            &format!("job {id} was cancelled"),
-        ));
-    }
-    if job.stage != Stage::NeedsHuman && job.stage != Stage::Approve {
-        return Err(error_response(
-            409,
-            "conflict",
-            &format!(
-                "job {id} is in stage {}, approve needs needs-human or approve",
-                job.stage
-            ),
-        ));
-    }
-    // The child would refuse this, and nobody reads a child's refusal, so answer here. The review
-    // rules inside apply to needs-human only, the open-changes rule to both stages.
-    if let Some(why) = job.approve_refusal(without_review, b.waive_reason.is_some()) {
-        return Err(error_response(409, "conflict", &why));
-    }
-    refuse_if_queued(home, name, &id)?;
-    let request_id = enqueue(
+    let request_id = admit::queue_approve(
         home,
-        deps,
         name,
-        Action::Approve,
         &id,
-        false,
         without_review,
         b.waive_reason.as_deref(),
-    )?;
+        (deps.now_ms)(),
+    )
+    .map_err(refusal)?;
     Ok(ApiResponse {
         status: 202,
         body: json!({"requestId": request_id}),
@@ -978,7 +939,7 @@ mod tests {
             code(&post(&f, "/projects/good/jobs/9/approve", b"")),
             (404, "not_found".to_string())
         );
-        for id in ["1%2F2", "1x", "1234567", "-1"] {
+        for id in ["1%2F2", "1x", "1234567", "-1", "0", "000"] {
             assert_eq!(
                 code(&post(&f, &format!("/projects/good/jobs/{id}/approve"), b"")).1,
                 "bad_request",

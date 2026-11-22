@@ -1096,7 +1096,7 @@ factoryd status
 No options. It only reads and works whether or not `factoryd` runs. It prints:
 
 1. `daily budget: <used> of <limit> weighted tokens today (<pct>%), resets at <time>`. Only when a daily budget is set.
-2. `Queue:` waiting requests, or `(empty)`.
+2. `Queue:` waiting requests, each line showing id, project, action and job, or `(empty)`.
 3. `Running:` for each project, `<project> job <job> pid <pid> age <N>s`, or `(none)`.
 4. `Results:` the last 10 results, newest first.
 5. The factoryd version.
@@ -1139,7 +1139,7 @@ factoryd enqueue --project <name> --job <id> [--series | --approve | --retry]
 | Option | Meaning |
 |---|---|
 | `--project <name>` | Required. The registered project. |
-| `--job <id>` | Required. 1 to 6 digits. |
+| `--job <id>` | Required. 1 to 6 digits. The id is padded to three digits, so `7` queues `007`. Job 0 is refused. |
 | `--series` | Run request only: continue with the next plan after each merge. |
 | `--approve` | Make it an approve request, not a run request. |
 | `--retry` | Make it a retry request: continue a parked job at the stage that parked it. Cannot be combined with `--series` or `--approve`. |
@@ -1154,8 +1154,9 @@ factoryd enqueue --project my-app --job 028 --retry
 - It prints the new request id, for example `1761379200000-my-app-028`.
 - A request starts `factory --project <name> run <job> [--series]`, `factory --project <name> approve <job>`, or `factory --project <name> retry <job>`. A run or a retry waits for the daily budget, an approve does not.
 - `--retry` checks the job first, like the dashboard's Retry button: it refuses an unknown project or job, a cancelled job, a job that is not parked, a park with no resume stage, a merge or sync retry that lacks its approval, and a job that already has an approve or retry queued. It prints the reason and exits 1.
-- Without `--retry`, `enqueue` does not check that the project exists. It never needs `factoryd` to be running. An unknown project is rejected later with the reason `unknown project`. If no `factoryd` runs, the request waits in the queue until one starts.
-- `--series` together with `--approve` is refused: `series is only valid for a run request`.
+- Without `--retry`, `enqueue` checks that the project exists and refuses an unknown one. It never needs `factoryd` to be running; if none runs, the request waits in the queue until one starts.
+- `--series` together with `--approve` is refused by the argument parser.
+- An approve is refused for the same job states as the dashboard's Approve button and while an approve or retry of the job is queued; a run is refused while a run of the job is queued.
 - There is no `--without-review` option here. You can pass it only through the API or by running `factory approve --without-review` yourself.
 - If a project is busy, the request waits. A busy project that was started by hand with `factory run` also holds the lease, so the request waits until that run ends. A request that keeps meeting a held lease is retried up to 20 times, then marked failed.
 
