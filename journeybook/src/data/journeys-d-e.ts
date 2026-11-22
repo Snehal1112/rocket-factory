@@ -605,7 +605,7 @@ echo $?`,
         precondition: "Job 028 has run at least once.",
         command: `factory --project my-app tokens 028`,
         expected: `totals: input, cache_creation, output, cache_read and weighted <n> (<pct>% of <budget>)
-by role: builder, reviewer, committer, message and kb, each with runs, raw and weighted
+by role: builder, reviewer and kb, each with runs, raw and weighted (older jobs may also list committer and message runs)
 runs: one row per agent run, with the role, provider, round, turns and weighted tokens`,
         assert: "Totals, a by-role block and one row per agent run",
         notes:

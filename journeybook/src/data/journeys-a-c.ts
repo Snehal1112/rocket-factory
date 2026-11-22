@@ -600,7 +600,7 @@ Next plan: none`,
         assert: "Job created, and every agent of the job runs on opus",
         notes:
           "`factory new` refuses a blank model (`--model must not be blank`), a Fable model (`--model must not be a Fable model`) and a Claude model on a Codex project (`--model <name> is a Claude model, but this project runs Codex`).",
-        why: "The value is stored on the job card and carried to the later jobs of a series. Every agent of the job runs on it: the builder and its fix rounds, the reviewer, the committer, the merge message, the KB refresher and the helper agents they start. It replaces `builder_model`, `reviewer_model` and the other role models from `project.toml` for this job only.",
+        why: "The value is stored on the job card and carried to the later jobs of a series. Every agent of the job runs on it: the builder and its fix rounds, the reviewer, the KB refresher and the helper agents they start. It replaces `builder_model`, `reviewer_model` and the other role models from `project.toml` for this job only.",
         verify: {
           look: "The review ledger line reads `review model: opus (job model)`.",
         },

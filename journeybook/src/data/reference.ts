@@ -395,7 +395,7 @@ export const corrections: Correction[] = [
   {
     n: 6,
     claimed: "Only the builder, reviewer and committer spend tokens.",
-    actual: "The message-only committer run and the knowledge-base refresher spend tokens too.",
+    actual: "The driver writes commits and merge messages with no agent. The spec reviewer and the knowledge-base refresher spend tokens too.",
   },
   {
     n: 7,

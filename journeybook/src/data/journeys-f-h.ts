@@ -655,7 +655,7 @@ Transcripts: <state dir>/probes/<stamp>-claude`,
         expected: `(the same table with one row, builder, then the Skills seen line, and the Report and Transcripts lines)`,
         assert: "The table has one row, builder",
         notes:
-          "`--role` takes `builder`, `reviewer`, `spec-reviewer`, `committer` or `kb`. Repeat it for more than one role. It spends real tokens: one short turn for the role, at most 50,000 weighted tokens. A bad option value exits with code 2.",
+          "`--role` takes `builder`, `reviewer`, `spec-reviewer` or `kb`. Repeat it for more than one role. It spends real tokens: one short turn for the role, at most 50,000 weighted tokens. A bad option value exits with code 2.",
         why: "`--role` limits the probe to the roles you name. The default is all five.",
         after:
           "Leaves a report and a transcripts folder under `<state dir>/probes/`. Nothing else changes.",
