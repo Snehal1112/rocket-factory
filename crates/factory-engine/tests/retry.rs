@@ -291,6 +291,26 @@ fn retry_without_resume_or_park_json_refuses_with_the_kind_commands() {
 }
 
 #[test]
+fn retry_refusal_without_park_json_offers_without_review() {
+    let fx = common::approved_job();
+    park(&fx, factory_core::ParkKind::Other, None);
+    remove_park_file(&fx);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.set_review("code", factory_core::ReviewState::Pending);
+            Ok(())
+        })
+        .expect("review pending");
+    let text = refusal(&fx);
+    assert!(
+        text.contains("factory approve 001 --without-review"),
+        "{text}"
+    );
+    assert!(!text.contains("factory approve 001,"), "{text}");
+}
+
+#[test]
 fn retry_refuses_a_builder_park() {
     let fx = common::approved_job();
     park(&fx, factory_core::ParkKind::ChecksFailed, None);

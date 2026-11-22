@@ -304,7 +304,13 @@ impl ParkRecord {
 }
 
 /// The commands a park offers: those in `park.json`, else those of the board's park kind.
-pub fn park_commands(dir: &Path, id: &str, park_kind: Option<&str>) -> Vec<String> {
+pub fn park_commands(
+    dir: &Path,
+    id: &str,
+    park_kind: Option<&str>,
+    review_missing: bool,
+    verdict: Option<&str>,
+) -> Vec<String> {
     if let Some(record) = ParkRecord::read(dir) {
         if !record.next.is_empty() {
             return record.next;
@@ -313,14 +319,20 @@ pub fn park_commands(dir: &Path, id: &str, park_kind: Option<&str>) -> Vec<Strin
     park_kind
         .and_then(ParkKind::from_name)
         .unwrap_or(ParkKind::Other)
-        .next(id)
+        .next_for(id, review_missing, verdict)
 }
 
 /// The refusal for a retry of a parked job that has no resume stage, naming its next commands.
-pub fn no_resume_refusal(dir: &Path, id: &str, park_kind: Option<&str>) -> String {
+pub fn no_resume_refusal(
+    dir: &Path,
+    id: &str,
+    park_kind: Option<&str>,
+    review_missing: bool,
+    verdict: Option<&str>,
+) -> String {
     format!(
         "job {id} has no stage to retry at; use {}",
-        park_commands(dir, id, park_kind).join(", ")
+        park_commands(dir, id, park_kind, review_missing, verdict).join(", ")
     )
 }
 
@@ -362,8 +374,25 @@ mod tests {
     fn no_resume_refusal_joins_the_commands() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(
-            no_resume_refusal(dir.path(), "001", Some("nothing-changed")),
+            no_resume_refusal(dir.path(), "001", Some("nothing-changed"), false, None),
             "job 001 has no stage to retry at; use factory rework 001 <note>, factory cancel 001"
+        );
+    }
+
+    #[test]
+    fn fallback_commands_follow_the_review_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            park_commands(dir.path(), "001", Some("other"), true, None),
+            ParkKind::Other.next_for("001", true, None)
+        );
+        assert_eq!(
+            park_commands(dir.path(), "001", Some("other"), true, None),
+            vec![
+                "factory rework 001 <note>".to_string(),
+                "factory cancel 001".to_string(),
+                "factory approve 001 --without-review (the review has not run)".to_string(),
+            ]
         );
     }
 
@@ -374,7 +403,7 @@ mod tests {
         record.next = vec!["factory rework 001 <note>".to_string()];
         record.write(dir.path()).expect("write");
         assert_eq!(
-            park_commands(dir.path(), "001", Some("other")),
+            park_commands(dir.path(), "001", Some("other"), true, None),
             vec!["factory rework 001 <note>".to_string()]
         );
     }
@@ -390,7 +419,7 @@ mod tests {
         std::fs::write(broken.path().join(PARK_FILE), "not json").expect("write broken");
         for dir in [&empty, &no_next, &broken] {
             assert_eq!(
-                park_commands(dir.path(), "001", Some("nothing-changed")),
+                park_commands(dir.path(), "001", Some("nothing-changed"), false, None),
                 ParkKind::NothingChanged.next("001")
             );
         }
@@ -401,7 +430,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         for kind in [None, Some("nonsense")] {
             assert_eq!(
-                park_commands(dir.path(), "001", kind),
+                park_commands(dir.path(), "001", kind, false, None),
                 ParkKind::Other.next("001")
             );
         }

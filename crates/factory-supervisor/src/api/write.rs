@@ -1394,7 +1394,7 @@ mod tests {
         assert_eq!(code(&r), (409, "conflict".to_string()));
         assert_eq!(
             r.body["error"]["message"],
-            "job 001 has no stage to retry at; use factory approve 001, factory rework 001 <note>, factory cancel 001"
+            "job 001 has no stage to retry at; use factory rework 001 <note>, factory cancel 001, factory approve 001 --without-review (the review has not run)"
         );
         assert_eq!(queued(&f), 0);
     }

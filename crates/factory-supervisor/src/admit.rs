@@ -195,6 +195,8 @@ pub fn queue_retry(home: &Home, name: &str, raw_id: &str, now_ms: u64) -> Result
             &layout.job_dir(&job.dir),
             &id,
             job.park_kind.as_deref(),
+            job.review_missing(),
+            job.last_review.as_ref().map(|r| r.verdict.as_str()),
         )));
     };
     // An approval given before the park carries over, as in the engine.
@@ -451,7 +453,7 @@ mod tests {
         assert_eq!(
             err,
             Refusal::Conflict(
-                "job 001 has no stage to retry at; use factory approve 001, factory rework 001 <note>, factory cancel 001".into()
+                "job 001 has no stage to retry at; use factory rework 001 <note>, factory cancel 001, factory approve 001 --without-review (the review has not run)".into()
             )
         );
         assert!(queue::list(&home).is_empty());
