@@ -93,6 +93,7 @@ impl Repo {
     }
 
     /// The job worktree folder under `worktrees_dir()` that holds `path`.
+    /// The match is lexical: `..` is not resolved.
     pub fn worktree_root_of(&self, path: &Path) -> Option<PathBuf> {
         let rest = path.strip_prefix(&self.worktrees).ok()?;
         let first = rest.components().next()?;
@@ -112,6 +113,7 @@ impl Repo {
     }
 
     /// The paths with the project folder removed. Unchanged without a scope.
+    /// A path outside the project folder passes through unchanged.
     pub fn scoped_paths(&self, paths: &[String]) -> Vec<String> {
         match &self.subpath {
             Some(sub) => paths
