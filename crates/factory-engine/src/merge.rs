@@ -100,6 +100,35 @@ pub fn park_with_parts_resume(
     Ok(())
 }
 
+/// Sets the stage `factory retry` resumes at on a parked job, and rewrites `park.json` to match
+/// with a recomputed `next`. The kind, reason, round and evidence of the record stay. A missing
+/// record stays missing, because the board field is the source of truth.
+pub(crate) fn set_park_resume(
+    driver: &Driver,
+    id: &str,
+    resume: ResumeAt,
+) -> Result<(), EngineError> {
+    let job = driver.store().update_job(id, |job| {
+        if job.stage == Stage::NeedsHuman {
+            job.park_resume = Some(resume);
+        }
+        Ok(job.clone())
+    })?;
+    let dir = driver.job_dir(&job);
+    if let Some(mut record) = ParkRecord::read(&dir) {
+        record.resume = Some(resume);
+        record.next = next_with_resume(
+            record.kind,
+            id,
+            job.review_missing(),
+            job.last_review.as_ref().map(|r| r.verdict.as_str()),
+            Some(resume),
+        );
+        write_record(&dir, &record);
+    }
+    Ok(())
+}
+
 /// What went wrong in a soft step.
 enum StepFailure {
     Error(EngineError),

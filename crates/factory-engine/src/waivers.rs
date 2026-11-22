@@ -66,15 +66,17 @@ fn write_waivers(job_dir: &Path, list: &[Waiver]) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// Appends a waiver. The same head and review file as the last entry is a retry and adds nothing.
+/// Appends a waiver. The same head and review file as the last entry is a retry: it keeps that
+/// entry and takes only the new reason and time.
 pub fn record_waiver(job_dir: &Path, waiver: Waiver) -> Result<(), EngineError> {
     let mut list = read_waivers(job_dir);
-    if list.last().is_some_and(|last| {
-        !last.superseded && last.head == waiver.head && last.file == waiver.file
-    }) {
-        return Ok(());
+    match list.last_mut() {
+        Some(last) if !last.superseded && last.head == waiver.head && last.file == waiver.file => {
+            last.reason = waiver.reason;
+            last.at = waiver.at;
+        }
+        _ => list.push(waiver),
     }
-    list.push(waiver);
     write_waivers(job_dir, &list)
 }
 

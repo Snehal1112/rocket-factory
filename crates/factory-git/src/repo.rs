@@ -301,17 +301,9 @@ impl Repo {
         root: &str,
         entry: &git2::TreeEntry<'_>,
     ) -> Result<git2::TreeWalkResult> {
-        let name = entry
-            .name()
-            .ok_or_else(|| GitError::BadInput(format!("a path under {root:?} is not UTF-8")))?;
-        if name == ".git" {
+        let Some(name) = entry_name(entry.name(), root)? else {
             return Ok(git2::TreeWalkResult::Skip);
-        }
-        if matches!(name, "" | "." | "..") {
-            return Err(GitError::BadInput(format!(
-                "unsafe path component {name:?} under {root:?}"
-            )));
-        }
+        };
         let path = dest.join(root).join(name);
         match entry.filemode() {
             0o040000 => std::fs::create_dir_all(&path)?,
@@ -400,6 +392,24 @@ impl Repo {
     }
 }
 
+/// The name of a tree entry to write under `root`, or `None` to skip it.
+/// A non-UTF-8 name is refused. `.git` in any ASCII case is skipped, because case-insensitive
+/// filesystems would put it in the real `.git`. `""`, `.`, `..` and names holding `/`, `\` or
+/// `\0` are refused, since they could leave the export folder.
+fn entry_name<'a>(name: Option<&'a str>, root: &str) -> Result<Option<&'a str>> {
+    let name =
+        name.ok_or_else(|| GitError::BadInput(format!("a path under {root:?} is not UTF-8")))?;
+    if name.eq_ignore_ascii_case(".git") {
+        return Ok(None);
+    }
+    if matches!(name, "" | "." | "..") || name.contains(['/', '\\', '\0']) {
+        return Err(GitError::BadInput(format!(
+            "unsafe path component {name:?} under {root:?}"
+        )));
+    }
+    Ok(Some(name))
+}
+
 /// Sorted, deduplicated paths of a diff.
 pub(crate) fn paths_of(diff: &Diff<'_>) -> Vec<String> {
     let mut set = BTreeSet::new();
@@ -411,4 +421,44 @@ pub(crate) fn paths_of(diff: &Diff<'_>) -> Vec<String> {
         }
     }
     set.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entry_name_refuses_a_non_utf8_name() {
+        let err = entry_name(None, "src").expect_err("non-utf8");
+        assert!(err.to_string().contains("is not UTF-8"), "{err}");
+    }
+
+    #[test]
+    fn entry_name_skips_dot_git() {
+        for name in [".git", ".GIT", ".Git"] {
+            assert_eq!(entry_name(Some(name), "src").expect("skip"), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn entry_name_refuses_unsafe_names() {
+        for name in ["", ".", "..", "a/b", "a\\b", "a\0b"] {
+            let err = entry_name(Some(name), "src").expect_err(name);
+            assert!(
+                err.to_string().contains("unsafe path component"),
+                "{name:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn entry_name_accepts_a_plain_name() {
+        for name in ["main.rs", ".env", "a.b"] {
+            assert_eq!(
+                entry_name(Some(name), "src").expect("ok"),
+                Some(name),
+                "{name}"
+            );
+        }
+    }
 }

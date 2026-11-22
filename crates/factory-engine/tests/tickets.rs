@@ -836,6 +836,42 @@ fn two_follow_ups_with_the_same_title_file_two_tickets() {
     );
 }
 
+#[test]
+fn a_ref_inside_inline_code_is_not_closed() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_NONE), &t);
+    set_feature(&fx, "Fix the parser for `#42`, #76", None);
+    let report = tickets_step(&fx.driver, &fx.id, false).expect("step");
+    assert!(!report.failed, "{report:?}");
+    assert_eq!(t.count("comment 42"), 0);
+    assert_eq!(t.count("close 42"), 0);
+    assert_eq!(t.count("close 76"), 1);
+}
+
+#[test]
+fn intake_follow_ups_take_only_the_intake_issue_as_parent() {
+    let t = tracker();
+    let fx = merged(Some(SPEC_WITH_TWO), &t);
+    set_feature(&fx, "Fix https://github.com/o/r/issues/5 crash, #76", None);
+    set_intake_issue(&fx, 76);
+    let out = file_follow_ups(&fx.driver, &fx.id, &t, false).expect("file");
+    assert!(
+        !out.report.failed && !out.report.skipped,
+        "{:?}",
+        out.report
+    );
+    assert_eq!(t.count("labels_of 5"), 0);
+    assert_eq!(t.count("labels_of 76"), 1);
+    let s = t.state.lock().expect("lock");
+    assert!(
+        s.created
+            .iter()
+            .all(|c| c.1.contains("#76") && !c.1.contains("#5")),
+        "{:?}",
+        s.created
+    );
+}
+
 fn set_intake_issue(fx: &MergeFixture, issue: u32) {
     fx.driver
         .store()

@@ -285,6 +285,13 @@ test("a series-waiting park card offers retry and cancel but no approve", () => 
   assert.doesNotMatch(html, /factory approve/);
 });
 
+test("a checks-failed card with a resume offers retry and rework chips", () => {
+  const html = board.renderCard(makeJob({ stage: "needs-human", park_kind: "checks-failed", park_resume: "rereview" }));
+  assert.match(html, /factory retry 001/);
+  assert.match(html, /factory rework 001/);
+  assert.doesNotMatch(html, /factory approve/);
+});
+
 test("a series-waiting park in the needs-you list offers no approve", () => {
   const html = board.renderSummary(
     makeState([makeJob({ stage: "needs-human", park_kind: "series-waiting", park_resume: "build" })]),

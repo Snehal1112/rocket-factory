@@ -129,7 +129,10 @@
     if (!job || job.cancelled === true) return [];
     if (job.stage === "needs-human" && job.park_resume === "build" && job.park_kind === "series-waiting") return ["retry", "cancel"];
     if (job.stage === "needs-human" && job.park_resume === "build") return ["retry", "rework", "cancel"];
-    if (job.stage === "needs-human" && typeof job.park_resume === "string" && job.park_resume !== "") return ["retry", "approve", "cancel"];
+    const resumable = job.stage === "needs-human" && typeof job.park_resume === "string" && job.park_resume !== "";
+    // These kinds keep rework next to retry. It mirrors ParkKind::keeps_rework in crates/factory-core/src/park.rs.
+    if (resumable && ["machine-waiting", "builder-stopped", "checks-failed"].includes(job.park_kind)) return ["retry", "rework", "cancel"];
+    if (resumable) return ["retry", "approve", "cancel"];
     if (job.stage === "needs-human") return ["approve", "rework", "cancel"];
     if (job.stage === "approve") return ["approve", "cancel"];
     if (job.stage === "merged") return [];
