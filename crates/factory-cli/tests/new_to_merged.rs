@@ -1183,7 +1183,7 @@ fn rework_after_failing_checks_carries_the_checks() -> TestResult {
     sc.run(&["rework", "1", "fix the flag"])?;
     let text = std::fs::read_to_string(job_file(&sc, "changes-r2.md"))?;
     assert!(text.starts_with("fix the flag\n\n"), "{text}");
-    assert!(text.contains("FAIL test ! -f bad.flag"), "{text}");
+    assert!(text.contains("## test ! -f bad.flag (exit 1)"), "{text}");
     Ok(())
 }
 
