@@ -261,6 +261,7 @@ fn task_range(first: u32, count: usize) -> String {
 
 /// Cuts a plan into its header and task sections. `### Task N:` headings win over the checkbox form.
 /// With `as_headings`, checkbox task lines are written as `### Task N:` headings.
+/// A checked `- [x]` mark is dropped. The ledger, not the mark, says which tasks are done.
 /// `Next plan:` lines outside code fences are dropped.
 fn split_plan(text: &str, as_headings: bool) -> Split {
     let headings = parse_tasks(text);
@@ -648,6 +649,31 @@ mod tests {
             vec!["first", "second", "third", "fourth"]
         );
         assert!(got.text.contains("- [x] Task 4: fourth"), "{}", got.text);
+    }
+
+    #[test]
+    fn mixed_forms_write_checkbox_tasks_as_headings_with_a_warning() {
+        let a = "# A\n\n### Task 1: first\n\nNext plan: plan-02.md\n";
+        let b = "# B\n\n- [ ] Task 1: second\n\nNext plan: none\n";
+        let got = combine_plans(&two(a, b));
+        assert_eq!(got.tasks, 2);
+        assert!(got.text.contains("### Task 2: second"), "{}", got.text);
+        let warning = got
+            .warnings
+            .iter()
+            .find(|w| w.contains("its checkbox tasks are written as"))
+            .expect("a mixed-form warning");
+        assert!(warning.contains("plans/plan-02.md"), "{warning}");
+        assert_eq!(got.warnings.len(), 1, "{:?}", got.warnings);
+    }
+
+    #[test]
+    fn mixed_forms_drop_the_done_mark() {
+        let a = "# A\n\n### Task 1: first\n\nNext plan: plan-02.md\n";
+        let b = "# B\n\n- [x] Task 1: second\n\nNext plan: none\n";
+        let got = combine_plans(&two(a, b));
+        assert!(got.text.contains("### Task 2: second"), "{}", got.text);
+        assert!(!got.text.contains("[x]"), "{}", got.text);
     }
 
     #[test]

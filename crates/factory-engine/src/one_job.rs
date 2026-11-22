@@ -29,6 +29,16 @@ pub struct OneJob {
     pub notes: Vec<String>,
 }
 
+/// The refusal text when the combined plan holds a different number of tasks than `expected`.
+fn count_mismatch(text: &str, expected: usize) -> Option<String> {
+    let found = parse_checkbox_tasks(text).len();
+    (found != expected).then(|| {
+        format!(
+            "combining the plans failed: the combined plan has {found} tasks but {expected} were expected"
+        )
+    })
+}
+
 /// Creates one job for the whole plan chain. The guard runs first: an estimate over the budget needs consent.
 pub fn create_one_job(
     driver: &Driver,
@@ -116,12 +126,8 @@ pub fn create_one_job_accepting(
         texts.push((name, text));
     }
     let combined = combine_plans(&texts);
-    let found = parse_checkbox_tasks(&combined.text).len();
-    if found != combined.tasks {
-        return Err(EngineError::Msg(format!(
-            "combining the plans failed: the combined plan has {found} tasks but {} were expected",
-            combined.tasks
-        )));
+    if let Some(why) = count_mismatch(&combined.text, combined.tasks) {
+        return Err(EngineError::Msg(why));
     }
     let issues = factory_core::parse_issues(feature);
     let mut job = rolled_back(driver, |made| {
@@ -176,4 +182,24 @@ pub fn create_one_job_accepting(
         ));
     }
     Ok(OneJob { job, notes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_mismatch_names_both_counts() {
+        let text = "### Task 1: a\n\n### Task 2: b\n";
+        assert_eq!(
+            count_mismatch(text, 3).as_deref(),
+            Some("combining the plans failed: the combined plan has 2 tasks but 3 were expected")
+        );
+    }
+
+    #[test]
+    fn count_mismatch_is_none_when_the_counts_agree() {
+        let text = "### Task 1: a\n\n### Task 2: b\n";
+        assert!(count_mismatch(text, 2).is_none());
+    }
 }

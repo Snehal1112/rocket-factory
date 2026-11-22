@@ -110,6 +110,18 @@ fn parse_series_with_none_accepts_five_tasks() {
 }
 
 #[test]
+fn parse_series_with_a_cap_of_two_refuses_three_tasks() {
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-x.md", 2, "none");
+    let s = parse_series_with(d.path(), d.path(), Some(2)).expect("two tasks fit");
+    assert_eq!(s.plans[0].tasks, vec![1, 2]);
+    let d = tempfile::tempdir().expect("tmp");
+    plan(d.path(), "plan-01-x.md", 3, "none");
+    let e = parse_series_with(d.path(), d.path(), Some(2)).expect_err("three tasks");
+    assert!(matches!(e, SeriesError::TaskCount { found: 3, .. }), "{e}");
+}
+
+#[test]
 fn parse_series_with_none_still_refuses_zero_tasks() {
     let d = tempfile::tempdir().expect("tmp");
     plan(d.path(), "plan-01-a.md", 0, "none");
