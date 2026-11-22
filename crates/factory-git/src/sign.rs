@@ -291,6 +291,21 @@ mod tests {
         path.display().to_string()
     }
 
+    /// Signs "x", trying again while a parallel test's fork still holds the fresh script open for writing.
+    fn sign_retrying(signer: &Signer) -> Result<String, String> {
+        let mut result = signer.sign("x");
+        for _ in 0..20 {
+            match &result {
+                Err(reason) if reason.contains("Text file busy") => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    result = signer.sign("x");
+                }
+                _ => break,
+            }
+        }
+        result
+    }
+
     fn signer(format: SignFormat, program: String, key: &str, timeout: Duration) -> Signer {
         Signer {
             format,
@@ -366,7 +381,7 @@ mod tests {
         let program = script(dir.path(), "slow", "sleep 5");
         let s = signer(SignFormat::OpenPgp, program, "ABC", Duration::from_secs(1));
         let start = Instant::now();
-        let err = s.sign("x").expect_err("timeout");
+        let err = sign_retrying(&s).expect_err("timeout");
         assert_eq!(err, "signing timed out after 1 s");
         assert!(start.elapsed() < Duration::from_secs(3));
     }
@@ -376,7 +391,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let program = script(dir.path(), "junk", "cat >/dev/null; echo junk-signature");
         let s = signer(SignFormat::OpenPgp, program, "ABC", SIGN_TIMEOUT);
-        let err = s.sign("x").expect_err("no signature");
+        let err = sign_retrying(&s).expect_err("no signature");
         assert!(err.ends_with("made no signature"), "{err}");
     }
 
@@ -389,7 +404,7 @@ mod tests {
             "cat >/dev/null; echo '[GNUPG:] SIG_CREATED D 1 8 00 1 X' >&2; echo SIG",
         );
         let s = signer(SignFormat::OpenPgp, program, "ABC", SIGN_TIMEOUT);
-        assert_eq!(s.sign("x").expect("signature"), "SIG");
+        assert_eq!(sign_retrying(&s).expect("signature"), "SIG");
     }
 
     #[test]
@@ -401,7 +416,7 @@ mod tests {
             "echo \"gpg: signing failed: No pinentry\" >&2; echo \"[GNUPG:] FAILURE sign 67108949\" >&2; exit 2",
         );
         let s = signer(SignFormat::OpenPgp, program.clone(), "ABC", SIGN_TIMEOUT);
-        let err = s.sign("x").expect_err("failure");
+        let err = sign_retrying(&s).expect_err("failure");
         assert_eq!(
             err,
             format!("{program} exited with 2: gpg: signing failed: No pinentry")
@@ -423,7 +438,7 @@ mod tests {
             "key::ssh-ed25519 AAAA x",
             SIGN_TIMEOUT,
         );
-        s.sign("x").expect_err("failure");
+        sign_retrying(&s).expect_err("failure");
         let recorded = std::fs::read_to_string(&args).expect("args file");
         let words: Vec<&str> = recorded.split_whitespace().collect();
         let after_f = words
