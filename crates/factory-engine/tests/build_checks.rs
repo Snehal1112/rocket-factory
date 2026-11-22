@@ -1631,8 +1631,11 @@ fn a_rework_note_left_by_a_batch_goes_to_the_ledger_and_a_fix_round_uses_the_fin
     assert!(!fx.job_dir.join("rework-note.md").exists());
     let ledger = fx.ledger();
     assert!(
-        ledger.contains("rework note not sent to a builder")
-            && ledger.contains("please look at the batch"),
+        ledger.contains("rework note not sent to a builder because the old batch recovery ran no builder: please look at the batch"),
+        "{ledger}"
+    );
+    assert!(
+        !ledger.contains("because the batch commit ran no builder"),
         "{ledger}"
     );
     // A fix round now resumes with the findings file.

@@ -107,3 +107,30 @@ fn staged_tree_is_compares_the_index_with_a_commit() {
     repo.stage_all(&wt).expect("stage");
     assert!(!repo.staged_tree_is(&wt, &sha).expect("one more change"));
 }
+
+#[test]
+fn staged_tree_is_leaves_the_index_and_files_alone() {
+    let fx = Fixture::new();
+    let (repo, wt) = job_worktree(&fx);
+    let sha = commit_files(&inside(&wt), &[("one.txt", "1\n")], "add one").to_string();
+    std::fs::write(wt.path.join("two.txt"), "2\n").expect("write");
+    std::fs::write(wt.path.join("one.txt"), "changed\n").expect("edit");
+    let entries = |r: &Repository| -> Vec<(String, git2::Oid)> {
+        r.index()
+            .expect("index")
+            .iter()
+            .map(|e| (String::from_utf8_lossy(&e.path).into_owned(), e.id))
+            .collect()
+    };
+    let before = entries(&inside(&wt));
+    assert!(repo.staged_tree_is(&wt, &sha).expect("same tree"));
+    assert_eq!(entries(&inside(&wt)), before);
+    assert_eq!(
+        std::fs::read_to_string(wt.path.join("one.txt")).expect("one"),
+        "changed\n"
+    );
+    let status = inside(&wt)
+        .status_file(std::path::Path::new("two.txt"))
+        .expect("status");
+    assert!(status.contains(git2::Status::WT_NEW), "{status:?}");
+}

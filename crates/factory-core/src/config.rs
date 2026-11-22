@@ -1516,6 +1516,20 @@ mod tests {
     }
 
     #[test]
+    fn ignored_keys_in_lists_a_key_set_in_both_places_once() {
+        assert_eq!(
+            ignored_keys_in("commit_batch = false\n[settings]\ncommit_batch = true\n"),
+            ["commit_batch"]
+        );
+    }
+
+    #[test]
+    fn ignored_keys_in_skips_commented_keys() {
+        assert!(ignored_keys_in("# commit_model = \"x\"\nfix_rounds = 3\n").is_empty());
+        assert!(ignored_keys_in("[settings]\n# commit_batch = false\n").is_empty());
+    }
+
+    #[test]
     fn the_ignored_keys_are_not_serialized() {
         let text = toml::to_string(&Config::default()).expect("serialize");
         assert!(!text.contains("commit_"), "{text}");

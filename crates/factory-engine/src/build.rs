@@ -936,7 +936,7 @@ impl Engine<'_> {
         let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let kept: String = one_line.chars().take(300).collect();
         self.ruling(&format!(
-            "rework note not sent to a builder because the batch commit ran no builder: {kept}"
+            "rework note not sent to a builder because the old batch recovery ran no builder: {kept}"
         ))?;
         let _ = std::fs::remove_file(&path);
         Ok(())
