@@ -1310,7 +1310,7 @@ mod tests {
         assert_eq!(code(&r), (409, "conflict".to_string()));
         assert_eq!(
             r.body["error"]["message"],
-            "job 001 has no resume stage, see its park for the next command"
+            "job 001 has no stage to retry at; use factory approve 001, factory rework 001 <note>, factory cancel 001"
         );
         assert_eq!(queued(&f), 0);
     }

@@ -303,6 +303,27 @@ impl ParkRecord {
     }
 }
 
+/// The commands a park offers: those in `park.json`, else those of the board's park kind.
+pub fn park_commands(dir: &Path, id: &str, park_kind: Option<&str>) -> Vec<String> {
+    if let Some(record) = ParkRecord::read(dir) {
+        if !record.next.is_empty() {
+            return record.next;
+        }
+    }
+    park_kind
+        .and_then(ParkKind::from_name)
+        .unwrap_or(ParkKind::Other)
+        .next(id)
+}
+
+/// The refusal for a retry of a parked job that has no resume stage, naming its next commands.
+pub fn no_resume_refusal(dir: &Path, id: &str, park_kind: Option<&str>) -> String {
+    format!(
+        "job {id} has no stage to retry at; use {}",
+        park_commands(dir, id, park_kind).join(", ")
+    )
+}
+
 /// Longest board summary, in characters.
 const SUMMARY_CAP: usize = 160;
 
@@ -336,6 +357,55 @@ pub fn park_summary(reason: &str, parts: &[ParkPart]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_resume_refusal_joins_the_commands() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            no_resume_refusal(dir.path(), "001", Some("nothing-changed")),
+            "job 001 has no stage to retry at; use factory rework 001 <note>, factory cancel 001"
+        );
+    }
+
+    #[test]
+    fn park_commands_prefer_the_park_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut record = ParkRecord::new(ParkKind::Other, "r", "001", 1, 1, vec![]);
+        record.next = vec!["factory rework 001 <note>".to_string()];
+        record.write(dir.path()).expect("write");
+        assert_eq!(
+            park_commands(dir.path(), "001", Some("other")),
+            vec!["factory rework 001 <note>".to_string()]
+        );
+    }
+
+    #[test]
+    fn park_commands_fall_back_to_the_kind() {
+        let empty = tempfile::tempdir().expect("tempdir");
+        let no_next = tempfile::tempdir().expect("tempdir");
+        let mut record = ParkRecord::new(ParkKind::Other, "r", "001", 1, 1, vec![]);
+        record.next = vec![];
+        record.write(no_next.path()).expect("write");
+        let broken = tempfile::tempdir().expect("tempdir");
+        std::fs::write(broken.path().join(PARK_FILE), "not json").expect("write broken");
+        for dir in [&empty, &no_next, &broken] {
+            assert_eq!(
+                park_commands(dir.path(), "001", Some("nothing-changed")),
+                ParkKind::NothingChanged.next("001")
+            );
+        }
+    }
+
+    #[test]
+    fn park_commands_read_an_unknown_kind_as_other() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for kind in [None, Some("nonsense")] {
+            assert_eq!(
+                park_commands(dir.path(), "001", kind),
+                ParkKind::Other.next("001")
+            );
+        }
+    }
 
     #[test]
     fn summary_joins_the_first_two_lines() {
