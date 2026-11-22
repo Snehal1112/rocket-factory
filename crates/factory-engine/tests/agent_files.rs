@@ -163,8 +163,8 @@ fn scoped_two_task_fixture() -> Fixture {
 }
 
 /// Runs a scoped job to fix round 2 with failing checks, then runs the fix builder after
-/// `idle_secs` of idle time on a session that ended at 150000 tokens. Returns its spec.
-fn fix_builder_spec(idle_secs: u64) -> factory_agent::AgentSpec {
+/// `idle_secs` of idle time on a session that ended at 150000 tokens. Returns the fixture and its spec.
+fn fix_builder_spec(idle_secs: u64) -> (Fixture, factory_agent::AgentSpec) {
     let mut fx = scoped_fixture();
     fx.config.checks = vec![CheckRule {
         paths: vec!["**".into()],
@@ -190,7 +190,8 @@ fn fix_builder_spec(idle_secs: u64) -> factory_agent::AgentSpec {
     board.save(&fx.board_path).expect("save");
     let fix = Tagged::new(scripted(vec![write_effect("b.txt")]), 20_000);
     fx.engine(&fix).build_stage().expect("fix round");
-    fix.inner.last_spec_for("builder").expect("fix builder")
+    let spec = fix.inner.last_spec_for("builder").expect("fix builder");
+    (fx, spec)
 }
 
 #[test]
@@ -232,12 +233,20 @@ fn every_builder_and_the_reviewer_start_in_the_project_folder() {
     assert_eq!(spec.cwd, wt_dir(&fx), "task resume builder");
 
     // The resumed and the fresh fix builders.
-    let spec = fix_builder_spec(0);
+    let (fx, spec) = fix_builder_spec(0);
     assert!(spec.resume.is_some(), "a warm session resumes");
-    assert!(spec.cwd.ends_with("apps/web"), "resumed fix builder");
-    let spec = fix_builder_spec(1_000);
+    assert_eq!(
+        spec.cwd,
+        worktree(&fx).join("apps/web"),
+        "resumed fix builder"
+    );
+    let (fx, spec) = fix_builder_spec(1_000);
     assert_eq!(spec.resume, None);
-    assert!(spec.cwd.ends_with("apps/web"), "fresh fix builder");
+    assert_eq!(
+        spec.cwd,
+        worktree(&fx).join("apps/web"),
+        "fresh fix builder"
+    );
 
     // The reviewer runs in the project folder, and its prompt names the worktree root.
     let fx = scoped_fixture();

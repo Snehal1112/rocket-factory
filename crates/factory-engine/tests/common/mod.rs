@@ -814,12 +814,42 @@ impl SeriesFixture {
 /// Moves main to `head` by hand, as a person merging outside the driver would.
 pub fn merge_by_hand(fx: &MergeFixture) -> String {
     let repo = Repository::open(&fx.main).expect("open");
-    let oid = git2::Oid::from_str(&fx.head).expect("oid");
+    move_main_to(&repo, git2::Oid::from_str(&fx.head).expect("oid"));
+    fx.head.clone()
+}
+
+/// Points main at `oid` and checks it out, so the index and the folder follow.
+fn move_main_to(repo: &Repository, oid: git2::Oid) {
     repo.reference("refs/heads/main", oid, true, "hand merge")
         .expect("move main");
     repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
         .expect("checkout");
-    fx.head.clone()
+}
+
+/// Merges the job head into main with a merge commit, as a person would. Returns its sha.
+pub fn merge_by_hand_no_ff(fx: &MergeFixture) -> String {
+    let repo = Repository::open(&fx.main).expect("open");
+    let head = repo
+        .find_commit(git2::Oid::from_str(&fx.head).expect("oid"))
+        .expect("head commit");
+    let tip = repo
+        .revparse_single("main")
+        .expect("main")
+        .peel_to_commit()
+        .expect("main commit");
+    let sig = Signature::now("t", "t@example.com").expect("sig");
+    let oid = repo
+        .commit(
+            None,
+            &sig,
+            &sig,
+            "hand merge",
+            &head.tree().expect("tree"),
+            &[&tip, &head],
+        )
+        .expect("merge commit");
+    move_main_to(&repo, oid);
+    oid.to_string()
 }
 
 /// Records `sha` as the reviewed head.

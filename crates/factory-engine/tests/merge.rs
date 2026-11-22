@@ -81,6 +81,17 @@ fn a_scoped_job_with_a_merged_base_resumes() {
 }
 
 #[test]
+fn a_scoped_job_merged_with_a_merge_commit_resumes() {
+    let fx = common::approved_scoped_job(&["apps/web/a.txt"]);
+    let merge = common::merge_by_hand_no_ff(&fx);
+    let later = common::commit_file(&fx.main, "apps/api/later.txt", "x");
+    assert_ne!(later, merge);
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert_eq!(r, MergeResult::Merged(later.clone()));
+    assert_eq!(common::main_tip(&fx.main), later);
+}
+
+#[test]
 fn a_moved_branch_tip_parks_without_merging() {
     let fx = common::approved_job();
     common::commit_file(&common::worktree_of(&fx), "late.txt", "x");

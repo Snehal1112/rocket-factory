@@ -783,7 +783,7 @@ mod tests {
         let e = env();
         let retired = "factory-committer.md";
         let preset = e.home.presets_dir().join("rust/agents").join(retired);
-        std::fs::write(preset, "preset committer").expect("write");
+        std::fs::write(preset, "preset committer\n## Report\nx\n").expect("write");
         let own = e.home.project_dir("p").join("agents").join(retired);
         std::fs::write(own, "project committer").expect("write");
         let mut tip = Tip::default();
