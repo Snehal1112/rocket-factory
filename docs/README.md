@@ -8,7 +8,7 @@ Start here. Find the question you have, open that one doc. Paths are relative to
 |---|---|
 | How do I install the factory and run my first feature? | `guides/getting-started.md` |
 | What is every command, option and recipe, in plain words? | `guides/factory-user-guide.md` |
-| How does the pipeline work: stages, job model, gates, merge rules, dashboard? | `reference/software-factory.md` |
+| How does the pipeline work: stages, job model, gates, merge rules, dashboard? | `reference/software-factory.md`; for the dashboard modes and flags, `../dashboard/README.md` |
 | What can I set in `project.toml`, with defaults and validation? | `reference/project-toml-reference.md` |
 | Which flags does each `factory` and `factoryd` command take? | `reference/factory-admin-manual.md` |
 | How do I cut a release? | `operations/releasing.md` |
