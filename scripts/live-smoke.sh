@@ -304,8 +304,13 @@ interactive_step() {
     echo -e "${BLUE}Driving claude in tmux...${NC}"
     mkdir -p "$out/interactive"
     session="factory-smoke-$$"
+    # The /factory command calls factory on PATH, so a binary given by path goes first on PATH.
+    path_prefix=""
+    case "$FACTORY_BIN" in
+    */*) path_prefix="PATH=$(cd "$(dirname "$FACTORY_BIN")" && pwd):$PATH " ;;
+    esac
     "$TMUX_BIN" new-session -d -s "$session" -x 200 -y 50 -c "$repo" \
-        "env FACTORY_HOME=$FACTORY_HOME claude"
+        "env FACTORY_HOME=$FACTORY_HOME ${path_prefix}claude"
     wait_for 'trust this folder|\? for shortcuts' "the claude prompt"
     if pane | grep -qi 'trust this folder'; then
         "$TMUX_BIN" send-keys -t "$session" Enter
