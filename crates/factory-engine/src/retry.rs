@@ -36,6 +36,8 @@ fn retry_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
             &driver.job_dir(&job),
             &job.id,
             job.park_kind.as_deref(),
+            job.review_missing(),
+            job.last_review.as_ref().map(|r| r.verdict.as_str()),
         )));
     };
     let word = resume.as_str();
