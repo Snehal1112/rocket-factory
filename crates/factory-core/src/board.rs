@@ -17,6 +17,9 @@ pub enum ReviewState {
     Skipped,
     /// The reviewer run failed or stalled before it gave a verdict. It counts as no verdict yet.
     Failed,
+    /// A state this version does not know, such as one a newer binary wrote. It counts as no verdict.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Token totals of one job, summed over its agent runs. New in v3, absent in v1 boards.
@@ -1000,6 +1003,39 @@ mod tests {
         assert!(j.review_missing(), "a fix round resets the verdict");
         j.reviews.clear();
         assert!(j.review_missing(), "an absent review is missing too");
+    }
+
+    #[test]
+    fn an_unknown_review_state_loads_as_unknown() {
+        let state: ReviewState = serde_json::from_str("\"reviewing\"").expect("parse");
+        assert_eq!(state, ReviewState::Unknown);
+    }
+
+    #[test]
+    fn an_unknown_review_state_counts_as_missing() {
+        let mut j = Job::new("001", "d", "s", "2026-11-22", "f", 1.0);
+        j.set_review("code", ReviewState::Unknown);
+        assert!(j.review_missing());
+        assert_eq!(j.missing_reviews(), vec!["code"]);
+    }
+
+    #[test]
+    fn known_review_states_round_trip() {
+        for (state, word) in [
+            (ReviewState::Pending, "\"pending\""),
+            (ReviewState::Running, "\"running\""),
+            (ReviewState::Pass, "\"pass\""),
+            (ReviewState::Changes, "\"changes\""),
+            (ReviewState::Skipped, "\"skipped\""),
+            (ReviewState::Failed, "\"failed\""),
+            (ReviewState::Unknown, "\"unknown\""),
+        ] {
+            assert_eq!(serde_json::to_string(&state).expect("write"), word);
+            assert_eq!(
+                serde_json::from_str::<ReviewState>(word).expect("read"),
+                state
+            );
+        }
     }
 
     fn fresh_job() -> Job {
