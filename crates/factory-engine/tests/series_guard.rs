@@ -69,8 +69,104 @@ fn plan_two_parks_when_plan_one_was_cancelled() {
         panic!("expected a park, got {end:?}");
     };
     assert!(reason.contains(&one), "{reason}");
-    assert!(reason.contains("cancel this plan too"), "{reason}");
+    assert!(
+        reason.contains("cancel this plan, or replace plan 1 with factory new --replaces"),
+        "{reason}"
+    );
+    assert!(reason.contains(&format!("--replaces {one}")), "{reason}");
     assert_waiting(&fx, &two);
+}
+
+/// Cancels `id` and adds a new job at its series place with plan file `plan`. Returns the new id.
+/// The job is made from a lone plan, so `create_job` does not walk the chain behind `plan`.
+fn stand_in(fx: &SeriesFixture, id: &str, plan: &Path) -> String {
+    let old = fx.driver.job(id).expect("job");
+    fx.driver
+        .store()
+        .update_job(id, |j| {
+            j.cancelled = true;
+            j.set_stage(Stage::NeedsHuman, Some("cancelled"), true, 2.0)
+        })
+        .expect("cancel");
+    let lone = lone_plan(fx, &format!("stand-in-{id}"));
+    let made = create_job(&fx.driver, "fixed", "fixed plan", Some(&lone), None).expect("create");
+    let mut pos = old.series.expect("series");
+    pos.plan_file = plan.to_string_lossy().into_owned();
+    fx.driver
+        .store()
+        .update_job(&made.id, |j| {
+            j.series = Some(pos.clone());
+            Ok(())
+        })
+        .expect("series");
+    made.id
+}
+
+#[test]
+fn series_guard_prefers_the_replacement_of_a_cancelled_plan() {
+    let fx = SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let (one, two) = two_plans(&fx);
+    let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+    let new_one = stand_in(&fx, &one, &fixed);
+    assert_eq!(run_job(&fx.driver, &new_one).expect("run"), RunEnd::Merged);
+    assert_eq!(
+        run_series(&fx.driver, &two).expect("series"),
+        RunEnd::Merged,
+        "{}",
+        ledger_of(&fx, &two)
+    );
+}
+
+#[test]
+fn run_series_finds_a_replacement_at_a_new_path_after_the_plan_before_merges() {
+    let fx = SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let (one, two) = two_plans(&fx);
+    let fixed = fx.plan_file("plan-02-fixed.md", 1, "none");
+    let new_two = stand_in(&fx, &two, &fixed);
+    assert_eq!(
+        run_series(&fx.driver, &one).expect("series"),
+        RunEnd::Merged
+    );
+    assert_eq!(fx.driver.job(&new_two).expect("job").stage, Stage::Merged);
+    assert!(fx.driver.job(&two).expect("job").cancelled);
+    assert_eq!(
+        fx.driver.store().load().expect("board").jobs.len(),
+        3,
+        "no job made for the old plan 2"
+    );
+}
+
+#[test]
+fn run_series_continues_the_next_plan_after_a_replacement_merges() {
+    let fx = SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let (one, two) = two_plans(&fx);
+    let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+    let new_one = stand_in(&fx, &one, &fixed);
+    assert_eq!(
+        run_series(&fx.driver, &new_one).expect("series"),
+        RunEnd::Merged
+    );
+    assert_eq!(fx.driver.job(&two).expect("job").stage, Stage::Merged);
+}
+
+#[test]
+fn run_series_stops_when_the_next_plan_is_cancelled() {
+    let fx = SeriesFixture::new("fine\nVERDICT: APPROVE");
+    let (one, two) = two_plans(&fx);
+    fx.driver
+        .store()
+        .update_job(&two, |j| {
+            j.cancelled = true;
+            j.set_stage(Stage::NeedsHuman, Some("cancelled"), true, 2.0)
+        })
+        .expect("cancel");
+    assert_eq!(
+        run_series(&fx.driver, &one).expect("series"),
+        RunEnd::Merged
+    );
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 2, "no new job for a cancelled plan");
+    assert!(fx.driver.job(&two).expect("job").cancelled);
 }
 
 #[test]

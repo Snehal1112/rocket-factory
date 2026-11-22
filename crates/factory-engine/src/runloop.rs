@@ -786,11 +786,17 @@ pub fn run_series(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
         // Resume: the next job may already exist from an earlier run.
         let board = driver.store().load()?;
         let next_name = next.to_string_lossy().into_owned();
-        let existing = board.jobs.iter().find(|j| {
-            j.series.as_ref().is_some_and(|s| {
-                s.id == pos.id && s.plan_file == next_name && s.index == pos.index + 1
-            })
-        });
+        let existing = match pos.id.as_deref() {
+            Some(sid) => board.series_member(sid, pos.index + 1),
+            None => board.jobs.iter().find(|j| {
+                j.series.as_ref().is_some_and(|s| {
+                    s.id.is_none() && s.plan_file == next_name && s.index == pos.index + 1
+                })
+            }),
+        };
+        if existing.is_some_and(|j| j.cancelled) {
+            return Ok(RunEnd::Merged);
+        }
         current = match existing {
             Some(j) => j.id.clone(),
             None => {
