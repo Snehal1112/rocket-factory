@@ -90,12 +90,20 @@ In `stage_follow_ups`, after the `skip_intake` check, a job whose `intake_issue`
 
 Two changes in `sync_requested_by` (`crates/factory-engine/src/sync.rs`).
 
-**The park records where to resume.** Where a requested sync parks (`if let SyncOutcome::Parked(reason, kind)`), a park after a whole-branch reset records `ResumeAt::Rereview`:
+**The park records where to resume.** Where a requested sync parks (`if let SyncOutcome::Parked(reason, kind)`), the park call stays as it is. Then, when `whole_branch` is true, the job's resume stage is set to `Rereview` in one more write:
 
 ```rust
-let resume = if whole_branch { Some(ResumeAt::Rereview) } else { kind.resume() };
-crate::merge::park_with_parts_resume(driver, id, reason, kind, Vec::new(), resume)?;
+crate::merge::park_with_parts(driver, id, reason, kind, Vec::new())?;
+if whole_branch {
+    driver.store().update_job(id, |j| {
+        j.park_resume = Some(ResumeAt::Rereview);
+        Ok(())
+    })?;
+}
 ```
+
+- This write comes last, so it also wins over a park that the checks stage wrote earlier in the same run. `park_with_parts` keeps such a park's kind, evidence and resume stage (`crates/factory-engine/src/merge.rs:66-74`, "a failed check in the sync"). For example, checks that fail with no fix rounds left park as `ChecksFailed`, whose resume stage is `None`.
+- The park's kind, reason and evidence are not changed.
 
 **The early `UpToDate` return skips unfinished sync parks:**
 
@@ -144,6 +152,7 @@ Example: sync 1 merges main and its check fails, so the job parks with resume `R
 | sync again on a parked job whose reviews all have verdicts (`Pass`, `Changes`, `Skipped`) | `UpToDate`, as today |
 | sync on a job parked during build (resume `Build`, review `Pending`) | `UpToDate`, resume stage kept |
 | `factory retry` after a sync park | resumes at re-review |
+| sync whose checks fail with no fix rounds left (the checks stage parks first) | resume `Rereview`; the next sync reviews the whole branch |
 | non-intake job | parents from the feature text, as today |
 | waiver write fails | error, job stays in needs-human |
 | approve retry with a new reason | `waivers.json` holds the new reason, still one entry |
@@ -160,7 +169,7 @@ Example: sync 1 merges main and its check fails, so the job parks with resume `R
 - `entry_name_refuses_a_non_utf8_name`, `entry_name_skips_dot_git`, `entry_name_refuses_unsafe_names`, `entry_name_accepts_a_plain_name`.
 
 `crates/factory-engine/tests/sync_review.rs`:
-- `a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun`, `a_parked_job_with_only_verdicts_stays_up_to_date`, `a_build_parked_job_stays_up_to_date_on_sync`, `a_sync_park_resumes_at_rereview`.
+- `a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun`, `a_parked_job_with_only_verdicts_stays_up_to_date`, `a_build_parked_job_stays_up_to_date_on_sync`, `a_sync_park_resumes_at_rereview`, `a_sync_parked_by_its_checks_resumes_at_rereview`.
 - Existing test change: `an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage` sets the code review to `Pass` before each stage, because a `Pending` review in Review or NeedsHuman now reruns.
 - `sync_requested_on_an_up_to_date_job_changes_nothing` (existing) keeps pinning the approved, up-to-date case.
 
@@ -209,7 +218,7 @@ cargo test -j4 -p factory-cli --test operator_events
 - A feature text with `` `#42` `` makes the ticket step comment on and close nothing for 42.
 - `entry_name` refuses `""`, `.`, `..` and names with `/`, `\` or `\0`, skips `.git` and refuses a non-UTF-8 name.
 - When intake files follow-ups, only `intake_issue` is a parent: labels, footer and the other-repo skip ignore issue refs in the title.
-- A requested sync that parks after its whole-branch reset records resume `Rereview`.
+- A requested sync that parks after its whole-branch reset leaves the job with resume `Rereview`, also when the checks stage parked it first in the same run.
 - A requested sync on a job in review, or parked with resume `Rereview`, that has a `Pending`, `Running` or `Failed` review runs the checks and the whole-branch review instead of returning `UpToDate`.
 - An approved up-to-date job, a parked job whose reviews all have verdicts, and a job parked during build still get `UpToDate`.
 - A failed waiver write leaves the job in needs-human.
@@ -234,5 +243,6 @@ cargo test -j4 -p factory-cli --test operator_events
 - Fix every open item of issues 57, 70, 79, 80 and 24 in this spec, one job, no follow-up tickets. Decided by: user
 - Which reviews make a requested sync rerun? Options: only `Pending`, `Running` or `Failed`; the same but never in build; any review not `Pass`. Chosen: only `Pending`, `Running` or `Failed`. Decided by: user
 - How is a stopped sync told apart from a job parked during build, which also has a pending review? Options: mark the sync park with resume `Rereview` and rerun only those, fix only `retry`. Chosen: mark the sync park; both `factory sync` and `factory retry` then finish it. Decided by: user
+- How does the sync's `Rereview` win over a park the checks stage wrote first? Options: set `park_resume` after the park, pass a resume override into the checks stage. Chosen: set it after the park, leaving kind, reason and evidence alone. Decided by: user
 - The export name rule becomes a pure function so the unreachable tree names can be tested. Decided by: call
 - What does a second `factory sync` do after a sync that merged and then stopped? Options: rerun when reviews are unfinished, keep `UpToDate` and test `retry`. Chosen: rerun when reviews are unfinished. Decided by: user
