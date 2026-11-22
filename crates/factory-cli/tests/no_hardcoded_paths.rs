@@ -29,15 +29,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn no_source_names_a_state_path_or_the_main_branch() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut hits = Vec::new();
-    for name in [
-        "factory-engine",
-        "factory-git",
-        "factory-cli",
-        "factory-agent",
-        "factory-checks",
-        "factory-core",
-        "factory-supervisor",
-    ] {
+    for name in workspace_crates() {
         let mut files = Vec::new();
         rust_files(&crates.join(name).join("src"), &mut files);
         for file in files {
@@ -50,20 +42,7 @@ fn no_source_names_a_state_path_or_the_main_branch() {
                 continue;
             }
             let text = std::fs::read_to_string(&file).expect("read");
-            // Everything from the first test module on is test code.
-            let code = text.split("#[cfg(test)]").next().unwrap_or("");
-            for (n, line) in code.lines().enumerate() {
-                let t = line.trim_start();
-                if t.starts_with("//") {
-                    continue;
-                }
-                if line.contains("\".superpowers")
-                    || line.contains("\".claude")
-                    || line.contains("\"main\"")
-                {
-                    hits.push(format!("{rel}:{}: {}", n + 1, t));
-                }
-            }
+            hits.extend(path_hits(&rel, &text));
         }
     }
     assert!(
@@ -84,7 +63,11 @@ fn root_text(rel: &str) -> String {
 
 /// The crate names in the `members` block of the root `Cargo.toml`, read as text.
 fn workspace_crates() -> Vec<String> {
-    let manifest = root_text("Cargo.toml");
+    crates_in(&root_text("Cargo.toml"))
+}
+
+/// The crate names in the `members` block of a manifest. A member outside `crates/` panics.
+fn crates_in(manifest: &str) -> Vec<String> {
     let members = manifest
         .split("members = [")
         .nth(1)
@@ -94,7 +77,15 @@ fn workspace_crates() -> Vec<String> {
         .lines()
         .filter_map(|line| {
             let path = line.trim().trim_end_matches(',').trim_matches('"');
-            path.strip_prefix("crates/").map(str::to_string)
+            if path.is_empty() {
+                return None;
+            }
+            match path.strip_prefix("crates/") {
+                Some(name) => Some(name.to_string()),
+                None => {
+                    panic!("workspace member {path} is not under crates/; update workspace_crates")
+                }
+            }
         })
         .collect();
     assert!(
@@ -126,13 +117,60 @@ fn ci_and_release_list_every_workspace_crate() {
     }
 }
 
-/// The non-comment lines before the test module that hold a `/proc` string literal.
+/// The lines outside test items, with their 1-based numbers.
+///
+/// A line that is exactly `#[cfg(test)]` after trimming starts a test item. An item whose first
+/// line ends in `;` is that one line. A braced item ends at the first later line that is the
+/// attribute's indentation followed by `}`, the layout rustfmt gives every file.
+fn production_lines(text: &str) -> Vec<(usize, &str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut kept = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        if line.trim() != "#[cfg(test)]" {
+            kept.push((i + 1, line));
+            i += 1;
+            continue;
+        }
+        let indent = &line[..line.len() - line.trim_start().len()];
+        let close = format!("{indent}}}");
+        if lines
+            .get(i + 1)
+            .is_some_and(|next| next.trim().ends_with(';'))
+        {
+            i += 2;
+        } else {
+            i += 1;
+            while i < lines.len() && lines[i] != close {
+                i += 1;
+            }
+            i += 1;
+        }
+    }
+    kept
+}
+
+/// The non-comment production lines that hold a `/proc` string literal.
 fn proc_lines(text: &str) -> Vec<String> {
-    // Everything from the first test module on is test code.
-    let code = text.split("#[cfg(test)]").next().unwrap_or("");
-    code.lines()
-        .filter(|line| !line.trim_start().starts_with("//") && line.contains("\"/proc"))
-        .map(|line| line.trim_start().to_string())
+    production_lines(text)
+        .into_iter()
+        .filter(|(_, line)| !line.trim_start().starts_with("//") && line.contains("\"/proc"))
+        .map(|(_, line)| line.trim_start().to_string())
+        .collect()
+}
+
+/// The production lines of one file that name a state path or the main branch.
+fn path_hits(rel: &str, text: &str) -> Vec<String> {
+    production_lines(text)
+        .into_iter()
+        .filter(|(_, line)| {
+            !line.trim_start().starts_with("//")
+                && (line.contains("\".superpowers")
+                    || line.contains("\".claude")
+                    || line.contains("\"main\""))
+        })
+        .map(|(n, line)| format!("{rel}:{n}: {}", line.trim_start()))
         .collect()
 }
 
@@ -140,6 +178,44 @@ fn proc_lines(text: &str) -> Vec<String> {
 fn the_proc_lint_catches_a_proc_literal() {
     let src = "//! Reads nothing from /proc.\nfn f() { let _ = std::fs::read(\"/proc/self/stat\"); }\n#[cfg(test)]\nmod tests { const P: &str = \"/proc/1\"; }\n";
     assert_eq!(proc_lines(src).len(), 1);
+}
+
+#[test]
+fn the_proc_lint_catches_a_read_after_an_early_test_use() {
+    let src = "#[cfg(test)]\nuse x;\nfn f() { let _ = std::fs::read(\"/proc/self/stat\"); }\n";
+    assert_eq!(proc_lines(src).len(), 1);
+}
+
+#[test]
+fn the_paths_lint_catches_main_after_an_early_test_use() {
+    let src = "#[cfg(test)]\nuse x;\nconst B: &str = \"main\";\n";
+    assert_eq!(
+        path_hits("a/src/x.rs", src),
+        ["a/src/x.rs:3: const B: &str = \"main\";"]
+    );
+}
+
+#[test]
+fn production_lines_drops_only_test_items() {
+    let src = "#[cfg(test)]\nuse x::y;\nfn keep_one() {}\nconst S: &str = \"#[cfg(test)]\";\n#[cfg(test)]\nmod tests {\n    fn t() { let a = \"}\"; let b = \"{\"; }\n}\nfn keep_two() {}\n";
+    let kept = production_lines(src);
+    let texts: Vec<&str> = kept.iter().map(|(_, line)| *line).collect();
+    let numbers: Vec<usize> = kept.iter().map(|(n, _)| *n).collect();
+    assert_eq!(
+        texts,
+        [
+            "fn keep_one() {}",
+            "const S: &str = \"#[cfg(test)]\";",
+            "fn keep_two() {}"
+        ]
+    );
+    assert_eq!(numbers, [3, 4, 9]);
+}
+
+#[test]
+#[should_panic(expected = "is not under crates/")]
+fn a_member_outside_crates_panics() {
+    crates_in("members = [\n    \"crates/a\",\n    \"tools/x\",\n]\n");
 }
 
 #[test]
