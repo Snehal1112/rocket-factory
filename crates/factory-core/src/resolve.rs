@@ -6,14 +6,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::layout::is_agent_file_name;
+use crate::layout::{
+    is_agent_file_name, FACTORY_AGENTS_REL_DIR, FACTORY_OVERRIDE_REL_FILE, FACTORY_RISK_GLOB,
+};
 use crate::project::{self, ProjectFile};
 use crate::{Config, CoreError, Home, Layout};
-
-const OVERRIDE_FILE: &str = ".factory/override.toml";
-pub(crate) const AGENTS_DIR: &str = ".factory/agents";
-/// Always a risk path, so a repo cannot change its own factory settings without review.
-const FACTORY_RISK: &str = ".factory/**";
 
 /// Reads committed files from the tip of the base branch.
 pub trait BaseTipFiles {
@@ -143,18 +140,20 @@ fn merged_config(
     };
     let mut checks = tables(table.get("checks"), "checks", problems);
 
-    match tip.read_file(OVERRIDE_FILE) {
+    match tip.read_file(FACTORY_OVERRIDE_REL_FILE) {
         Err(e) => problems.push(format!(
-            "cannot read {OVERRIDE_FILE} from the base branch: {e}"
+            "cannot read {FACTORY_OVERRIDE_REL_FILE} from the base branch: {e}"
         )),
         Ok(None) => {}
         Ok(Some(text)) => match toml::from_str::<toml::Table>(&text) {
-            Err(e) => problems.push(format!("{OVERRIDE_FILE} is not valid TOML: {e}")),
+            Err(e) => problems.push(format!(
+                "{FACTORY_OVERRIDE_REL_FILE} is not valid TOML: {e}"
+            )),
             Ok(over) => {
                 for key in over.keys() {
                     if key != "risk_paths" && key != "checks" {
                         problems.push(format!(
-                            "{OVERRIDE_FILE} may only set risk_paths and checks, not {key:?}"
+                            "{FACTORY_OVERRIDE_REL_FILE} may only set risk_paths and checks, not {key:?}"
                         ));
                     }
                 }
@@ -168,7 +167,7 @@ fn merged_config(
         },
     }
 
-    risk.push(FACTORY_RISK.to_string());
+    risk.push(FACTORY_RISK_GLOB.to_string());
     let mut seen = Vec::new();
     risk.retain(|r| {
         if seen.contains(r) {
@@ -292,15 +291,15 @@ fn merged_agents(
         note_drift(&preset_files, n, content, &file.preset, notes);
     }
     by_name.extend(own_files);
-    match tip.list_dir(AGENTS_DIR) {
+    match tip.list_dir(FACTORY_AGENTS_REL_DIR) {
         Err(e) => problems.push(format!(
-            "cannot read {AGENTS_DIR} from the base branch: {e}"
+            "cannot read {FACTORY_AGENTS_REL_DIR} from the base branch: {e}"
         )),
         Ok(files) => {
             for (n, content) in files {
                 if n.contains('/') || n.contains('\\') || n.contains("..") {
                     problems.push(format!(
-                        "agent file name {n:?} in {AGENTS_DIR} is not valid"
+                        "agent file name {n:?} in {FACTORY_AGENTS_REL_DIR} is not valid"
                     ));
                 } else if n.ends_with(".md") {
                     note_retired(&n, "the base branch", notes);
@@ -342,7 +341,8 @@ mod tests {
     impl Tip {
         fn with_override(text: &str) -> Tip {
             let mut t = Tip::default();
-            t.files.insert(OVERRIDE_FILE.to_string(), text.to_string());
+            t.files
+                .insert(FACTORY_OVERRIDE_REL_FILE.to_string(), text.to_string());
             t
         }
     }
@@ -409,7 +409,7 @@ mod tests {
         let mut want = preset_config(&e);
         want.base_branch = "v-4.0.0".into();
         want.cache_ttl = Some("5m".into());
-        want.risk_paths.push(FACTORY_RISK.into());
+        want.risk_paths.push(FACTORY_RISK_GLOB.into());
         assert_eq!(r.config, want);
         let names: Vec<&str> = r.agents.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(
@@ -450,7 +450,7 @@ mod tests {
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert_eq!(r.config.diff_cap_lines, 123);
-        assert_eq!(r.config.risk_paths, ["only/**", FACTORY_RISK]);
+        assert_eq!(r.config.risk_paths, ["only/**", FACTORY_RISK_GLOB]);
     }
 
     #[test]
@@ -522,7 +522,7 @@ mod tests {
             r.config
                 .risk_paths
                 .iter()
-                .filter(|p| *p == FACTORY_RISK)
+                .filter(|p| *p == FACTORY_RISK_GLOB)
                 .count()
         };
         assert_eq!(
@@ -633,7 +633,9 @@ mod tests {
         let r = resolve(&e.home, "p", &tip).expect("resolve");
         assert_fail_closed(&r);
         assert!(
-            r.problems.iter().any(|p| p.contains(OVERRIDE_FILE)),
+            r.problems
+                .iter()
+                .any(|p| p.contains(FACTORY_OVERRIDE_REL_FILE)),
             "{:?}",
             r.problems
         );
@@ -717,7 +719,7 @@ mod tests {
         let e = env();
         let mut tip = Tip::default();
         tip.dirs.insert(
-            AGENTS_DIR.to_string(),
+            FACTORY_AGENTS_REL_DIR.to_string(),
             vec![("factory-code-reviewer.md".into(), "old\n".into())],
         );
         let r = resolve(&e.home, "p", &tip).expect("resolve");
@@ -750,7 +752,7 @@ mod tests {
         std::fs::write(own.join("notes.txt"), "ignored").expect("write");
         let mut tip = Tip::default();
         tip.dirs.insert(
-            AGENTS_DIR.to_string(),
+            FACTORY_AGENTS_REL_DIR.to_string(),
             vec![
                 (
                     "factory-kb-refresher.md".to_string(),
@@ -803,7 +805,7 @@ mod tests {
         std::fs::write(own, "project committer").expect("write");
         let mut tip = Tip::default();
         tip.dirs.insert(
-            AGENTS_DIR.to_string(),
+            FACTORY_AGENTS_REL_DIR.to_string(),
             vec![(retired.to_string(), "repo committer".to_string())],
         );
         let r = resolve(&e.home, "p", &tip).expect("resolve");
@@ -827,7 +829,7 @@ mod tests {
         std::fs::write(e.home.project_dir("p").join("agents/README.md"), "stray").expect("write");
         let mut tip = Tip::default();
         tip.dirs.insert(
-            AGENTS_DIR.to_string(),
+            FACTORY_AGENTS_REL_DIR.to_string(),
             vec![
                 ("README.md".to_string(), "stray".to_string()),
                 ("factory-ok.md".to_string(), "ok".to_string()),
@@ -854,7 +856,7 @@ mod tests {
         let e = env();
         let mut tip = Tip::default();
         tip.dirs.insert(
-            AGENTS_DIR.to_string(),
+            FACTORY_AGENTS_REL_DIR.to_string(),
             vec![("../evil.md".to_string(), "x".to_string())],
         );
         let r = resolve(&e.home, "p", &tip).expect("resolve");

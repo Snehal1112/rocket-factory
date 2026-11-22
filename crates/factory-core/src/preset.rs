@@ -2,7 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::resolve::{BaseTipFiles, AGENTS_DIR};
+use crate::layout::{FACTORY_AGENTS_REL_DIR, PROJECT_AGENTS_DIR};
+use crate::resolve::BaseTipFiles;
 use crate::{project, write_atomic, CoreError, Home};
 
 mod manifest;
@@ -443,12 +444,14 @@ pub fn shadowed(home: &Home, updated: &[PathBuf], tip_for: TipFor<'_>) -> Vec<Sh
                 continue;
             }
         };
-        let listing = match tip.list_dir(AGENTS_DIR) {
+        let listing = match tip.list_dir(FACTORY_AGENTS_REL_DIR) {
             Ok(l) => l,
             Err(why) => {
                 out.push(ShadowLine::Skipped {
                     project: entry.name,
-                    reason: format!("cannot read .factory/agents from the base branch: {why}"),
+                    reason: format!(
+                        "cannot read {FACTORY_AGENTS_REL_DIR} from the base branch: {why}"
+                    ),
                 });
                 continue;
             }
@@ -456,7 +459,7 @@ pub fn shadowed(home: &Home, updated: &[PathBuf], tip_for: TipFor<'_>) -> Vec<Sh
         for f in files {
             if home
                 .project_dir(&entry.name)
-                .join("agents")
+                .join(PROJECT_AGENTS_DIR)
                 .join(f)
                 .is_file()
             {

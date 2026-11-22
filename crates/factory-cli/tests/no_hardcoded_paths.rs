@@ -4,14 +4,17 @@ use std::path::{Path, PathBuf};
 
 const ALLOWED: &[&str] = &[
     "factory-core/src/layout.rs",
+    // factory-git does not depend on factory-core; the in-repo worktree folder mirrors Layout::in_repo.
     "factory-git/src/repo.rs",
     "factory-cli/src/bin/factory-shots.rs",
     // The fake Claude reads the agent file from the folder the real `claude --agent` searches.
     "factory-agent/src/bin/fake-claude.rs",
-    // The default risk patterns are a policy, not a path the driver opens. Plan 3 moves them into presets.
+    // The default risk patterns are risk policy, not paths the driver opens.
     "factory-core/src/config.rs",
-    // The docs-only rule names Rocket folders. It is a policy too, and plan 3 moves it into presets.
+    // The docs-only rule names Rocket folders. It is risk policy too, not a path the driver opens.
     "factory-core/src/risk.rs",
+    // The default home folder name, ~/.factory.
+    "factory-core/src/home.rs",
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -176,6 +179,7 @@ fn path_hits(rel: &str, text: &str) -> Vec<String> {
             !line.trim_start().starts_with("//")
                 && (line.contains("\".superpowers")
                     || line.contains("\".claude")
+                    || line.contains("\".factory")
                     || line.contains("\"main\""))
         })
         .map(|(n, line)| format!("{rel}:{n}: {}", line.trim_start()))
@@ -200,6 +204,15 @@ fn the_paths_lint_catches_main_after_an_early_test_use() {
     assert_eq!(
         path_hits("a/src/x.rs", src),
         ["a/src/x.rs:3: const B: &str = \"main\";"]
+    );
+}
+
+#[test]
+fn path_hits_flag_a_factory_literal() {
+    let src = "const A: &str = \".factory/agents\";\n#[cfg(test)]\nmod tests {\n    const B: &str = \".factory/x\";\n}\n";
+    assert_eq!(
+        path_hits("factory-core/src/x.rs", src),
+        ["factory-core/src/x.rs:1: const A: &str = \".factory/agents\";"]
     );
 }
 
