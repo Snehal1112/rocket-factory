@@ -183,7 +183,13 @@ fn unmatched_allowlist_has_no_skills_preface() {
         .build_stage()
         .expect("build");
     let spec = runner.last_spec_for("builder").expect("builder");
-    assert_eq!(spec.codex_config, ["skills.include_instructions=false"]);
+    assert_eq!(
+        spec.codex_config,
+        [
+            "skills.include_instructions=false",
+            "skills.bundled.enabled=false"
+        ]
+    );
     assert!(spec.agent_prompt.expect("agent text").contains(BAN));
 }
 
@@ -208,11 +214,22 @@ fn reviewer_gets_no_skills() {
     });
     fx.engine(&reviewer)
         .with_agent_files(list)
-        .with_codex_skill_roots(vec![root])
+        .with_codex_skill_roots(vec![root.clone()])
         .review_stage()
         .expect("review");
     let spec = reviewer.last_spec_for("reviewer").expect("reviewer");
-    assert_eq!(spec.codex_config, ["skills.include_instructions=false"]);
+    let tdd = std::fs::canonicalize(root.join("superpowers/tdd/SKILL.md")).expect("canon");
+    assert_eq!(
+        spec.codex_config,
+        [
+            "skills.include_instructions=false".to_string(),
+            "skills.bundled.enabled=false".to_string(),
+            format!(
+                "skills.config=[{{path=\"{}\",enabled=false}}]",
+                tdd.display()
+            )
+        ]
+    );
 }
 
 #[test]
