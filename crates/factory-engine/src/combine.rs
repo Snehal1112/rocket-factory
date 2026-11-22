@@ -390,13 +390,14 @@ fn renumber(line: &str, n: u32) -> String {
 }
 
 /// The numbers of `Task N` mentions in a text that point at another task once renumbered.
-/// Lines inside code fences are skipped. Each number is listed once.
+/// Lines inside code fences and inline code spans are skipped. Each number is listed once.
 fn stale_mentions(text: &str, numbers: &HashMap<u32, u32>) -> Vec<u32> {
     let mut out = Vec::new();
     for (line, _) in lines_with_fence(text)
         .into_iter()
         .filter(|(_, fenced)| !fenced)
     {
+        let line = factory_core::strip_spans(line);
         for (at, _) in line.match_indices("Task ") {
             if line[..at]
                 .chars()
@@ -1132,6 +1133,39 @@ mod tests {
             got.text.contains("Body of b one, see Task 2."),
             "{}",
             got.text
+        );
+    }
+
+    /// Combines plan a (three tasks) with a two-task plan b whose first body is `body`.
+    fn warnings_for_body(body: &str) -> Vec<String> {
+        let a = plan("Core", "g", &[], &[], &["a one", "a two", "a three"]);
+        let b = plan("Engine", "g", &[], &[], &["b one", "b two"]).replace("Body of b one.", body);
+        combine_plans(&two(&a, &b)).warnings
+    }
+
+    #[test]
+    fn an_inline_code_mention_is_left_alone() {
+        let warnings = warnings_for_body("Write `### Task 1: first` into the fixture.");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_mention_outside_the_code_span_still_warns() {
+        let warnings = warnings_for_body("Write `Task 1` and see Task 2.");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains(&format!("mentions \"Task {}\"", 2)),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_lone_backtick_does_not_hide_a_mention() {
+        let warnings = warnings_for_body("a ` b, see Task 2.");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains(&format!("mentions \"Task {}\"", 2)),
+            "{warnings:?}"
         );
     }
 
