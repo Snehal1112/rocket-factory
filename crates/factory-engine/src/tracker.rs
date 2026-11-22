@@ -322,18 +322,28 @@ pub(crate) fn parse_view(json: &str) -> Result<(Vec<String>, bool), String> {
 }
 
 /// The lowest issue number whose title equals `title` and whose body contains `footer`, from
-/// `gh issue list --json number,title,body`. A missing or null body counts as empty.
+/// `gh issue list --json number,title,body`. A missing or null body counts as empty. A reply that
+/// is not an array is an error, and so is a matching entry whose number is missing, not an
+/// integer or over `u32::MAX`, so the caller never files a duplicate on a reply it cannot read.
 pub(crate) fn parse_found(json: &str, title: &str, footer: &str) -> Result<Option<u32>, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
-    let found = value
+    let issues = value
         .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|issue| issue["title"].as_str() == Some(title))
-        .filter(|issue| issue["body"].as_str().unwrap_or("").contains(footer))
-        .filter_map(|issue| issue["number"].as_u64().and_then(|n| u32::try_from(n).ok()))
-        .min();
+        .ok_or_else(|| "gh printed unexpected JSON: expected an array".to_string())?;
+    let mut found: Option<u32> = None;
+    for issue in issues {
+        if issue["title"].as_str() != Some(title)
+            || !issue["body"].as_str().unwrap_or("").contains(footer)
+        {
+            continue;
+        }
+        let number = issue["number"]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| format!("gh printed an unusable number for `{title}`"))?;
+        found = Some(found.map_or(number, |lowest| lowest.min(number)));
+    }
     Ok(found)
 }
 
@@ -653,6 +663,90 @@ mod tests {
     fn parse_found_rejects_invalid_json() {
         let err = parse_found("nope", "Fix x", FOOTER).expect_err("invalid");
         assert!(err.contains("invalid JSON"), "{err}");
+    }
+
+    const NOT_AN_ARRAY: &str = "gh printed unexpected JSON: expected an array";
+    const BAD_NUMBER: &str = "gh printed an unusable number for `Fix x`";
+
+    #[test]
+    fn parse_found_rejects_an_object_reply() {
+        let err = parse_found(r#"{"message":"Bad credentials"}"#, "Fix x", FOOTER)
+            .expect_err("an object is not a list");
+        assert_eq!(err, NOT_AN_ARRAY);
+    }
+
+    #[test]
+    fn parse_found_rejects_a_null_reply() {
+        let err = parse_found("null", "Fix x", FOOTER).expect_err("null is not a list");
+        assert_eq!(err, NOT_AN_ARRAY);
+    }
+
+    #[test]
+    fn parse_found_rejects_a_string_reply() {
+        let err = parse_found(r#""oops""#, "Fix x", FOOTER).expect_err("a string is not a list");
+        assert_eq!(err, NOT_AN_ARRAY);
+    }
+
+    #[test]
+    fn parse_found_accepts_an_empty_array() {
+        assert_eq!(parse_found("[]", "Fix x", FOOTER).expect("parse"), None);
+    }
+
+    #[test]
+    fn parse_found_rejects_a_matching_number_over_u32() {
+        let json =
+            r#"[{"number":4294967296,"title":"Fix x","body":"Filed by factory job 007 (slug)"}]"#;
+        let err = parse_found(json, "Fix x", FOOTER).expect_err("number over u32");
+        assert_eq!(err, BAD_NUMBER);
+    }
+
+    #[test]
+    fn parse_found_rejects_a_matching_entry_without_a_number() {
+        let json = r#"[{"title":"Fix x","body":"Filed by factory job 007 (slug)"}]"#;
+        let err = parse_found(json, "Fix x", FOOTER).expect_err("no number");
+        assert_eq!(err, BAD_NUMBER);
+    }
+
+    #[test]
+    fn parse_found_rejects_a_matching_string_number() {
+        let json = r#"[{"number":"7","title":"Fix x","body":"Filed by factory job 007 (slug)"}]"#;
+        let err = parse_found(json, "Fix x", FOOTER).expect_err("string number");
+        assert_eq!(err, BAD_NUMBER);
+    }
+
+    #[test]
+    fn parse_found_rejects_when_any_match_has_a_bad_number() {
+        let json = r#"[
+          {"number":4,"title":"Fix x","body":"Filed by factory job 007 (slug)"},
+          {"number":4294967296,"title":"Fix x","body":"Filed by factory job 007 (slug)"}
+        ]"#;
+        let err = parse_found(json, "Fix x", FOOTER).expect_err("one bad match");
+        assert_eq!(err, BAD_NUMBER);
+    }
+
+    #[test]
+    fn parse_found_skips_an_unrelated_number_over_u32() {
+        let json = r#"[
+          {"number":4294967296,"title":"Other","body":"Filed by factory job 007 (slug)"},
+          {"number":4,"title":"Fix x","body":"Filed by factory job 007 (slug)"}
+        ]"#;
+        assert_eq!(parse_found(json, "Fix x", FOOTER).expect("parse"), Some(4));
+    }
+
+    #[test]
+    fn parse_found_skips_a_non_object_element() {
+        let json = r#"[1,{"number":4,"title":"Fix x","body":"Filed by factory job 007 (slug)"}]"#;
+        assert_eq!(parse_found(json, "Fix x", FOOTER).expect("parse"), Some(4));
+    }
+
+    #[test]
+    fn parse_found_keeps_u32_max() {
+        let json =
+            r#"[{"number":4294967295,"title":"Fix x","body":"Filed by factory job 007 (slug)"}]"#;
+        assert_eq!(
+            parse_found(json, "Fix x", FOOTER).expect("parse"),
+            Some(u32::MAX)
+        );
     }
 
     fn strings(items: &[&str]) -> Vec<String> {
