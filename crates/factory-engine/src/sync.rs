@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use factory_core::{Job, ParkKind, ReviewState, Stage};
+use factory_core::{Job, ParkKind, ResumeAt, ReviewState, Stage};
 use factory_git::{MergeOutcome, Worktree};
 
 use crate::{now_secs, Decision, Driver, EngineError, MessageKind, StageOutcome, MAX_SYNCS};
@@ -91,7 +91,11 @@ pub fn sync_requested_by(
     let behind = !crate::merge::git_op("is_ancestor", || {
         driver.repo().is_ancestor(driver.repo().base_branch(), &tip)
     })?;
-    if tip == head && !behind && !retry {
+    // A stopped sync must be able to finish, and a build park keeps its resume stage.
+    let unfinished = has_no_verdict(&job)
+        && (job.stage == Stage::Review
+            || (job.stage == Stage::NeedsHuman && job.park_resume == Some(ResumeAt::Rereview)));
+    if tip == head && !behind && !retry && !unfinished {
         return Ok(SyncOutcome::UpToDate);
     }
     // Only an approved head keeps its reviewed floor. Any other case reviews the whole branch.
@@ -116,12 +120,26 @@ pub fn sync_requested_by(
     if let SyncOutcome::Parked(reason, kind) = &outcome {
         let kind = kind.unwrap_or(ParkKind::Other);
         crate::merge::park_with_parts(driver, id, reason, kind, Vec::new())?;
+        // A stopped sync must be able to finish, so a park before any verdict resumes at the review.
+        if whole_branch && has_no_verdict(&driver.job(id)?) {
+            crate::merge::set_park_resume(driver, id, ResumeAt::Rereview)?;
+        }
     } else if !retry && job.stage == Stage::NeedsHuman && driver.job(id)?.stage == Stage::Approve {
         // The parked job was held for a reason the review does not recheck, so a person releases it.
         let reason = format!("sync review passed, run factory approve {id}");
         crate::merge::park_with_parts(driver, id, &reason, ParkKind::Other, Vec::new())?;
     }
     Ok(outcome)
+}
+
+/// True when a review is pending, running or failed. Pass, changes and skipped are verdicts.
+fn has_no_verdict(job: &Job) -> bool {
+    job.reviews.values().any(|s| {
+        matches!(
+            s,
+            ReviewState::Pending | ReviewState::Running | ReviewState::Failed
+        )
+    })
 }
 
 /// The shared sync steps. `rewritten` is true when a requested sync already reset the floor, so

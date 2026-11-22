@@ -68,12 +68,22 @@ fn review_calls(fx: &common::MergeFixture) -> usize {
 
 /// A fixture whose config runs `command` as the only check.
 fn fixture_with_check(command: &str, effects: Vec<common::Effect>) -> common::MergeFixture {
+    fixture_with_check_rounds(command, factory_core::Config::default().fix_rounds, effects)
+}
+
+/// Like `fixture_with_check`, with the number of fix rounds the config allows.
+fn fixture_with_check_rounds(
+    command: &str,
+    fix_rounds: u32,
+    effects: Vec<common::Effect>,
+) -> common::MergeFixture {
     let config = factory_core::Config {
         checks: vec![factory_core::CheckRule {
             paths: vec!["**".into()],
             commands: vec![command.to_string()],
             ..factory_core::CheckRule::default()
         }],
+        fix_rounds,
         ..factory_core::Config::default()
     };
     let fx = common::approved_job_config(Arc::new(scripted(effects)), config);
@@ -292,6 +302,14 @@ fn an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage() {
         factory_core::Stage::NeedsHuman,
     ] {
         let fx = fixture(vec![]);
+        // Finished reviews, so a Pending review does not make the sync run again.
+        fx.driver
+            .store()
+            .update_job(&fx.id, |j| {
+                j.set_review("code", factory_core::ReviewState::Pass);
+                Ok(())
+            })
+            .expect("review");
         force_stage(&fx, stage);
         assert_eq!(
             sync_requested(&fx.driver, &fx.id).expect("sync"),
@@ -784,4 +802,124 @@ fn a_failed_requested_sync_review_parks_with_resume_rereview() {
     let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
     assert_eq!(rec.kind, factory_core::ParkKind::ReviewFailed);
     assert_eq!(rec.resume, Some(factory_core::ResumeAt::Rereview));
+}
+
+/// A fixture whose check passes only once the returned flag file exists, parked in needs-human
+/// with main one commit ahead.
+fn flag_check_fixture(
+    fix_rounds: u32,
+) -> (tempfile::TempDir, std::path::PathBuf, common::MergeFixture) {
+    let flags = tempfile::tempdir().expect("tempdir");
+    let flag = flags.path().join("ok");
+    let fx = with_security_agent(fixture_with_check_rounds(
+        &format!("test -f {}", flag.display()),
+        fix_rounds,
+        vec![reply(APPROVE), reply(SECURITY_OK)],
+    ));
+    force_stage(&fx, factory_core::Stage::NeedsHuman);
+    common::commit_file(&fx.main, "other.md", "o");
+    (flags, flag, fx)
+}
+
+#[test]
+fn a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun() {
+    let (_flags, flag, fx) = flag_check_fixture(factory_core::Config::default().fix_rounds);
+    let first = sync_requested(&fx.driver, &fx.id).expect("first sync");
+    assert!(matches!(first, SyncOutcome::Parked(..)), "{first:?}");
+    assert_eq!(review_calls(&fx), 0);
+    std::fs::write(&flag, "").expect("flag");
+    let second = sync_requested(&fx.driver, &fx.id).expect("second sync");
+    assert_ne!(second, SyncOutcome::UpToDate);
+    assert_eq!(fx.runner.specs_for("reviewer").len(), 1);
+    assert_eq!(fx.runner.specs_for("security-review").len(), 1);
+    assert_eq!(fx.driver.job(&fx.id).expect("job").prev_head, None);
+}
+
+#[test]
+fn a_parked_job_with_only_verdicts_stays_up_to_date() {
+    let fx = fixture(vec![]);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.set_review("code", factory_core::ReviewState::Changes);
+            j.park_resume = Some(factory_core::ResumeAt::Rereview);
+            Ok(())
+        })
+        .expect("reviews");
+    force_stage(&fx, factory_core::Stage::NeedsHuman);
+    assert_eq!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::UpToDate
+    );
+    assert_eq!(review_calls(&fx), 0);
+}
+
+#[test]
+fn a_build_parked_job_stays_up_to_date_on_sync() {
+    let fx = fixture(vec![]);
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.park_resume = Some(factory_core::ResumeAt::Build);
+            Ok(())
+        })
+        .expect("resume");
+    force_stage(&fx, factory_core::Stage::NeedsHuman);
+    assert_eq!(
+        sync_requested(&fx.driver, &fx.id).expect("sync"),
+        SyncOutcome::UpToDate
+    );
+    assert_eq!(review_calls(&fx), 0);
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.park_resume, Some(factory_core::ResumeAt::Build));
+}
+
+#[test]
+fn a_sync_park_resumes_at_rereview() {
+    let (_flags, _flag, fx) = flag_check_fixture(factory_core::Config::default().fix_rounds);
+    let first = sync_requested(&fx.driver, &fx.id).expect("first sync");
+    assert!(matches!(first, SyncOutcome::Parked(..)), "{first:?}");
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.park_resume, Some(factory_core::ResumeAt::Rereview));
+}
+
+#[test]
+fn a_sync_review_with_changes_keeps_plain_rework() {
+    let fx = with_security_agent(fixture_roles(vec![
+        ("reviewer", reply(CHANGES)),
+        ("security-review", reply(SECURITY_OK)),
+    ]));
+    force_stage(&fx, factory_core::Stage::NeedsHuman);
+    common::commit_file(&fx.main, "other.md", "o");
+    let outcome = sync_requested(&fx.driver, &fx.id).expect("sync");
+    assert!(matches!(outcome, SyncOutcome::Parked(..)), "{outcome:?}");
+    assert_eq!(fx.driver.job(&fx.id).expect("job").park_resume, None);
+}
+
+#[test]
+fn a_sync_parked_by_its_checks_resumes_at_rereview() {
+    let (_flags, flag, fx) = flag_check_fixture(0);
+    let first = sync_requested(&fx.driver, &fx.id).expect("first sync");
+    assert!(matches!(first, SyncOutcome::Parked(..)), "{first:?}");
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.park_kind.as_deref(), Some("checks-failed"));
+    assert_eq!(job.park_resume, Some(factory_core::ResumeAt::Rereview));
+    let rec = factory_core::ParkRecord::read(&fx.driver.job_dir(&job)).expect("park.json");
+    assert_eq!(rec.resume, Some(factory_core::ResumeAt::Rereview));
+    assert!(
+        rec.next.iter().any(|n| n.starts_with("factory retry 001")),
+        "{:?}",
+        rec.next
+    );
+    assert!(
+        rec.next
+            .iter()
+            .any(|n| n.starts_with("factory rework 001 ")),
+        "{:?}",
+        rec.next
+    );
+    std::fs::write(&flag, "").expect("flag");
+    let second = sync_requested(&fx.driver, &fx.id).expect("second sync");
+    assert_ne!(second, SyncOutcome::UpToDate);
+    assert_eq!(fx.runner.specs_for("reviewer").len(), 1);
 }
