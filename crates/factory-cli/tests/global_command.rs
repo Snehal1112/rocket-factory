@@ -581,6 +581,10 @@ fn the_command_asks_for_a_commit_line_in_every_plan() {
         validate.contains("**Commit:**"),
         "step 3 must check the line"
     );
+    assert!(
+        validate.contains("With `--one-job`, also check the spec's `**Commit:**` line under its title by the same rule."),
+        "step 3 must check the one-job spec line"
+    );
 }
 
 fn cmds_dir(tmp: &Path) -> PathBuf {
