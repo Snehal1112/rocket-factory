@@ -214,7 +214,11 @@ impl Engine<'_> {
     pub(crate) fn ruling_once(&self, text: &str) -> Result<(), EngineError> {
         let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let line = format!("Ruling: {one_line}");
-        let ledger = std::fs::read_to_string(self.ledger_file().path).unwrap_or_default();
+        let ledger = match std::fs::read_to_string(self.ledger_file().path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(EngineError::from(e)),
+        };
         if ledger.lines().any(|l| l == line) {
             return Ok(());
         }

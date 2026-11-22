@@ -90,7 +90,9 @@ fn a_failed_job_folder_leaves_no_job_on_the_board() {
     }
     std::fs::create_dir_all(jobs.parent().expect("jobs parent")).expect("jobs parent");
     std::fs::write(&jobs, "not a folder").expect("jobs file");
-    create_one_job(&fx.driver, "demo", "f", &plans, None, None, false).expect_err("io error");
+    let err =
+        create_one_job(&fx.driver, "demo", "f", &plans, None, None, false).expect_err("io error");
+    assert!(matches!(err, EngineError::Io(_)), "{err}");
     assert!(fx.driver.store().load().expect("board").jobs.is_empty());
 }
 
