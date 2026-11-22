@@ -225,13 +225,6 @@ impl Engine<'_> {
         self.ruling(&one_line)
     }
 
-    /// Moves the job to needs-human with a reason and logs the park. The ledger ruling is left to the caller.
-    pub(crate) fn move_to_needs_human(&self, reason: &str) -> Result<(), EngineError> {
-        self.set_stage(Stage::NeedsHuman, Some(reason), false)?;
-        log_park(&self.job_id, reason);
-        Ok(())
-    }
-
     /// The job's own model from `factory new --model`, when set and not blank. It replaces every role's model.
     pub(crate) fn job_model(&self) -> Option<String> {
         let board = Board::load(&self.board_path).ok()?;

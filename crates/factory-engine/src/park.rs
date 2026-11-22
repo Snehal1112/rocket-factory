@@ -3,14 +3,14 @@
 use std::path::Path;
 
 use factory_core::{
-    next_with_resume, open_blockers, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt,
+    next_with_resume, open_blockers, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt, Stage,
 };
 
 use factory_core::gate_record::{GateKey, GateResult};
 
 use crate::decide::risk_summary;
 use crate::gate_record::{fail_key, offers_approve, GateTarget};
-use crate::ports::now;
+use crate::ports::{log_park, now, set_stage_logged};
 use crate::{Engine, EngineError, StageOutcome};
 
 /// The reviewer's open `[blocker]` lines, or the whole reply when it has none.
@@ -87,19 +87,18 @@ pub(crate) fn write_record(dir: &Path, record: &ParkRecord) {
     }
 }
 
-/// Runs the park writes in order: clear, board update, stage move, record, ruling.
+/// Runs the park writes in order: clear, board update, record, ruling.
 /// The clear step removes the record of an earlier park first. It stops at the first error.
-/// The record is written only after the update and the stage move succeed, and stays when the ruling fails.
+/// The board update holds the park fields and the stage move in one save. The record is written only
+/// after it succeeds, and stays when the ruling fails.
 pub(crate) fn in_park_order(
     clear: impl FnOnce(),
     update: impl FnOnce() -> Result<(), EngineError>,
-    stage: impl FnOnce() -> Result<(), EngineError>,
     record: impl FnOnce(),
     ruling: impl FnOnce() -> Result<(), EngineError>,
 ) -> Result<(), EngineError> {
     clear();
     update()?;
-    stage()?;
     record();
     ruling()
 }
@@ -243,10 +242,11 @@ impl Engine<'_> {
                     j.park_resume = resume;
                     j.park_at = Some(at);
                     j.park_summary = Some(summary);
-                    Ok(())
-                })
+                    set_stage_logged(j, Stage::NeedsHuman, Some(&reason), false, now())
+                })?;
+                log_park(&self.job_id, &reason);
+                Ok(())
             },
-            || self.move_to_needs_human(&reason),
             || {
                 write_record(&self.job_dir, &record);
                 // The gate lines follow the record, so a ruling error does not drop them.
@@ -479,20 +479,16 @@ mod tests {
     }
 
     #[test]
-    fn park_steps_run_clear_then_update_then_stage_then_record_then_ruling() {
+    fn park_steps_run_clear_then_update_then_record_then_ruling() {
         let order = Order::default();
         in_park_order(
             || order.borrow_mut().push("clear"),
             || step(&order, "update"),
-            || step(&order, "stage"),
             || order.borrow_mut().push("record"),
             || step(&order, "ruling"),
         )
         .expect("parked");
-        assert_eq!(
-            *order.borrow(),
-            vec!["clear", "update", "stage", "record", "ruling"]
-        );
+        assert_eq!(*order.borrow(), vec!["clear", "update", "record", "ruling"]);
     }
 
     #[test]
@@ -501,7 +497,6 @@ mod tests {
         let err = in_park_order(
             || {},
             || Err(EngineError::Msg("board locked".into())),
-            || step(&order, "stage"),
             || order.borrow_mut().push("record"),
             || step(&order, "ruling"),
         )
@@ -511,33 +506,17 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_stage_move_leaves_no_park_record() {
-        let order = Order::default();
-        let err = in_park_order(
-            || {},
-            || step(&order, "update"),
-            || Err(EngineError::Msg("stage failed".into())),
-            || order.borrow_mut().push("record"),
-            || step(&order, "ruling"),
-        )
-        .expect_err("stage failed");
-        assert_eq!(err.to_string(), "stage failed");
-        assert_eq!(*order.borrow(), vec!["update"]);
-    }
-
-    #[test]
     fn a_failed_ruling_leaves_the_park_record() {
         let order = Order::default();
         let err = in_park_order(
             || {},
             || step(&order, "update"),
-            || step(&order, "stage"),
             || order.borrow_mut().push("record"),
             || Err(EngineError::Msg("ledger locked".into())),
         )
         .expect_err("ruling failed");
         assert_eq!(err.to_string(), "ledger locked");
-        assert_eq!(*order.borrow(), vec!["update", "stage", "record"]);
+        assert_eq!(*order.borrow(), vec!["update", "record"]);
     }
 
     #[test]
@@ -643,7 +622,32 @@ mod tests {
 
     /// Runs `body` with an engine whose board file does not exist, so every board read and write fails.
     fn with_unreadable_board(body: impl FnOnce(&Engine, &Path)) {
+        with_engine(|_| {}, |engine, job_dir, _| body(engine, job_dir));
+    }
+
+    /// Runs `body` with an engine whose board holds job `001` at `stage`. `body` gets the board path.
+    fn with_board_job(stage: Stage, body: impl FnOnce(&Engine, &Path)) {
+        with_engine(
+            |board_path| {
+                let mut job = factory_core::Job::new("001", "job", "s", "2026-11-22", "f", 1.0);
+                job.set_stage(stage, None, true, 1.0).expect("stage");
+                crate::BoardStore::new(board_path, std::time::Duration::from_secs(1))
+                    .update(|board| {
+                        board.jobs.push(job);
+                        Ok(())
+                    })
+                    .expect("save board");
+            },
+            |engine, _, board_path| body(engine, board_path),
+        );
+    }
+
+    /// Builds an engine in a temp repo. `seed` runs on the board path first, then `body` gets the
+    /// job folder and the board path.
+    fn with_engine(seed: impl FnOnce(&Path), body: impl FnOnce(&Engine, &Path, &Path)) {
         let dir = tempfile::tempdir().expect("temp dir");
+        let board_path = dir.path().join("board.json");
+        seed(&board_path);
         let git = git2::Repository::init(dir.path()).expect("init repo");
         // The user's global git config may turn signing on.
         git.config()
@@ -656,7 +660,7 @@ mod tests {
         let job_dir = dir.path().join("job");
         std::fs::create_dir(&job_dir).expect("job dir");
         let engine = Engine::new(
-            dir.path().join("board.json"),
+            board_path.clone(),
             job_dir.clone(),
             "001".to_string(),
             job_dir.join("plan.md"),
@@ -670,7 +674,25 @@ mod tests {
             &events,
         )
         .expect("engine");
-        body(&engine, &job_dir);
+        body(&engine, &job_dir, &board_path);
+    }
+
+    #[test]
+    fn a_refused_stage_move_saves_no_park_fields() {
+        // A merged job cannot move to needs-human without force, so the one update fails as a whole.
+        with_board_job(Stage::Merged, |engine, board_path| {
+            engine
+                .park_with(ParkKind::Other, "test park".to_string(), Vec::new())
+                .expect_err("the move is refused");
+            let board = crate::BoardStore::new(board_path, std::time::Duration::from_secs(1))
+                .load()
+                .expect("board");
+            let job = board.find("001").expect("job");
+            assert_eq!(job.stage, Stage::Merged);
+            assert_eq!(job.park_kind, None);
+            assert_eq!(job.park_summary, None);
+            assert_eq!(job.park_at, None);
+        });
     }
 
     #[test]
