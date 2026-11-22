@@ -4,8 +4,8 @@ use factory_checks::{
     append_notes, plan_checks_in, run_checks, write_checks_md, CheckPlan, ChecksReport, Workspace,
 };
 use factory_core::{
-    code_paths_of, has_test_marker, has_test_path, uncovered_paths, ChecksPass, Config, ParkKind,
-    ParkPart, ReviewState, Stage,
+    code_paths_of, has_test_marker, has_test_path, uncovered_paths, write_atomic, ChecksPass,
+    Config, ParkKind, ParkPart, ReviewState, Stage,
 };
 
 use factory_core::gate_record::{GateKey, GateResult};
@@ -82,15 +82,61 @@ fn log_check_results(report: &ChecksReport) {
     }
 }
 
+/// The job file with the failing output of the last checks run, for a rework. Only the driver writes it.
+pub const CHECKS_FAILURES_FILE: &str = "checks-failures.md";
+
+/// Removes one old check file. A missing file is fine; any other error is pushed as `name: err`.
+fn remove_old(dir: &Path, name: &str, errors: &mut Vec<String>) {
+    if let Err(e) = std::fs::remove_file(dir.join(name)) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            errors.push(format!("{name}: {e}"));
+        }
+    }
+}
+
+/// Replaces `checks.md` and `checks-failures.md` with the files of this run. The old files go first,
+/// so a failed write leaves no evidence from an earlier run. Each error comes back as a line that
+/// names the file, nothing is raised.
+pub(crate) fn save_check_files(
+    job_dir: &Path,
+    report: &ChecksReport,
+    notes: &[String],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    remove_old(job_dir, "checks.md", &mut errors);
+    remove_old(job_dir, CHECKS_FAILURES_FILE, &mut errors);
+    let md = job_dir.join("checks.md");
+    match write_checks_md(&md, report) {
+        Ok(()) => {
+            if let Err(e) = append_notes(&md, notes) {
+                errors.push(format!("checks.md: {e}"));
+            }
+        }
+        Err(e) => errors.push(format!("checks.md: {e}")),
+    }
+    if !report.all_passed() {
+        let text = report.failure_text();
+        if let Err(e) = write_atomic(&job_dir.join(CHECKS_FAILURES_FILE), text.as_bytes()) {
+            errors.push(format!("{CHECKS_FAILURES_FILE}: {e}"));
+        }
+    }
+    errors
+}
+
 impl Engine<'_> {
-    /// Runs the mapped checks over the whole job diff and writes `checks.md`.
+    /// Runs the mapped checks over the whole job diff and writes `checks.md`. A write error is logged
+    /// and the report is still returned, so the decision does not depend on the file.
     pub(crate) fn run_checks_now(&self) -> Result<ChecksReport, EngineError> {
         let (head, workdir, plan) = self.planned_checks()?;
         let report = run_checks(&workdir, &plan);
         log_check_results(&report);
-        let md = self.job_dir.join("checks.md");
-        write_checks_md(&md, &report).map_err(|e| EngineError::Check(e.to_string()))?;
-        append_notes(&md, &plan.notes).map_err(|e| EngineError::Check(e.to_string()))?;
+        for e in save_check_files(&self.job_dir, &report, &plan.notes) {
+            let msg = format!("checks.md could not be written: {e}");
+            tracing::error!(event = "step.error", step = "checks_md", msg = %msg);
+            if let Err(re) = self.ruling(&msg) {
+                tracing::error!(event = "step.error", step = "checks_md", msg = %format!("ledger ruling failed: {re}"));
+            }
+        }
         self.record_gates(&plan, &report)?;
         let pass = report.all_passed().then(|| ChecksPass {
             head,
@@ -577,5 +623,79 @@ mod gate_tests {
     fn a_risky_diff_is_gated_too() {
         let all = paths(&["src-tauri/src/lib.rs"]);
         assert!(no_checks_reason(&all, &[], &Config::default()).is_some());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(command: &str, passed: bool, tail: &str) -> factory_checks::CheckResult {
+        factory_checks::CheckResult {
+            command: command.to_string(),
+            passed,
+            summary: if passed { "ok".into() } else { "exit 1".into() },
+            tail: tail.to_string(),
+        }
+    }
+
+    /// Makes the next `write_atomic` of `name` in `dir` fail, by putting a folder at its temp path.
+    fn block_write(dir: &Path, name: &str) {
+        std::fs::create_dir(dir.join(format!(".{name}.{}.tmp", std::process::id())))
+            .expect("block");
+    }
+
+    #[test]
+    fn save_check_files_writes_failures_for_a_failing_report() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let report = ChecksReport {
+            results: vec![result("cargo test", false, "error[E0425]: x")],
+        };
+        assert!(save_check_files(dir.path(), &report, &[]).is_empty());
+        let text =
+            std::fs::read_to_string(dir.path().join(CHECKS_FAILURES_FILE)).expect("failures");
+        assert_eq!(text, report.failure_text());
+        assert!(text.contains("error[E0425]: x"), "{text}");
+    }
+
+    #[test]
+    fn save_check_files_removes_old_failures_on_a_pass() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join(CHECKS_FAILURES_FILE), "old").expect("old");
+        let report = ChecksReport {
+            results: vec![result("cargo test", true, "")],
+        };
+        assert!(save_check_files(dir.path(), &report, &[]).is_empty());
+        assert!(!dir.path().join(CHECKS_FAILURES_FILE).exists());
+        let md = std::fs::read_to_string(dir.path().join("checks.md")).expect("checks.md");
+        assert!(md.starts_with("# Checks"), "{md}");
+        assert!(md.contains("PASS cargo test"), "{md}");
+    }
+
+    #[test]
+    fn save_check_files_writes_no_failures_for_an_empty_report() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let report = ChecksReport { results: vec![] };
+        assert!(save_check_files(dir.path(), &report, &[]).is_empty());
+        assert!(!dir.path().join(CHECKS_FAILURES_FILE).exists());
+        let md = std::fs::read_to_string(dir.path().join("checks.md")).expect("checks.md");
+        assert!(md.contains("PASS none"), "{md}");
+    }
+
+    #[test]
+    fn save_check_files_leaves_no_stale_pass_when_the_write_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("checks.md"), "# Checks\n\nPASS old (ok)\n").expect("old");
+        block_write(dir.path(), "checks.md");
+        let report = ChecksReport {
+            results: vec![result("cargo test", false, "boom")],
+        };
+        let errors = save_check_files(dir.path(), &report, &[]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].starts_with("checks.md:"), "{errors:?}");
+        assert!(!dir.path().join("checks.md").exists());
+        let text =
+            std::fs::read_to_string(dir.path().join(CHECKS_FAILURES_FILE)).expect("failures");
+        assert_eq!(text, report.failure_text());
     }
 }

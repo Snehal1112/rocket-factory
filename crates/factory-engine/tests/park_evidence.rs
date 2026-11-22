@@ -2,7 +2,7 @@ mod common;
 
 use common::{commit_file, scripted, Effect, Fixture};
 use factory_core::{ParkKind, ParkRecord, Stage};
-use factory_engine::{merge_stage, MergeResult, StageOutcome};
+use factory_engine::{merge_stage, MergeResult, StageOutcome, CHECKS_FAILURES_FILE};
 
 fn change_effect(file: &'static str) -> Effect {
     Box::new(move |spec| {
@@ -170,10 +170,10 @@ fn a_risky_park_after_a_sync_runs_the_final_checks() {
     assert!(part.text.contains("true"), "{}", part.text);
 }
 
-#[test]
-fn final_checks_that_cannot_run_after_a_sync_park_risky_and_say_why() {
-    // The first run passes. The second run is the final check: it turns checks.md into a folder, so
-    // the driver cannot write its report and the run fails with an error instead of a result.
+/// The first run of the script passes. The second run is the final check: it turns checks.md into a
+/// folder, so the driver cannot write its report, and it exits with `second_exit`. The temp folder
+/// holds the script and must outlive the merge stage.
+fn blocked_report_fixture(second_exit: u8) -> (common::MergeFixture, tempfile::TempDir) {
     let scripts = tempfile::tempdir().expect("scripts dir");
     let script = scripts.path().join("block-report.sh");
     let marker = scripts.path().join("ran");
@@ -183,7 +183,7 @@ fn final_checks_that_cannot_run_after_a_sync_park_risky_and_say_why() {
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\nif [ -e {m} ]; then rm -rf {r}; mkdir {r}; exit 0; fi\ntouch {m}\n",
+            "#!/bin/sh\nif [ -e {m} ]; then rm -rf {r}; mkdir {r}; exit {second_exit}; fi\ntouch {m}\n",
             m = marker.display(),
             r = report.display()
         ),
@@ -191,22 +191,50 @@ fn final_checks_that_cannot_run_after_a_sync_park_risky_and_say_why() {
     .expect("write script");
     std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
         .expect("chmod");
+    (fx, scripts)
+}
+
+#[test]
+fn a_failed_checks_md_write_after_a_sync_keeps_a_passing_result() {
+    let (fx, _scripts) = blocked_report_fixture(0);
     let r = merge_stage(&fx.driver, &fx.id).expect("stage");
     assert!(matches!(r, MergeResult::Parked(_)), "{r:?}");
     let rec = merge_record(&fx);
     assert_eq!(rec.kind, ParkKind::RiskyDiff, "{rec:?}");
-    let part = rec
-        .parts
-        .iter()
-        .find(|p| p.title == "Checks")
-        .expect("Checks part");
     assert!(
-        part.text.starts_with("final checks could not run:"),
-        "{}",
-        part.text
+        !rec.parts
+            .iter()
+            .any(|p| p.text.starts_with("final checks could not run")),
+        "{rec:?}"
     );
     let job = fx.driver.job(&fx.id).expect("job");
-    assert_eq!(job.stage, Stage::NeedsHuman);
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    assert!(
+        ledger.contains("checks.md could not be written"),
+        "{ledger}"
+    );
+}
+
+#[test]
+fn a_failed_checks_md_write_after_sync_parks_as_checks_failed() {
+    let (fx, _scripts) = blocked_report_fixture(1);
+    let r = merge_stage(&fx.driver, &fx.id).expect("stage");
+    assert!(matches!(r, MergeResult::Parked(_)), "{r:?}");
+    let rec = merge_record(&fx);
+    assert_eq!(rec.kind, ParkKind::ChecksFailed, "{rec:?}");
+    assert!(
+        rec.reason.contains("final checks failed after sync"),
+        "{}",
+        rec.reason
+    );
+    let job = fx.driver.job(&fx.id).expect("job");
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    assert!(
+        ledger.contains("checks.md could not be written"),
+        "{ledger}"
+    );
 }
 
 #[test]
@@ -237,6 +265,10 @@ fn failing_final_checks_after_a_sync_park_as_checks_failed_without_a_fix_round()
         rec.reason
     );
     assert!(fx.runner.specs_for("builder").is_empty());
+    let job = fx.driver.job(&fx.id).expect("job");
+    let failures = std::fs::read_to_string(fx.driver.job_dir(&job).join(CHECKS_FAILURES_FILE))
+        .expect("checks-failures.md");
+    assert!(failures.starts_with("## "), "{failures}");
     let titles = titles(&rec);
     for want in ["Review", "Risk", "Checks"] {
         assert!(titles.contains(&want), "{titles:?}");
