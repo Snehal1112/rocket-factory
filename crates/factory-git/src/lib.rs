@@ -9,15 +9,13 @@ mod merge;
 mod repo;
 mod report;
 mod reset;
-// Not called until commits are signed.
-#[allow(dead_code)]
 mod sign;
 mod stage;
 mod state;
 mod tip;
 mod worktree;
 
-pub use commits::CommitInfo;
+pub use commits::{CommitInfo, Committed};
 pub use diff::{DiffCounts, DiffFiles};
 pub use error::{GitError, Result};
 pub use merge::MergeOutcome;

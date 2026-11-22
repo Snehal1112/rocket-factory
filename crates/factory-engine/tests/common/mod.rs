@@ -431,7 +431,12 @@ pub fn init_repo(main: &Path) {
     std::fs::create_dir_all(main).expect("mkdir");
     let mut opts = git2::RepositoryInitOptions::new();
     opts.initial_head("main");
-    Repository::init_opts(main, &opts).expect("init");
+    let git = Repository::init_opts(main, &opts).expect("init");
+    // The user's global git config may turn signing on.
+    git.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     commit_file(main, "README.md", "hello\n");
 }
 

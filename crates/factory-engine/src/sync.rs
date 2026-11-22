@@ -217,7 +217,7 @@ fn sync_with(
                 return Ok(SyncOutcome::Parked(format!("sync refused: {reason}"), None))
             }
             MergeOutcome::UpToDate => None,
-            MergeOutcome::Merged { merge_sha } => Some(merge_sha),
+            MergeOutcome::Merged { merge_sha, .. } => Some(merge_sha),
         }
     } else {
         None

@@ -198,7 +198,9 @@ impl Scenario {
         std::fs::create_dir_all(&root)?;
         let mut opts = git2::RepositoryInitOptions::new();
         opts.initial_head("main");
-        Repository::init_opts(&root, &opts)?;
+        let git = Repository::init_opts(&root, &opts)?;
+        // The user's global git config may turn signing on.
+        git.config()?.set_bool("commit.gpgsign", false)?;
         commit_files(&root, &[("README.md", "demo\n")], "init")?;
         // The config stays untracked, which the merge preflight allows.
         std::fs::create_dir_all(root.join(".claude/factory"))?;

@@ -227,7 +227,7 @@ fn merge_main_into_adds_a_merge_commit_without_rewriting_history() {
     let main = fx.main_sha();
     let msg = "chore(factory): sync job 001 demo with main";
     let new_head = match repo.merge_main_into(&wt, msg).expect("sync") {
-        MergeOutcome::Merged { merge_sha } => merge_sha,
+        MergeOutcome::Merged { merge_sha, .. } => merge_sha,
         other => panic!("expected Merged, got {other:?}"),
     };
     let git = fx.git();
@@ -243,6 +243,37 @@ fn merge_main_into_adds_a_merge_commit_without_rewriting_history() {
     // The stale base still reads as current after the sync.
     let check = repo.base_state(&wt.base, &new_head).expect("state");
     assert_eq!(check.state, factory_git::BaseState::Current);
+}
+
+#[test]
+fn a_signed_sync_merge_has_a_gpgsig() {
+    let fx = Fixture::new();
+    let gpg = fake_gpg(fx.dir.path());
+    signing_on(
+        &fx.git(),
+        &[
+            ("gpg.program", gpg.to_str().expect("utf8")),
+            ("user.signingkey", "ABC"),
+        ],
+    );
+    let repo = fx.repo();
+    let wt = repo.create_worktree(&job()).expect("create");
+    commit_files(&wt_repo(&wt), &[("job.txt", "j\n")], "job work");
+    commit_files(&fx.git(), &[("other.txt", "o\n")], "main moves");
+    match repo.merge_main_into(&wt, "chore: sync").expect("sync") {
+        MergeOutcome::Merged {
+            merge_sha,
+            unsigned,
+        } => {
+            assert_eq!(unsigned, None);
+            assert_eq!(repo.tip(&wt.branch).expect("tip"), merge_sha);
+            assert_eq!(
+                signature_of(&fx.git(), &merge_sha).as_deref(),
+                Some(FAKE_SIGNATURE)
+            );
+        }
+        other => panic!("expected Merged, got {other:?}"),
+    }
 }
 
 #[test]

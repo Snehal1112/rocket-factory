@@ -23,6 +23,11 @@ impl Fixture {
         let mut opts = RepositoryInitOptions::new();
         opts.initial_head(base);
         let repo = Repository::init_opts(&path, &opts).expect("init");
+        // The user's global git config may turn signing on.
+        repo.config()
+            .expect("config")
+            .set_bool("commit.gpgsign", false)
+            .expect("gpgsign");
         commit_files(&repo, &[("base.txt", "base\n")], "init");
         Fixture { dir, path }
     }
@@ -54,6 +59,54 @@ impl Fixture {
         let head = commit_to_branch(&git, branch, files, "job work");
         (base, head.to_string())
     }
+}
+
+/// Writes an executable `/bin/sh` script into `dir` and returns its path.
+pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    path
+}
+
+/// A fake gpg that records its arguments in `args` beside it and makes a fixed signature.
+pub fn fake_gpg(dir: &Path) -> PathBuf {
+    script(
+        dir,
+        "fake-gpg",
+        r#"echo "$@" > "$(dirname "$0")/args"
+cat > /dev/null
+echo "[GNUPG:] SIG_CREATED D 22 8 00 1 ABC" >&2
+printf -- '-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----\n'"#,
+    )
+}
+
+/// The `-bsau` arguments the fake gpg was run with.
+pub fn recorded_args(dir: &Path) -> String {
+    std::fs::read_to_string(dir.join("args"))
+        .expect("args file")
+        .trim_end()
+        .to_string()
+}
+
+/// Turns signing on in the repo config with the given extra settings.
+pub fn signing_on(repo: &Repository, settings: &[(&str, &str)]) {
+    let mut cfg = repo.config().expect("config");
+    cfg.set_bool("commit.gpgsign", true).expect("gpgsign");
+    cfg.set_str("gpg.format", "openpgp").expect("format");
+    for (name, value) in settings {
+        cfg.set_str(name, value).expect("setting");
+    }
+}
+
+pub const FAKE_SIGNATURE: &str = "-----BEGIN PGP SIGNATURE-----\nfake\n-----END PGP SIGNATURE-----";
+
+/// The `gpgsig` text of a commit, or None when it is unsigned.
+pub fn signature_of(repo: &Repository, sha: &str) -> Option<String> {
+    let oid = Oid::from_str(sha).expect("oid");
+    let (sig, _) = repo.extract_signature(&oid, None).ok()?;
+    Some(sig.as_str().expect("utf8").to_string())
 }
 
 pub fn sig() -> Signature<'static> {

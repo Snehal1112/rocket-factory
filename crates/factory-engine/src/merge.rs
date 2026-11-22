@@ -478,7 +478,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         return match git_op("merge_no_ff", || {
             repo.merge_no_ff(&job.branch, &head, &message)
         })? {
-            MergeOutcome::Merged { merge_sha } => Ok(Step::Merged(merge_sha)),
+            MergeOutcome::Merged { merge_sha, .. } => Ok(Step::Merged(merge_sha)),
             MergeOutcome::Conflict { paths } => Ok(Step::plain(format!(
                 "merge conflict in {}",
                 paths.join(", ")

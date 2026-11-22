@@ -128,7 +128,12 @@ pub fn fixture() -> (tempfile::TempDir, Home) {
     std::fs::write(home.token_file(), TOKEN).expect("token");
     let repo = t.path().join("repo");
     std::fs::create_dir_all(&repo).expect("repo dir");
-    git2::Repository::init(&repo).expect("git init");
+    let git = git2::Repository::init(&repo).expect("git init");
+    // The user's global git config may turn signing on.
+    git.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     register(&home, "good", &repo);
     register(&home, "broken", &t.path().join("missing-repo"));
     (t, home)

@@ -543,6 +543,11 @@ pub(crate) mod tests {
         let mut opts = git2::RepositoryInitOptions::new();
         opts.initial_head("main");
         let git = Repository::init_opts(&main, &opts).expect("init");
+        // The user's global git config may turn signing on.
+        git.config()
+            .expect("config")
+            .set_bool("commit.gpgsign", false)
+            .expect("gpgsign");
         let base = commit(&git, "HEAD", base_files, None);
         let base_commit = git
             .find_commit(git2::Oid::from_str(&base).expect("oid"))

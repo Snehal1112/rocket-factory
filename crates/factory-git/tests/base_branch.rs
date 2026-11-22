@@ -57,7 +57,7 @@ fn merge_moves_the_base_branch_only() {
         )
         .expect("merge")
     {
-        MergeOutcome::Merged { merge_sha } => merge_sha,
+        MergeOutcome::Merged { merge_sha, .. } => merge_sha,
         other => panic!("expected Merged, got {other:?}"),
     };
     assert_ne!(fx.branch_tip(BASE), base_before);
