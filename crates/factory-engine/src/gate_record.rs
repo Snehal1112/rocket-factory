@@ -5,7 +5,7 @@ use std::path::Path;
 use factory_core::gate_record::{append, read, GateKey, GateLine, GateResult};
 use factory_core::{Job, ParkKind, Stage};
 
-use crate::ports::{now, short_sha};
+use crate::ports::{now_whole_secs, short_sha};
 use crate::runloop::{user_decisions, Validated};
 use crate::{Driver, Engine};
 
@@ -70,14 +70,15 @@ fn write_line(dir: &Path, job_id: &str, line: &GateLine) {
     }
 }
 
-/// The current time in whole seconds.
-fn now_at() -> u64 {
-    now().max(0.0) as u64
-}
-
 impl Engine<'_> {
     /// Records one gate result when the project's `gate_record` setting is on. It never fails.
     pub(crate) fn gate(&self, key: GateKey, result: GateResult, detail: &str) {
+        self.gate_lines(&[(key, result, detail)]);
+    }
+
+    /// Records several gate results with one board read when the project's `gate_record` setting
+    /// is on. It never fails.
+    pub(crate) fn gate_lines(&self, lines: &[(GateKey, GateResult, &str)]) {
         if !self.config.gate_record {
             return;
         }
@@ -88,8 +89,11 @@ impl Engine<'_> {
             .as_ref()
             .and_then(|j| j.head.as_deref())
             .map(|h| short_sha(h).to_string());
-        let line = GateLine::new(key, result, round, head, now_at(), detail);
-        write_line(&self.job_dir, &self.job_id, &line);
+        let at = now_whole_secs();
+        for (key, result, detail) in lines {
+            let line = GateLine::new(*key, *result, round, head.clone(), at, detail);
+            write_line(&self.job_dir, &self.job_id, &line);
+        }
     }
 
     /// Records a `machine` line only when its result differs from the last `machine` line of this round.
@@ -115,7 +119,7 @@ pub fn record_gate(driver: &Driver, job: &Job, key: GateKey, result: GateResult,
         return;
     }
     let head = job.head.as_deref().map(|h| short_sha(h).to_string());
-    let line = GateLine::new(key, result, job.round.max(1), head, now_at(), detail);
+    let line = GateLine::new(key, result, job.round, head, now_whole_secs(), detail);
     write_line(&driver.job_dir(job), &job.id, &line);
 }
 
@@ -193,6 +197,7 @@ fn spec_gate_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::park::tests::with_engine_config;
 
     #[test]
     fn park_kinds_map_to_their_gates() {
@@ -279,6 +284,60 @@ mod tests {
             fail_key(ParkKind::Other, Some(Stage::Review), GateTarget::NoFailLine),
             None
         );
+    }
+
+    /// Runs `body` on an engine over a board with job 001 in the given round.
+    fn with_job(gate_record: bool, round: u32, body: impl FnOnce(&Engine, &Path)) {
+        let config = factory_core::Config {
+            gate_record,
+            min_free_disk_mb: 0,
+            ..factory_core::Config::default()
+        };
+        with_engine_config(
+            config,
+            |board_path| {
+                let mut job = Job::new("001", "job", "s", "2026-11-22", "f", 1.0);
+                job.round = round;
+                crate::BoardStore::new(board_path, std::time::Duration::from_secs(1))
+                    .update(|board| {
+                        board.jobs.push(job);
+                        Ok(())
+                    })
+                    .expect("save board");
+            },
+            |engine, job_dir, _| body(engine, job_dir),
+        );
+    }
+
+    #[test]
+    fn gate_lines_write_every_line_once() {
+        with_job(true, 1, |engine, job_dir| {
+            engine.gate_lines(&[
+                (GateKey::Format, GateResult::Pass, "a"),
+                (GateKey::Lint, GateResult::Pass, "b"),
+            ]);
+            let lines = read(job_dir);
+            let gates: Vec<GateKey> = lines.iter().map(|l| l.gate).collect();
+            assert_eq!(gates, [GateKey::Format, GateKey::Lint]);
+        });
+    }
+
+    #[test]
+    fn gate_lines_write_nothing_when_off() {
+        with_job(false, 1, |engine, job_dir| {
+            engine.gate_lines(&[(GateKey::Format, GateResult::Pass, "a")]);
+            assert!(!job_dir.join(factory_core::gate_record::GATES_FILE).exists());
+        });
+    }
+
+    #[test]
+    fn record_gate_keeps_round_zero_as_one() {
+        with_job(true, 0, |engine, job_dir| {
+            engine.gate(GateKey::Format, GateResult::Pass, "a");
+            let lines = read(job_dir);
+            assert_eq!(lines.len(), 1);
+            assert_eq!(lines[0].round, 1);
+        });
     }
 
     #[test]

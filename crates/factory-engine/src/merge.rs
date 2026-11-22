@@ -1,5 +1,5 @@
-use factory_core::gate_record::{GateKey, GateResult};
 use factory_core::{
+    gate_record::{GateKey, GateResult},
     next_with_resume, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt, Stage,
 };
 use factory_git::{BaseState, MergeOutcome, Preflight};
