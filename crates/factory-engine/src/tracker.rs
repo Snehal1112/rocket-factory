@@ -418,6 +418,35 @@ pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<LabelEvent>,
     Ok(last.flatten())
 }
 
+/// Accepts only `owner/name`, each part a repository name that is not `.` or `..`.
+pub(crate) fn check_repo_name(name: &str) -> Result<(), String> {
+    let usable = name.split_once('/').is_some_and(|(owner, repo)| {
+        [owner, repo]
+            .iter()
+            .all(|part| factory_core::is_repo_name(part) && *part != "." && *part != "..")
+    });
+    if usable {
+        Ok(())
+    } else {
+        Err(format!(
+            "gh repo view printed an unusable repository name: `{name}`"
+        ))
+    }
+}
+
+/// Accepts only ASCII letters, digits and `-`, with an optional `[bot]` suffix, and never `null`.
+pub(crate) fn check_login(login: &str) -> Result<(), String> {
+    let rest = login.strip_suffix("[bot]").unwrap_or(login);
+    let usable = !rest.is_empty()
+        && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && !login.eq_ignore_ascii_case("null");
+    if usable {
+        Ok(())
+    } else {
+        Err(format!("gh api user printed an unusable login: `{login}`"))
+    }
+}
+
 /// Runs `gh` in the main checkout. It never uses a shell.
 pub struct GhTracker {
     program: String,
@@ -514,6 +543,7 @@ impl Tracker for GhTracker {
         if name.is_empty() {
             return Err("gh repo view printed no repository name".to_string());
         }
+        check_repo_name(&name)?;
         Ok(name)
     }
 
@@ -573,6 +603,7 @@ impl Tracker for GhTracker {
         if login.is_empty() {
             return Err("gh api user printed no login".to_string());
         }
+        check_login(&login)?;
         Ok(login)
     }
 }
@@ -1122,6 +1153,77 @@ mod tests {
             .edit_labels(7, &strings(&["x"]), &[])
             .expect_err("create fails");
         assert!(err.contains("bad credentials"), "{err}");
+    }
+
+    #[test]
+    fn check_repo_name_accepts_owner_and_name() {
+        for name in ["o/r", "Snehal1112/rocket-factory"] {
+            check_repo_name(name).expect("valid");
+        }
+    }
+
+    #[test]
+    fn check_repo_name_rejects_malformed_names() {
+        for name in [
+            "o/r/x", "o r/x", "/r", "o/", "or", "o/r\nx/y", "../x", "o/..", "./r", "o/r?x=1",
+            "o/r#a", "o%2Fr/x",
+        ] {
+            let err = check_repo_name(name).expect_err(name);
+            assert_eq!(
+                err,
+                format!("gh repo view printed an unusable repository name: `{name}`")
+            );
+        }
+    }
+
+    #[test]
+    fn check_login_accepts_bot_logins() {
+        for login in ["alice", "a-b", "github-actions[bot]"] {
+            check_login(login).expect("valid");
+        }
+    }
+
+    #[test]
+    fn check_login_rejects_malformed_logins() {
+        for login in [
+            "a b", "a/b", "a\nb", "a:b", "a?b", "a_b", "[bot]", "null", "NULL",
+        ] {
+            let err = check_login(login).expect_err(login);
+            assert_eq!(
+                err,
+                format!("gh api user printed an unusable login: `{login}`")
+            );
+        }
+    }
+
+    #[test]
+    fn repo_name_rejects_a_malformed_gh_reply() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "echo 'o r/x'");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let err = tracker.repo_name().expect_err("malformed");
+        assert_eq!(
+            err,
+            "gh repo view printed an unusable repository name: `o r/x`"
+        );
+    }
+
+    #[test]
+    fn repo_name_keeps_the_empty_output_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "true");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let err = tracker.repo_name().expect_err("empty");
+        assert_eq!(err, "gh repo view printed no repository name");
+    }
+
+    #[test]
+    fn current_user_rejects_a_malformed_gh_reply() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "echo 'a b'");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let err = tracker.current_user().expect_err("malformed");
+        assert_eq!(err, "gh api user printed an unusable login: `a b`");
     }
 
     #[test]
