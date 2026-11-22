@@ -143,8 +143,45 @@ fn a_plan_without_a_commit_line_uses_the_plan_title() {
         .job_message(&request("", "", &[], true))
         .expect("message");
     let subject = message.lines().next().expect("subject");
-    assert!(subject.contains("Retry a parked job") || subject.contains("retry a parked job"));
-    assert!(!subject.starts_with("chore(factory): merge job"));
+    assert_eq!(subject, "feat: retry a parked job");
+}
+
+#[test]
+fn a_title_ending_in_a_period_drops_the_period() {
+    let fx = Fixture::new();
+    write_plan(&fx, "# Retry a parked job.\n\n**Goal:** Retry it.\n");
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    let message = engine
+        .job_message(&request("", "", &[], true))
+        .expect("message");
+    let subject = message.lines().next().expect("subject");
+    assert_eq!(subject, "feat: retry a parked job");
+    assert!(
+        !fx.ledger().contains("fixed message used"),
+        "{}",
+        fx.ledger()
+    );
+}
+
+#[test]
+fn a_second_merge_message_writes_the_refused_line_ruling_once() {
+    let fx = Fixture::new();
+    let _ = std::fs::remove_file(fx.job_dir.join("progress.md"));
+    write_plan(&fx, "# Retry\n\n**Commit:** Added a thing\n");
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    for _ in 0..2 {
+        engine
+            .job_message(&request("", "", &[], true))
+            .expect("message");
+    }
+    assert_eq!(
+        fx.ledger().matches("plan **Commit:** line refused").count(),
+        1,
+        "{}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -157,7 +194,7 @@ fn a_plan_without_a_heading_uses_the_feature() {
         .job_message(&request("", "", &[], true))
         .expect("message");
     let subject = message.lines().next().expect("subject");
-    assert!(subject.contains("demo feature"));
+    assert_eq!(subject, "feat: demo feature");
 }
 
 #[test]

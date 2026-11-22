@@ -130,3 +130,26 @@ fn sync_message_uses_relates_to_then_the_job_footer() {
         tip.message().expect("msg")
     );
 }
+
+#[test]
+fn the_sync_commit_has_the_fixed_subject_and_footers() {
+    let effects = vec![reply("ok\nVERDICT: APPROVE")];
+    let fx = approved_job_with(Arc::new(scripted(effects)));
+    with_issues(&fx, vec![20]);
+    common::commit_file(&fx.main, "other.md", "o");
+    merged(&fx);
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let job = fx.driver.job(&fx.id).expect("job");
+    let tip = repo
+        .revparse_single(&job.branch)
+        .expect("branch")
+        .peel_to_commit()
+        .expect("commit");
+    assert_eq!(
+        tip.message().expect("msg"),
+        format!(
+            "chore(factory): sync main into job 001 {}\n\nRelates to: #20\nFactory-Job: 001",
+            job.slug
+        )
+    );
+}

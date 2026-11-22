@@ -210,6 +210,17 @@ impl Engine<'_> {
         self.ledger_file().ruling(&one_line).map_err(core_err)
     }
 
+    /// Appends a ruling unless the ledger already holds the same ruling line.
+    pub(crate) fn ruling_once(&self, text: &str) -> Result<(), EngineError> {
+        let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let line = format!("Ruling: {one_line}");
+        let ledger = std::fs::read_to_string(self.ledger_file().path).unwrap_or_default();
+        if ledger.lines().any(|l| l == line) {
+            return Ok(());
+        }
+        self.ruling(&one_line)
+    }
+
     /// Moves the job to needs-human with a reason and logs the park. The ledger ruling is left to the caller.
     pub(crate) fn move_to_needs_human(&self, reason: &str) -> Result<(), EngineError> {
         self.set_stage(Stage::NeedsHuman, Some(reason), false)?;
