@@ -11,10 +11,10 @@ You are a thin front end. The Rust driver does all mechanical work. Never edit t
 
 ## Find the project
 
-1. Run `factory project which` from the current directory (use `$FACTORY_BIN` in place of `factory` when `FACTORY_BIN` is set). Its output is the project name, called `<name>` below.
+1. Run `factory project which` from the current directory. Its output is the project name, called `<name>` below.
 2. If it fails, show the user its error line, then stop. When the line says `no registered project`, add that they can run `factory project add <path> --preset <name>` for this repository. When it says `ambiguous match`, say the registry holds two names for one repository and must be fixed. When the command is not found, say the factory binaries are not on PATH.
 
-`<factory>` means `$FACTORY_BIN` when `FACTORY_BIN` is set, else `factory` on PATH. Pass `--project <name>` on every `<factory>` call, so each call is `<factory> --project <name> <subcommand> ...`.
+`<factory>` is `factory` on PATH. Write it literally in every shell command and never use a shell variable, because the Claude permission check refuses a command that holds one. Pass `--project <name>` on every `<factory>` call, so each call is `<factory> --project <name> <subcommand> ...`.
 
 ## Pick the subcommand
 

@@ -78,16 +78,19 @@ pub fn allowed(skill: &FoundSkill, allow: &[String]) -> bool {
         .any(|entry| entry.split('@').next() == Some(wanted.as_str()))
 }
 
-/// The `-c` values that limit Codex to the allowed skills.
+/// The `-c` values that limit Codex to the allowed skills. With none allowed, every skill is off:
+/// instructions, bundled skills and each found skill.
 pub fn codex_skill_args(found: &[FoundSkill], allow: &[String]) -> Vec<String> {
     let allowed_paths: BTreeSet<&Path> = found
         .iter()
         .filter(|skill| allowed(skill, allow))
         .map(|skill| skill.path.as_path())
         .collect();
+    let mut args = Vec::new();
     if allowed_paths.is_empty() {
-        return vec!["skills.include_instructions=false".to_string()];
+        args.push("skills.include_instructions=false".to_string());
     }
+    args.push("skills.bundled.enabled=false".to_string());
     let disabled: BTreeSet<String> = found
         .iter()
         .filter(|skill| !allowed_paths.contains(skill.path.as_path()))
@@ -98,7 +101,6 @@ pub fn codex_skill_args(found: &[FoundSkill], allow: &[String]) -> Vec<String> {
             )
         })
         .collect();
-    let mut args = vec!["skills.bundled.enabled=false".to_string()];
     if !disabled.is_empty() {
         let items: Vec<String> = disabled.into_iter().collect();
         args.push(format!("skills.config=[{}]", items.join(",")));
@@ -220,11 +222,26 @@ mod tests {
     }
 
     #[test]
-    fn empty_or_unmatched_allowlist_turns_instructions_off() {
-        let skills = [found("", "foo", "/p/f")];
-        let off = list(&["skills.include_instructions=false"]);
+    fn empty_or_unmatched_allowlist_turns_every_skill_off() {
+        let skills = [found("", "foo", "/p/foo"), found("", "bar", "/p/bar")];
+        let off = list(&[
+            "skills.include_instructions=false",
+            "skills.bundled.enabled=false",
+            "skills.config=[{path=\"/p/bar\",enabled=false},{path=\"/p/foo\",enabled=false}]",
+        ]);
         assert_eq!(codex_skill_args(&skills, &[]), off);
         assert_eq!(codex_skill_args(&skills, &list(&["nothing"])), off);
+    }
+
+    #[test]
+    fn an_empty_find_with_no_allowlist_has_no_skills_config() {
+        assert_eq!(
+            codex_skill_args(&[], &[]),
+            list(&[
+                "skills.include_instructions=false",
+                "skills.bundled.enabled=false"
+            ])
+        );
     }
 
     #[test]

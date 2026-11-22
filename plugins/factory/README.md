@@ -2,7 +2,7 @@
 
 This plugin adds the `/factory` command to Claude Code. The command brainstorms and plans a feature with you, then hands it to the rocket-factory driver, which builds, checks, reviews and merges it.
 
-The plugin does not install the `factory` binary. The `factory` binary must be on your PATH (or set in `$FACTORY_BIN`). Build and install it as described in `docs/guides/getting-started.md`.
+The plugin does not install the `factory` binary. The `factory` binary must be on your PATH. Build and install it as described in `docs/guides/getting-started.md`.
 
 ## Install
 

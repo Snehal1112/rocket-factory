@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use factory_agent::AgentSpec;
 use factory_core::agents::strip_frontmatter;
-use factory_core::{codex_worktree_skills_dir, Config, TOOL_MAP_CODEX};
+use factory_core::{codex_runtime_tool_map, codex_worktree_skills_dir, Config};
 use factory_git::Repo;
 
 use crate::codex_skills::{allowed, codex_skill_args, discover_skills, FoundSkill};
@@ -21,7 +21,7 @@ fn has_role(role: &str, prefix: &str) -> bool {
 
 /// Codex agent text: the preface first so its rules win, then the tool map, then the agent body.
 fn codex_agent_text(preface: &str, body: &str) -> String {
-    format!("{preface}\n\n{TOOL_MAP_CODEX}\n\n{body}")
+    format!("{preface}\n\n{}\n\n{body}", codex_runtime_tool_map())
 }
 
 /// The Codex preface. With allowed skills the catalog may be used, subagents stay off either way.
@@ -80,15 +80,20 @@ fn kb_folder(add_dirs: &[PathBuf]) -> Option<&Path> {
 }
 
 impl Engine<'_> {
-    /// Rewrites a spec for the Codex runner. A missing agent file is an error, and the caller fails the run.
-    pub(crate) fn prepare_for_codex(&self, spec: &mut AgentSpec) -> Result<(), EngineError> {
+    /// The skills a Codex run in `cwd` can find: the user roots and the worktree's own folder.
+    pub(crate) fn codex_found_skills(&self, cwd: &Path) -> Vec<FoundSkill> {
         let mut roots = self.codex_skill_roots.clone();
         let worktree = self
             .repo
-            .worktree_root_of(&spec.cwd)
-            .unwrap_or_else(|| spec.cwd.clone());
+            .worktree_root_of(cwd)
+            .unwrap_or_else(|| cwd.to_path_buf());
         roots.push(codex_worktree_skills_dir(&worktree));
-        let found = discover_skills(&roots);
+        discover_skills(&roots)
+    }
+
+    /// Rewrites a spec for the Codex runner. A missing agent file is an error, and the caller fails the run.
+    pub(crate) fn prepare_for_codex(&self, spec: &mut AgentSpec) -> Result<(), EngineError> {
+        let found = self.codex_found_skills(&spec.cwd);
         let allow = self.config.skill_allow_for(&spec.role);
         spec.codex_config = codex_skill_args(&found, &allow);
         if let Some(name) = spec.agent.clone() {

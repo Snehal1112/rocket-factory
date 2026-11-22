@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 
 use factory_agent::AgentSpec;
 use factory_core::{
-    agents_file, evaluate, expected_channels, parse_probe_answer, probe_prompt, write_atomic,
-    AgentFile, Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe,
+    agents_file, allowed_skill_entries, evaluate_with_absent, parse_probe_answer, probe_prompt,
+    write_atomic, AgentFile, Harness, ProbeAnswer, ProbeReport, ProbeRole, RoleProbe,
 };
 
 use crate::agents_file::write_agents_json_at;
 use crate::clock::utc_stamp;
+use crate::codex_skills::allowed;
 use crate::ports::{core_err, io_err, JobView};
 use crate::specs::spec_reviewer_agent;
 use crate::{kb_spec, Engine, EngineError, ReviewerExtra};
@@ -136,6 +137,23 @@ impl Engine<'_> {
         }
     }
 
+    /// The allowlist entries of a Codex role that no found skill matches.
+    fn absent_codex_skills(&self, role: ProbeRole, cwd: &Path) -> Vec<String> {
+        let entries = allowed_skill_entries(role, Harness::Codex, &self.config);
+        if entries.is_empty() {
+            return entries;
+        }
+        let found = self.codex_found_skills(cwd);
+        entries
+            .into_iter()
+            .filter(|entry| {
+                !found
+                    .iter()
+                    .any(|s| allowed(s, std::slice::from_ref(entry)))
+            })
+            .collect()
+    }
+
     fn probe_run(
         &self,
         role: ProbeRole,
@@ -145,6 +163,10 @@ impl Engine<'_> {
         work_dir: &Path,
     ) -> Result<(RoleProbe, String, AgentSpec), EngineError> {
         let mut spec = self.probe_base_spec(role, work_dir);
+        let absent = match harness {
+            Harness::Claude => Vec::new(),
+            Harness::Codex => self.absent_codex_skills(role, &spec.cwd),
+        };
         self.shape_spec(&mut spec, harness)
             .map_err(|e| EngineError::Msg(with_project_hint(e)))?;
         spec.prompt = probe_prompt(marker);
@@ -169,13 +191,18 @@ impl Engine<'_> {
         let probe = match failure {
             None => {
                 let answer = parse_probe_answer(&run.result_text, marker);
-                evaluate(role, harness, &self.config, &answer)
+                evaluate_with_absent(role, harness, &self.config, &answer, &absent)
             }
             Some(why) => {
-                let mut probe = evaluate(role, harness, &self.config, &ProbeAnswer::default());
-                let expected = expected_channels(role, harness, &self.config);
+                let mut probe = evaluate_with_absent(
+                    role,
+                    harness,
+                    &self.config,
+                    &ProbeAnswer::default(),
+                    &absent,
+                );
                 for channel in &mut probe.channels {
-                    if expected.contains(&channel.name.as_str()) {
+                    if channel.expected {
                         channel.present = false;
                         channel.detail = why.clone();
                     }

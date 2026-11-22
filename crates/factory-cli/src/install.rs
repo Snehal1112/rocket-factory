@@ -252,6 +252,13 @@ mod tests {
     }
 
     #[test]
+    fn codex_skill_refuses_text_after_the_claude_map() {
+        let error = build_codex_skill(&format!("{}\nextra\n", claude_command_text()))
+            .expect_err("text after the Claude map must be an error");
+        assert!(error.to_string().contains("Claude tool map"), "{error}");
+    }
+
+    #[test]
     fn codex_skill_reports_a_missing_claude_map() {
         let error = build_codex_skill("# Factory\n\nno map here\n")
             .expect_err("a command without the Claude map must be an error");

@@ -297,11 +297,16 @@ fn interactive_runs_with_a_fake_tmux() {
     let commands = home.join(".claude/commands");
     std::fs::create_dir_all(&commands).expect("commands dir");
     std::fs::write(commands.join("factory.md"), "factory\n").expect("write command");
-    // The fake shows the ready prompt and the merged job; every other call is a no-op.
+    // The fake logs every call. It shows the ready prompt, and the merged job only after the
+    // command was typed.
     let tmux = tmp.path().join("tmux");
+    let log = tmp.path().join("tmux.log");
     std::fs::write(
         &tmux,
-        "#!/bin/sh\nif [ \"$1\" = capture-pane ]; then\n  printf '? for shortcuts\\nmerged\\n001\\n'\nfi\nexit 0\n",
+        format!(
+            "#!/bin/sh\nlog={}\necho \"$*\" >> \"$log\"\nif [ \"$1\" = capture-pane ]; then\n  printf '? for shortcuts\\n'\n  if grep -q 'send-keys .*/factory status' \"$log\"; then printf 'merged\\n001\\n'; fi\nfi\nexit 0\n",
+            log.display()
+        ),
     )
     .expect("write tmux");
     std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).expect("chmod tmux");
@@ -317,4 +322,28 @@ fn interactive_runs_with_a_fake_tmux() {
     let pane =
         std::fs::read_to_string(run_tmp.path().join("out/interactive/pane.txt")).expect("pane.txt");
     assert!(pane.contains("001"), "{pane}");
+    let calls = std::fs::read_to_string(&log).expect("tmux.log");
+    assert!(
+        calls
+            .lines()
+            .any(|l| l.contains("send-keys") && l.contains("/factory status")),
+        "{calls}"
+    );
+    assert!(
+        calls.lines().any(|l| l.starts_with("kill-session")),
+        "{calls}"
+    );
+    let path_part = format!(
+        "PATH={}:",
+        Path::new(env!("CARGO_BIN_EXE_factory"))
+            .parent()
+            .expect("bin dir")
+            .display()
+    );
+    assert!(
+        calls
+            .lines()
+            .any(|l| l.contains("new-session") && l.contains(&path_part)),
+        "{path_part}\n{calls}"
+    );
 }

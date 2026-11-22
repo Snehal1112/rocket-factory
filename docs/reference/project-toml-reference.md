@@ -1,6 +1,6 @@
 # project.toml reference
 
-Everything you can set in a registered project's `project.toml`, with defaults, validation, where each key takes effect and examples. Verified against the code on 2026-10-19 (commit `cfd6c64`). Source files are named so you can re-check. For the pipeline itself, read `software-factory.md`.
+Everything you can set in a registered project's `project.toml`, with defaults, validation, where each key takes effect and examples. Verified against the code on 2026-11-22 (commit `5452e2b`). Source files are named so you can re-check. For the pipeline itself, read `software-factory.md`.
 
 ## Where the file lives
 
@@ -23,7 +23,7 @@ base_branch = "main"
 Rules:
 
 - `subpath` is the project folder relative to the git top folder `repo`, with `/` separators. Absent means the project is the repo top folder. `factory project add <repo>/apps/web` writes it. It must be a relative path without `..` and must name an existing folder, otherwise the project shows as disabled. A job may change only files inside this folder, the agents start there, and every path in `risk_paths` and `[[checks]]` (`paths`, and the working directory of the commands) is relative to it, not to the repo root. A project without `subpath` is unchanged.
-- Only `repo`, `preset`, `subpath` and `[settings]` are allowed at the top level. Any other key makes the file unreadable (`factory-core/src/project.rs:37`).
+- Only `repo`, `preset`, `subpath` and `[settings]` are allowed at the top level. Any other key makes the file unreadable (`#[serde(deny_unknown_fields)]` on `ProjectFile` in `factory-core/src/project.rs`).
 - `[settings]` takes any `Config` key from the next sections. An unknown key or a wrong type makes the project fail closed (see "Fail closed").
 - `factory project add` writes `repo`, `preset`, `subpath` (for a subfolder), `base_branch` and `cache_ttl` as real settings. Below them it writes every other setting as a commented line with the value the project gets while the line stays commented: the built-in default, or the preset's value marked `# From the <preset> preset.` A setting that is unset by default shows an example value and what unset means. Remove the `# ` to set one.
 - `factory project defaults <name>` (or `--all`) adds the same commented lines to an older file. It skips every setting the file already sets or already has as a commented line, keeps the rest of the text as it is, puts the lines inside `[settings]` before any `[[settings.checks]]` table, and does nothing when every setting is listed. The lines live in `factory-core/src/settings_block.rs`, and a test fails when a `Config` key is missing there or a shown value differs from the real default.
@@ -227,10 +227,14 @@ No agent ever loads an MCP server. Every Claude run gets `--strict-mcp-config` w
 [[settings.checks]]
 paths    = ["crates/*/**"]
 commands = ["cargo check -j4 -p {crate}", "cargo test -j4 -p {crate}"]
+format   = ["cargo fmt -p {crate} -- --check"]
+lint     = ["cargo clippy -j4 -p {crate} --all-targets -- -D warnings"]
 ```
 
 How it works (`factory-checks/src/plan.rs`):
 
+- `format` lists commands planned after `commands`; their results show as the `format` gate.
+- `lint` lists commands planned after `format`; their results show as the `lint` gate.
 - Every rule whose `paths` match a changed file applies. It is not first-match.
 - `{crate}` is the cargo package that owns a matching path, read from `cargo metadata`, so `src-tauri` expands to its package name. If `cargo metadata` fails, it falls back to the folder after the first `crates` segment and `checks.md` says so. With several crates the command runs once per crate, in alphabetical order. A command that uses `{crate}` but has no matching crate runs nothing.
 - `{dependents}` expands to the direct dependents of the changed packages, alphabetically, at most `dependents_cap` of them. The rest are skipped and `checks.md` names them.
@@ -242,7 +246,7 @@ How it works (`factory-checks/src/plan.rs`):
 - A failure sends the job back to the builder for a fix round, or parks it when `fix_rounds` is used up.
 - Matching is case-sensitive here, unlike `risk_paths`.
 
-The rust preset's `crates/*/**` rule runs `cargo check -j4 -p {crate}`, `cargo test -j4 -p {crate}`, `cargo fmt -p {crate} -- --check`, `cargo clippy -j4 -p {crate} --all-targets -- -D warnings` and `cargo test -j4 -p {dependents}`. Its root `src/**` rule adds `cargo fmt -- --check` and `cargo clippy -j4 --all-targets -- -D warnings` after `cargo check -j4` and `cargo test -j4`. The rust preset covers the root `Cargo.toml` and `Cargo.lock` and exempts generic non-code files. A project that sets `[[settings.checks]]` or `unchecked_paths` replaces the preset value, so copy the preset entries it still wants.
+In the rust preset's `crates/*/**` rule, `commands` holds `cargo check -j4 -p {crate}`, `cargo test -j4 -p {crate}` and `cargo test -j4 -p {dependents}`, `format` holds `cargo fmt -p {crate} -- --check` and `lint` holds `cargo clippy -j4 -p {crate} --all-targets -- -D warnings`. In its root `src/**` rule, `commands` holds `cargo check -j4` and `cargo test -j4`, `format` holds `cargo fmt -- --check` and `lint` holds `cargo clippy -j4 --all-targets -- -D warnings`. The rust preset covers the root `Cargo.toml` and `Cargo.lock` and exempts generic non-code files. A project that sets `[[settings.checks]]` or `unchecked_paths` replaces the preset value, so copy the preset entries it still wants.
 
 ```toml
 [[settings.checks]]

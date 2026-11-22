@@ -24,7 +24,7 @@ cargo run -j4 --manifest-path dashboard/Cargo.toml -- --home ~/.factory --port 8
 ## Crate layering
 
 ```
-factory-core    pure rules: board, ledger, config, risk, verdict, budget (no I/O deps)
+factory-core    domain rules plus home, project and preset loading: board, ledger, config, risk, verdict, budget (no I/O crate deps)
 factory-git     git2 layer: worktrees, diffs, no-ff merge (never shell out to git)
 factory-telemetry  structured logging: tracing layers, redaction, rotating log file (no factory deps)
 factory-procgroup  process groups for agent and check children, the `children-<owner>.json` registry, the leftover reaper and the shutdown signal handler (deps `libc`, `signal-hook`)
@@ -35,7 +35,7 @@ factory-cli     clap commands over the engine (`factory new|run|status|approve|r
 factory-supervisor  `factoryd`: queue of run requests, one `factory` child per project, adopts children after a restart
 ```
 
-- Only two things in `factory-engine` sit behind traits: `AgentRunner` (`factory-agent/src/runner.rs`, fakes in tests) and `Tracker` (`tracker.rs`). Git is the concrete `factory_git::Repo`, and checks (`factory_checks`) and `procinfo.rs` are called directly. `ports.rs` holds no traits, only error mappers and board/ledger helpers on `Engine`. For new agent or tracker logic use the existing trait; do not assume a fake exists for git or checks.
+- The workspace has seven traits: `AgentRunner` and `AgentStream` (factory-agent), `Tracker` (factory-engine), `BaseTipFiles` (factory-core), `FactoryCli` and `Spawner` (factory-supervisor), `LineSink` (factory-telemetry). `AgentRunner`, `Tracker`, `FactoryCli`, `Spawner` and `BaseTipFiles` have fakes in tests; `LineSink` has the in-memory `Memory` sink behind `factory_telemetry::capture`, which tests use; `AgentStream` has only real implementations. Of the engine's own ports only `AgentRunner` (`factory-agent/src/runner.rs`) and `Tracker` (`tracker.rs`) sit behind traits; `tipfiles.rs` implements `BaseTipFiles` for the resolver. Git is the concrete `factory_git::Repo`, and checks (`factory_checks`) and `procinfo.rs` are called directly. `ports.rs` holds no traits, only error mappers and board/ledger helpers on `Engine`. For new agent or tracker logic use the existing trait; do not assume a fake exists for git or checks.
 - `tick.rs` and `runloop.rs` drive one job through the stages. `decide.rs` holds the merge/fix/needs-human choice, `tasks.rs` the per-task builder loop, `series.rs` and `specs.rs` the multi-plan series.
 - Board, ledger and events are written only by the driver. Agents never touch them. Board JSON must stay compatible with `factory-server` (`dashboard/`, separate workspace), so add fields as optional. The dashboard has a `--home` mode that holds the API token server-side (`dashboard/README.md`); keep the token out of every reply.
 - The repo-level config is `.claude/factory/config.toml`. A missing or broken config must make every diff risky, so never default it to permissive.
@@ -56,4 +56,4 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 ## Carried over from Rocket
 
-These files in `.claude/` are copies of Rocket's factory files. Tests read them. They are Rocket-specific until later plans replace them: `factory/config.toml` becomes a preset (plan 3), the Rocket copy `commands/factory.md` was removed, so the only command is `factory-core/assets/global-command.md`, installed with `factory install` (plan 7), and `factory-cli/tests/agent_lint.rs` pins its text. The prose docs `software-factory.md` and `getting-started.md` live in `docs/reference/` and `docs/guides/`.
+These files in `.claude/` are copies of Rocket's factory files. Tests read them. `.claude/factory/config.toml` is Rocket's old config, kept for the tests that read it; the presets in `crates/factory-core/presets/` replaced it for registered projects. The Rocket copy `commands/factory.md` was removed, so the only command is `factory-core/assets/global-command.md`, which `factory install` writes, and `factory-cli/tests/agent_lint.rs` pins its text. The prose docs `software-factory.md` and `getting-started.md` live in `docs/reference/` and `docs/guides/`.

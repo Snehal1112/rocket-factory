@@ -28,7 +28,15 @@ fn a_reply_with_pages_is_refreshed() {
     );
     let specs = runner.specs_for("kb");
     assert_eq!(specs.len(), 1);
-    assert_eq!(specs[0].add_dirs, vec![fx.config.kb_dir().expect("kb dir")]);
+    assert_eq!(
+        specs[0].add_dirs,
+        vec![fx
+            .config
+            .kb_dir()
+            .expect("kb dir")
+            .canonicalize()
+            .expect("canon")]
+    );
     assert_eq!(specs[0].cwd, fx.repo.root());
     assert!(specs[0].prompt.contains("job 001 (demo)"));
 }

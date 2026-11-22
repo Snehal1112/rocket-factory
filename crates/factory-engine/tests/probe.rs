@@ -166,6 +166,50 @@ fn all_channels_present_when_the_answer_echoes_everything() {
     assert_eq!(probe.skills, ["superpowers:brainstorming"]);
 }
 
+fn codex_kb_probe(run: AgentRun) -> factory_core::RoleProbe {
+    let fx = fixture(Harness::Codex);
+    let runner = FakeRunner::new(vec![run]);
+    let dir = work_dir(&fx);
+    let (probe, _) = fx
+        .engine(&runner)
+        .with_agent_files(files())
+        .with_codex_skill_roots(vec![fx.tmp.path().join("no-skills")])
+        .probe_role_with(ProbeRole::Kb, Harness::Codex, Delivery::Agent, MARKER, &dir)
+        .expect("probe");
+    probe
+}
+
+#[test]
+fn a_codex_kb_probe_without_kb_refresh_passes() {
+    let probe = codex_kb_probe(AgentRun::done(&format!(
+        "MARKER: {MARKER}\nBOOTSTRAP: NONE\nTOOLS: NONE\nSKILLS: NONE"
+    )));
+    let skills = probe
+        .channels
+        .iter()
+        .find(|c| c.name == "skills")
+        .expect("skills");
+    assert!(!skills.expected);
+    assert!(skills.detail.starts_with(factory_core::NOT_INSTALLED));
+    assert!(probe.ok(), "{probe:?}");
+}
+
+#[test]
+fn a_failed_codex_run_keeps_the_not_installed_detail() {
+    let probe = codex_kb_probe(AgentRun::failed("boom"));
+    let by = |n: &str| {
+        probe
+            .channels
+            .iter()
+            .find(|c| c.name == n)
+            .expect("channel")
+    };
+    assert!(by("agent_text").expected && !by("agent_text").present);
+    assert!(!by("skills").expected);
+    assert!(by("skills").detail.starts_with(factory_core::NOT_INSTALLED));
+    assert!(!probe.ok());
+}
+
 #[test]
 fn a_stale_marker_does_not_pass() {
     let fx = fixture(Harness::Claude);

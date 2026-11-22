@@ -1,6 +1,6 @@
-# Software Factory for Rocket
+# Software Factory
 
-Status: v3, a Rust driver. Design: `docs/superpowers/specs/2026-10-13-software-factory-v3-rust-driver-design.md`. Plans: `docs/superpowers/plans/2026-10-13-software-factory-v3/`. v1 (LLM orchestrator, Python helper) and the v2 plan series are superseded.
+Status: the standalone Rust driver. Design: `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`. v1 (LLM orchestrator, Python helper) and the v2 plan series are superseded.
 
 The Rust driver does everything mechanical: state, checks, diffs, merge, sync, series, budget and events. The LLM is used only where judgment is needed: design and planning with the user, one builder per plan, one reviewer per diff.
 
@@ -429,7 +429,7 @@ Limits:
 - There is no mid-run budget warning or stop. Codex reports usage only at the end of a turn, so the run total is added to the job tally after the run and the job parks when it is over budget. `stall_minutes` still stops a silent run.
 - `cache_ttl` does not apply and is not set. `builder_carry_session` is off.
 - There is no cold-start data, so the COLD STARTS tables show `n/a` for Codex.
-- The agent file text and a short preface go into the prompt. A Codex run lists the skills in `~/.agents/skills`, `$CODEX_HOME/skills` (default `~/.codex/skills`) and `<worktree>/.agents/skills`; only the catalog (name, description, path) is in context. The factory sets `skills.bundled.enabled=false` and disables, by canonical path in `skills.config`, every skill the role is not allowed. The allowlist is the role's plugin list: an entry `superpowers` allows the skills in a `superpowers` subfolder, an entry `foo` allows a top-level `foo` folder, and an empty list, or one that matches no installed skill, gives `skills.include_instructions=false`. KB gets `kb-refresh`. Subagents stay off. When the skill a role names is not installed, the agent text keeps its short rules.
+- The agent file text and a short preface go into the prompt. A Codex run lists the skills in `~/.agents/skills`, `$CODEX_HOME/skills` (default `~/.codex/skills`) and `<worktree>/.agents/skills`; only the catalog (name, description, path) is in context. The factory sets `skills.bundled.enabled=false` and disables, by canonical path in `skills.config`, every skill the role is not allowed. The allowlist is the role's plugin list: an entry `superpowers` allows the skills in a `superpowers` subfolder, an entry `foo` allows a top-level `foo` folder, and an empty list, or one that matches no installed skill, gives `skills.include_instructions=false`, `skills.bundled.enabled=false` and every found skill disabled by path. The role plugin lists are the skill allowlist that replaced the planned `codex_builder_skills` setting. KB gets `kb-refresh`. Subagents stay off. When the skill a role names is not installed, the agent text keeps its short rules.
 - Runs pass `--ignore-user-config`, so your own `~/.codex/config.toml` is not read. The login still works. `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from the child unless `FACTORY_ALLOW_API_KEY=1`.
 - Runs set the `skills.*` flags above (`skills.bundled.enabled`, `skills.config`, `skills.include_instructions`) as `-c` values.
 - Runs set `features.apps=false` and `features.plugins=false`, so ChatGPT apps and Codex plugins add no tools. Codex has no switch that drops every MCP server, and `-c mcp_servers={}` merges instead of replacing.
@@ -463,17 +463,22 @@ A channel the role does not expect shows `-`, or `extra` when it is present anyw
 factory [--project <name>] probe [--harness claude|codex] [--role <role>]... [--json] [--delivery agent|append|stdin]
 ```
 
-The harness defaults to the project's `agent_cli`, the roles to all five. `--delivery` picks how the marker reaches Claude: an `agents.json` passed with `--agents` (`agent`), `--append-system-prompt` (`append`) or the start of stdin (`stdin`). The probe exits 1 when an expected channel is missing, 2 on bad flag values. Reports and per-role transcripts are written under `<state dir>/probes/`; `--json` prints the report and nothing else.
+The harness defaults to the project's `agent_cli`, the roles to all four. `--delivery` picks how the marker reaches Claude: an `agents.json` passed with `--agents` (`agent`), `--append-system-prompt` (`append`) or the start of stdin (`stdin`). The probe exits 1 when an expected channel is missing, 2 on bad flag values. Reports and per-role transcripts are written under `<state dir>/probes/`; `--json` prints the report and nothing else.
 
 The probe runs in a scratch folder under the state dir, not in the repo or a job worktree, so project-level context (the repo's `CLAUDE.md`, `.claude/settings.json`, `.claude/skills`) does not reach it. A pass on `no_extra_skills` covers user and plugin skills only, and real runs may still see project skills. The probe agents file lives in the scratch folder, so it never touches the repo.
 
 Each run costs one short turn per role with real credentials, so `cargo test` and `factory run` never start it. Run it by hand, and before each release (see `docs/operations/releasing.md`).
 
-Findings: the `--disable-slash-commands` and bootstrap answers are recorded here after the first live run.
+Findings (2026-11-22):
+
+- Claude 2.1.330: agent text reaches every role. The builder gets the superpowers bootstrap and skills. The reviewer and spec reviewer list no skills, so `--disable-slash-commands` blocks skills. The builder and kb also list 21 user and plugin skills, which the Claude probe does not check.
+- Codex 0.169.0 on `gpt-5.6-luna`: agent text reaches every role. The builder lists exactly the 14 superpowers skills, so the allowlist works with plugins and apps off. The other roles named a `factory` skill taken from the command-only `### Model option` section of the map, which run prompts now leave out. Their catalog is empty.
+- Headless manual runs of `/factory status` and `$factory status` both worked. Claude refused two commands that held a shell variable (`B=${FACTORY_BIN:-factory}; ...`), which is why the command now calls `factory` literally.
+- Under Codex, a role's named skill that is not installed (kb's `kb-refresh` lives in `~/.claude/skills` only) shows `Not installed (kb): kb-refresh, short rules used` and does not fail the probe. The probe checks a partly absent allowlist against the skills that are installed (`evaluate_with_absent`).
 
 ## Harness text
 
-The `/factory` command body and the agent files name no harness tool. Tool names live in one mapping file per harness, `tool-map-claude.md` and `tool-map-codex.md` in `crates/factory-core/assets/`. The Claude map is also the tail of `global-command.md`, and a test pins the two equal. The Codex skill is the shared body with `/factory` changed to `$factory`, then the Codex map. Codex runtime agent text is the preface, then the Codex map, then the agent body. Claude agent runs need no map. A third harness needs one map file and its words in `HARNESS_WORDS` in `crates/factory-cli/tests/tool_map.rs`. The prompt strings in `specs.rs` and `kb.rs` still name the Read, Agent and Workflow tools and are out of scope here.
+The `/factory` command body and the agent files name no harness tool. Tool names live in one mapping file per harness, `tool-map-claude.md` and `tool-map-codex.md` in `crates/factory-core/assets/`. The Claude map is also the tail of `global-command.md`, and a test pins the two equal. The Codex skill is the shared body with `/factory` changed to `$factory`, then the Codex map. The shared command body must end with the exact Claude map, and `factory install` refuses otherwise, so no Claude tool name reaches the Codex skill. Codex runtime agent text is the preface, then the Codex map without its `### Model option` section (`codex_runtime_tool_map`), then the agent body; the installed `$factory` skill keeps the whole map. Claude agent runs need no map. A third harness needs one map file and its words in `HARNESS_WORDS` in `crates/factory-cli/tests/tool_map.rs`. The prompt strings in `specs.rs` and `kb.rs` still name the Read, Agent and Workflow tools and are out of scope here.
 
 ## Token comparison
 

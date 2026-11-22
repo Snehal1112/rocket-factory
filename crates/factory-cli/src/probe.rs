@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use factory_agent::{AgentRunner, Caps, ClaudeRunner, CodexRunner, EventSink};
-use factory_core::{Channel, Harness, ProbeReport, ProbeRole};
+use factory_core::{Channel, Harness, ProbeReport, ProbeRole, NOT_INSTALLED};
 use factory_engine::{unique_stamp, Delivery};
 
 use crate::commands::{api_key_source, CliCtx, CliError};
@@ -167,6 +167,17 @@ pub fn render_probe(report: &ProbeReport) -> String {
                 channel.detail
             ));
         }
+        let not_installed = role
+            .channels
+            .iter()
+            .filter(|c| c.name == "skills" && !c.expected)
+            .find_map(|c| c.detail.strip_prefix(NOT_INSTALLED));
+        if let Some(entries) = not_installed {
+            out.push_str(&format!(
+                "Not installed ({}): {entries}, short rules used\n",
+                role.role.as_str()
+            ));
+        }
     }
     out.push_str(&format!(
         "\nReport: {}.json\nTranscripts: {}\n",
@@ -174,4 +185,41 @@ pub fn render_probe(report: &ProbeReport) -> String {
         report.transcript_dir.display()
     ));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use factory_core::RoleProbe;
+
+    #[test]
+    fn the_probe_report_names_a_not_installed_skill() {
+        let channel = |name: &str, expected: bool, present: bool, detail: String| Channel {
+            name: name.to_string(),
+            expected,
+            present,
+            detail,
+        };
+        let report = ProbeReport {
+            harness: Harness::Codex,
+            cli_version: "test".to_string(),
+            roles: vec![RoleProbe {
+                role: ProbeRole::Kb,
+                channels: vec![
+                    channel("agent_text", true, true, "marker echoed".into()),
+                    channel("skills", false, false, format!("{NOT_INSTALLED}kb-refresh")),
+                ],
+                tools: Vec::new(),
+                skills: Vec::new(),
+                model: None,
+            }],
+            transcript_dir: "/t".into(),
+        };
+        let text = render_probe(&report);
+        assert!(
+            text.contains("Not installed (kb): kb-refresh, short rules used"),
+            "{text}"
+        );
+        assert!(!text.contains("Missing (kb) skills"), "{text}");
+    }
 }

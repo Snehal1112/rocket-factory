@@ -56,6 +56,20 @@ fn run_agent_prepends_the_agent_file_and_the_codex_preface() {
 }
 
 #[test]
+fn codex_role_text_names_no_factory_skill() {
+    let fx = codex(Fixture::new());
+    let runner = scripted(vec![write_effect()]);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .build_stage()
+        .expect("build");
+    let text = agent_text(&runner, "builder");
+    assert!(text.contains("## Harness notes: Codex"), "{text}");
+    assert!(!text.contains("### Model option"), "{text}");
+    assert!(!text.contains("$factory"), "{text}");
+}
+
+#[test]
 fn kb_gets_the_skill_sentence() {
     let fx = with_kb(codex(Fixture::new()));
     let runner = scripted(vec![write_effect(), reply("No relevant changes")]);
@@ -169,7 +183,13 @@ fn unmatched_allowlist_has_no_skills_preface() {
         .build_stage()
         .expect("build");
     let spec = runner.last_spec_for("builder").expect("builder");
-    assert_eq!(spec.codex_config, ["skills.include_instructions=false"]);
+    assert_eq!(
+        spec.codex_config,
+        [
+            "skills.include_instructions=false",
+            "skills.bundled.enabled=false"
+        ]
+    );
     assert!(spec.agent_prompt.expect("agent text").contains(BAN));
 }
 
@@ -194,11 +214,22 @@ fn reviewer_gets_no_skills() {
     });
     fx.engine(&reviewer)
         .with_agent_files(list)
-        .with_codex_skill_roots(vec![root])
+        .with_codex_skill_roots(vec![root.clone()])
         .review_stage()
         .expect("review");
     let spec = reviewer.last_spec_for("reviewer").expect("reviewer");
-    assert_eq!(spec.codex_config, ["skills.include_instructions=false"]);
+    let tdd = std::fs::canonicalize(root.join("superpowers/tdd/SKILL.md")).expect("canon");
+    assert_eq!(
+        spec.codex_config,
+        [
+            "skills.include_instructions=false".to_string(),
+            "skills.bundled.enabled=false".to_string(),
+            format!(
+                "skills.config=[{{path=\"{}\",enabled=false}}]",
+                tdd.display()
+            )
+        ]
+    );
 }
 
 #[test]

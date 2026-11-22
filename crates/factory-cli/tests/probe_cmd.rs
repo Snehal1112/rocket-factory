@@ -384,7 +384,8 @@ fn a_codex_probe_sends_the_codex_model_to_every_role() {
             "{role}"
         );
     }
-    assert_eq!(text.matches("model: gpt-5.6-luna").count(), 4, "{text}");
+    let needle = format!("model: {}", factory_core::project::CODEX_DEFAULT_MODEL);
+    assert_eq!(text.matches(&needle).count(), 4, "{text}");
 }
 
 #[test]
@@ -428,7 +429,8 @@ fn the_probe_report_names_the_model() {
     else {
         panic!("expected a report");
     };
-    assert!(text.contains("model: gpt-5.6-luna"), "{text}");
+    let needle = format!("model: {}", factory_core::project::CODEX_DEFAULT_MODEL);
+    assert!(text.contains(&needle), "{text}");
 }
 
 #[test]

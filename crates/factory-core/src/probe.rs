@@ -226,6 +226,9 @@ pub fn expected_channels(role: ProbeRole, harness: Harness, config: &Config) -> 
     out
 }
 
+/// The `skills` detail of a role whose named skills are all not installed.
+pub const NOT_INSTALLED: &str = "not installed, short rules used: ";
+
 /// Builds the four channels of a role from the agent's answer.
 pub fn evaluate(
     role: ProbeRole,
@@ -233,10 +236,28 @@ pub fn evaluate(
     config: &Config,
     answer: &ProbeAnswer,
 ) -> RoleProbe {
-    let expected = expected_channels(role, harness, config);
+    evaluate_with_absent(role, harness, config, answer, &[])
+}
+
+/// Like `evaluate`, but the `absent` allowlist entries are not installed. The `skills` channel
+/// checks the other entries, and `no_extra_skills` still counts an absent entry as allowed.
+pub fn evaluate_with_absent(
+    role: ProbeRole,
+    harness: Harness,
+    config: &Config,
+    answer: &ProbeAnswer,
+    absent: &[String],
+) -> RoleProbe {
+    let mut expected = expected_channels(role, harness, config);
     let entries = allowed_skill_entries(role, harness, config);
-    let missing: Vec<&String> = entries
+    let kept: Vec<&String> = entries.iter().filter(|e| !absent.contains(e)).collect();
+    let all_absent = kept.is_empty() && !absent.is_empty();
+    if all_absent {
+        expected.retain(|name| *name != "skills");
+    }
+    let missing: Vec<&String> = kept
         .iter()
+        .copied()
         .filter(|e| !answer.skills.iter().any(|s| skill_matches(s, e)))
         .collect();
     let extra: Vec<&String> = answer
@@ -268,11 +289,19 @@ pub fn evaluate(
         ),
         channel(
             "skills",
-            missing.is_empty(),
-            if missing.is_empty() {
+            !all_absent && missing.is_empty(),
+            if all_absent {
+                format!("{NOT_INSTALLED}{}", absent.join(", "))
+            } else if !missing.is_empty() {
+                format!("missing: {}", join(&missing))
+            } else if absent.is_empty() {
                 format!("{} skills listed", answer.skills.len())
             } else {
-                format!("missing: {}", join(&missing))
+                format!(
+                    "{} skills listed; {NOT_INSTALLED}{}",
+                    answer.skills.len(),
+                    absent.join(", ")
+                )
             },
         ),
         channel(
@@ -308,6 +337,99 @@ mod tests {
 
     fn cfg() -> Config {
         Config::default()
+    }
+
+    fn by<'a>(p: &'a RoleProbe, name: &str) -> &'a Channel {
+        p.channels.iter().find(|c| c.name == name).expect("channel")
+    }
+
+    fn absent_kb() -> Vec<String> {
+        vec!["kb-refresh".to_string()]
+    }
+
+    fn marker_answer(skills: &[&str]) -> ProbeAnswer {
+        ProbeAnswer {
+            marker_seen: true,
+            skills: skills.iter().map(|s| s.to_string()).collect(),
+            ..ProbeAnswer::default()
+        }
+    }
+
+    #[test]
+    fn a_not_installed_named_skill_is_not_expected() {
+        let p = evaluate_with_absent(
+            ProbeRole::Kb,
+            Harness::Codex,
+            &cfg(),
+            &marker_answer(&[]),
+            &absent_kb(),
+        );
+        let skills = by(&p, "skills");
+        assert!(!skills.expected);
+        assert!(!skills.present);
+        assert_eq!(skills.detail, format!("{NOT_INSTALLED}kb-refresh"));
+        assert!(
+            p.channels.iter().filter(|c| c.expected).all(|c| c.present),
+            "{:?}",
+            p.channels
+        );
+    }
+
+    #[test]
+    fn one_absent_entry_of_two_checks_only_the_other() {
+        let config = Config::parse("kb_plugins = [\"superpowers\"]").expect("parse");
+        let p = evaluate_with_absent(
+            ProbeRole::Kb,
+            Harness::Codex,
+            &config,
+            &marker_answer(&["superpowers:tdd"]),
+            &absent_kb(),
+        );
+        let skills = by(&p, "skills");
+        assert!(skills.expected && skills.present, "{skills:?}");
+        assert_eq!(
+            skills.detail,
+            format!("1 skills listed; {NOT_INSTALLED}kb-refresh")
+        );
+    }
+
+    #[test]
+    fn an_absent_named_skill_listed_anyway_is_not_an_extra() {
+        let p = evaluate_with_absent(
+            ProbeRole::Kb,
+            Harness::Codex,
+            &cfg(),
+            &marker_answer(&["kb-refresh"]),
+            &absent_kb(),
+        );
+        assert!(by(&p, "no_extra_skills").present);
+    }
+
+    #[test]
+    fn an_extra_skill_still_fails_when_the_named_one_is_absent() {
+        let p = evaluate_with_absent(
+            ProbeRole::Kb,
+            Harness::Codex,
+            &cfg(),
+            &marker_answer(&["factory"]),
+            &absent_kb(),
+        );
+        let extra = by(&p, "no_extra_skills");
+        assert!(extra.expected && !extra.present);
+        assert_eq!(extra.detail, "extra: factory");
+    }
+
+    #[test]
+    fn evaluate_matches_evaluate_with_absent_on_an_empty_list() {
+        let answer = marker_answer(&["kb-refresh"]);
+        for role in ProbeRole::ALL {
+            for harness in [Harness::Claude, Harness::Codex] {
+                assert_eq!(
+                    evaluate(role, harness, &cfg(), &answer),
+                    evaluate_with_absent(role, harness, &cfg(), &answer, &[])
+                );
+            }
+        }
     }
 
     #[test]
