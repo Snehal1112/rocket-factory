@@ -545,7 +545,11 @@ impl Engine<'_> {
         if staged.is_empty() {
             return Ok(Snapshot::Nothing);
         }
-        let sha = self.repo.commit_staged(wt, subject).map_err(git_err)?;
+        let committed = self.repo.commit_staged(wt, subject).map_err(git_err)?;
+        let sha = committed.sha;
+        if let Some(reason) = &committed.unsigned {
+            self.ruling(&crate::merge::warn_unsigned("snapshot", &sha, reason))?;
+        }
         tracing::info!(
             event = "commit.done",
             kind = "snapshot",

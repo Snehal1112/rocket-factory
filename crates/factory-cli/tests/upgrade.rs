@@ -28,6 +28,11 @@ fn make_repo(parent: &Path, folder: &str) -> PathBuf {
     let mut opts = RepositoryInitOptions::new();
     opts.initial_head("main");
     let repo = Repository::init_opts(&path, &opts).expect("init");
+    // The user's global git config may turn signing on.
+    repo.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     std::fs::write(path.join("a.txt"), "a").expect("write");
     let mut index = repo.index().expect("index");
     index.add_path(Path::new("a.txt")).expect("add");

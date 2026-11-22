@@ -88,7 +88,7 @@ fn same_tree_ignores_history() {
     let first = commit_files(&inside(&wt), &[("a.txt", "a\n")], "wip: task 1 a").to_string();
     repo.reset_soft(&wt, &wt.base).expect("reset");
     repo.stage_all(&wt).expect("stage");
-    let squashed = repo.commit_staged(&wt, "feat: a").expect("commit");
+    let squashed = repo.commit_staged(&wt, "feat: a").expect("commit").sha;
     assert_ne!(first, squashed);
     assert!(repo.same_tree(&first, &squashed).expect("same"));
     assert!(!repo.same_tree(&wt.base, &squashed).expect("differs"));

@@ -431,7 +431,12 @@ pub fn init_repo(main: &Path) {
     std::fs::create_dir_all(main).expect("mkdir");
     let mut opts = git2::RepositoryInitOptions::new();
     opts.initial_head("main");
-    Repository::init_opts(main, &opts).expect("init");
+    let git = Repository::init_opts(main, &opts).expect("init");
+    // The user's global git config may turn signing on.
+    git.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     commit_file(main, "README.md", "hello\n");
 }
 
@@ -625,6 +630,38 @@ pub fn worktree_of(fx: &MergeFixture) -> PathBuf {
             .worktree
             .expect("worktree"),
     )
+}
+
+/// Turns signing on in the repo at `main`, with a signer script made from `body` in `dir`.
+pub fn signer_on(main: &Path, dir: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let script = dir.join("fake-signer");
+    std::fs::write(&script, format!("#!/bin/sh\n{body}\n")).expect("script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let repo = Repository::open(main).expect("open");
+    let mut cfg = repo.config().expect("config");
+    cfg.set_bool("commit.gpgsign", true).expect("gpgsign");
+    cfg.set_str("gpg.program", script.to_str().expect("utf8"))
+        .expect("program");
+    cfg.set_str("user.signingkey", "ABC").expect("key");
+}
+
+/// A signer that fails at once, as gpg does when the passphrase is not cached.
+pub fn failing_signer(main: &Path, dir: &Path) {
+    signer_on(
+        main,
+        dir,
+        "echo 'gpg: signing failed: No pinentry' >&2\nexit 2",
+    );
+}
+
+/// A signer that makes a signature, as a working gpg does.
+pub fn working_signer(main: &Path, dir: &Path) {
+    signer_on(
+        main,
+        dir,
+        "cat > /dev/null\necho '[GNUPG:] SIG_CREATED D 22 8 00 1 ABC' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\nfake\\n-----END PGP SIGNATURE-----\\n'",
+    );
 }
 
 pub fn main_tip(dir: &Path) -> String {

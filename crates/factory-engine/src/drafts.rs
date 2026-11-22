@@ -172,6 +172,11 @@ mod tests {
         let mut opts = git2::RepositoryInitOptions::new();
         opts.initial_head("main");
         let repo = git2::Repository::init_opts(&root, &opts).expect("init");
+        // The user's global git config may turn signing on.
+        repo.config()
+            .expect("config")
+            .set_bool("commit.gpgsign", false)
+            .expect("gpgsign");
         let sig = git2::Signature::now("t", "t@example.com").expect("sig");
         let tree = repo
             .find_tree(repo.index().expect("index").write_tree().expect("tree"))

@@ -1,3 +1,4 @@
+use crate::commits::write_commit;
 use crate::error::Result;
 use crate::repo::{short, Repo};
 use crate::state::Preflight;
@@ -10,7 +11,11 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeOutcome {
     /// A new two-parent merge commit. For a sync this is the new job head.
-    Merged { merge_sha: String },
+    /// `unsigned` is the reason it is unsigned when signing was on but failed.
+    Merged {
+        merge_sha: String,
+        unsigned: Option<String>,
+    },
     /// Nothing to merge, the target already contains the other side.
     UpToDate,
     /// The merge conflicts. Nothing was changed on disk or in any ref.
@@ -66,7 +71,7 @@ pub(crate) fn commit_merge(
     }
     let tree = repo.find_tree(index.write_tree_to(repo)?)?;
     let sig = signature(repo)?;
-    let new_id = repo.commit(None, &sig, &sig, message, &tree, &[ours, theirs])?;
+    let (new_id, unsigned) = write_commit(repo, None, &sig, message, &tree, &[ours, theirs])?;
     let created = repo.find_commit(new_id)?;
     let parents_ok = created.parent_count() == 2
         && created.parent_id(0)? == ours.id()
@@ -97,6 +102,7 @@ pub(crate) fn commit_merge(
     }
     Ok(MergeOutcome::Merged {
         merge_sha: new_id.to_string(),
+        unsigned,
     })
 }
 

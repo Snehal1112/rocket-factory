@@ -63,7 +63,12 @@ fn setup() -> Env {
     std::fs::create_dir_all(&repo).expect("mkdir");
     let mut opts = RepositoryInitOptions::new();
     opts.initial_head("main");
-    Repository::init_opts(&repo, &opts).expect("init");
+    let init = Repository::init_opts(&repo, &opts).expect("init");
+    // The user's global git config may turn signing on.
+    init.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     commit_file(&repo, "README.md", "hello\n");
     commit_file(&repo, "apps/web/index.txt", "web\n");
     commit_file(&repo, "apps/api/index.txt", "api\n");

@@ -117,6 +117,11 @@ fn setup(extra: &[(&str, &str)]) -> Env {
     let mut opts = RepositoryInitOptions::new();
     opts.initial_head(BASE);
     let repo = Repository::init_opts(&repo_path, &opts).expect("init");
+    // The user's global git config may turn signing on.
+    repo.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     commit_files(
         &repo,
         &[

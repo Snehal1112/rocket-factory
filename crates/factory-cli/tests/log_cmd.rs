@@ -121,7 +121,12 @@ fn log_event_filters_by_prefix() {
 #[test]
 fn bad_factory_log_is_a_note_not_a_failure() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    Repository::init(tmp.path()).expect("init");
+    let git = Repository::init(tmp.path()).expect("init");
+    // The user's global git config may turn signing on.
+    git.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_factory"))
         .arg("--root")
         .arg(tmp.path())

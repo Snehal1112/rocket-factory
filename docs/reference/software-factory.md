@@ -76,6 +76,7 @@ The reviewer can use a stronger model on risky or large diffs. `reviewer_model_l
 ## Commits
 
 - The builder never commits. The driver stages everything not ignored and makes the commits itself with git2. No agent writes a commit message.
+- Signing: when the git setting `commit.gpgsign` is true (system, global or repository config), the driver signs its snapshot, sync and final merge commits the way `git commit` does, so GitHub shows them as verified. `gpg.format` picks OpenPGP (`gpg`), x509 (`gpgsm`) or SSH (`ssh-keygen`), and `gpg.program`, `gpg.openpgp.program`, `gpg.x509.program`, `gpg.ssh.program` and `user.signingkey` apply as in git. The signing program never prompts (`--pinentry-mode error` for gpg, `SSH_ASKPASS_REQUIRE=never` for ssh-keygen) and is killed after 30 s. When signing fails, the commit is made unsigned and the job goes on. The ledger gets `commit <sha7> is unsigned: <reason>`, stderr gets a warning, the events get a `commit.unsigned` event, and an unsigned final merge shows `<sha7>, unsigned: <reason>` in the `merge` gate detail.
 - Commit note: every builder reply ends with a note between `---BEGIN COMMIT---` and `---END COMMIT---`: a subject of at most 50 characters in the imperative with no trailing period, a sentence on why, and one bullet per change. The note comes after the `Status:` line and any `Ruling:` lines. Example:
 
 ```

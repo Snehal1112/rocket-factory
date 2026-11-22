@@ -6,6 +6,68 @@ use factory_git::{BaseState, GitError, MergeOutcome, Preflight};
 const MSG: &str = "chore(factory): merge job 001 x";
 
 #[test]
+fn a_signed_merge_into_main_has_a_gpgsig() {
+    let fx = Fixture::new();
+    let gpg = fake_gpg(fx.dir.path());
+    signing_on(
+        &fx.git(),
+        &[
+            ("gpg.program", gpg.to_str().expect("utf8")),
+            ("user.signingkey", "ABC"),
+        ],
+    );
+    let (_, head) = fx.job_branch("factory/001-x", &[("job.txt", "j\n")]);
+    let outcome = fx
+        .repo()
+        .merge_no_ff("factory/001-x", &head, MSG)
+        .expect("merge");
+    match outcome {
+        MergeOutcome::Merged {
+            merge_sha,
+            unsigned,
+        } => {
+            assert_eq!(unsigned, None);
+            assert_eq!(fx.main_sha(), merge_sha);
+            assert_eq!(
+                signature_of(&fx.git(), &merge_sha).as_deref(),
+                Some(FAKE_SIGNATURE)
+            );
+        }
+        other => panic!("expected Merged, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_unsigned_merge_reports_the_reason() {
+    let fx = Fixture::new();
+    let failing = script(fx.dir.path(), "fail-gpg", "exit 2");
+    signing_on(
+        &fx.git(),
+        &[
+            ("gpg.program", failing.to_str().expect("utf8")),
+            ("user.signingkey", "ABC"),
+        ],
+    );
+    let (_, head) = fx.job_branch("factory/001-x", &[("job.txt", "j\n")]);
+    let outcome = fx
+        .repo()
+        .merge_no_ff("factory/001-x", &head, MSG)
+        .expect("merge");
+    match outcome {
+        MergeOutcome::Merged {
+            merge_sha,
+            unsigned,
+        } => {
+            let reason = unsigned.expect("unsigned reason");
+            assert!(reason.contains("exited with 2"), "{reason}");
+            assert_eq!(fx.main_sha(), merge_sha);
+            assert_eq!(signature_of(&fx.git(), &merge_sha), None);
+        }
+        other => panic!("expected Merged, got {other:?}"),
+    }
+}
+
+#[test]
 fn preflight_is_ready_on_a_clean_main_and_ignores_untracked_files() {
     let fx = Fixture::new();
     std::fs::write(fx.path.join("scratch.txt"), "x").expect("write");
@@ -136,7 +198,7 @@ fn merge_no_ff_builds_a_two_parent_commit_with_the_fixed_message() {
         .merge_no_ff("factory/001-x", &head, MSG)
         .expect("merge")
     {
-        MergeOutcome::Merged { merge_sha } => merge_sha,
+        MergeOutcome::Merged { merge_sha, .. } => merge_sha,
         other => panic!("expected Merged, got {other:?}"),
     };
     let git = fx.git();

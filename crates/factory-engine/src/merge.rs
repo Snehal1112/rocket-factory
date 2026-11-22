@@ -20,7 +20,8 @@ pub enum MergeResult {
 }
 
 enum Step {
-    Merged(String),
+    /// The merge sha and the reason the commit is unsigned, if it is.
+    Merged(String, Option<String>),
     Park(String, ParkKind, Vec<ParkPart>, Option<ResumeAt>),
 }
 
@@ -228,6 +229,23 @@ fn report_soft_step(
     }
 }
 
+/// Prints and logs an unsigned commit, and returns the ledger line for it.
+pub(crate) fn warn_unsigned(kind: &str, sha: &str, reason: &str) -> String {
+    let line = format!(
+        "commit {} is unsigned: {reason}",
+        crate::ports::short_sha(sha)
+    );
+    eprintln!("warning: {line}");
+    tracing::warn!(event = "commit.unsigned", kind, sha, reason);
+    line
+}
+
+/// Reports an unsigned commit to the ledger, stderr and the events. The job goes on.
+pub(crate) fn report_unsigned(driver: &Driver, id: &str, kind: &str, sha: &str, reason: &str) {
+    let line = warn_unsigned(kind, sha, reason);
+    write_step_ledger(driver, id, "unsigned", &line);
+}
+
 /// Writes one folded line to the job's ledger. A missing job skips it and a failed write is only logged.
 fn write_step_ledger(driver: &Driver, id: &str, step: &str, line: &str) {
     let Ok(job) = driver.job(id) else {
@@ -242,11 +260,14 @@ fn write_step_ledger(driver: &Driver, id: &str, step: &str, line: &str) {
 /// Merges the reviewed head into main, syncing first when main moved. Any failure parks the job.
 pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError> {
     match try_merge(driver, id) {
-        Ok(Step::Merged(sha)) => {
+        Ok(Step::Merged(sha, unsigned)) => {
             finish_merge(driver, id, &sha)?;
             tracing::info!(event = "merge.done", sha = %sha);
-            // The merge lock was released when `try_merge` returned, so the gate lines go here.
-            record_merge_pass(driver, id, &sha);
+            // The merge lock was released when `try_merge` returned, so the reports go here.
+            if let Some(reason) = &unsigned {
+                report_unsigned(driver, id, "merge", &sha, reason);
+            }
+            record_merge_pass(driver, id, &sha, unsigned.as_deref());
             // The merge is done, so a failed refresh must not change the result.
             match run_soft_step(|| driver.kb_refresh(id, false)) {
                 Ok(text) if text.starts_with("kb refresh failed") => {
@@ -383,7 +404,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         let check = git_op("base_state", || repo.base_state(&base, &head))?;
         match check.state {
             // A crash after the merge commit but before the board update lands here.
-            BaseState::Merged => return Ok(Step::Merged(check.main_sha)),
+            BaseState::Merged => return Ok(Step::Merged(check.main_sha, None)),
             BaseState::BaseNotMain => {
                 return Ok(Step::plain(format!(
                     "the job base is not on {main}, a human must look at the branch"
@@ -458,7 +479,7 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         // The message run can take a while, so main is checked again before the merge.
         let again = git_op("base_state", || repo.base_state(&base, &head))?;
         match again.state {
-            BaseState::Merged => return Ok(Step::Merged(again.main_sha)),
+            BaseState::Merged => return Ok(Step::Merged(again.main_sha, None)),
             BaseState::BaseNotMain => {
                 return Ok(Step::plain(format!(
                     "the job base is not on {main}, a human must look at the branch"
@@ -478,7 +499,10 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         return match git_op("merge_no_ff", || {
             repo.merge_no_ff(&job.branch, &head, &message)
         })? {
-            MergeOutcome::Merged { merge_sha } => Ok(Step::Merged(merge_sha)),
+            MergeOutcome::Merged {
+                merge_sha,
+                unsigned,
+            } => Ok(Step::Merged(merge_sha, unsigned)),
             MergeOutcome::Conflict { paths } => Ok(Step::plain(format!(
                 "merge conflict in {}",
                 paths.join(", ")
@@ -497,20 +521,19 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
 
 /// Records `merge: pass` with the short merge sha, then `approve: pass "retried"` when the last
 /// `approve` line of this round is `waiting`. A job that cannot be read gets no line.
-fn record_merge_pass(driver: &Driver, id: &str, sha: &str) {
+fn record_merge_pass(driver: &Driver, id: &str, sha: &str, unsigned: Option<&str>) {
     if !driver.config().gate_record {
         return;
     }
     let Ok(job) = driver.job(id) else {
         return;
     };
-    record_gate(
-        driver,
-        &job,
-        GateKey::Merge,
-        GateResult::Pass,
-        crate::ports::short_sha(sha),
-    );
+    let short = crate::ports::short_sha(sha);
+    let detail = match unsigned {
+        Some(reason) => format!("{short}, unsigned: {reason}"),
+        None => short.to_string(),
+    };
+    record_gate(driver, &job, GateKey::Merge, GateResult::Pass, &detail);
     let round = job.round.max(1);
     let last = factory_core::gate_record::read(&driver.job_dir(&job))
         .into_iter()

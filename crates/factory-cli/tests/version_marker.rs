@@ -119,7 +119,12 @@ fn commands_without_the_home_ignore_a_newer_marker() {
     let home = home_with(t.path(), "99.0.0\n");
     let repo = t.path().join("repo");
     std::fs::create_dir_all(&repo).expect("mkdir");
-    git2::Repository::init(&repo).expect("init");
+    let git = git2::Repository::init(&repo).expect("init");
+    // The user's global git config may turn signing on.
+    git.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     let cmds = t.path().join("cmds");
     let runs: Vec<Vec<&str>> = vec![
         vec!["--version"],

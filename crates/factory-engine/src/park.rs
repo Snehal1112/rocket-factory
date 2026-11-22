@@ -644,7 +644,12 @@ mod tests {
     /// Runs `body` with an engine whose board file does not exist, so every board read and write fails.
     fn with_unreadable_board(body: impl FnOnce(&Engine, &Path)) {
         let dir = tempfile::tempdir().expect("temp dir");
-        git2::Repository::init(dir.path()).expect("init repo");
+        let git = git2::Repository::init(dir.path()).expect("init repo");
+        // The user's global git config may turn signing on.
+        git.config()
+            .expect("config")
+            .set_bool("commit.gpgsign", false)
+            .expect("gpgsign");
         let repo = factory_git::Repo::open(dir.path()).expect("open repo");
         let runner = factory_agent::FakeRunner::new(Vec::new());
         let events = factory_agent::EventSink::new(dir.path().join("events.jsonl"), "001");

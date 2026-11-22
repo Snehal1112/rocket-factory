@@ -37,7 +37,12 @@ struct Server {
 fn add_project(t: &tempfile::TempDir, home: &Home, name: &str) {
     let repo = t.path().join(format!("repo-{name}"));
     std::fs::create_dir_all(&repo).expect("repo");
-    git2::Repository::init(&repo).expect("init");
+    let git = git2::Repository::init(&repo).expect("init");
+    // The user's global git config may turn signing on.
+    git.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     let dir = home.project_dir(name);
     std::fs::create_dir_all(dir.join("state")).expect("project");
     std::fs::write(

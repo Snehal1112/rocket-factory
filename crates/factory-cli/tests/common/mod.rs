@@ -145,7 +145,12 @@ impl Fixture {
         std::fs::create_dir_all(&root).expect("mkdir");
         let mut opts = git2::RepositoryInitOptions::new();
         opts.initial_head("main");
-        Repository::init_opts(&root, &opts).expect("init");
+        let git = Repository::init_opts(&root, &opts).expect("init");
+        // The user's global git config may turn signing on.
+        git.config()
+            .expect("config")
+            .set_bool("commit.gpgsign", false)
+            .expect("gpgsign");
         commit_file(&root, "README.md", "hello\n");
         // The config stays untracked, which the merge preflight allows.
         std::fs::create_dir_all(root.join(".claude/factory")).expect("mkdir config");

@@ -24,7 +24,12 @@ impl External {
         std::fs::create_dir_all(&repo).expect("mkdir");
         let mut opts = RepositoryInitOptions::new();
         opts.initial_head("v-4.0.0");
-        Repository::init_opts(&repo, &opts).expect("init");
+        let init = Repository::init_opts(&repo, &opts).expect("init");
+        // The user's global git config may turn signing on.
+        init.config()
+            .expect("config")
+            .set_bool("commit.gpgsign", false)
+            .expect("gpgsign");
         commit_file(&repo, "README.md", "hello\n");
         let git = Repository::open(&repo).expect("open");
         let first = git.head().expect("head").peel_to_commit().expect("commit");

@@ -12,6 +12,11 @@ fn repo_tip_returns_the_committed_text_not_the_working_tree() {
     let mut opts = RepositoryInitOptions::new();
     opts.initial_head("v-4.0.0");
     let git = Repository::init_opts(&path, &opts).expect("init");
+    // The user's global git config may turn signing on.
+    git.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     std::fs::write(
         path.join(".factory/override.toml"),
         "risk_paths = [\"a/**\"]\n",

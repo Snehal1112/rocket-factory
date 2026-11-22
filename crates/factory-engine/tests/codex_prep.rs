@@ -340,7 +340,12 @@ fn symlinked_kb(auto_commit: bool) -> (Fixture, std::path::PathBuf) {
         .expect("kb dir")
         .canonicalize()
         .expect("canonical");
-    git2::Repository::init(&target).expect("init kb repo");
+    let kb = git2::Repository::init(&target).expect("init kb repo");
+    // The user's global git config may turn signing on.
+    kb.config()
+        .expect("config")
+        .set_bool("commit.gpgsign", false)
+        .expect("gpgsign");
     let link = fx.tmp.path().join("kb-link");
     std::os::unix::fs::symlink(&target, &link).expect("symlink");
     fx.config.kb_path = Some(link.to_string_lossy().into_owned());
