@@ -75,6 +75,22 @@ fn a_second_waiver_is_appended() {
 }
 
 #[test]
+fn a_retry_with_a_new_reason_updates_the_waiver() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    record_waiver(&job_dir(&fx), two_blockers()).expect("first");
+    let mut again = two_blockers();
+    again.reason = "a better reason".into();
+    again.at = 20;
+    record_waiver(&job_dir(&fx), again).expect("retry");
+    let list = read_waivers(&job_dir(&fx));
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].reason, "a better reason");
+    assert_eq!(list[0].at, 20);
+    assert_eq!(list[0].blockers.len(), 2);
+}
+
+#[test]
 fn a_retry_does_not_duplicate_the_waiver() {
     let t = FakeTracker::new("o/r");
     let fx = with_tracker(approved_job(), t.clone());

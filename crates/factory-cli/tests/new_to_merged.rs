@@ -895,6 +895,19 @@ fn waive_reason_must_be_one_short_line() -> TestResult {
 }
 
 #[test]
+fn a_failed_waiver_write_leaves_the_job_in_needs_human() -> TestResult {
+    let sc = parked_with_changes()?;
+    // A directory named `waivers.json` keeps the atomic write from replacing it.
+    for entry in std::fs::read_dir(sc.root.join(".superpowers/sdd"))?.flatten() {
+        std::fs::create_dir(entry.path().join("waivers.json"))?;
+    }
+    sc.run(&["approve", "1", "--waive", "accepted for now"])
+        .expect_err("waiver write fails");
+    assert_eq!(sc.stage("001")?, "needs-human");
+    Ok(())
+}
+
+#[test]
 fn approve_with_waive_merges_and_records_the_waiver() -> TestResult {
     let sc = parked_with_changes()?;
     let out = sc.run(&["approve", "1", "--waive", "accepted for now"])?;
