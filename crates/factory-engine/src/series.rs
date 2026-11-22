@@ -56,6 +56,19 @@ fn resolve(root: &Path, from: &Path, rel: &str) -> PathBuf {
         .unwrap_or(a)
 }
 
+/// The target of the closing `Next plan:` line of a plan text, `none` included.
+fn next_target<'a>(text: &'a str, path: &Path) -> Result<&'a str, SeriesError> {
+    let last = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    last.strip_prefix("Next plan:")
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && !t.contains(char::is_whitespace))
+        .ok_or_else(|| SeriesError::NoNextLine(path.to_path_buf()))
+}
+
 fn read_plan(
     root: &Path,
     path: &Path,
@@ -63,16 +76,7 @@ fn read_plan(
 ) -> Result<SeriesPlan, SeriesError> {
     let text =
         std::fs::read_to_string(path).map_err(|_| SeriesError::Missing(path.to_path_buf()))?;
-    let last = text
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("");
-    let target = last
-        .strip_prefix("Next plan:")
-        .map(str::trim)
-        .filter(|t| !t.is_empty() && !t.contains(char::is_whitespace))
-        .ok_or_else(|| SeriesError::NoNextLine(path.to_path_buf()))?;
+    let target = next_target(&text, path)?;
     let tasks: Vec<u32> = crate::tasks::parse_checkbox_tasks(&text)
         .into_iter()
         .map(|t| t.n)
@@ -91,7 +95,7 @@ fn read_plan(
     })
 }
 
-fn canon(p: &Path) -> PathBuf {
+pub(crate) fn canon(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
@@ -101,6 +105,25 @@ pub(crate) const MAX_TASKS_PER_PLAN: usize = 3;
 /// Validates the `Next plan:` chain from `start` (a plan file, or a folder of `plan-*.md` files).
 pub fn parse_series(root: &Path, start: &Path) -> Result<Series, SeriesError> {
     parse_series_with(root, start, Some(MAX_TASKS_PER_PLAN))
+}
+
+/// Reads one plan and does not walk its chain.
+pub(crate) fn parse_one_plan(root: &Path, path: &Path) -> Result<Series, SeriesError> {
+    let plan = read_plan(root, path, Some(MAX_TASKS_PER_PLAN))?;
+    Ok(Series { plans: vec![plan] })
+}
+
+/// The `Next plan:` target of the frozen copy of a plan, resolved as if the plan sat at `origin`.
+/// `None` means `Next plan: none`.
+pub(crate) fn frozen_next(
+    root: &Path,
+    frozen: &Path,
+    origin: &Path,
+) -> Result<Option<PathBuf>, SeriesError> {
+    let text =
+        std::fs::read_to_string(frozen).map_err(|_| SeriesError::Missing(frozen.to_path_buf()))?;
+    let target = next_target(&text, frozen)?;
+    Ok((target != "none").then(|| resolve(root, origin, target)))
 }
 
 /// `max_tasks` of `None` lifts the upper bound on tasks per plan. A plan still needs at least one task.

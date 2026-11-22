@@ -636,6 +636,29 @@ impl Board {
         shared.then(|| sid.clone())
     }
 
+    /// The job at a series place: one that is not cancelled, else the first cancelled one.
+    pub fn series_member(&self, series_id: &str, index: u32) -> Option<&Job> {
+        let mut at_place = self.jobs.iter().filter(|j| {
+            j.series
+                .as_ref()
+                .is_some_and(|s| s.id.as_deref() == Some(series_id) && s.index == index)
+        });
+        let first = at_place.next()?;
+        if !first.cancelled {
+            return Some(first);
+        }
+        Some(at_place.find(|j| !j.cancelled).unwrap_or(first))
+    }
+
+    /// The live job that took the series place of job `id`. `None` for a job without a series id,
+    /// a missing job, or when no other live job holds the place.
+    pub fn replacement_of(&self, id: &str) -> Option<&Job> {
+        let job = self.jobs.iter().find(|j| j.id == id)?;
+        let pos = job.series.as_ref()?;
+        let member = self.series_member(pos.id.as_deref()?, pos.index)?;
+        (member.id != id && !member.cancelled).then_some(member)
+    }
+
     pub fn find_mut(&mut self, id: &str) -> Result<&mut Job, CoreError> {
         let id = crate::ids::normalize_id(id)?;
         self.jobs
@@ -648,6 +671,62 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(id: &str, sid: &str, index: u32, cancelled: bool) -> Job {
+        let mut j = in_series(id, sid, 3);
+        j.series.as_mut().expect("series").index = index;
+        j.cancelled = cancelled;
+        j
+    }
+
+    #[test]
+    fn series_member_prefers_a_live_job_over_a_cancelled_one() {
+        let b = Board {
+            jobs: vec![
+                at("001", "S1", 1, true),
+                at("002", "S1", 2, false),
+                at("003", "S1", 1, false),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(b.series_member("S1", 1).expect("member").id, "003");
+        assert_eq!(b.series_member("S1", 2).expect("member").id, "002");
+        assert!(b.series_member("S1", 3).is_none());
+        assert!(b.series_member("S2", 1).is_none());
+    }
+
+    #[test]
+    fn series_member_falls_back_to_a_cancelled_job() {
+        let b = Board {
+            jobs: vec![at("001", "S1", 1, true)],
+            ..Default::default()
+        };
+        assert_eq!(b.series_member("S1", 1).expect("member").id, "001");
+    }
+
+    #[test]
+    fn replacement_of_names_the_live_job_at_the_same_place() {
+        let b = Board {
+            jobs: vec![
+                at("001", "S1", 1, true),
+                at("002", "S1", 2, false),
+                at("003", "S1", 1, false),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(b.replacement_of("001").expect("replaced").id, "003");
+        assert!(
+            b.replacement_of("003").is_none(),
+            "a live job is not replaced by itself"
+        );
+        assert!(b.replacement_of("002").is_none());
+        assert!(b.replacement_of("009").is_none());
+        let plain = Board {
+            jobs: vec![Job::new("001", "d", "s", "c", "f", 1.0)],
+            ..Default::default()
+        };
+        assert!(plain.replacement_of("001").is_none());
+    }
 
     fn in_series(id: &str, sid: &str, total: u32) -> Job {
         let mut j = Job::new(id, "d", "s", "2026-10-16", "f", 1.0);

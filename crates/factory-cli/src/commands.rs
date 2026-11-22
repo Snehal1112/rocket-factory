@@ -8,10 +8,10 @@ use factory_core::{
     ParkRecord, Stage,
 };
 use factory_engine::{
-    costs_path, create_job_with_spec_accepting, create_one_job_accepting, find_draft,
-    force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs,
+    costs_path, create_job_with_spec_accepting, create_one_job_accepting, create_replacement,
+    find_draft, force_release_project_lease, gather_costs, lease_is_live, merge_stage, now_secs,
     project_lease_status, remove_draft, run_job, run_series, set_draft_stage, start_draft, today,
-    Driver, MergeResult, RepoTip, RunEnd, SpecMode, DEFAULT_LOCK_WAIT,
+    Driver, MergeResult, Replacement, RepoTip, RunEnd, SpecMode, DEFAULT_LOCK_WAIT,
 };
 
 use crate::cli::{Cli, Command, SpecCmd};
@@ -378,6 +378,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
             one_job,
             accept_over_budget,
             accept_spec,
+            replaces,
         } => new_job(
             ctx,
             &slug,
@@ -389,6 +390,7 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
                 one_job,
                 accept_over_budget,
                 accept_spec,
+                replaces,
             },
         ),
         Command::Run { id, series } => run(ctx, &norm(&id)?, series),
@@ -476,6 +478,7 @@ struct NewArgs {
     one_job: bool,
     accept_over_budget: bool,
     accept_spec: Option<String>,
+    replaces: Option<String>,
 }
 
 fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<String, CliError> {
@@ -486,6 +489,7 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
         one_job,
         accept_over_budget,
         accept_spec,
+        replaces,
     } = args;
     if let Some(reason) = &accept_spec {
         validate_one_line(reason, "accept-spec reason")?;
@@ -497,8 +501,24 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
     {
         return Err(CliError::Refused(problem));
     }
-    let (job, notes) = match (one_job, plans.as_deref()) {
-        (true, Some(plan)) => {
+    let target = replaces.as_deref().map(norm).transpose()?;
+    let (job, notes) = match (one_job, plans.as_deref(), target.as_deref()) {
+        (false, Some(plan), Some(old)) => {
+            let made = create_replacement(
+                &d,
+                &Replacement {
+                    target: old,
+                    slug,
+                    feature,
+                    plan,
+                    spec: spec.as_deref(),
+                    model: model.as_deref(),
+                    accept_spec: accept_spec.as_deref(),
+                },
+            )?;
+            (made, Vec::new())
+        }
+        (true, Some(plan), _) => {
             let made = create_one_job_accepting(
                 &d,
                 slug,
@@ -545,6 +565,9 @@ fn new_job(ctx: &CliCtx, slug: &str, feature: &str, args: NewArgs) -> Result<Str
     }
     for warning in job.spec_warning.iter().flat_map(|w| w.split("; ")) {
         out.push_str(&format!("\nwarning: {warning}"));
+    }
+    if let Some(old) = &target {
+        out.push_str(&format!("\njob {old} replaced by job {}", job.id));
     }
     if plans.is_none() {
         let dir = d.job_dir(&job);
@@ -827,6 +850,12 @@ fn rework(ctx: &CliCtx, id: &str, note: &str, force: bool) -> Result<String, Cli
     let _span = factory_engine::job_span(id).entered();
     let d = ctx.driver()?;
     let job = d.job(id)?;
+    if let Some(new) = d.store().load()?.replacement_of(id) {
+        return Err(CliError::Refused(format!(
+            "job {id} was replaced by job {}, rework that one",
+            new.id
+        )));
+    }
     if job.stage != Stage::NeedsHuman {
         return Err(CliError::Refused(format!(
             "job {id} is in stage {}, rework needs needs-human",
@@ -921,23 +950,9 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
     }
     let text = format!("cancelled: {reason}");
     let now = now_secs();
-    d.store().update_job(id, |j| {
-        factory_engine::set_stage_logged(j, Stage::NeedsHuman, Some(&text), false, now)?;
-        j.cancelled = true;
-        j.lease = None;
-        j.task_session = None;
-        j.builder_last = None;
-        Ok(())
-    })?;
-    tracing::info!(
-        event = "operator.cancel",
-        reason = %factory_telemetry::cap_message(reason),
-        force,
-        msg = "job cancelled"
-    );
-    // The reason is folded into one line, because the ledger takes one line.
-    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    d.ledger(&job).ruling(&one_line)?;
+    d.store()
+        .update_job(id, |j| factory_engine::mark_cancelled(j, &text, now))?;
+    factory_engine::record_cancel(&d, &job, reason, force)?;
     let mut out = format!("job {id} cancelled");
     // The process that held the project lease may be gone, so a forced cancel clears it for this job.
     if force {

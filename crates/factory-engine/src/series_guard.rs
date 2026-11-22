@@ -44,16 +44,16 @@ impl Engine<'_> {
     fn wait_for_earlier_plan(&self) -> Result<Option<StageOutcome>, EngineError> {
         let board = Board::load(&self.board_path).map_err(core_err)?;
         let me = board.find(&self.job_id).map_err(core_err)?;
-        let Some(pos) = me.series.as_ref().filter(|s| s.index > 1 && s.id.is_some()) else {
+        let Some((pos, sid)) = me
+            .series
+            .as_ref()
+            .filter(|s| s.index > 1)
+            .and_then(|s| Some((s, s.id.as_deref()?)))
+        else {
             return Ok(None);
         };
         let n = pos.index - 1;
-        let earlier = board.jobs.iter().find(|j| {
-            j.series
-                .as_ref()
-                .is_some_and(|s| s.id == pos.id && s.index == n)
-        });
-        let Some(earlier) = earlier else {
+        let Some(earlier) = board.series_member(sid, n) else {
             return Ok(None);
         };
         if earlier.stage == Stage::Merged {
@@ -61,8 +61,8 @@ impl Engine<'_> {
         }
         let reason = if earlier.cancelled {
             format!(
-                "plan {n} (job {}) was cancelled; cancel this plan too, or plan the work again",
-                earlier.id
+                "plan {n} (job {id}) was cancelled; cancel this plan, or replace plan {n} with factory new --replaces {id}",
+                id = earlier.id
             )
         } else {
             format!("plan {n} (job {}) is not merged yet", earlier.id)

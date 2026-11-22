@@ -519,10 +519,10 @@ fn a_cancelled_plan_stops_the_series_and_later_plans_stay_at_spec() {
             Ok(())
         })
         .expect("cancel plan 2");
-    assert!(matches!(
+    assert_eq!(
         run_series(&fx.driver, &job.id).expect("series"),
-        RunEnd::NeedsHuman(_)
-    ));
+        RunEnd::Merged
+    );
     let board = fx.driver.store().load().expect("board");
     assert_eq!(board.jobs[0].stage, factory_core::Stage::Merged);
     assert_eq!(board.jobs[2].stage, factory_core::Stage::Spec);
