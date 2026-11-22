@@ -6,7 +6,7 @@
 
 **Commit:** fix(telemetry): redact spaced sensitive flags
 
-**Architecture:** `is_sensitive` in factory-telemetry gains five contained markers and a whole-part rule for `pat` and `pass`. `redact_command` walks the command words in order, and a bare sensitive `--name` hides the next word. The `check.run` log, the log fields and the format and lint gate details already call these, so nothing else changes in code. factory-engine is touched only by a test; no port is involved.
+**Architecture:** `is_sensitive` in factory-telemetry gains six contained markers and a whole-part rule for `pat` and `pass`. `redact_command` walks the command words in order, and a bare sensitive `--name` hides the next word. The `check.run` log, the log fields and the format and lint gate details already call these, so nothing else changes in code. factory-engine is touched only by a test; no port is involved.
 
 **Tech Stack:** Rust, factory-telemetry with no new dependency.
 
@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Contained markers: `token`, `key`, `secret`, `password`, `passwd`, `credential`, `auth`, `bearer`. Whole name parts (split on `-` and `_`): `pat`, `pass`. Exception: `weighted_tokens`. Names are lowercased first.
+- Contained markers: `token`, `key`, `secret`, `password`, `passwd`, `passphrase`, `credential`, `auth`, `bearer`, `cookie`. Whole name parts (split on `-` and `_`): `pat`, `pass`. Exception: `weighted_tokens`. Names are lowercased first.
 - The redaction text is `[redacted]` (the existing `REDACTED` constant). Words are joined with single spaces, as today.
 - No new dependency, no `Cargo.toml` change, and no file under `dashboard/` changes.
 - Cargo: `-j4 -p <crate>`, never `--workspace`, `--all` or `CARGO_TARGET_DIR`. Tests use `.expect("...")` and `expect_err`. Comments are short full sentences.
@@ -62,7 +62,7 @@ fn spaced_value_of_a_sensitive_flag_is_redacted() {
 
 #[test]
 fn new_names_are_sensitive() {
-    for name in ["auth", "authorization", "bearer", "credentials", "passwd", "pat", "github_pat", "pass", "db-pass"] {
+    for name in ["auth", "authorization", "bearer", "credentials", "passwd", "passphrase", "cookie", "pat", "github_pat", "pass", "db-pass"] {
         assert_eq!(
             redact_command(&format!("tool --{name} v")),
             format!("tool --{name} [redacted]"),
@@ -73,7 +73,7 @@ fn new_names_are_sensitive() {
 
 #[test]
 fn names_that_only_contain_pat_or_pass_are_not_sensitive() {
-    for name in ["path", "manifest_path", "passed", "bypass", "patch"] {
+    for name in ["path", "manifest_path", "passed", "bypass", "patch", "session_id"] {
         assert_eq!(redact_field(name, json!("v")), json!("v"), "{name}");
     }
 }
@@ -131,7 +131,7 @@ fn a_format_detail_redacts_a_spaced_secret_flag() {
     - The `--name=value` branch stays as it is.
   - Rewrite both doc comments to state the name rule and both flag forms.
 
-- [ ] **Step 5: Update the docs.** In `docs/reference/software-factory.md`, rewrite the Redaction sentence (near line 202) to list the eight markers, the whole-part rule for `pat` and `pass`, and both flag forms. Change the last sentence of the Gate record fields paragraph (near line 394) to say that both the `--name=value` and the `--name value` form are redacted.
+- [ ] **Step 5: Update the docs.** In `docs/reference/software-factory.md`, rewrite the Redaction sentence (near line 202) to list the ten markers, the whole-part rule for `pat` and `pass`, and both flag forms. Change the last sentence of the Gate record fields paragraph (near line 394) to say that both the `--name=value` and the `--name value` form are redacted.
 
 - [ ] **Step 6: Run** `cargo test -j4 -p factory-telemetry`. Expected: all pass, the 7 existing tests and the 11 new ones. Then run `cargo test -j4 -p factory-engine`. Expected: all pass, `gate_record` with 34 tests (33 existing and 1 new).
 

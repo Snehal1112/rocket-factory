@@ -32,7 +32,7 @@ Gaps: `--token abc` keeps `abc`, and the common names above are not sensitive at
 
 ```
 is_sensitive(name):  lowercase; false for "weighted_tokens"
-  true when the name contains token, key, secret, password, passwd, credential, auth or bearer
+  true when the name contains token, key, secret, password, passwd, passphrase, credential, auth, bearer or cookie
   true when a whole part of the name (split on "-" and "_") is pat or pass
 redact_command, for each word left to right:
   word is marked                         -> "[redacted]" (and, if the word is itself a bare
@@ -47,7 +47,7 @@ words joined with single spaces                                            (unch
 
 `is_sensitive` keeps its `weighted_tokens` exception and becomes true when either holds:
 
-- The lowercased name contains `token`, `key`, `secret`, `password`, `passwd`, `credential`, `auth` or `bearer`.
+- The lowercased name contains `token`, `key`, `secret`, `password`, `passwd`, `passphrase`, `credential`, `auth`, `bearer` or `cookie`.
 - One whole part of the name, split on `-` and `_`, is `pat` or `pass`. These two are whole parts only, because as substrings they would hide `path`, `manifest-path` and the `passed` field of the `check.run` event.
 
 The rule covers both flag forms and log field names, since all three go through `is_sensitive`.
@@ -55,9 +55,11 @@ The rule covers both flag forms and log field names, since all three go through 
 | Name | Sensitive |
 |---|---|
 | `api-key`, `token`, `password` | yes, as today |
-| `auth`, `authorization`, `bearer`, `credentials`, `passwd` | yes, new |
+| `auth`, `authorization`, `bearer`, `credentials`, `passwd`, `passphrase`, `cookie` | yes, new |
 | `pat`, `github_pat`, `pass`, `db-pass` | yes, new (whole part) |
 | `path`, `manifest-path`, `passed`, `bypass`, `patch` | no |
+| `session`, `session_id` | no; `session_id` is an agent session id the logs keep on purpose |
+| `dbpass`, `mypat` | no, a known leak of the whole-part rule |
 | `weighted_tokens` | no |
 
 ### 2. Spaced sensitive flags
@@ -108,8 +110,8 @@ In `crates/factory-telemetry/src/redact.rs` (unit tests), each a single `assert_
 - `a_sensitive_flag_at_the_end_is_kept`: `tool --password` is unchanged.
 - `short_flags_and_paths_are_never_redacted`: `cargo test -j4 -p factory-engine --manifest-path a/Cargo.toml` is unchanged.
 - `a_bare_double_dash_is_not_sensitive`: `tool -- --token abc` gives `tool -- --token [redacted]`.
-- `new_names_are_sensitive`: for each of `auth`, `authorization`, `bearer`, `credentials`, `passwd`, `pat`, `github_pat`, `pass` and `db-pass`, `redact_command("tool --<name> v")` is `tool --<name> [redacted]`.
-- `names_that_only_contain_pat_or_pass_are_not_sensitive`: `redact_field` keeps the value for `path`, `manifest_path`, `passed`, `bypass` and `patch`.
+- `new_names_are_sensitive`: for each of `auth`, `authorization`, `bearer`, `credentials`, `passwd`, `passphrase`, `cookie`, `pat`, `github_pat`, `pass` and `db-pass`, `redact_command("tool --<name> v")` is `tool --<name> [redacted]`.
+- `names_that_only_contain_pat_or_pass_are_not_sensitive`: `redact_field` keeps the value for `path`, `manifest_path`, `passed`, `bypass`, `patch` and `session_id`.
 - `new_field_names_are_redacted`: `redact_field` gives `[redacted]` for `auth_header`, `bearer`, `db_pass` and `github_pat`.
 - The existing five tests still pass, including `weighted_tokens_is_the_one_field_not_redacted`.
 
@@ -138,7 +140,7 @@ Commands:
 
 ## Acceptance criteria
 
-- `is_sensitive` is true for the eight contained markers and for `pat` or `pass` as a whole name part, and false for `weighted_tokens`, `path` and `passed`.
+- `is_sensitive` is true for the ten contained markers and for `pat` or `pass` as a whole name part, and false for `weighted_tokens`, `path`, `passed` and `session_id`.
 - The word after a bare sensitive long flag is always shown as `[redacted]`, including one that starts with `-`.
 - A hidden word that is itself a bare sensitive flag also hides the word after it.
 - A sensitive flag at the end of the command is kept, and a bare `--` is not sensitive.
@@ -152,6 +154,7 @@ Commands:
 
 - Short flags and environment prefixes.
 - A default-deny rule with a list of safe flags.
+- `session`, `signature` and `cert`, which stay known risks.
 
 ## Decisions
 
@@ -160,5 +163,7 @@ Commands:
 - Which sensitive names, after the spec review found `--auth`, `--bearer`, `--pat`, `--pass` and `--passwd` leaking? Options: a wider name list, default deny with a safe list, accept the leaks. Chosen: a wider name list (auth, bearer, pat, pass, passwd, credential added), for both flag forms and log fields. Decided by: user
 - What happens to the word after a bare sensitive flag? Options: always hide the next word, keep words that start with `-` as flags, hide every word up to the next flag. Chosen: always hide the next word, one word only. Decided by: user
 - Is a bare `--` sensitive? Options: not sensitive (the words after it are checked as usual), hide everything after it. Chosen: not sensitive. Decided by: user
-- `pat` and `pass` match only as whole name parts, because as substrings they would hide `path`, `manifest-path` and the `passed` event field. Decided by: call
-- A hidden word that is itself a bare sensitive flag marks the word after it, so a value after two such flags stays hidden. Decided by: call
+- How do `pat` and `pass` match? Options: whole name parts plus a `passphrase` marker, plain substrings, whole parts only. Chosen: whole name parts, with `passphrase` added as a marker; `--dbpass` and `--mypat` stay a known leak. Decided by: user
+- Is the value after two bare sensitive flags in a row hidden? Options: hide it too, hide one word only. Chosen: hide it too. Decided by: user
+- Add more names? Options: cookie and session, all four (cookie, session, signature, cert), none. Chosen: cookie and session. Decided by: user
+- How is `session` handled, given it would hide the `session_id` field of every `agent.end` event? Options: drop session and keep cookie, session for flags only, hide session everywhere. Chosen: drop session, keep cookie. Decided by: user
