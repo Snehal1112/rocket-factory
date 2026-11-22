@@ -107,10 +107,10 @@ Expected: all pass, including `crates/factory-git/tests/export_tree.rs`, with 0 
 
 **Interfaces:**
 - Port: none new. The reviewer runs through `AgentRunner`, scripted in the tests.
-- Consumes: `factory_core::{Stage, ReviewState, ResumeAt}`, `Job.reviews: BTreeMap<String, ReviewState>`, `Job.park_resume: Option<ResumeAt>`, `ParkKind::resume(self) -> Option<ResumeAt>` and `crate::merge::park_with_parts_resume(driver, id, reason, kind, parts, resume)`.
+- Consumes: `factory_core::{Stage, ReviewState, ResumeAt}`, `Job.reviews: BTreeMap<String, ReviewState>`, `Job.park_resume: Option<ResumeAt>`, `Config.fix_rounds: u32` and `crate::merge::park_with_parts(driver, id, reason, kind, parts)`.
 - Produces: no new items. `sync_requested_by` keeps its signature.
 
-**Tests added:** `a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun`, `a_parked_job_with_only_verdicts_stays_up_to_date`, `a_build_parked_job_stays_up_to_date_on_sync`, `a_sync_park_resumes_at_rereview`. Test changed: `an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage`.
+**Tests added:** `a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun`, `a_parked_job_with_only_verdicts_stays_up_to_date`, `a_build_parked_job_stays_up_to_date_on_sync`, `a_sync_park_resumes_at_rereview`, `a_sync_parked_by_its_checks_resumes_at_rereview`. Test changed: `an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage`.
 
 - [ ] **Step 1: Read the code**
 
@@ -151,6 +151,7 @@ fn a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun() {
 | `a_parked_job_with_only_verdicts_stays_up_to_date` | `fixture(vec![])`, no commit on main; `update_job` sets `j.set_review("code", factory_core::ReviewState::Changes)` and `j.park_resume = Some(factory_core::ResumeAt::Rereview)`; then `force_stage(&fx, factory_core::Stage::NeedsHuman)` | `sync_requested(&fx.driver, &fx.id).expect("sync")` equals `SyncOutcome::UpToDate`, and `review_calls(&fx) == 0` |
 | `a_build_parked_job_stays_up_to_date_on_sync` | `fixture(vec![])`, no commit on main; the code review stays `Pending`; `update_job` sets `j.park_resume = Some(factory_core::ResumeAt::Build)`; then `force_stage(&fx, factory_core::Stage::NeedsHuman)` | `sync_requested` equals `SyncOutcome::UpToDate`, `review_calls(&fx) == 0`, and `fx.driver.job(&fx.id).expect("job").park_resume == Some(factory_core::ResumeAt::Build)` |
 | `a_sync_park_resumes_at_rereview` | the first half of `a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun`, up to the first sync | after the first sync, `fx.driver.job(&fx.id).expect("job").park_resume == Some(factory_core::ResumeAt::Rereview)` |
+| `a_sync_parked_by_its_checks_resumes_at_rereview` | build the fixture as `fixture_with_check` does, but with `fix_rounds: 0` in the `Config`, the same flag-file check and `with_security_agent`, effects `vec![reply(APPROVE), reply(SECURITY_OK)]`; `force_stage` to `NeedsHuman`; commit `other.md` on main; first sync | first sync returns `SyncOutcome::Parked(..)`; the job's `park_resume == Some(factory_core::ResumeAt::Rereview)`; after writing the flag file, a second sync is not `UpToDate` and `fx.runner.specs_for("reviewer").len() == 1` |
 
 Also update the existing `an_up_to_date_job_with_tip_equal_head_changes_nothing_in_every_stage`: in its loop, before `force_stage`, set the code review to `ReviewState::Pass` with `update_job` and `j.set_review("code", ReviewState::Pass)`. A `Pending` review in Review or NeedsHuman now reruns. With `Pass` the test keeps meaning "an up-to-date job with finished reviews changes nothing". Keep its assertions unchanged.
 
@@ -161,13 +162,13 @@ Also update the existing `an_up_to_date_job_with_tip_equal_head_changes_nothing_
 Run: `cargo test -j4 -p factory-engine --test sync_review`
 Expected:
 - `a_sync_stopped_after_its_merge_reviews_the_whole_branch_on_rerun` fails at `assert_ne!(second, SyncOutcome::UpToDate)`, because today the second sync returns `UpToDate`.
-- `a_sync_park_resumes_at_rereview` fails, because today the sync park records no resume stage.
+- `a_sync_park_resumes_at_rereview` and `a_sync_parked_by_its_checks_resumes_at_rereview` fail, because today the sync park records no `Rereview` (the second also because the checks park keeps `None`).
 - `a_parked_job_with_only_verdicts_stays_up_to_date`, `a_build_parked_job_stays_up_to_date_on_sync` and the updated existing test pass.
 
 - [ ] **Step 4: Implement**
 
 In `sync_requested_by`, make both changes from spec section 4:
-- Where the requested sync parks, call `park_with_parts_resume` with `Some(ResumeAt::Rereview)` when `whole_branch` is true, and with `kind.resume()` otherwise. The `else if` branch for "sync review passed" stays as it is.
+- Where the requested sync parks, keep the `park_with_parts` call. Then, when `whole_branch` is true, set `j.park_resume = Some(ResumeAt::Rereview)` in one `update_job`, as spec section 4 shows. The write runs last, so it wins over a park the checks stage wrote earlier. The `else if` branch for "sync review passed" stays as it is.
 - Compute `no_verdict` and `unfinished` as shown, and add `&& !unfinished` to the `UpToDate` condition.
 
 Add a one-line comment above each change saying why: a stopped sync must be able to finish, and a build park must keep its resume stage.
