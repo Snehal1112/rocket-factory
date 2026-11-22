@@ -1,5 +1,6 @@
 mod costs;
 mod events;
+mod gates;
 mod home_mode;
 mod model;
 mod park;

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::{AgentRun, SessionHook, StopReason};
+use factory_core::gate_record::{GateKey, GateResult};
 use factory_core::{
     builder_rulings, builder_status, is_agent_file_name, parse_builder_status, BuilderStatus,
     ParkKind, ParkPart, ResumeAt, Stage, TaskSession, TaskState,
@@ -974,6 +975,16 @@ impl Engine<'_> {
             .repo
             .diff_to_files(&from, &head, &self.job_dir)
             .map_err(git_err)?;
+        // The builder ran and committed, so its line comes before the cap can park the job.
+        if no_change {
+            self.gate(
+                GateKey::Builder,
+                GateResult::Note,
+                "no change, work already on the branch",
+            );
+        } else {
+            self.gate(GateKey::Builder, GateResult::Pass, &self.task_detail());
+        }
         let cap = self.config.diff_cap_lines as usize;
         if info.changed_lines() > cap {
             let reason = format!(
@@ -995,7 +1006,23 @@ impl Engine<'_> {
             crate::ports::set_stage_logged(j, Stage::Review, None, false, now())
         })?;
         self.ruling(&format!("head of round {} is {head}", job.round))?;
+        self.gate(
+            GateKey::DiffCap,
+            GateResult::Pass,
+            &format!("{} / {cap} lines", info.changed_lines()),
+        );
         Ok(StageOutcome::Advanced(Stage::Review))
+    }
+
+    /// "task k of n" for a per-task job, else "whole plan".
+    fn task_detail(&self) -> String {
+        let tasks = parse_tasks(&std::fs::read_to_string(&self.plan_file).unwrap_or_default());
+        let done = self.job().map_or(0, |j| j.task_index as usize);
+        if tasks.is_empty() || done == 0 {
+            "whole plan".to_string()
+        } else {
+            format!("task {} of {}", done.min(tasks.len()), tasks.len())
+        }
     }
 
     /// The directory of the worktree, or an error when the job has none yet.

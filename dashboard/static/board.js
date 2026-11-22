@@ -752,11 +752,104 @@
     );
   }
 
+  const GATE_STATES = ["pass", "fail", "note", "waived", "skipped", "running", "waiting", "interrupted", "not-reached"];
+  const GATE_GROUPS = ["spec", "start", "build", "checks", "review", "merge"];
+  const GATE_TOTAL = 18;
+
+  // The gate rows of a job, or an empty list when it has no record.
+  function gateList(job) {
+    return job && job.gates && Array.isArray(job.gates.list) ? job.gates.list.filter((g) => g && g.gate) : [];
+  }
+
+  function gateState(gate) {
+    return GATE_STATES.includes(gate.state) ? gate.state : "not-reached";
+  }
+
+  function gateLabel(key) {
+    return String(key).replace(/-/g, " ");
+  }
+
+  function gateTitle(gate) {
+    const detail = gate.state === "not-reached" || !gate.detail ? gateState(gate).replace("-", " ") : gate.detail;
+    return `${gateLabel(gate.gate)}: ${detail}`;
+  }
+
+  // The text at the right end of the strip.
+  function gateSummary(job) {
+    if (job.cancelled === true) return "cancelled";
+    const list = gateList(job);
+    const stopped = job.gates && job.gates.stopped_at;
+    if (job.stage === "needs-human" && stopped) return `stopped at ${stopped}`;
+    if (job.stage === "merged") {
+      const count = (...states) => list.filter((g) => states.includes(gateState(g))).length;
+      const notes = count("note", "waived");
+      const parts = [
+        [count("pass"), "passed"],
+        [notes, notes === 1 ? "note" : "notes"],
+        [count("skipped"), "skipped"],
+      ];
+      return parts.filter((p) => p[0] > 0).map((p) => `${p[0]} ${p[1]}`).join(" · ");
+    }
+    return `${list.filter((g) => gateState(g) !== "not-reached").length} / ${GATE_TOTAL}`;
+  }
+
+  // The strip of marks, grouped by stage, with the gate list under it. Empty without a record.
+  function gateStrip(job) {
+    const list = gateList(job);
+    if (list.length === 0) return "";
+    const stopped = job.gates.stopped_at;
+    const groups = GATE_GROUPS.map((name) => ({ name, gates: list.filter((g) => g.stage === name) })).filter((g) => g.gates.length);
+    const marks = groups
+      .map(
+        (g) =>
+          `<span class="gate-grp"><b>${escapeHtml(g.name)}</b><span class="gate-marks">` +
+          g.gates
+            .map((x) => `<i class="gm gm-${gateState(x)}" data-gate="${escapeHtml(x.gate)}" title="${escapeHtml(gateTitle(x))}"></i>`)
+            .join("") +
+          `</span></span>`,
+      )
+      .join("");
+    const hit = job.stage === "needs-human" && stopped ? " gate-sum-hit" : "";
+    const summary = `<span class="gate-sum${hit}">${escapeHtml(gateSummary(job))}</span>`;
+    const reason = (typeof job.park_summary === "string" && job.park_summary.trim()) || job.reason || "";
+    const rows = groups
+      .map(
+        (g) =>
+          `<h4 class="gate-head">${escapeHtml(g.name)}</h4><ul class="gate-rows">` +
+          g.gates
+            .map((x) => {
+              const state = gateState(x);
+              const isHit = job.stage === "needs-human" && x.gate === stopped;
+              const history = x.history ? ` (${escapeHtml(x.history)})` : "";
+              return (
+                `<li class="gate-row${isHit ? " fail" : ""}${state === "not-reached" ? " dim" : ""}" data-row="${escapeHtml(x.gate)}">` +
+                `<i class="gm gm-${state}"></i><span class="gate-name">${escapeHtml(gateLabel(x.gate))}</span>` +
+                `<span class="gate-detail">${escapeHtml(x.detail || "")}${history}</span>` +
+                (isHit && reason ? `<p class="gate-hit">${escapeHtml(reason)}</p>` : "") +
+                `</li>`
+              );
+            })
+            .join("") +
+          `</ul>`,
+      )
+      .join("");
+    // The user's choice wins, as for the task list, because the board is redrawn every second.
+    const key = `gates-${job.id}`;
+    const open = (taskChoice.has(key) ? taskChoice.get(key) : job.stage === "needs-human") ? " open" : "";
+    return (
+      `<details class="gates" data-gates="${escapeHtml(key)}"${open}><summary class="gate-strip" aria-label="${escapeHtml(`Gates of job ${job.id}: ${gateSummary(job)}`)}">` +
+      `${marks}${summary}</summary><div class="gate-list">${rows}</div></details>`
+    );
+  }
+
   function renderCard(job, now, specs) {
     const id = escapeHtml(job.id);
     const stage = STAGES.some((s) => s.key === job.stage) ? job.stage : "spec";
     const stageTitle = (STAGES.find((s) => s.key === stage) || STAGES[0]).title;
-    const chips = CHIP_STAGES.includes(job.stage)
+    const strip = gateStrip(job);
+    const chips = strip
+      ? ""
+      : CHIP_STAGES.includes(job.stage)
       ? `<div class="chips">${reviewRoles(job).map((role) => reviewChip(role, (job.reviews || {})[role])).join("")}</div>`
       : "";
     const reason =
@@ -797,6 +890,7 @@
       specChip(job.series, specs) +
       `<time class="job-date" title="Last stage change">${escapeHtml(formatStamp(job.stage_since) || job.created)}</time></header>` +
       `<p class="feature">${escapeHtml(job.feature)}</p>` +
+      strip +
       progressBar(job) +
       `<div class="meta"><span class="round" title="builder rounds used">` +
       `<span class="pips" aria-hidden="true">${roundPips(job.round)}</span>round ${Number(job.round) || 0}</span>` +
@@ -982,6 +1076,8 @@
     openChanges,
     agentLine,
     renderCard,
+    gateStrip,
+    gateSummary,
     actionButtons,
     renderSpecCard,
     renderDraftCard,

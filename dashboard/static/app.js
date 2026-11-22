@@ -538,7 +538,7 @@
     }
   });
 
-  // Remember which agent lists and task lists the user opened or closed, because the board is redrawn every second.
+  // Remember which agent, task and gate lists the user opened or closed, because the board is redrawn every second.
   byId("board").addEventListener(
     "toggle",
     (event) => {
@@ -546,6 +546,10 @@
       if (!box.matches) return;
       if (box.matches("details[data-tasks]")) {
         FactoryBoard.taskChoice.set(box.getAttribute("data-tasks"), box.open);
+        return;
+      }
+      if (box.matches("details[data-gates]")) {
+        FactoryBoard.taskChoice.set(box.getAttribute("data-gates"), box.open);
         return;
       }
       if (!box.matches("details[data-agents]")) return;

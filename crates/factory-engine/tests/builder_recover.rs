@@ -946,3 +946,31 @@ fn per_task_machine_failure_waits_before_fresh_fallback() {
     assert_eq!(new.matches(", fresh)").count(), 1, "{new}");
     assert_eq!(new.matches(", resumed)").count(), 1, "{new}");
 }
+
+/// How often a disk wait that ends when the disk frees reads the clock, with `gate_record` set to `on`.
+fn clock_reads_of_a_disk_wait(on: bool) -> u32 {
+    let mut fx = disk_fixture();
+    fx.config.gate_record = on;
+    let mut m = fake_machine(|t| if t > 200.0 { 10_000 } else { 100 }, |_, _| {});
+    let reads = Arc::new(AtomicU32::new(0));
+    let (inner, count) = (m.wait.now.clone(), reads.clone());
+    m.wait.now = Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+        inner()
+    });
+    let runner = scripted(vec![change_effect()]);
+    let out = fx
+        .engine(&runner)
+        .with_machine_wait(m.wait)
+        .build_stage()
+        .expect("build");
+    assert!(matches!(out, StageOutcome::Advanced(_)), "{out:?}");
+    reads.load(Ordering::SeqCst)
+}
+
+#[test]
+fn a_disk_wait_reads_the_clock_for_the_gate_only_when_it_is_recorded() {
+    let off = clock_reads_of_a_disk_wait(false);
+    let on = clock_reads_of_a_disk_wait(true);
+    assert_eq!(off + 2, on, "off {off}, on {on}");
+}

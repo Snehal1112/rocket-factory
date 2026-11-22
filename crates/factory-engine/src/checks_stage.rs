@@ -8,7 +8,10 @@ use factory_core::{
     ParkPart, ReviewState, Stage,
 };
 
+use factory_core::gate_record::{GateKey, GateResult};
+
 use crate::decide::fix_rounds_used;
+use crate::gate_record::GateTarget;
 use crate::park::part_from_file;
 
 /// The named check results kept on the board next to the review roles.
@@ -97,7 +100,43 @@ impl Engine<'_> {
             j.checks_pass = pass;
             Ok(())
         })?;
+        self.gate_checks_run(&plan, &report);
         Ok(report)
+    }
+
+    /// Records `format`, `lint` and `checks` for one checks run. It runs outside every board closure.
+    fn gate_checks_run(&self, plan: &CheckPlan, report: &ChecksReport) {
+        // `format` and `lint` come first, so a checks park stops at `checks`, the last fail line.
+        for (name, key) in [("format", GateKey::Format), ("lint", GateKey::Lint)] {
+            let results: Vec<_> = report
+                .results
+                .iter()
+                .filter(|r| plan.gate_of(&r.command) == Some(name))
+                .collect();
+            if results.is_empty() {
+                self.gate(key, GateResult::Skipped, &format!("no {name} command"));
+                continue;
+            }
+            let result = if results.iter().all(|r| r.passed) {
+                GateResult::Pass
+            } else {
+                GateResult::Fail
+            };
+            let commands: Vec<&str> = results.iter().map(|r| r.command.as_str()).collect();
+            self.gate(key, result, &commands.join(", "));
+        }
+        let total = report.results.len();
+        let passed = report.results.iter().filter(|r| r.passed).count();
+        let result = if report.all_passed() {
+            GateResult::Pass
+        } else {
+            GateResult::Fail
+        };
+        self.gate(
+            GateKey::Checks,
+            result,
+            &format!("{passed} of {total} commands passed"),
+        );
     }
 
     /// The head of the whole job diff, the workdir and the check plan for the scoped changed paths.
@@ -197,7 +236,17 @@ impl Engine<'_> {
     ) -> Result<Option<(ParkKind, String)>, EngineError> {
         let workdir = self.repo.workdir_in(&self.worktree()?);
         let plan = self.plan_for(paths, &workdir);
-        Ok(no_checks_reason(paths, &plan.unplanned, &self.config).map(|r| (ParkKind::NoChecks, r)))
+        let reason = no_checks_reason(paths, &plan.unplanned, &self.config);
+        if reason.is_none() {
+            let n = code_paths_of(paths, &self.config).len();
+            let detail = if n == 0 {
+                "no code paths".to_string()
+            } else {
+                format!("all {n} code paths covered")
+            };
+            self.gate(GateKey::NoChecks, GateResult::Pass, &detail);
+        }
+        Ok(reason.map(|r| (ParkKind::NoChecks, r)))
     }
 
     /// Parks a job that a gate stopped, with the checks and the reason as evidence.
@@ -216,7 +265,13 @@ impl Engine<'_> {
         };
         parts.extend(part_from_file(&self.job_dir, "checks.md", "Checks"));
         parts.push(ParkPart::new("Why it stopped", "driver", &reason));
-        self.park_with(kind, reason, parts)
+        // A scope violation is a checks failure, but the job is at the review stage when it parks.
+        let target = if kind == ParkKind::Other {
+            GateTarget::Key(GateKey::Checks)
+        } else {
+            GateTarget::FromKind
+        };
+        self.park_with_target(kind, reason, parts, kind.resume(), target)
     }
 
     /// Plans the checks. The cargo workspace map is loaded only when a command needs it, and a
@@ -265,7 +320,19 @@ impl Engine<'_> {
                 Vec::new()
             };
             parts.push(ParkPart::new(title, source, findings));
-            return self.park_with(kind, format!("{reason} after {used} fix rounds"), parts);
+            // The checks run already wrote the `checks: fail` line, so a checks park adds none.
+            let target = if kind == ParkKind::ChecksFailed {
+                GateTarget::NoFailLine
+            } else {
+                GateTarget::FromKind
+            };
+            return self.park_with_target(
+                kind,
+                format!("{reason} after {used} fix rounds"),
+                parts,
+                kind.resume(),
+                target,
+            );
         }
         let next = job.round + 1;
         std::fs::write(self.job_dir.join(format!("changes-r{next}.md")), findings)
@@ -336,6 +403,14 @@ impl Engine<'_> {
                         return self.park_gate(ParkKind::NoTests, reason, &paths);
                     }
                     self.ruling(NO_TESTS_NOTE)?;
+                    let code = code_paths_of(&paths, &self.config);
+                    self.gate(GateKey::NoTests, GateResult::Note, &code_path_list(&code));
+                } else {
+                    self.gate(
+                        GateKey::NoTests,
+                        GateResult::Pass,
+                        "a test was added or no code changed",
+                    );
                 }
             }
             return Ok(StageOutcome::Advanced(Stage::Review));

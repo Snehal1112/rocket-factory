@@ -539,3 +539,61 @@ fn a_tracked_spec_reviewer_text_wins() {
     new(&fx, None).expect("created");
     assert!(reviewer_prompt(&fx).contains("TRACKED-REVIEWER"));
 }
+
+/// The `spec-check` detail of the only job, and its spec warning.
+fn spec_check_of(fx: &Fx) -> (String, Option<String>) {
+    let board = fx.driver.store().load().expect("board");
+    assert_eq!(board.jobs.len(), 1);
+    let job = &board.jobs[0];
+    let lines = factory_core::gate_record::read(&fx.driver.job_dir(job));
+    let check = lines
+        .iter()
+        .find(|l| l.gate == factory_core::gate_record::GateKey::SpecCheck)
+        .unwrap_or_else(|| panic!("no spec-check line in {lines:?}"));
+    (check.detail.clone(), job.spec_warning.clone())
+}
+
+#[test]
+fn an_intake_spec_counts_no_decision_warning() {
+    let config = Config {
+        gate_record: true,
+        ..Config::default()
+    };
+    let fx = fixture(vec![reviewer(APPROVE)], config);
+    let tree = fx.plan.parent().expect("plans").join("tree");
+    std::fs::create_dir_all(tree.join("docs")).expect("tree");
+    std::fs::write(tree.join("docs/a.md"), "one\n").expect("source");
+    let spec = SPEC.replace(
+        "Use a queue. Decided by: user",
+        "Use a queue. Source: docs/a.md. Decided by: call",
+    );
+    std::fs::write(&fx.spec, spec).expect("spec");
+    create_job_with_spec_accepting(
+        &fx.driver,
+        "demo",
+        "f",
+        Some(&fx.plan),
+        Some(&fx.spec),
+        None,
+        SpecMode::Intake(&tree),
+    )
+    .expect("created");
+    let (detail, warning) = spec_check_of(&fx);
+    assert!(warning.is_none(), "{warning:?}");
+    assert!(detail.contains("0 decision warnings"), "{detail}");
+}
+
+#[test]
+fn a_spec_without_a_user_decision_counts_one_decision_warning() {
+    let config = Config {
+        gate_record: true,
+        ..Config::default()
+    };
+    let fx = fixture(vec![reviewer(APPROVE)], config);
+    let spec = SPEC.replace("Decided by: user", "Decided by: call");
+    std::fs::write(&fx.spec, spec).expect("spec");
+    new(&fx, None).expect("created");
+    let (detail, warning) = spec_check_of(&fx);
+    assert!(warning.is_some_and(|w| w.contains("no decision in this spec")));
+    assert!(detail.contains("1 decision warnings"), "{detail}");
+}

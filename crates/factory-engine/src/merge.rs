@@ -1,8 +1,10 @@
+use factory_core::gate_record::{GateKey, GateResult};
 use factory_core::{
     next_with_resume, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt, Stage,
 };
 use factory_git::{BaseState, MergeOutcome, Preflight};
 
+use crate::gate_record::{fail_key, offers_approve, record_gate, GateTarget};
 use crate::park::{evidence_or_reason, write_record};
 use crate::tickets::TicketsReport;
 use crate::{
@@ -59,6 +61,27 @@ pub fn park_with_parts_resume(
     parts: Vec<ParkPart>,
     resume: Option<ResumeAt>,
 ) -> Result<(), EngineError> {
+    park_with_parts_target(
+        driver,
+        id,
+        reason,
+        kind,
+        parts,
+        resume,
+        GateTarget::FromKind,
+    )
+}
+
+/// Parks like `park_with_parts_resume`, and writes the fail line under the gate `target` names.
+pub fn park_with_parts_target(
+    driver: &Driver,
+    id: &str,
+    reason: &str,
+    kind: ParkKind,
+    parts: Vec<ParkPart>,
+    resume: Option<ResumeAt>,
+    target: GateTarget,
+) -> Result<(), EngineError> {
     let now = now_secs();
     let at = now.max(0.0) as u64;
     let parts = evidence_or_reason(parts, reason);
@@ -66,6 +89,8 @@ pub fn park_with_parts_resume(
     let job = driver.store().update_job(id, |job| {
         // A park written earlier, such as a failed check in the sync, keeps its kind and evidence.
         let already = job.stage == Stage::NeedsHuman && job.park_kind.is_some();
+        // The stage before the park picks the gate of a park of kind `Other`.
+        let stage_before = job.stage;
         if !already {
             job.park_kind = Some(kind.as_str().to_string());
             job.park_at = Some(at);
@@ -73,9 +98,9 @@ pub fn park_with_parts_resume(
             job.park_resume = resume;
         }
         crate::ports::set_stage_logged(job, Stage::NeedsHuman, Some(reason), false, now)?;
-        Ok((job.clone(), already))
+        Ok((job.clone(), already, stage_before))
     })?;
-    let (job, already) = job;
+    let (job, already, stage_before) = job;
     // An earlier park already logged, wrote its record and ruled.
     if already {
         return Ok(());
@@ -92,6 +117,12 @@ pub fn park_with_parts_resume(
         resume,
     );
     write_record(&driver.job_dir(&job), &record);
+    if let Some((key, result)) = fail_key(kind, Some(stage_before), target) {
+        record_gate(driver, &job, key, result, reason);
+    }
+    if offers_approve(&record.next) {
+        record_gate(driver, &job, GateKey::Approve, GateResult::Waiting, reason);
+    }
     // The ledger takes one line, so the reason is folded into a single line.
     let one_line = reason.split_whitespace().collect::<Vec<_>>().join(" ");
     driver
@@ -214,6 +245,8 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
         Ok(Step::Merged(sha)) => {
             finish_merge(driver, id, &sha)?;
             tracing::info!(event = "merge.done", sha = %sha);
+            // The merge lock was released when `try_merge` returned, so the gate lines go here.
+            record_merge_pass(driver, id, &sha);
             // The merge is done, so a failed refresh must not change the result.
             match run_soft_step(|| driver.kb_refresh(id, false)) {
                 Ok(text) if text.starts_with("kb refresh failed") => {
@@ -251,8 +284,17 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
             }
             Ok(MergeResult::Merged(sha))
         }
+        // Every park here is a merge-step park, so its fail line goes under `merge`.
         Ok(Step::Park(reason, kind, parts, resume)) => {
-            park_with_parts_resume(driver, id, &reason, kind, parts, resume)?;
+            park_with_parts_target(
+                driver,
+                id,
+                &reason,
+                kind,
+                parts,
+                resume,
+                GateTarget::Key(GateKey::Merge),
+            )?;
             Ok(MergeResult::Parked(reason))
         }
         // A cancelled job stays as the cancel left it, and the run ends as needs-human.
@@ -265,7 +307,15 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
                 Ok(job) if job.stage != Stage::Approve => ResumeAt::Rereview,
                 _ => ResumeAt::Merge,
             };
-            park_with_parts_resume(driver, id, &reason, ParkKind::Other, parts, Some(resume))?;
+            park_with_parts_target(
+                driver,
+                id,
+                &reason,
+                ParkKind::Other,
+                parts,
+                Some(resume),
+                GateTarget::Key(GateKey::Merge),
+            )?;
             Ok(MergeResult::Parked(reason))
         }
     }
@@ -443,6 +493,32 @@ fn try_merge(driver: &Driver, id: &str) -> Result<Step, EngineError> {
         format!("{main} moved again after the maximum number of syncs"),
         ResumeAt::Sync,
     ))
+}
+
+/// Records `merge: pass` with the short merge sha, then `approve: pass "retried"` when the last
+/// `approve` line of this round is `waiting`. A job that cannot be read gets no line.
+fn record_merge_pass(driver: &Driver, id: &str, sha: &str) {
+    if !driver.config().gate_record {
+        return;
+    }
+    let Ok(job) = driver.job(id) else {
+        return;
+    };
+    record_gate(
+        driver,
+        &job,
+        GateKey::Merge,
+        GateResult::Pass,
+        crate::ports::short_sha(sha),
+    );
+    let round = job.round.max(1);
+    let last = factory_core::gate_record::read(&driver.job_dir(&job))
+        .into_iter()
+        .rev()
+        .find(|l| l.gate == GateKey::Approve && l.round == round);
+    if last.is_some_and(|l| l.result == GateResult::Waiting) {
+        record_gate(driver, &job, GateKey::Approve, GateResult::Pass, "retried");
+    }
 }
 
 fn finish_merge(driver: &Driver, id: &str, sha: &str) -> Result<(), EngineError> {

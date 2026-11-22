@@ -367,6 +367,10 @@ pub(crate) struct Validated {
     pub spec_text: Option<String>,
     /// The user's reason, when `--accept-spec` overrode a refusal.
     pub accepted: Option<String>,
+    /// False when no agent review ran: the setting is off, or an accepted refusal stopped before it.
+    pub review_ran: bool,
+    /// True for a spec drafted unattended by intake, which gets no decision warning.
+    pub intake: bool,
 }
 
 /// Records that the user accepted a refused spec, in the job's ledger and its warning.
@@ -444,6 +448,7 @@ fn validate_series_inner(
     // The text that passes the check is the text every job gets, so the file is read once.
     let mut spec_text: Option<String> = None;
     let mut accepted: Option<String> = None;
+    let mut review_ran = driver.config().spec_review;
     if has_spec {
         let text = std::fs::read_to_string(&spec).map_err(|_| {
             if spec_path.is_some() {
@@ -500,6 +505,7 @@ fn validate_series_inner(
                     if matches!(refusal, crate::spec_check::SpecRefusal::NoUserDecision(_)) =>
                 {
                     accepted = Some(format!("{reason} (no agent review ran)"));
+                    review_ran = false;
                 }
                 Some(reason) => accepted = Some(reason.to_string()),
                 None => return Err(EngineError::SpecRefused(refusal)),
@@ -512,6 +518,8 @@ fn validate_series_inner(
         plan_warnings,
         spec_text,
         accepted,
+        review_ran,
+        intake: intake_tree.is_some(),
     })
 }
 
@@ -587,14 +595,11 @@ pub fn create_job_with_spec_accepting(
             model,
         )?;
         adopt_draft(driver, slug, &job);
+        let on = driver.config().spec_review;
+        crate::gate_record::record_spec_gates(driver, std::slice::from_ref(&job), None, on);
         return Ok(job);
     };
-    let Validated {
-        series,
-        plan_warnings,
-        spec_text,
-        accepted,
-    } = validate_series(
+    let validated = validate_series(
         driver,
         start,
         spec_path,
@@ -605,8 +610,19 @@ pub fn create_job_with_spec_accepting(
                 .map_err(EngineError::from)
         },
     )?;
-    let first = add_series_jobs(driver, slug, feature, model, &series, spec_text.as_deref())?;
+    let Validated {
+        series,
+        plan_warnings,
+        spec_text,
+        accepted,
+        ..
+    } = &validated;
+    let (spec_text, accepted) = (spec_text.clone(), accepted.clone());
+    let first = add_series_jobs(driver, slug, feature, model, series, spec_text.as_deref())?;
     adopt_draft(driver, slug, &first);
+    let members = series_members(driver, &first);
+    let on = driver.config().spec_review;
+    crate::gate_record::record_spec_gates(driver, &members, Some(&validated), on);
     // The job is made either way. The warning only tells the reader how little the user decided.
     let mut first = first;
     if intake_tree.is_none()
@@ -619,10 +635,26 @@ pub fn create_job_with_spec_accepting(
     if let Some(reason) = &accepted {
         first = record_accepted(driver, slug, first, reason);
     }
-    for warning in &plan_warnings {
+    for warning in plan_warnings {
         first = add_warning(driver, slug, first, warning);
     }
     Ok(first)
+}
+
+/// Every job of the series `first` belongs to, or `first` alone when it has no series id.
+fn series_members(driver: &Driver, first: &Job) -> Vec<Job> {
+    let id = first.series.as_ref().and_then(|s| s.id.as_deref());
+    let Some(id) = id else {
+        return vec![first.clone()];
+    };
+    match driver.store().load() {
+        Ok(board) => board
+            .jobs
+            .into_iter()
+            .filter(|j| j.series.as_ref().and_then(|s| s.id.as_deref()) == Some(id))
+            .collect(),
+        Err(_) => vec![first.clone()],
+    }
 }
 
 /// Adds one job per plan of a checked `series` and copies `spec_text` into each, and returns the
@@ -859,12 +891,7 @@ pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, E
             )))
         }
     };
-    let Validated {
-        plan_warnings,
-        spec_text,
-        accepted,
-        ..
-    } = validate_series(
+    let validated = validate_series(
         driver,
         r.plan,
         Some(spec),
@@ -872,6 +899,13 @@ pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, E
         None,
         |root, p| crate::series::parse_one_plan(root, p).map_err(EngineError::from),
     )?;
+    let Validated {
+        plan_warnings,
+        spec_text,
+        accepted,
+        ..
+    } = &validated;
+    let (spec_text, accepted) = (spec_text.clone(), accepted.clone());
     let new_pos = SeriesPos {
         plan_file: crate::series::canon(r.plan).to_string_lossy().into_owned(),
         ..pos
@@ -890,6 +924,8 @@ pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, E
         remove_new_jobs(driver, std::slice::from_ref(&new));
         return Err(e);
     }
+    let on = driver.config().spec_review;
+    crate::gate_record::record_spec_gates(driver, std::slice::from_ref(&new), Some(&validated), on);
     driver.ledger(&new).ruling(&format!("replaces job {id}"))?;
     if spec_text
         .as_deref()
@@ -900,7 +936,7 @@ pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, E
     if let Some(reason) = &accepted {
         new = record_accepted(driver, r.slug, new, reason);
     }
-    for warning in &plan_warnings {
+    for warning in plan_warnings {
         new = add_warning(driver, r.slug, new, warning);
     }
     Ok(new)

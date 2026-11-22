@@ -163,6 +163,8 @@ pub struct Config {
     pub tickets_on_merge: bool,
     /// After a merge, file one ticket for the open `[minor]` review findings. On by default.
     pub minor_tickets: bool,
+    /// Write `gates.jsonl` in each job folder for the dashboard gate strip. Off by default.
+    pub gate_record: bool,
     /// Turn on polling for labelled GitHub issues and `factory intake`. Off by default.
     pub intake: bool,
     /// The label that makes an open issue eligible. Not empty, no comma.
@@ -282,6 +284,7 @@ impl Default for Config {
             builder_simplify: true,
             tickets_on_merge: true,
             minor_tickets: true,
+            gate_record: false,
             intake: false,
             intake_label: "factory".to_string(),
             priority_labels: ["priority: P0", "priority: P1", "priority: P2"]
@@ -1270,6 +1273,13 @@ mod tests {
         assert_eq!(cfg.intake_label, "bot");
         assert_eq!(cfg.priority_labels, ["p1", "p2"]);
         assert_eq!(cfg.intake_trusted, ["alice"]);
+    }
+
+    #[test]
+    fn gate_record_is_off_by_default_and_can_be_turned_on() {
+        assert!(!Config::default().gate_record);
+        assert!(Config::parse("gate_record = true").expect("ok").gate_record);
+        assert!(Config::parse("gate_record = \"yes\"").is_err());
     }
 
     #[test]

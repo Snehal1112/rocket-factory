@@ -133,6 +133,7 @@ The builder also gets deny rules for `Edit` and `Write` on the job folder, so it
 | `base_branch` | string | `"main"` | Jobs branch from it and merge into it. Must be a valid git branch name and must not start with `factory/`. |
 | `tickets_on_merge` | bool | true | After the last plan merges, file follow-up tickets first, then comment on and close the parent tickets with `gh`. `false` turns it off. A failure never changes the merge. |
 | `minor_tickets` | bool | true | After a merge, file one ticket with a checklist of the open `[minor]` findings of the last review. It needs no `tickets_on_merge`, applies to every plan of a series and never changes the merge. |
+| `gate_record` | bool | false | Write gates.jsonl in each job folder, one line per gate result, for the dashboard's gate strip. |
 | `intake` | bool | false | Turns on polling for labelled GitHub issues and `factory intake`. |
 | `intake_label` | string | `"factory"` | The label that makes an open issue eligible. Not empty, no comma. |
 | `priority_labels` | list of strings | `["priority: P0", "priority: P1", "priority: P2"]` | Priority labels, highest first, no duplicates. An issue without one is picked last. |

@@ -376,3 +376,33 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1; letter-spacin
 .budget[hidden] { display: none; }
 .budget-warn { border-color: var(--attention); background: var(--attention-wash); color: var(--attention); }
 .budget-stop { border-color: var(--destructive); background: var(--destructive-wash); color: var(--destructive); }
+
+/* The gate strip and its list on a job card. */
+.gates { margin-top: 9px; }
+.gate-strip { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 7px 11px; padding: 6px 7px; min-height: 44px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; list-style: none; }
+.gate-strip::-webkit-details-marker { display: none; }
+.gate-strip:hover, .gate-strip:focus-visible { border-color: var(--border); background: var(--muted); outline: none; }
+.gate-grp { display: flex; flex-direction: column; gap: 3px; }
+.gate-grp b { font-size: 9.5px; font-weight: 500; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: 0.04em; }
+.gate-marks { display: flex; gap: 3px; }
+.gate-sum { margin-left: auto; font-size: 11px; color: var(--muted-foreground); white-space: nowrap; }
+.gate-sum-hit { color: var(--destructive); font-weight: 600; }
+.gm { display: inline-block; flex: none; width: 10px; height: 10px; box-sizing: border-box; border-radius: 3px; }
+.gm-pass { background: var(--success); }
+.gm-fail { background: var(--destructive); }
+.gm-note, .gm-waived { background: var(--attention); }
+.gm-running, .gm-waiting { background: var(--primary); animation: gate-pulse 1.4s ease-in-out infinite; }
+.gm-skipped { background: transparent; border: 1.5px dashed var(--muted-foreground); }
+.gm-not-reached, .gm-interrupted { background: var(--muted-foreground); opacity: 0.35; }
+@keyframes gate-pulse { 50% { opacity: 0.35; } }
+.gate-list { margin-top: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 11.5px; }
+.gate-head { margin: 7px 0 2px; font-size: 9.5px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); }
+.gate-head:first-child { margin-top: 0; }
+.gate-rows { margin: 0; padding: 0; list-style: none; }
+.gate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 19px; }
+.gate-name { flex: none; width: 96px; }
+.gate-detail { flex: 1; min-width: 0; color: var(--muted-foreground); text-align: right; overflow-wrap: anywhere; }
+.gate-row.fail .gate-name { color: var(--destructive); font-weight: 600; }
+.gate-row.dim .gate-name { color: var(--muted-foreground); }
+.gate-hit { flex-basis: 100%; margin: 2px 0 4px 18px; padding: 6px 8px; border-left: 2px solid var(--destructive); background: var(--destructive-wash); font-size: 11px; }
+@media (max-width: 480px) { .gate-detail { flex-basis: 100%; text-align: left; } }

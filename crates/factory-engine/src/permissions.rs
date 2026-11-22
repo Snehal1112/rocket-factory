@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use factory_agent::{AgentRun, AgentSpec};
+use factory_core::gate_record::{GateKey, GateResult};
 #[cfg(test)]
 use factory_core::NEVER_ALLOWED_PROGRAMS;
 use factory_core::{builder_program_ok, is_env_assignment, Config, ParkKind};
@@ -64,7 +65,10 @@ impl Engine<'_> {
         }
         let run = run?;
         match first_changed {
-            None => Ok(Ok(run)),
+            None => {
+                self.gate(GateKey::BuilderGuard, GateResult::Pass, "");
+                Ok(Ok(run))
+            }
             Some(name) => {
                 let session = run.session_id.clone().or(earlier_session);
                 let session_model = self.session_model(&run, earlier_model);

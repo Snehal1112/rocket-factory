@@ -10,6 +10,7 @@ pub mod cost;
 pub mod error;
 pub mod fsutil;
 mod gate;
+pub mod gate_record;
 pub mod home;
 pub mod homeconfig;
 pub mod ids;

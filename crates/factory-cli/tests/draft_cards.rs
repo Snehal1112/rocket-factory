@@ -1,6 +1,7 @@
 mod common;
 
 use common::Fixture;
+use factory_core::gate_record::{read, GateKey, GateResult, GATES_FILE};
 
 const SPEC: &str = "docs/superpowers/specs";
 
@@ -188,4 +189,82 @@ fn spec_start_refuses_a_digit_only_slug() {
     );
     let status = fx.run(&["status"]).expect("status");
     assert!(!status.contains("drafts:"), "{status}");
+}
+
+/// The job folders of every job on the board.
+fn job_dirs(fx: &Fixture) -> Vec<std::path::PathBuf> {
+    let layout = factory_core::Layout::in_repo(&fx.root);
+    let board =
+        factory_engine::BoardStore::new(&layout.board_file(), std::time::Duration::from_secs(15))
+            .load()
+            .expect("board");
+    board.jobs.iter().map(|j| layout.job_dir(&j.dir)).collect()
+}
+
+/// Writes a two-plan folder with a valid spec and returns its path.
+fn two_plan_folder(fx: &Fixture) -> std::path::PathBuf {
+    let second = fx.write_plan("plan-02-b.md", 1, "none");
+    let first = fx.write_plan("plan-01-a.md", 1, second.to_str().expect("utf8"));
+    let folder = first.parent().expect("plans folder").to_path_buf();
+    let spec =
+        "# Spec\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n\
+                ## Acceptance criteria\n\n- It is done.\n";
+    std::fs::write(folder.join("spec.md"), spec).expect("spec");
+    folder
+}
+
+fn enable_gate_record(fx: &Fixture) {
+    let path = fx.root.join(".claude/factory/config.toml");
+    let mut text = std::fs::read_to_string(&path).expect("config");
+    text.push_str("gate_record = true\n");
+    std::fs::write(path, text).expect("config");
+}
+
+#[test]
+fn new_writes_spec_gates_into_every_job_of_a_series() {
+    let fx = Fixture::new();
+    enable_gate_record(&fx);
+    let folder = two_plan_folder(&fx);
+    let out = fx
+        .run(&[
+            "new",
+            "demo",
+            "f",
+            "--plans",
+            folder.to_str().expect("utf8"),
+        ])
+        .expect("new");
+    let dirs = job_dirs(&fx);
+    assert_eq!(dirs.len(), 2, "{out}");
+    for dir in dirs {
+        let lines = read(&dir);
+        let keys: Vec<_> = lines.iter().map(|l| (l.gate, l.result)).collect();
+        assert_eq!(
+            keys,
+            vec![
+                (GateKey::SpecCheck, GateResult::Pass),
+                (GateKey::SpecReview, GateResult::Pass)
+            ],
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn no_spec_gates_when_the_setting_is_off() {
+    let fx = Fixture::new();
+    let folder = two_plan_folder(&fx);
+    fx.run(&[
+        "new",
+        "demo",
+        "f",
+        "--plans",
+        folder.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    let dirs = job_dirs(&fx);
+    assert_eq!(dirs.len(), 2);
+    for dir in dirs {
+        assert!(!dir.join(GATES_FILE).exists());
+    }
 }

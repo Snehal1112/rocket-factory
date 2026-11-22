@@ -818,12 +818,17 @@ fn new_without_plans_says_a_plan_is_needed_and_new_with_plans_does_not() {
 
 /// A risky job parked with open review blockers.
 fn parked_with_changes() -> Result<Scenario, Box<dyn std::error::Error>> {
+    parked_with_changes_config("")
+}
+
+/// Like `parked_with_changes`, with `extra_config` appended to the config file.
+fn parked_with_changes_config(extra_config: &str) -> Result<Scenario, Box<dyn std::error::Error>> {
     let mut steps = vec![build(vec![("secrets/token.txt", "x\n")], 1_000)];
     for _ in 0..6 {
         steps.push(review(CHANGES));
         steps.push(build(vec![("secrets/token.txt", "y\n")], 400));
     }
-    let sc = Scenario::new("", steps)?;
+    let sc = Scenario::new(extra_config, steps)?;
     let end = sc.start(&sc.plan_b, false)?;
     assert!(end.starts_with("needs-human"), "{end}");
     Ok(sc)
@@ -928,6 +933,28 @@ fn approve_with_waive_merges_and_records_the_waiver() -> TestResult {
     let list: serde_json::Value = serde_json::from_str(&waivers)?;
     assert_eq!(list.as_array().map(Vec::len), Some(1), "{waivers}");
     assert_eq!(list[0]["reason"], "accepted for now");
+    Ok(())
+}
+
+#[test]
+fn approve_waive_writes_waived_with_blockers() -> TestResult {
+    use factory_core::gate_record::{read, GateKey, GateResult};
+    let sc = parked_with_changes_config("gate_record = true")?;
+    let out = sc.run(&["approve", "1", "--waive", "accepted for now"])?;
+    assert!(out.starts_with("merged"), "{out}");
+    let mut lines = Vec::new();
+    for entry in std::fs::read_dir(sc.root.join(".superpowers/sdd"))?.flatten() {
+        lines.extend(read(&entry.path()));
+    }
+    let waived: Vec<_> = lines
+        .iter()
+        .filter(|l| l.gate == GateKey::Approve && l.result == GateResult::Waived)
+        .collect();
+    assert_eq!(waived.len(), 1, "{lines:?}");
+    assert!(waived[0].detail.contains("accepted for now"), "{lines:?}");
+    assert!(waived[0].detail.contains("1 blockers"), "{lines:?}");
+    // The merge after the waiver is no retry, so no `retried` line follows it.
+    assert!(!lines.iter().any(|l| l.detail == "retried"), "{lines:?}");
     Ok(())
 }
 

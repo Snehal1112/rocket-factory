@@ -1257,3 +1257,127 @@ test("approveCommand offers nothing while open changes wait on a missing review"
   assert.ok(board.approveCommand(passed).includes("--waive"));
   assert.match(board.renderCard(passed), /factory approve 001 --waive/);
 });
+
+const GATE_ORDER = [
+  "spec-check", "spec-review", "series", "machine", "builder-guard", "builder", "checks", "format", "lint",
+  "no-checks", "no-tests", "budget", "diff-cap", "review", "risk", "final-gate", "merge", "approve",
+];
+const GATE_STAGE = { "spec-check": "spec", "spec-review": "spec", series: "start", machine: "start", "builder-guard": "build", builder: "build", checks: "checks", format: "checks", lint: "checks", "no-checks": "checks", "no-tests": "checks", budget: "review", "diff-cap": "review", review: "review", risk: "review", "final-gate": "merge", merge: "merge", approve: "merge" };
+
+// Builds 18 rows, not reached except the given states.
+function gatesOf(states, stoppedAt) {
+  const list = GATE_ORDER.map((gate) => {
+    const state = (states || {})[gate] || "not-reached";
+    return { gate, stage: GATE_STAGE[gate], state, detail: state === "not-reached" ? "" : `${gate} detail`, round: state === "not-reached" ? 0 : 1, history: "" };
+  });
+  return { list, stopped_at: stoppedAt || null };
+}
+
+test("the strip has 18 marks in card order", () => {
+  const job = makeJob({ stage: "build", round: 1, gates: gatesOf({ "builder-guard": "pass" }) });
+  const html = board.gateStrip(job);
+  const marks = [...html.matchAll(/data-gate="([a-z-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(marks, GATE_ORDER);
+});
+
+test("the strip is empty without a record", () => {
+  assert.equal(board.gateStrip(makeJob({ gates: null })), "");
+  assert.equal(board.gateStrip(makeJob({})), "");
+});
+
+test("the summary counts reached gates while running", () => {
+  const job = makeJob({ stage: "build", gates: gatesOf({ "spec-check": "pass", "spec-review": "skipped", series: "running" }) });
+  assert.equal(board.gateSummary(job), "3 / 18");
+});
+
+test("the summary names the stopped gate when parked", () => {
+  const job = makeJob({ stage: "needs-human", gates: gatesOf({ checks: "fail" }, "checks") });
+  assert.equal(board.gateSummary(job), "stopped at checks");
+});
+
+test("the summary of a merged job leaves out zero parts", () => {
+  const states = {};
+  GATE_ORDER.forEach((g, i) => { states[g] = i < 15 ? "pass" : "skipped"; });
+  const job = makeJob({ stage: "merged", gates: gatesOf(states) });
+  assert.equal(board.gateSummary(job), "15 passed · 3 skipped");
+  states.lint = "note";
+  assert.equal(board.gateSummary(makeJob({ stage: "merged", gates: gatesOf(states) })), "14 passed · 1 note · 3 skipped");
+});
+
+test("the summary of a cancelled job", () => {
+  const job = makeJob({ stage: "needs-human", cancelled: true, gates: gatesOf({ checks: "fail" }, "checks") });
+  assert.equal(board.gateSummary(job), "cancelled");
+});
+
+test("a needs-human card opens the list", () => {
+  board.taskChoice.clear();
+  const job = makeJob({ stage: "needs-human", gates: gatesOf({ checks: "fail" }, "checks") });
+  assert.match(board.renderCard(job), /<details class="gates" data-gates="gates-001" open>/);
+});
+
+test("a gate list the user closed stays closed on the next render", () => {
+  board.taskChoice.clear();
+  const parked = makeJob({ stage: "needs-human", gates: gatesOf({ checks: "fail" }, "checks") });
+  board.taskChoice.set("gates-001", false);
+  assert.match(board.renderCard(parked), /<details class="gates" data-gates="gates-001">/);
+  // The choice belongs to one job, so another parked job still opens its list.
+  assert.match(board.renderCard(Object.assign({}, parked, { id: "002" })), /<details class="gates" data-gates="gates-002" open>/);
+  board.taskChoice.clear();
+});
+
+test("a gate list the user opened stays open on a running card", () => {
+  board.taskChoice.clear();
+  const running = makeJob({ stage: "build", gates: gatesOf({ builder: "pass" }) });
+  assert.match(board.renderCard(running), /<details class="gates" data-gates="gates-001">/);
+  board.taskChoice.set("gates-001", true);
+  assert.match(board.renderCard(running), /<details class="gates" data-gates="gates-001" open>/);
+  board.taskChoice.clear();
+});
+
+test("the_gate_list_is_a_details_element", () => {
+  const html = board.renderCard(makeJob({ stage: "build", gates: gatesOf({ builder: "pass" }) }));
+  assert.match(html, /<details class="gates" data-gates="gates-001">/);
+  assert.match(html, /<summary[^>]*>(?:(?!<\/summary>)[\s\S])*data-gate="spec-check"/);
+});
+
+test("a_card_without_a_record_has_no_strip", () => {
+  const html = board.renderCard(makeJob({ stage: "review", gates: null }));
+  assert.doesNotMatch(html, /class="gates"/);
+  assert.match(html, /class="chips"/);
+});
+
+test("a card with a record hides the review chips", () => {
+  const html = board.renderCard(makeJob({ stage: "review", gates: gatesOf({ review: "running" }) }));
+  assert.doesNotMatch(html, /class="chips"/);
+});
+
+test("the failing row shows the park reason", () => {
+  const job = makeJob({ stage: "needs-human", park_summary: "checks failed", gates: gatesOf({ checks: "fail" }, "checks") });
+  const row = board.renderCard(job).match(/<li class="gate-row[^"]*"[^>]*data-row="checks"[\s\S]*?<\/li>/)[0];
+  assert.match(row, /class="gate-row fail"/);
+  assert.match(row, /checks failed/);
+});
+
+test("gate details are escaped and not-reached marks are muted", () => {
+  const g = gatesOf({ checks: "pass" });
+  g.list[6].detail = "<img src=x>";
+  const html = board.gateStrip(makeJob({ gates: g }));
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /gm-not-reached/);
+});
+
+test("a stopped_at gate shows no stop mark or park reason once the job is not parked", () => {
+  const job = makeJob({ stage: "merged", park_summary: "checks failed", reason: "checks failed", gates: gatesOf({ checks: "pass" }, "checks") });
+  const html = board.renderCard(job);
+  assert.doesNotMatch(html, /class="gate-row fail"/);
+  assert.doesNotMatch(html, /gate-hit/);
+  assert.doesNotMatch(html, /checks failed/);
+});
+
+test("the strip sits directly under the title and the chips stay put without a record", () => {
+  const withGates = board.renderCard(makeJob({ stage: "review", gates: gatesOf({ review: "running" }) }));
+  assert.match(withGates, /<p class="feature">[^<]*<\/p><details class="gates"/);
+  const without = board.renderCard(makeJob({ stage: "review", gates: null }));
+  assert.doesNotMatch(without, /<p class="feature">[^<]*<\/p><div class="chips"/);
+  assert.ok(without.indexOf('class="chips"') > without.indexOf('class="meta"'));
+});

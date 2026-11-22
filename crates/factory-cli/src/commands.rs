@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use factory_agent::{AgentRunner, ApiKeySource, Caps, ClaudeRunner, CodexRunner, EventSink};
+use factory_core::gate_record::{GateKey, GateResult};
 use factory_core::{
     ignored_keys_in, outcome_lines, resolve, AgentFile, Config, CostsFile, Home, Layout,
     ParkRecord, Stage,
@@ -828,6 +829,12 @@ fn approve(
             factory_engine::set_stage_logged(j, Stage::Approve, None, false, now)
         }
     })?;
+    let without_a_review = without_review && job.stage == Stage::NeedsHuman && job.review_missing();
+    let gate = match waived {
+        Some((reason, count)) => (GateResult::Waived, format!("{reason}, {count} blockers")),
+        None if without_a_review => (GateResult::Note, "approved without a review".to_string()),
+        None => (GateResult::Pass, "approved by the user".to_string()),
+    };
     let ruling = if let Some((reason, count)) = waived {
         tracing::info!(
             event = "operator.approve",
@@ -843,13 +850,14 @@ fn approve(
             without_review,
             msg = "approved by the user"
         );
-        if without_review && job.stage == Stage::NeedsHuman && job.review_missing() {
+        if without_a_review {
             "approved by the user without a review".to_string()
         } else {
             "approved by the user".to_string()
         }
     };
     d.ledger(&job).ruling(&ruling)?;
+    factory_engine::record_gate(&d, &job, GateKey::Approve, gate.0, &gate.1);
     Ok(match merge_stage(&d, id)? {
         MergeResult::Merged(sha) => outcome_lines::merged_line(Some(&sha)),
         MergeResult::Parked(reason) => outcome_lines::parked_line(&reason),

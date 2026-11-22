@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use factory_core::gate_record::{GateKey, GateResult};
 use factory_core::{Board, ParkKind, Stage};
 use factory_git::GitError;
 
@@ -35,6 +36,7 @@ impl Engine<'_> {
         if let Some(parked) = self.wait_for_earlier_plan()? {
             return Ok(Some(parked));
         }
+        self.gate_series();
         self.recut_stale(job)?;
         Ok(None)
     }
@@ -69,6 +71,33 @@ impl Engine<'_> {
         };
         self.park_with(ParkKind::SeriesWaiting, reason, vec![])
             .map(Some)
+    }
+
+    /// Records the `series` line of a job the guard let through.
+    fn gate_series(&self) {
+        let Ok(board) = Board::load(&self.board_path) else {
+            return;
+        };
+        let Ok(me) = board.find(&self.job_id) else {
+            return;
+        };
+        let Some(pos) = me.series.as_ref() else {
+            self.gate(GateKey::Series, GateResult::Skipped, "single plan");
+            return;
+        };
+        let (k, n) = (pos.index, pos.total);
+        let earlier = pos
+            .id
+            .as_deref()
+            .and_then(|sid| board.series_member(sid, k.saturating_sub(1)));
+        let detail = if k <= 1 {
+            format!("plan 1 of {n}")
+        } else if earlier.is_some() {
+            format!("plan {k} of {n}, earlier plan merged")
+        } else {
+            format!("plan {k} of {n}, earlier plan not on the board")
+        };
+        self.gate(GateKey::Series, GateResult::Pass, &detail);
     }
 
     /// Cuts the branch of a job with no commits again when the base branch moved since it was cut.

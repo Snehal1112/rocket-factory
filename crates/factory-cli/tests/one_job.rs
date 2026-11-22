@@ -3,6 +3,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::Fixture;
+use factory_core::gate_record::{read, GateKey, GateResult};
 
 const HEADER: &str = "# Plan\n\n> For agents: use superpowers:subagent-driven-development.\n\n**Goal:** g\n\n**Architecture:** a\n\n**Tech Stack:** t\n\n**Spec:** s\n\n**Global Constraints:** c\n\n**Review Focus:** r\n\n";
 const TASK_BODY: &str = "**Files:**\n- Modify: `a.rs`\n\n**Interfaces:**\n- Produces: x\n\n";
@@ -367,4 +368,103 @@ fn factory_status_does_not_warn() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stderr.contains("has no effect"), "{stderr}");
     assert!(!stdout.contains("has no effect"), "{stdout}");
+}
+
+fn enable_gate_record(fx: &Fixture) {
+    let path = fx.root.join(".claude/factory/config.toml");
+    let mut text = std::fs::read_to_string(&path).expect("config");
+    text.push_str("gate_record = true\n");
+    std::fs::write(path, text).expect("config");
+}
+
+/// The gate and result pairs in the folder of the only job on the board.
+fn only_job_gates(fx: &Fixture) -> Vec<(GateKey, GateResult)> {
+    let layout = factory_core::Layout::in_repo(&fx.root);
+    let board =
+        factory_engine::BoardStore::new(&layout.board_file(), std::time::Duration::from_secs(15))
+            .load()
+            .expect("board");
+    assert_eq!(board.jobs.len(), 1);
+    read(&layout.job_dir(&board.jobs[0].dir))
+        .iter()
+        .map(|l| (l.gate, l.result))
+        .collect()
+}
+
+#[test]
+fn new_one_job_writes_spec_gates() {
+    let fx = Fixture::new();
+    enable_gate_record(&fx);
+    set_budget(&fx, 2_000_000);
+    let plans = plans_folder(&fx, 2, 2);
+    fx.run(&[
+        "new",
+        "demo",
+        "f",
+        "--plans",
+        plans.to_str().expect("utf8"),
+        "--one-job",
+    ])
+    .expect("new");
+    assert_eq!(
+        only_job_gates(&fx),
+        vec![
+            (GateKey::SpecCheck, GateResult::Pass),
+            (GateKey::SpecReview, GateResult::Pass)
+        ]
+    );
+}
+
+#[test]
+fn accept_spec_writes_waived_spec_check() {
+    let fx = Fixture::with_risk_path("src-tauri/**");
+    enable_gate_record(&fx);
+    let plans = plans_folder(&fx, 1, 1);
+    make_risky(&plans);
+    fx.run(&[
+        "new",
+        "demo",
+        "f",
+        "--plans",
+        plans.to_str().expect("utf8"),
+        "--accept-spec",
+        "checked by hand",
+    ])
+    .expect("created");
+    let layout = factory_core::Layout::in_repo(&fx.root);
+    let board =
+        factory_engine::BoardStore::new(&layout.board_file(), std::time::Duration::from_secs(15))
+            .load()
+            .expect("board");
+    let lines = read(&layout.job_dir(&board.jobs[0].dir));
+    let pairs: Vec<_> = lines.iter().map(|l| (l.gate, l.result)).collect();
+    assert_eq!(
+        pairs,
+        vec![
+            (GateKey::SpecCheck, GateResult::Waived),
+            (GateKey::SpecReview, GateResult::Skipped)
+        ]
+    );
+    assert!(
+        lines[0].detail.contains("checked by hand"),
+        "{}",
+        lines[0].detail
+    );
+}
+
+#[test]
+fn spec_review_off_writes_skipped() {
+    let fx = Fixture::new();
+    enable_gate_record(&fx);
+    set_spec_review_off(&fx);
+    let plans = plans_folder(&fx, 1, 1);
+    fx.run(&["new", "demo", "f", "--plans", plans.to_str().expect("utf8")])
+        .expect("new");
+    assert_eq!(
+        only_job_gates(&fx),
+        vec![
+            (GateKey::SpecCheck, GateResult::Pass),
+            (GateKey::SpecReview, GateResult::Skipped)
+        ]
+    );
 }

@@ -74,12 +74,7 @@ pub fn create_one_job_accepting(
     accept_spec: Option<&str>,
 ) -> Result<OneJob, EngineError> {
     // The task cap is lifted, so a plan with no task needs its own message.
-    let Validated {
-        series,
-        plan_warnings,
-        spec_text,
-        accepted,
-    } = validate_series(driver, plan, spec_path, accept_spec, None, |root, start| {
+    let validated = validate_series(driver, plan, spec_path, accept_spec, None, |root, start| {
         parse_series_with(root, start, None).map_err(|e| match e {
             SeriesError::TaskCount { path, found: 0 } => EngineError::Msg(format!(
                 "{}: a plan needs at least one task",
@@ -88,6 +83,13 @@ pub fn create_one_job_accepting(
             other => EngineError::from(other),
         })
     })?;
+    let Validated {
+        series,
+        plan_warnings,
+        spec_text,
+        accepted,
+        ..
+    } = &validated;
     // One plan has nothing to combine, so it takes the normal path and skips the guard.
     if series.plans.len() == 1 {
         let job = create_job_with_spec_accepting(
@@ -160,6 +162,8 @@ pub fn create_one_job_accepting(
         }
     }
     adopt_draft(driver, slug, &job);
+    let on = driver.config().spec_review;
+    crate::gate_record::record_spec_gates(driver, std::slice::from_ref(&job), Some(&validated), on);
     let mut notes = Vec::new();
     if spec_text
         .as_deref()

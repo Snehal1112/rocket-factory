@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use factory_core::gate_record::GateKey;
 use factory_core::{Job, ParkKind, ResumeAt, ReviewState, Stage};
 use factory_git::{MergeOutcome, Worktree};
 
+use crate::gate_record::GateTarget;
 use crate::{now_secs, Decision, Driver, EngineError, MessageKind, StageOutcome, MAX_SYNCS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,7 +121,22 @@ pub fn sync_requested_by(
     // A park that `park_after_sync` already wrote keeps its own kind and evidence.
     if let SyncOutcome::Parked(reason, kind) = &outcome {
         let kind = kind.unwrap_or(ParkKind::Other);
-        crate::merge::park_with_parts(driver, id, reason, kind, Vec::new())?;
+        // A failed check after the sync belongs to the checks gate, whatever stage the job is at.
+        let target =
+            if reason == "checks failed after sync" || reason == "final checks failed after sync" {
+                GateTarget::Key(GateKey::Checks)
+            } else {
+                GateTarget::FromKind
+            };
+        crate::merge::park_with_parts_target(
+            driver,
+            id,
+            reason,
+            kind,
+            Vec::new(),
+            kind.resume(),
+            target,
+        )?;
         // A stopped sync must be able to finish, so a park before any verdict resumes at the review.
         if whole_branch && has_no_verdict(&driver.job(id)?) {
             crate::merge::set_park_resume(driver, id, ResumeAt::Rereview)?;
@@ -127,7 +144,16 @@ pub fn sync_requested_by(
     } else if !retry && job.stage == Stage::NeedsHuman && driver.job(id)?.stage == Stage::Approve {
         // The parked job was held for a reason the review does not recheck, so a person releases it.
         let reason = format!("sync review passed, run factory approve {id}");
-        crate::merge::park_with_parts(driver, id, &reason, ParkKind::Other, Vec::new())?;
+        // No gate failed, so the park writes only `approve: waiting`.
+        crate::merge::park_with_parts_target(
+            driver,
+            id,
+            &reason,
+            ParkKind::Other,
+            Vec::new(),
+            ParkKind::Other.resume(),
+            GateTarget::NoFailLine,
+        )?;
     }
     Ok(outcome)
 }

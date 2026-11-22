@@ -7,6 +7,7 @@ use std::time::Duration;
 use factory_agent::{
     classify_failure, did_no_work, AgentRun, AgentSpec, FailureClass, MachineCause, StopReason,
 };
+use factory_core::gate_record::GateResult;
 use factory_core::{
     budget_state, parse_builder_status, BudgetState, BuilderStatus, ParkKind, Stage,
 };
@@ -217,8 +218,21 @@ impl Engine<'_> {
     /// Waits while `preflight` finds the machine down. `Some` holds the outcome when the wait parked the job.
     fn wait_while_down(&self, dir: &Path) -> Result<Option<StageOutcome>, EngineError> {
         let Some((cause, detail)) = self.preflight(dir) else {
+            // The disk is only measured again when the gate is recorded.
+            if self.config.gate_record {
+                let measured = (self.config.min_free_disk_mb > 0)
+                    .then(|| (self.machine.free_mb)(dir))
+                    .flatten();
+                match measured {
+                    Some(mb) => self.gate_machine(GateResult::Pass, &format!("free {mb} MiB")),
+                    None => self.gate_machine(GateResult::Pass, ""),
+                }
+            }
             return Ok(None);
         };
+        self.gate_machine(GateResult::Waiting, &detail);
+        // The clock is read for the gate line only, so it stays untouched when the gate is off.
+        let started = self.config.gate_record.then(|| (self.machine.now)());
         let mut probe = || {
             Ok(match self.preflight(dir) {
                 None => Probe::Fine,
@@ -226,7 +240,13 @@ impl Engine<'_> {
             })
         };
         match self.wait_for_machine(cause, &detail, &mut probe)? {
-            WaitEnd::Ready | WaitEnd::Final(_) => Ok(None),
+            WaitEnd::Ready | WaitEnd::Final(_) => {
+                if let Some(started) = started {
+                    let mins = ((self.machine.now)() - started).max(0.0) as u64 / 60;
+                    self.gate_machine(GateResult::Pass, &format!("ok after {mins} min"));
+                }
+                Ok(None)
+            }
             WaitEnd::Parked(out) => Ok(Some(out)),
         }
     }

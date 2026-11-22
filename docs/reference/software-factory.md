@@ -383,7 +383,44 @@ The command matches subcommands by exact shape, so feature text such as `next bu
 - The server reads the board's four token counters and weights them like the driver (cache reads count one tenth). New fields that are malformed are dropped, never a board error. The budget falls back to 3,000,000 weighted tokens when the board has no `budget_weighted` (boards made under the old default). The driver's own default is now 1,000,000. The card bar shows the board total, or the running total from the agent events when that is higher, so it moves while an agent works.
 - Only the last 4 MiB of the log is read at startup. Agents idle for a day are dropped (cap 500). The registry resets when the log is truncated, replaced or deleted. An agent silent for 10 minutes shows `stale`.
 - A needs-human card with details (`has_park` in `/api/state`) shows a "See what went wrong" button. It opens a native dialog that fetches `GET /api/jobs/<id>/park` (404 without a file, 422 for a broken file, text capped at 1 MiB, the path taken from the board and kept inside `.superpowers/sdd/`). The popup shows the kind, reason, each evidence part with the lines that matter marked and the first one scrolled into view, and the next commands as copy chips. The polled state never carries the evidence text.
+- A job with a gate record shows a strip of 18 marks on its card, grouped by stage, with a summary at the right end (`stopped at <gate>`, a count such as `14 passed · 2 notes`, or `n / 18` while it runs) and a list of one line per gate under it. A job parked in needs-human opens the list. Once the user opens or closes a job's list, the page keeps that choice across redraws, as it does for the task list. Jobs without a record keep the review chips. See the Gate record section.
 - The page patches only changed text. The status line is not a live region. One short announcement is made when the connection level changes. Bar widths are set through the CSSOM because the CSP forbids inline styles.
+
+## Gate record
+
+With `gate_record = true` in `project.toml` (default false, see `docs/reference/project-toml-reference.md`), the driver writes one JSON line per gate result into `gates.jsonl` in the job folder. The dashboard reads it to draw the gate strip on the card. Without the setting no file is written. Writing is best effort: a failed write logs the event `gates.record_error` and never changes what the job does.
+
+Each line has these fields: `v` (line version, 1), `gate` (one of the 18 keys), `result`, `round`, `head` (short sha, left out when unknown), `at` (unix seconds) and `detail` (one line, newlines become spaces, cut to 300 characters with a final `…`). The `result` is one of `pass`, `fail`, `note`, `waived`, `skipped`, `running` or `waiting`. The round is the builder round of the job; a round of 0 is written as 1. The file is append-only, and a file that ends in a cut line gets a newline before the next line.
+
+The 18 gates, in card order, with their stage group:
+
+| Stage | Gates |
+|---|---|
+| spec | `spec-check`, `spec-review` |
+| start | `series`, `machine` |
+| build | `builder-guard`, `builder` |
+| checks | `checks`, `format`, `lint`, `no-checks`, `no-tests` |
+| review | `budget`, `diff-cap`, `review`, `risk` |
+| merge | `final-gate`, `merge`, `approve` |
+
+`spec-check`, `spec-review` and `series` run once per job. Every other gate runs once per round. The `builder` line comes before the diff cap check, so a `diff-too-large` park still shows the builder as passed. A checks run writes `format` and `lint` before `checks`, so a park on failed checks stops at `checks`. The `decision warnings` count in the `spec-check` detail is 0 for an intake spec, which gets no decision warning.
+
+A park writes a fail line for the gate that follows from its kind. The `series-waiting` park writes `waiting` instead of `fail`. `review-failed` and `changes-remain` write none, because the review loop already wrote the review line. A park of kind `other` uses the stage the job was in: build gives `builder`, review gives `review`, approve gives `merge`, and any other stage gives no line. A park that offers `factory approve` also writes an `approve: waiting` line.
+
+| Park kind | Gate |
+|---|---|
+| `builder-stopped`, `builder-blocked`, `builder-committed`, `nothing-changed`, `commit-failed` | `builder` |
+| `builder-tampered` | `builder-guard` |
+| `checks-failed` | `checks` |
+| `no-checks` | `no-checks` |
+| `no-tests` | `no-tests` |
+| `diff-too-large` | `diff-cap` |
+| `budget-stopped` | `budget` |
+| `risky-diff` | `risk` |
+| `machine-waiting` | `machine` |
+| `series-waiting` | `series` (`waiting`) |
+
+The dashboard shows the latest state of each gate for the job's current round (a board round of 0 counts as 1). A gate that runs once per job uses its last line of any round. Any other gate uses its last line of the current round, and `not-reached` when it has none. Lines from earlier rounds only feed a history text such as `fail r1`. A `running` result counts as `interrupted` when the job is merged, cancelled or parked, and a `waiting` result when the job ended or is working on a stage other than the start gates (`series`, `machine`). The gate the job `stopped_at` is the last `fail` line of the current round. Broken lines, lines of a newer version and lines with an unknown gate or result are skipped.
 
 ## Per-task builders
 

@@ -3,6 +3,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::events::Registry;
+use crate::gates::{load_gates, GatesView};
 use crate::model::{AgentState, Board, Draft, Job, StageEntry};
 use crate::paths::Paths;
 use crate::plan::{load_plan, PlanView};
@@ -25,6 +26,8 @@ pub struct JobView {
     pub stage_durations: Vec<StageDuration>,
     pub token_view: Option<TokenView>,
     pub has_park: bool,
+    /// The gate record of the job, `null` when it has none.
+    pub gates: Option<GatesView>,
 }
 
 /// One draft card: the board entry plus its age and a stale flag.
@@ -304,6 +307,7 @@ pub fn build_state(
             stage_durations: stage_durations(job, now),
             token_view: token_view(job),
             has_park: has_park(paths, job),
+            gates: load_gates(paths, job),
         })
         .collect();
     let mut unassigned = Vec::new();

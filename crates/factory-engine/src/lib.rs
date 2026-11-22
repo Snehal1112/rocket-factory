@@ -15,6 +15,7 @@ mod decide;
 mod drafts;
 mod escalation;
 mod followups;
+mod gate_record;
 mod intake;
 mod jobmsg;
 mod kb;
@@ -73,6 +74,7 @@ pub use costs::{costs_path, estimate_for_plan, gather_costs, refresh_costs};
 pub use decide::{decide, risk_summary, DecideInput, Decision};
 pub use drafts::{find_draft, remove_draft, set_draft_stage, start_draft};
 pub use followups::{follow_ups, FollowUp};
+pub use gate_record::{record_gate, GateTarget};
 pub use intake::{
     pick_next, run_intake, IntakeOutcome, STATE_DONE, STATE_NEEDS_HUMAN, STATE_RUNNING,
 };
@@ -80,7 +82,8 @@ pub use kb::{kb_prompt, kb_spec, parse_kb_reply, KbOutcome, KB_AGENT};
 pub use lease::{acquire_lease, lease_is_live, release_lease, Lease, LeaseError};
 pub use lock::{lock_board, BoardLock};
 pub use merge::{
-    merge_stage, park, park_with_parts, park_with_parts_resume, MergeResult, MAX_SYNCS,
+    merge_stage, park, park_with_parts, park_with_parts_resume, park_with_parts_target,
+    MergeResult, MAX_SYNCS,
 };
 pub use message::{driver_footers, fixed_message, MessageKind, MessageRequest};
 pub use minors::{minor_tickets_step, MINORS_FILE};

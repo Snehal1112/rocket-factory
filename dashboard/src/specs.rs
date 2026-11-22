@@ -236,6 +236,7 @@ mod tests {
             stage_durations: Vec::new(),
             token_view: None,
             has_park: false,
+            gates: None,
         }
     }
 

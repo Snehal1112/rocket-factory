@@ -545,3 +545,25 @@ fn a_delete_only_manifest_diff_stays_risky() {
     assert_risky(&run_job(&fx, effect));
     assert!(ledger(&fx).contains("diff stays risky"), "{}", ledger(&fx));
 }
+
+#[test]
+fn cargo_lock_clears_risk() {
+    let mut fx = fixture();
+    fx.config.gate_record = true;
+    assert_eq!(
+        run_job(&fx, change(internal_dep(), true)),
+        Decision::AutoMerge
+    );
+    let lines = factory_core::gate_record::read(&fx.job_dir);
+    let risk: Vec<_> = lines
+        .iter()
+        .filter(|l| l.gate == factory_core::gate_record::GateKey::Risk)
+        .collect();
+    assert_eq!(risk.len(), 1, "{lines:?}");
+    assert_eq!(risk[0].result, factory_core::gate_record::GateResult::Pass);
+    assert!(
+        risk[0].detail.contains("cleared by the Cargo lock check"),
+        "{}",
+        risk[0].detail
+    );
+}

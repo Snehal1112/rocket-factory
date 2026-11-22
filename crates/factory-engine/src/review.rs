@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use factory_checks::ChecksReport;
+use factory_core::gate_record::{GateKey, GateResult};
 use factory_core::{
     budget_state, combine_verdicts, open_blockers, parse_verdict, DiffClass, LastReview, ParkKind,
     ResumeAt, ReviewState, Stage, Verdict, REVIEW_ROLES,
@@ -106,6 +107,8 @@ impl Engine<'_> {
             // Like the other evidence files, this one is best effort and never stops the review.
             let _ = std::fs::write(&first_risky, risk.risky.join("\n") + "\n");
         }
+        let (risk_result, risk_detail) = risk_line(risky, &risk.risky, risk.note.as_deref());
+        self.gate(GateKey::Risk, risk_result, &risk_detail);
         let round_lines = round_diff.changed_lines();
         let job_model = self.job_model();
         let model = job_model
@@ -146,6 +149,7 @@ impl Engine<'_> {
 
         // A sync review runs the code reviewer only. A round or rebase runs every role the job holds.
         let mut to_run: Vec<&'static str> = Vec::new();
+        let mut skipped: Vec<&'static str> = Vec::new();
         for role in REVIEW_ROLES {
             let held =
                 role == "code" || (run_kind != ReviewRun::Sync && job.reviews.contains_key(role));
@@ -161,6 +165,7 @@ impl Engine<'_> {
                     Ok(())
                 })?;
                 self.ruling("security review skipped, docs-only round")?;
+                skipped.push(role);
             } else {
                 to_run.push(role);
             }
@@ -168,6 +173,7 @@ impl Engine<'_> {
         if to_run.contains(&"security") && !self.has_security_agent()? {
             let reason = format!("{SECURITY_AGENT}.md not found");
             self.ruling(&format!("parked, {reason}"))?;
+            self.gate(GateKey::Review, GateResult::Fail, "security agent missing");
             return Ok(ReviewOutcome {
                 verdict: Verdict::Missing,
                 review_path,
@@ -212,6 +218,7 @@ impl Engine<'_> {
             })?;
             specs.push(spec);
         }
+        self.gate(GateKey::Review, GateResult::Running, &to_run.join(", "));
         let runs = self.run_agents(specs)?;
         for (role, run) in to_run.into_iter().zip(runs) {
             if multi {
@@ -265,6 +272,7 @@ impl Engine<'_> {
                 role,
                 text: role_text,
                 verdict: role_verdict,
+                failed,
             });
         }
         let verdict = combine_verdicts(&verdicts);
@@ -274,6 +282,8 @@ impl Engine<'_> {
         };
         std::fs::write(&review_path, &text).map_err(io_err)?;
         let blockers = open_blockers(&text).len() as u32;
+        let (review_result, review_detail) = review_line(&parts, &skipped, blockers, &file);
+        self.gate(GateKey::Review, review_result, &review_detail);
         let source = match run_kind {
             ReviewRun::Round => job.fix_source.clone().unwrap_or_else(|| "build".into()),
             ReviewRun::Sync => "sync".into(),
@@ -301,6 +311,7 @@ impl Engine<'_> {
         ))?;
 
         let checks_ok = self.latest_checks_ok()?;
+        let used = self.job_weighted_tokens();
         let input = DecideInput {
             checks_ok,
             verdict: &verdict,
@@ -308,13 +319,18 @@ impl Engine<'_> {
             risky_summary: risk_summary(&risk.risky, &self.config),
             diff_lines: whole.changed_lines(),
             diff_cap: self.config.diff_cap_lines as usize,
-            budget: budget_state(self.job_weighted_tokens(), self.config.budget_weighted),
+            budget: budget_state(used, self.config.budget_weighted),
             round: job.round,
             fix_rounds: self.config.fix_rounds_for(risky),
             rework_base: job.rework_base,
             role_failed,
         };
         let decision = decide(&input);
+        // A stopped budget parks, and that park writes the fail line.
+        if let Some((result, detail)) = budget_line(input.budget, used, self.config.budget_weighted)
+        {
+            self.gate(GateKey::Budget, result, &detail);
+        }
         let choice = match &decision {
             Decision::AutoMerge => "merge",
             Decision::FixRound => "fix",
@@ -391,6 +407,7 @@ impl Engine<'_> {
                 }
                 self.set_stage(Stage::Approve, None, false)?;
                 self.ruling("auto-merge approved, checks green, reviewer approved")?;
+                self.gate(GateKey::Approve, GateResult::Pass, "auto-merge");
                 Ok(StageOutcome::Advanced(Stage::Approve))
             }
         }
@@ -436,6 +453,12 @@ impl Engine<'_> {
             ""
         };
         self.ruling(&format!("checks ran: {list}{note}"))?;
+        let detail = if reused.is_some() {
+            "reused the checks run".to_string()
+        } else {
+            format!("ran {} commands", commands.len())
+        };
+        self.gate(GateKey::FinalGate, GateResult::Pass, &detail);
         Ok(None)
     }
 }
@@ -445,6 +468,71 @@ struct RolePart {
     role: &'static str,
     text: String,
     verdict: Verdict,
+    /// True when the run failed or stalled without a verdict.
+    failed: bool,
+}
+
+/// The `risk` line: pass for a normal diff or one the Cargo lock check cleared, note for a risky one.
+fn risk_line(risky: bool, paths: &[String], note: Option<&str>) -> (GateResult, String) {
+    if risky {
+        return (GateResult::Note, format!("risky: {}", paths.join(", ")));
+    }
+    match note {
+        Some(note) => (
+            GateResult::Pass,
+            format!("cleared by the Cargo lock check; {note}"),
+        ),
+        None => (GateResult::Pass, "normal".to_string()),
+    }
+}
+
+/// The `review` line: pass when every role that ran approved, else fail. The detail names each
+/// role's verdict, the open blockers, the skipped roles and the review file.
+fn review_line(
+    parts: &[RolePart],
+    skipped: &[&str],
+    blockers: u32,
+    file: &str,
+) -> (GateResult, String) {
+    let mut words: Vec<String> = parts
+        .iter()
+        .map(|p| {
+            if p.failed {
+                format!("{} did not finish", p.role)
+            } else if p.verdict == Verdict::Missing {
+                format!("{} gave no verdict", p.role)
+            } else {
+                format!("{} {}", p.role, p.verdict.as_word().to_uppercase())
+            }
+        })
+        .collect();
+    if blockers > 0 {
+        words.push(format!("{blockers} blockers"));
+    }
+    words.extend(skipped.iter().map(|r| format!("{r} skipped (docs only)")));
+    words.push(file.to_string());
+    let passed = !parts.is_empty() && parts.iter().all(|p| p.verdict == Verdict::Approve);
+    let result = if passed {
+        GateResult::Pass
+    } else {
+        GateResult::Fail
+    };
+    (result, words.join(", "))
+}
+
+/// The `budget` line, or `None` when the budget is stopped.
+fn budget_line(
+    state: factory_core::BudgetState,
+    used: u64,
+    budget: u64,
+) -> Option<(GateResult, String)> {
+    let result = match state {
+        factory_core::BudgetState::Ok => GateResult::Pass,
+        factory_core::BudgetState::Warn => GateResult::Note,
+        factory_core::BudgetState::Stop => return None,
+    };
+    let percent = u128::from(used) * 100 / u128::from(budget.max(1));
+    Some((result, format!("{percent}% used")))
 }
 
 /// True when security review may be skipped: the round changed something, the diff is not risky and
@@ -547,11 +635,13 @@ mod tests {
                 role: "code",
                 text: "a\nVERDICT: APPROVE\n".to_string(),
                 verdict: Verdict::Approve,
+                failed: false,
             },
             RolePart {
                 role: "security",
                 text: "no verdict here".to_string(),
                 verdict: Verdict::Missing,
+                failed: false,
             },
         ];
         let text = merge_replies(&parts, Verdict::Missing);

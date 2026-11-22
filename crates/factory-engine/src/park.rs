@@ -6,7 +6,10 @@ use factory_core::{
     next_with_resume, open_blockers, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt,
 };
 
+use factory_core::gate_record::{GateKey, GateResult};
+
 use crate::decide::risk_summary;
+use crate::gate_record::{fail_key, offers_approve, GateTarget};
 use crate::ports::now;
 use crate::{Engine, EngineError, StageOutcome};
 
@@ -190,10 +193,23 @@ impl Engine<'_> {
         parts: Vec<ParkPart>,
         resume: Option<ResumeAt>,
     ) -> Result<StageOutcome, EngineError> {
+        self.park_with_target(kind, reason, parts, resume, GateTarget::FromKind)
+    }
+
+    /// Parks like `park_with_resume`, and writes the fail line under the gate `target` names.
+    pub(crate) fn park_with_target(
+        &self,
+        kind: ParkKind,
+        reason: String,
+        parts: Vec<ParkPart>,
+        resume: Option<ResumeAt>,
+        target: GateTarget,
+    ) -> Result<StageOutcome, EngineError> {
         // A park must still happen when the board cannot be read, so a missing job falls back to round 1.
         let job = self.job().ok();
         let round = job.as_ref().map_or(1, |j| j.round);
         let review_missing = job.as_ref().is_some_and(|j| j.review_missing);
+        let stage_before = job.as_ref().map(|j| j.stage);
         let at = now().max(0.0) as u64;
         let parts = evidence_or_reason(parts, &reason);
         let mut record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
@@ -231,7 +247,16 @@ impl Engine<'_> {
                 })
             },
             || self.move_to_needs_human(&reason),
-            || write_record(&self.job_dir, &record),
+            || {
+                write_record(&self.job_dir, &record);
+                // The gate lines follow the record, so a ruling error does not drop them.
+                if let Some((key, result)) = fail_key(kind, stage_before, target) {
+                    self.gate(key, result, &reason);
+                }
+                if offers_approve(&record.next) {
+                    self.gate(GateKey::Approve, GateResult::Waiting, &reason);
+                }
+            },
             || self.ruling(&format!("needs-human, {reason}")),
         )?;
         Ok(StageOutcome::NeedsHuman(reason))
