@@ -122,7 +122,11 @@ impl Engine<'_> {
             } else {
                 GateResult::Fail
             };
-            let commands: Vec<&str> = results.iter().map(|r| r.command.as_str()).collect();
+            // Commands go through `redact_command`, as in the log.
+            let commands: Vec<String> = results
+                .iter()
+                .map(|r| factory_telemetry::redact_command(&r.command))
+                .collect();
             self.gate(key, result, &commands.join(", "));
         }
         let total = report.results.len();

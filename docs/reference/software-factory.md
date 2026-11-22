@@ -390,7 +390,7 @@ The command matches subcommands by exact shape, so feature text such as `next bu
 
 With `gate_record = true` in `project.toml` (default false, see `docs/reference/project-toml-reference.md`), the driver writes one JSON line per gate result into `gates.jsonl` in the job folder. The dashboard reads it to draw the gate strip on the card. Without the setting no file is written. Writing is best effort: a failed write logs the event `gates.record_error` and never changes what the job does.
 
-Each line has these fields: `v` (line version, 1), `gate` (one of the 18 keys), `result`, `round`, `head` (short sha, left out when unknown), `at` (unix seconds) and `detail` (one line, newlines become spaces, cut to 300 characters with a final `…`). The `result` is one of `pass`, `fail`, `note`, `waived`, `skipped`, `running` or `waiting`. The round is the builder round of the job; a round of 0 is written as 1. The file is append-only, and a file that ends in a cut line gets a newline before the next line.
+Each line has these fields: `v` (line version, 1), `gate` (one of the 18 keys), `result`, `round`, `head` (short sha, left out when unknown), `at` (unix seconds) and `detail` (one line, newlines become spaces, cut to 300 characters with a final `…`). The `result` is one of `pass`, `fail`, `note`, `waived`, `skipped`, `running` or `waiting`. The round is the builder round of the job; a round of 0 is written as 1. The file is append-only, and a file that ends in a cut line gets a newline before the next line. The `format` and `lint` details list their commands through `redact_command`, the same rule the `check.run` log uses, so a sensitive `--name=value` flag shows `[redacted]`.
 
 The 18 gates, in card order, with their stage group:
 
