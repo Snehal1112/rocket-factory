@@ -82,9 +82,30 @@ fn root_text(rel: &str) -> String {
     .unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 
+/// The crate names in the `members` block of the root `Cargo.toml`, read as text.
+fn workspace_crates() -> Vec<String> {
+    let manifest = root_text("Cargo.toml");
+    let members = manifest
+        .split("members = [")
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .expect("workspace members in Cargo.toml");
+    let names: Vec<String> = members
+        .lines()
+        .filter_map(|line| {
+            let path = line.trim().trim_end_matches(',').trim_matches('"');
+            path.strip_prefix("crates/").map(str::to_string)
+        })
+        .collect();
+    assert!(
+        !names.is_empty(),
+        "no workspace members parsed from Cargo.toml"
+    );
+    names
+}
+
 #[test]
 fn ci_and_release_list_every_workspace_crate() {
-    let manifest = root_text("Cargo.toml");
     let ci = root_text(".github/workflows/ci.yml");
     let release = root_text("scripts/release.sh");
     let crates_block = release
@@ -93,28 +114,49 @@ fn ci_and_release_list_every_workspace_crate() {
         .and_then(|rest| rest.split(')').next())
         .expect("CRATES list in scripts/release.sh");
     let release_names: Vec<&str> = crates_block.split_whitespace().collect();
-    let members = manifest
-        .split("members = [")
-        .nth(1)
-        .and_then(|rest| rest.split(']').next())
-        .expect("workspace members in Cargo.toml");
-    let mut seen = 0;
-    for line in members.lines() {
-        let path = line.trim().trim_end_matches(',').trim_matches('"');
-        let Some(name) = path.strip_prefix("crates/") else {
-            continue;
-        };
-        seen += 1;
+    for name in workspace_crates() {
         assert!(
             ci.contains(&format!("-p {name}\n")),
             "{name} is missing from PKGS in .github/workflows/ci.yml"
         );
         assert!(
-            release_names.contains(&name),
+            release_names.contains(&name.as_str()),
             "{name} is missing from CRATES in scripts/release.sh"
         );
     }
-    assert!(seen > 0, "no workspace members parsed from Cargo.toml");
+}
+
+/// The non-comment lines before the test module that hold a `/proc` string literal.
+fn proc_lines(text: &str) -> Vec<String> {
+    // Everything from the first test module on is test code.
+    let code = text.split("#[cfg(test)]").next().unwrap_or("");
+    code.lines()
+        .filter(|line| !line.trim_start().starts_with("//") && line.contains("\"/proc"))
+        .map(|line| line.trim_start().to_string())
+        .collect()
+}
+
+#[test]
+fn the_proc_lint_catches_a_proc_literal() {
+    let src = "//! Reads nothing from /proc.\nfn f() { let _ = std::fs::read(\"/proc/self/stat\"); }\n#[cfg(test)]\nmod tests { const P: &str = \"/proc/1\"; }\n";
+    assert_eq!(proc_lines(src).len(), 1);
+}
+
+#[test]
+fn no_source_reads_proc() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut hits = Vec::new();
+    for name in workspace_crates() {
+        let mut files = Vec::new();
+        rust_files(&crates.join(&name).join("src"), &mut files);
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("read");
+            for line in proc_lines(&text) {
+                hits.push(format!("{}: {line}", file.display()));
+            }
+        }
+    }
+    assert!(hits.is_empty(), "source reads /proc:\n{}", hits.join("\n"));
 }
 
 #[test]
