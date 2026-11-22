@@ -88,6 +88,11 @@ fn setup() -> Env {
             Command::Project { cmd } => project::run(&home, cmd).expect("add"),
             _ => unreachable!(),
         };
+        // The tests read the merged job branches, so the cleanup after a merge is off.
+        let path = home.project_dir(name).join("project.toml");
+        let text = std::fs::read_to_string(&path).expect("read");
+        let text = text.replacen("[settings]\n", "[settings]\ncleanup_on_merge = false\n", 1);
+        std::fs::write(&path, text).expect("write");
     }
     Env {
         tmp,

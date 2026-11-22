@@ -59,6 +59,7 @@ fn settings_resolve_to_the_old_values() {
     assert_eq!(new.reviewer_model, old.reviewer_model);
     assert_eq!(new.builder_excerpt, old.builder_excerpt);
     assert_eq!(new.tickets_on_merge, old.tickets_on_merge);
+    assert_eq!(new.cleanup_on_merge, old.cleanup_on_merge);
     assert_eq!(new.kb_path, old.kb_path);
     assert_eq!(new.kb_model, old.kb_model);
     assert_eq!(new.kb_budget_weighted, old.kb_budget_weighted);

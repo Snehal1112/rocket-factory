@@ -304,6 +304,7 @@ fn show(home: &Home, name: &str) -> Result<String, CliError> {
         format!("worktrees folder: {}", l.worktrees_dir.display()),
         format!("risk paths: {}", resolved.config.risk_paths.len()),
         format!("tickets on merge: {}", resolved.config.tickets_on_merge),
+        format!("cleanup on merge: {}", resolved.config.cleanup_on_merge),
     ]);
     let names: Vec<&str> = resolved.agents.iter().map(|a| a.name.as_str()).collect();
     out.push(format!(

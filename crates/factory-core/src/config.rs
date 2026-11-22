@@ -161,6 +161,8 @@ pub struct Config {
     pub builder_simplify: bool,
     /// After a merge, file the follow-up tickets and close the parent tickets. On by default; set false to turn it off.
     pub tickets_on_merge: bool,
+    /// After a merge, remove the job's worktree and branch unless the worktree holds uncommitted work. On by default.
+    pub cleanup_on_merge: bool,
     /// After a merge, file one ticket for the open `[minor]` review findings. On by default.
     pub minor_tickets: bool,
     /// Write `gates.jsonl` in each job folder for the dashboard gate strip. Off by default.
@@ -283,6 +285,7 @@ impl Default for Config {
             builder_excerpt: true,
             builder_simplify: true,
             tickets_on_merge: true,
+            cleanup_on_merge: true,
             minor_tickets: true,
             gate_record: false,
             intake: false,
@@ -1324,6 +1327,17 @@ mod tests {
                 .spec_review
         );
         assert!(Config::parse("spec_review = \"no\"").is_err());
+    }
+
+    #[test]
+    fn cleanup_on_merge_is_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().cleanup_on_merge);
+        assert!(
+            !Config::parse("cleanup_on_merge = false")
+                .expect("parse")
+                .cleanup_on_merge
+        );
+        assert!(Config::parse("cleanup_on_merge = \"yes\"").is_err());
     }
 
     #[test]

@@ -344,6 +344,30 @@ fn cleanup_twice_succeeds_and_says_nothing_was_left() {
 }
 
 #[test]
+fn a_run_to_merged_cleans_up_by_default() {
+    let fx = Fixture::new();
+    std::fs::write(
+        fx.root.join(".claude/factory/config.toml"),
+        "risk_paths = [\"src-tauri/**\"]\nmin_free_disk_mb = 0\ncleanup_on_merge = true\n",
+    )
+    .expect("config");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&[
+        "new",
+        "hello",
+        "say hello",
+        "--plans",
+        plans.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    assert_eq!(
+        fx.run(&["cleanup", "1"]).expect("cleanup"),
+        "nothing to remove for job 001, the worktree and branch are already gone"
+    );
+}
+
+#[test]
 fn cleanup_deletes_the_branch_when_the_worktree_folder_was_removed_by_hand() {
     let fx = Fixture::with_risk_path("docs/**");
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");
@@ -743,7 +767,8 @@ fn cleanup_keeps_the_card_of_a_cancelled_job_with_a_live_lease() {
     let fx = Fixture::with_risk_path("docs/**");
     parked_and_cancelled(&fx, "hello");
     fx.run(&["cancel", "1"]).expect("cancel");
-    fx.hold_lease("001", "someone-else");
+    // The lease belongs to this driver, so the foreign-lease refusal does not apply.
+    fx.hold_lease("001", "tester");
     let out = fx
         .run(&["cleanup", "1", "--discard-commits"])
         .expect("cleanup");
@@ -1158,7 +1183,7 @@ fn rework_after_failing_checks_carries_the_checks() -> TestResult {
     sc.run(&["rework", "1", "fix the flag"])?;
     let text = std::fs::read_to_string(job_file(&sc, "changes-r2.md"))?;
     assert!(text.starts_with("fix the flag\n\n"), "{text}");
-    assert!(text.contains("FAIL test ! -f bad.flag"), "{text}");
+    assert!(text.contains("## test ! -f bad.flag (exit 1)"), "{text}");
     Ok(())
 }
 

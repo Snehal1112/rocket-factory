@@ -352,6 +352,39 @@ fn cleanup_removes_the_card_despite_a_dead_owner_lease() {
 }
 
 #[test]
+fn cleanup_refuses_a_job_leased_by_another_driver() {
+    let fx = Fixture::with_risk_path("docs/**");
+    new_job(&fx);
+    assert!(fx
+        .run(&["run", "1"])
+        .expect("run")
+        .starts_with("needs-human"));
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let layout = factory_core::Layout::in_repo(&fx.root);
+    let store = factory_engine::BoardStore::new(&layout.board_file(), Duration::from_secs(15));
+    let job = store
+        .load()
+        .expect("load")
+        .jobs
+        .into_iter()
+        .find(|j| j.id == "001")
+        .expect("job 001");
+    let worktree = std::path::PathBuf::from(job.worktree.clone().expect("worktree"));
+    fx.hold_lease("001", "someone-else");
+    let err = fx.run(&["cleanup", "1"]).expect_err("leased");
+    assert!(
+        err.to_string()
+            .contains("job 001 is leased by someone-else"),
+        "{err}"
+    );
+    assert!(worktree.exists());
+    let repo = git2::Repository::open(&fx.root).expect("open");
+    assert!(repo
+        .find_branch(&job.branch, git2::BranchType::Local)
+        .is_ok());
+}
+
+#[test]
 fn cancel_clears_the_saved_task_session() {
     let fx = Fixture::new();
     new_job(&fx);

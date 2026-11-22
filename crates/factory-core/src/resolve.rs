@@ -454,6 +454,21 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_on_merge_is_a_valid_project_setting() {
+        let e = env();
+        assert!(
+            resolve(&e.home, "p", &Tip::default())
+                .expect("resolve")
+                .config
+                .cleanup_on_merge
+        );
+        set_settings(&e, "cleanup_on_merge = false\n");
+        let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(!r.config.cleanup_on_merge && !r.config.degraded);
+    }
+
+    #[test]
     fn tickets_on_merge_is_a_valid_project_setting() {
         let e = env();
         assert!(

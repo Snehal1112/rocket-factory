@@ -549,6 +549,7 @@ factory cleanup 028
 factory cleanup 031 --discard-commits   # a cancelled job whose work you do not want
 ```
 
+- A merged job is cleaned automatically right after the merge unless you set `cleanup_on_merge = false`. A worktree with untracked or modified files is kept and the ledger says why; run `cleanup` (with `--discard-commits` if needed) after you look at it.
 - It only works on a merged or cancelled job.
 - It removes the git worktree and the job branch. The job folder (ledger, logs, usage figures) always stays.
 - A merged job keeps its card on the board.
@@ -1354,6 +1355,7 @@ Project settings live in `~/.factory/projects/<name>/project.toml` under `[setti
 | `checks` | Which commands run for which changed files. | from the preset |
 | `require_tests` | Park a change that adds no test. | false |
 | `tickets_on_merge` | File follow-up tickets, then close the parent tickets, after the last plan merges. | true |
+| `cleanup_on_merge` | Remove the worktree and branch of a job right after it merges. | true |
 | `minor_tickets` | File one ticket for the open minor review findings after each merge. | true |
 | `kb_path` | A knowledge base folder. Unset turns the knowledge base off. | unset |
 | `log_level` | How much the log records. | `info` |
