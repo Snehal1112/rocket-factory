@@ -49,7 +49,7 @@ Issue 12's "lock is free during the commit message run" item is obsolete. No com
 ```
 probe --harness h ─ config.agent_cli = h ─ h ≠ project's cli? ─ yes → every model field = h's default
                                                               └ no  → project models
-shape_spec(spec, harness)          fake_claude() missing → panic with the build command
+shape_spec(spec, harness)          fake_claude() missing → build it, panic only if the build fails
 merged_agents: preset ∪ own ∪ tip, then drop RETIRED_AGENTS with a note
 CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + factory-procgroup
 ```
@@ -64,17 +64,17 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 
 ### 2. Loud skips, hint and exec bits (issue 44)
 
-- `common::fake_claude()` returns `PathBuf`, and panics with "build fake-claude with `cargo build -j4 -p factory-agent` first" when the binary is missing. Its three callers drop their early returns.
-- The "agent file {name} not found" errors in `hide_claude_tools` and `prepare_for_codex` end with "; pass --project <name>, or run inside a registered project".
-- `scripts/live-smoke.sh` and `claude-shim.sh` get mode 100755.
-- A new test runs `scripts/live-smoke.sh --interactive` with a fake tmux. It puts a `tmux` script on `PATH` and sets `TMUX_BIN`. The script answers `new-session`, `send-keys` and `capture-pane` with a pane holding `? for shortcuts`, `merged` and `001`. The test expects exit 0, and `out/interactive/pane.txt` containing `001`.
+- `common::fake_claude()` returns `PathBuf`. When the binary is missing it builds it with `cargo build -j4 -p factory-agent --bin fake-claude` (through `env!("CARGO")`, from the workspace root), and panics with "build fake-claude with `cargo build -j4 -p factory-agent` first" only when that build fails. The factory's own checks run `cargo test -p factory-cli` without building it, so a bare panic would fail every later job. Its three callers drop their early returns.
+- On the probe path only, the "agent file {name} not found" error ends with "; pass --project <name>, or run inside a registered project". `prepare_for_codex` also runs in real jobs, so the hint is added where the probe maps the error (`probe_run` and `hide_claude_tools`), not in `prepare_for_codex`.
+- `scripts/live-smoke.sh` and `claude-shim.sh` have mode 100755. The builder cannot run `chmod`, so this was set by hand on main before the job, and a test pins it.
+- A new test runs `scripts/live-smoke.sh --no-probe --interactive` with a fake tmux, through `run_script`, with `TMUX_BIN` pointing at an executable fake and `HOME` at a temp home that holds `.claude/commands/factory.md`. The fake answers `capture-pane` with a pane holding `? for shortcuts`, `merged` and `001`, and every other subcommand with exit 0. The test expects exit 0, and `out/interactive/pane.txt` containing `001`.
 
 ### 3. CI on macOS and the `/proc` lint (issue 5)
 
-- Both jobs in `ci.yml` get `strategy: { fail-fast: false, matrix: { os: [ubuntu-latest, macos-latest] } }` and `runs-on: ${{ matrix.os }}`.
-- `PKGS` and `release.sh` `CRATES` gain `-p factory-procgroup`.
+- Both jobs in `ci.yml` run with `strategy: { fail-fast: false, matrix: { os: [ubuntu-latest, macos-latest] } }` and `runs-on: ${{ matrix.os }}`. `ci.yml` is a risky path with no check, so this edit was made by hand on main before the job. The job adds a test that pins it.
+- `PKGS` and `release.sh` `CRATES` include `factory-procgroup`, also by hand before the job. A test checks that both list every workspace member.
 - Any test that is Linux-only gets `#[cfg(target_os = "linux")]` with a comment saying why. `reap_on_takeover.rs` already has one.
-- `scripts/live-smoke.sh` must run on bash 3.2, the macOS `/bin/bash`. A survey found no bash 4 features (`declare -A`, `${x,,}`, `mapfile`, `readarray`, `|&`, `&>>`).
+- `scripts/live-smoke.sh` runs on macOS: its GNU-only `sed -i` and `\|` uses were replaced by hand before the job (`awk` into a new file, and `sed -E`). It uses no bash 4 features.
 - `no_hardcoded_paths.rs` gains `no_source_reads_proc`. It covers every crate in the workspace, `factory-procgroup` and `factory-telemetry` included. It skips `#[cfg(test)]` tails and `//` lines, as the existing test does, and fails on a line containing `"/proc`.
 
 ### 4. Combine lint skips inline code
@@ -89,7 +89,7 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
   - the task, task resume and task carry builders;
   - the resumed and fresh fix builders;
   - the reviewer, whose prompt names the worktree root while `spec.cwd` is `<root>/apps/web`.
-- `check_overlap` keeps "project {name} already covers {canon/new}" when the new folder sits inside the other. When the other folder sits strictly inside the new one, it says "project {name} already covers {canon/other}, inside {canon/new}". The test asserts the full texts.
+- `check_overlap` keeps "project {name} already covers {canon/new}" when the new folder sits inside the other. When the other folder sits strictly inside the new one, it says "project {name} already covers {canon/other}, inside {canon/new}", where an empty `new` prints `canon` itself, with no trailing slash. The CLI shows it after `config error: `. The test asserts the full texts with `ends_with`.
 - CLI tests:
   - `project show` of a subfolder project whose folder is gone prints `disabled: project folder is missing`;
   - a project whose repo path is a subfolder of a git repo prints `is not the top folder of a git repository`.
@@ -106,12 +106,12 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 - `merged_agents` applies the `RETIRED_AGENTS` filter after all three layers are merged.
 - Each project-own or tip copy it drops adds a note: "ignored retired agent {name} from {layer}; delete it". `{layer}` is `the project folder` or `the base branch`.
 - Tests that use `factory-committer.md` as a sample name move to `factory-kb-refresher.md`.
-- The journeybook lines drop the committer:
+- The journeybook lines drop the committer. They were edited by hand before the job, because no check covers `journeybook/`, and the job adds a test that pins them:
   - `--role` lists `builder`, `reviewer`, `spec-reviewer` and `kb`;
   - the model line names the builder, its fix rounds, the reviewer, the KB refresher and their helpers;
   - the tokens line names the builder, reviewer and kb;
-  - the reference claim says "the builder, the reviewers, the spec reviewer and the KB refresher".
-- The SVG note gains: "At most N + 2 builder runs, 3 runs per review role and 1 spec review, with fix_rounds = 2."
+  - the reference correction keeps its old `claimed` text, and its `actual` says the driver writes commits and merge messages with no agent, and the spec reviewer and the KB refresher spend tokens too.
+- The SVG note gains, by hand before the job and pinned by a test: "At most N + 2 builder runs, 3 runs per review role and 1 spec review, with fix_rounds = 2."
 - The two preset asserts get messages `"{name} ships factory-committer.md"` and `"{name} ships commit-context.md"`.
 - `every_intake_drafter_asks_for_the_commit_line` also pins:
   - `` `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert` ``;
@@ -136,13 +136,13 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 ## Testing
 
 - factory-engine:
-  - `tests/probe.rs`: `a_cross_harness_probe_uses_the_harness_default_model`, `a_same_harness_probe_keeps_the_project_models`, `shape_spec_follows_the_probe_harness`, `a_probe_without_agents_names_the_project_flag`.
+  - `tests/probe.rs`: `shape_spec_follows_the_probe_harness`, `a_probe_without_agents_names_the_project_flag`.
   - `tests/agent_files.rs`: `every_builder_and_the_reviewer_start_in_the_project_folder`.
   - `tests/gates.rs`: the stronger `checks_map_project_relative_paths`.
   - `tests/merge.rs`: `a_scoped_job_with_a_merged_base_resumes`.
   - `src/combine.rs`: `an_inline_code_mention_is_left_alone`, `a_mention_outside_the_code_span_still_warns`.
 - factory-cli:
-  - `tests/probe_cmd.rs`: `harness_flag_overrides_the_project_agent_cli` also asserts the model, and the report names the model.
+  - `tests/probe_cmd.rs`: `a_cross_harness_probe_uses_the_harness_default_model`, `a_same_harness_probe_keeps_the_project_models`, `the_probe_report_names_the_model`, and `harness_flag_overrides_the_project_agent_cli` also asserts the model.
   - `tests/live_smoke_script.rs`: `interactive_runs_with_a_fake_tmux`, `the_scripts_are_executable`.
   - `tests/no_hardcoded_paths.rs`: `no_source_reads_proc`.
   - `tests/project_cmd.rs`: `show_of_a_subfolder_project_with_a_missing_folder_is_disabled`, `a_registered_subfolder_repo_path_names_the_top_folder_rule`, and the full overlap texts.
@@ -168,7 +168,8 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 - Cargo commands are per crate with `-j4`, never `--workspace` or `--all`, and never set `CARGO_TARGET_DIR`.
 - Tests use `.expect("...")` and `expect_err`, never the unwrap call.
 - Board JSON is unchanged. The probe JSON `model` field is optional.
-- Git stays behind `factory_git::Repo`. The builder sets the two script modes with `chmod +x` on disk, and the driver's commit records them. It never runs git itself.
+- Git stays behind `factory_git::Repo`.
+- The job does not edit `.github/workflows/ci.yml`, `scripts/release.sh`, `scripts/live-smoke.sh`, the journeybook data or the SVG, and does not change file modes. Those were done by hand before the job, and the job only adds the tests that pin them.
 - Process checks stay in `procinfo.rs`, and no code reads `/proc`.
 - The macOS CI run happens on the first push. A failure there is fixed before this work counts as done.
 
@@ -200,7 +201,8 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 - The combine lint false positive (a `Task N` mention inside inline backticks in a later plan): fix the lint, not the plan, in this area. Options: fix the lint here, reword job 100's plan only, cancel and recreate job 100. Chosen: fix the lint, here in area 3. Decided by: user
 - How much of CI runs on macOS? Options: the full fmt, clippy and test matrix on ubuntu-latest and macos-latest with fail-fast off, tests only on macOS, the process crates only. Chosen: the full matrix, fail-fast off, with a commented cfg gate on any test that is Linux-only. Decided by: user
 - What model does `factory probe --harness <h>` use when `<h>` differs from the project's `agent_cli`? Options: that harness's default model for every role (Codex `CODEX_DEFAULT_MODEL`), a new `--model` flag, refuse with a hint. Chosen: the harness default model, named in the report, and `shape_spec` follows the harness argument. Decided by: user
-- How loud is a missing fake-claude binary in the CLI tests? Options: panic with the build hint, panic only in CI, `#[ignore]`. Chosen: the shared helper panics with "build fake-claude with `cargo build -j4 -p factory-agent` first". Decided by: user
+- How loud is a missing fake-claude binary in the CLI tests? Options: build it and panic only if that fails, panic and add a build step to the check rule, panic only in CI. Chosen: the helper builds it and panics with the build hint only when the build fails, because the factory's checks never build it. This replaces the first answer, a bare panic. Decided by: user
+- How are the edits the gates cannot pass made (`ci.yml` is a risky path; `scripts/`, `journeybook/` and the SVG have no check; the builder cannot `chmod`)? Options: by hand on main before the job, in the job with a manual approve, new check rules. Chosen: by hand before the job; the job adds only Rust code and the tests that pin those edits. Decided by: user
 - The `a-001`/`001-x` worktree name collision? Options: pin the clean failure with a test and a clear error, change the separator, refuse such project names. Chosen: pin the clean failure and make the error name the clashing folder; names do not change. Decided by: user
 - A probe outside a registered project with no agent files? Options: add a hint to the error, add the hint plus a fallback to the repo's tracked agents. Chosen: the hint only; the fallback stays with `docs/superpowers/plans/2026-11-01-agent-delivery-fixes.md`. Decided by: user
 - Issue 12's message-run lock item is dropped as obsolete, because no commit-message agent runs any more. Decided by: call
