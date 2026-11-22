@@ -269,3 +269,52 @@ fn interactive_with_codex_exits_2() {
     assert!(stderr_of(&output).contains("--interactive supports claude only"));
     assert!(!tmp.path().join("out/board.json").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn the_scripts_are_executable() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for rel in [
+        "../../scripts/live-smoke.sh",
+        "tests/support/claude-shim.sh",
+    ] {
+        let path = root.join(rel);
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "{} is not executable", path.display());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn interactive_runs_with_a_fake_tmux() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    let commands = home.join(".claude/commands");
+    std::fs::create_dir_all(&commands).expect("commands dir");
+    std::fs::write(commands.join("factory.md"), "factory\n").expect("write command");
+    // The fake shows the ready prompt and the merged job; every other call is a no-op.
+    let tmux = tmp.path().join("tmux");
+    std::fs::write(
+        &tmux,
+        "#!/bin/sh\nif [ \"$1\" = capture-pane ]; then\n  printf '? for shortcuts\\nmerged\\n001\\n'\nfi\nexit 0\n",
+    )
+    .expect("write tmux");
+    std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).expect("chmod tmux");
+    let (output, run_tmp) = run_script(
+        &["--no-probe", "--interactive"],
+        &[
+            ("TMUX_BIN", tmux.to_str().expect("utf8")),
+            ("HOME", home.to_str().expect("utf8")),
+        ],
+    );
+    let stderr = stderr_of(&output);
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let pane =
+        std::fs::read_to_string(run_tmp.path().join("out/interactive/pane.txt")).expect("pane.txt");
+    assert!(pane.contains("001"), "{pane}");
+}
