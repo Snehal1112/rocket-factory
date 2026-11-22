@@ -117,11 +117,22 @@ fn ci_and_release_list_every_workspace_crate() {
     }
 }
 
+/// Whether a line is a whole item: it, or its code part, ends in `;` or `{}`.
+fn is_one_line_item(line: &str) -> bool {
+    let ends_item = |s: &str| {
+        let s = s.trim();
+        s.ends_with(';') || s.ends_with("{}")
+    };
+    ends_item(line) || ends_item(line.split("//").next().unwrap_or(line))
+}
+
 /// The lines outside test items, with their 1-based numbers.
 ///
 /// A line that is exactly `#[cfg(test)]` after trimming starts a test item. An item whose first
-/// line ends in `;` is that one line. A braced item ends at the first later line that is the
-/// attribute's indentation followed by `}`, the layout rustfmt gives every file.
+/// line, or that line's code part, ends in `;` or `{}` is that one line. The code part is the
+/// text before the first `//`. The whole line is checked too, so a `//` inside a string keeps
+/// the old result. A braced item ends at the first later line that is the attribute's
+/// indentation followed by `}`, the layout rustfmt gives every file.
 fn production_lines(text: &str) -> Vec<(usize, &str)> {
     let lines: Vec<&str> = text.lines().collect();
     let mut kept = Vec::new();
@@ -135,10 +146,7 @@ fn production_lines(text: &str) -> Vec<(usize, &str)> {
         }
         let indent = &line[..line.len() - line.trim_start().len()];
         let close = format!("{indent}}}");
-        if lines
-            .get(i + 1)
-            .is_some_and(|next| next.trim().ends_with(';'))
-        {
+        if lines.get(i + 1).is_some_and(|next| is_one_line_item(next)) {
             i += 2;
         } else {
             i += 1;
@@ -210,6 +218,51 @@ fn production_lines_drops_only_test_items() {
         ]
     );
     assert_eq!(numbers, [3, 4, 9]);
+}
+
+#[test]
+fn production_lines_drops_one_line_test_items() {
+    let src = "#[cfg(test)]\nfn x() {}\nconst A: &str = \"keep\";\n#[cfg(test)]\nimpl T for U {}\nfn keep() {}\n";
+    let kept = production_lines(src);
+    let texts: Vec<&str> = kept.iter().map(|(_, line)| *line).collect();
+    let numbers: Vec<usize> = kept.iter().map(|(n, _)| *n).collect();
+    assert_eq!(texts, ["const A: &str = \"keep\";", "fn keep() {}"]);
+    assert_eq!(numbers, [3, 6]);
+}
+
+#[test]
+fn production_lines_reads_the_code_before_a_trailing_comment() {
+    let src =
+        "#[cfg(test)]\nuse x; // reason\nfn a() {}\n#[cfg(test)]\nfn x() {} // stub\nfn b() {}\n";
+    let kept = production_lines(src);
+    let texts: Vec<&str> = kept.iter().map(|(_, line)| *line).collect();
+    let numbers: Vec<usize> = kept.iter().map(|(n, _)| *n).collect();
+    assert_eq!(texts, ["fn a() {}", "fn b() {}"]);
+    assert_eq!(numbers, [3, 6]);
+}
+
+#[test]
+fn is_one_line_item_reads_the_whole_line_and_the_code_part() {
+    for line in [
+        "fn x() {}",
+        "use x; // reason",
+        "fn x() {} // stub",
+        "const U: &str = \"http://x\";",
+    ] {
+        assert!(is_one_line_item(line), "{line} is one line");
+    }
+    for line in ["mod tests {", "fn x() { 1 }", "fn x() { // open"] {
+        assert!(!is_one_line_item(line), "{line} opens a block");
+    }
+}
+
+#[test]
+fn the_paths_lint_catches_main_after_a_one_line_test_fn() {
+    let src = "#[cfg(test)]\nfn x() {}\nconst B: &str = \"main\";\n";
+    assert_eq!(
+        path_hits("a/src/x.rs", src),
+        ["a/src/x.rs:3: const B: &str = \"main\";"]
+    );
 }
 
 #[test]
