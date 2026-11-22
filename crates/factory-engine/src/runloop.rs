@@ -605,6 +605,36 @@ pub fn create_job_with_spec_accepting(
                 .map_err(EngineError::from)
         },
     )?;
+    let first = add_series_jobs(driver, slug, feature, model, &series, spec_text.as_deref())?;
+    adopt_draft(driver, slug, &first);
+    // The job is made either way. The warning only tells the reader how little the user decided.
+    let mut first = first;
+    if intake_tree.is_none()
+        && spec_text
+            .as_deref()
+            .is_some_and(|text| user_decisions(text) == 0)
+    {
+        first = add_warning(driver, slug, first, NO_USER_DECISION);
+    }
+    if let Some(reason) = &accepted {
+        first = record_accepted(driver, slug, first, reason);
+    }
+    for warning in &plan_warnings {
+        first = add_warning(driver, slug, first, warning);
+    }
+    Ok(first)
+}
+
+/// Adds one job per plan of a checked `series` and copies `spec_text` into each, and returns the
+/// first job. A failure of any job or spec copy removes the jobs made so far.
+fn add_series_jobs(
+    driver: &Driver,
+    slug: &str,
+    feature: &str,
+    model: Option<&str>,
+    series: &crate::Series,
+    spec_text: Option<&str>,
+) -> Result<Job, EngineError> {
     let total = series.plans.len() as u32;
     // A single plan needs no series id. A longer chain shares one id between all its jobs.
     let series_id = if total > 1 {
@@ -629,13 +659,12 @@ pub fn create_job_with_spec_accepting(
     // Issue numbers come from the feature text only, so a spec that cites an issue never closes it.
     let issues = factory_core::parse_issues(feature);
     let copy_spec = |job: &Job| -> Result<(), EngineError> {
-        if let Some(text) = &spec_text {
+        if let Some(text) = spec_text {
             std::fs::write(driver.job_dir(job).join("spec.md"), text)?;
         }
         Ok(())
     };
-    // A failure of any job or spec copy removes the jobs made so far.
-    let first = rolled_back(driver, |made| {
+    rolled_back(driver, |made| {
         let first = add_job(
             driver,
             slug,
@@ -667,24 +696,7 @@ pub fn create_job_with_spec_accepting(
             copy_spec(&later_job)?;
         }
         Ok(first)
-    })?;
-    adopt_draft(driver, slug, &first);
-    // The job is made either way. The warning only tells the reader how little the user decided.
-    let mut first = first;
-    if intake_tree.is_none()
-        && spec_text
-            .as_deref()
-            .is_some_and(|text| user_decisions(text) == 0)
-    {
-        first = add_warning(driver, slug, first, NO_USER_DECISION);
-    }
-    if let Some(reason) = &accepted {
-        first = record_accepted(driver, slug, first, reason);
-    }
-    for warning in &plan_warnings {
-        first = add_warning(driver, slug, first, warning);
-    }
-    Ok(first)
+    })
 }
 
 /// Copies the checked spec into the new job and cancels the target, in one board write that checks the
@@ -1283,6 +1295,41 @@ mod tests {
             .map(|rd| rd.count())
             .unwrap_or(0);
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn a_series_whose_third_plan_fails_leaves_no_job_and_no_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let d = driver(&tmp);
+        let plans = tmp.path().join("plans");
+        std::fs::create_dir_all(&plans).expect("plans");
+        for n in 1..=3 {
+            let next = if n == 3 {
+                "none".to_string()
+            } else {
+                plans
+                    .join(format!("plan-0{}-x.md", n + 1))
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            std::fs::write(
+                plans.join(format!("plan-0{n}-x.md")),
+                format!("# Plan\n\n### Task 1: t\n\nNext plan: {next}\n"),
+            )
+            .expect("plan");
+        }
+        let checked = validate(&d, &plans.join("plan-01-x.md"), None, None).expect("valid");
+        assert_eq!(checked.series.plans.len(), 3);
+        // The third plan goes after the check, so its copy fails once jobs 001 and 002 exist.
+        std::fs::remove_file(plans.join("plan-03-x.md")).expect("remove plan 3");
+        let err = add_series_jobs(&d, "demo", "f", None, &checked.series, None)
+            .expect_err("the third plan copy fails");
+        assert!(matches!(err, EngineError::Io(_)), "{err}");
+        assert!(d.store().load().expect("board").jobs.is_empty());
+        let left = std::fs::read_dir(&d.layout().jobs_dir)
+            .map(|rd| rd.count())
+            .unwrap_or(0);
+        assert_eq!(left, 0, "job 001 and 002 folders are gone");
     }
 
     #[test]
