@@ -85,6 +85,10 @@ pub enum Command {
         /// 200 characters, and goes to the first job's ledger and warning.
         #[arg(long)]
         accept_spec: Option<String>,
+        /// Put this plan in the place of a failed series plan, which is cancelled. Needs one plan
+        /// file in --plans.
+        #[arg(long, requires = "plans", conflicts_with = "one_job")]
+        replaces: Option<String>,
     },
     /// Build, check and review a job until it merges or needs you.
     Run {
@@ -549,6 +553,36 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn new_replaces_conflicts_with_one_job_and_needs_plans() {
+        let both = Cli::try_parse_from([
+            "factory",
+            "new",
+            "d",
+            "f",
+            "--plans",
+            "p.md",
+            "--replaces",
+            "1",
+            "--one-job",
+        ]);
+        assert!(both.is_err(), "--replaces conflicts with --one-job");
+        let bare = Cli::try_parse_from(["factory", "new", "d", "f", "--replaces", "1"]);
+        assert!(bare.is_err(), "--replaces needs --plans");
+        let cli = Cli::try_parse_from([
+            "factory",
+            "new",
+            "d",
+            "f",
+            "--plans",
+            "p.md",
+            "--replaces",
+            "1",
+        ])
+        .expect("parse");
+        assert!(matches!(cli.command, Command::New { replaces: Some(ref id), .. } if id == "1"));
     }
 
     #[test]

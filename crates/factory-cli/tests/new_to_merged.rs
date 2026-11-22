@@ -1213,3 +1213,51 @@ fn rework_writes_the_user_note_for_a_mid_task_rework() -> TestResult {
     assert!(job_file(&sc, "rework-note.md").exists());
     Ok(())
 }
+
+/// A two-plan series made through the CLI. Returns the path of plan 2.
+fn cli_series(fx: &Fixture) -> std::path::PathBuf {
+    let two = fx.write_plan("plan-02-b.md", 1, "none");
+    let one = fx.write_plan("plan-01-a.md", 1, two.to_str().expect("utf8"));
+    let spec = fx.tmp.path().join("spec.md");
+    std::fs::write(&spec, "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n").expect("spec");
+    fx.run(&[
+        "new",
+        "a",
+        "two plans",
+        "--plans",
+        one.to_str().expect("utf8"),
+        "--spec",
+        spec.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    two
+}
+
+#[test]
+fn new_replaces_prints_the_replacement_and_cancels_the_target() {
+    let fx = Fixture::new();
+    let two = cli_series(&fx);
+    let fixed = fx.write_plan("plan-01-fixed.md", 1, two.to_str().expect("utf8"));
+    let out = fx
+        .run(&[
+            "new",
+            "fixed",
+            "fixed plan",
+            "--plans",
+            fixed.to_str().expect("utf8"),
+            "--replaces",
+            "1",
+        ])
+        .expect("replace");
+    let mut lines = out.lines();
+    assert!(
+        lines
+            .next()
+            .expect("first")
+            .starts_with("created job 003 in "),
+        "{out}"
+    );
+    assert!(out.contains("job 001 replaced by job 003"), "{out}");
+    let show = fx.run(&["show", "1"]).expect("show");
+    assert!(show.contains("\"cancelled\": true"), "{show}");
+}

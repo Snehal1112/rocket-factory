@@ -180,3 +180,56 @@ fn retry_is_busy_when_the_project_is_held() {
         "{e:?}"
     );
 }
+
+/// A two-plan series made through the CLI. Returns the path of plan 2.
+fn cli_series(fx: &Fixture) -> std::path::PathBuf {
+    let two = fx.write_plan("plan-02-b.md", 1, "none");
+    let one = fx.write_plan("plan-01-a.md", 1, two.to_str().expect("utf8"));
+    let spec = fx.tmp.path().join("spec.md");
+    std::fs::write(&spec, "# Spec: Demo\n\n## Goal\n\nBuild the demo so that a user can finish the task in one step.\n\n## Acceptance criteria\n\n- It is done.\n").expect("spec");
+    fx.run(&[
+        "new",
+        "a",
+        "two plans",
+        "--plans",
+        one.to_str().expect("utf8"),
+        "--spec",
+        spec.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    two
+}
+
+#[test]
+fn rework_of_a_replaced_job_is_refused() {
+    let fx = Fixture::new();
+    let two = cli_series(&fx);
+    let fixed = fx.write_plan("plan-01-fixed.md", 1, two.to_str().expect("utf8"));
+    fx.run(&[
+        "new",
+        "fixed",
+        "x",
+        "--plans",
+        fixed.to_str().expect("utf8"),
+        "--replaces",
+        "1",
+    ])
+    .expect("replace");
+    let e = refusal(fx.run(&["rework", "1", "try again"]));
+    assert!(
+        e.contains("job 001 was replaced by job 003, rework that one"),
+        "{e}"
+    );
+    let e = refusal(fx.run(&["rework", "--force", "--", "1", "try again"]));
+    assert!(e.contains("was replaced by job 003"), "{e}");
+}
+
+#[test]
+fn rework_revives_a_cancelled_job_that_was_not_replaced() {
+    let fx = Fixture::new();
+    cli_series(&fx);
+    fx.run(&["cancel", "2"]).expect("cancel");
+    fx.run(&["rework", "2", "revive it"]).expect("rework");
+    let board = store(&fx).load().expect("board");
+    assert!(!board.find("002").expect("job").cancelled);
+}

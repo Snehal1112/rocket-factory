@@ -183,6 +183,10 @@ each, but the driver does not enforce that cap on this path. The 6 plan cap and 
 still apply. The flag needs `--plans`, and with a single plan it has no effect and
 `new` prints a `note:` line.
 
+To fix one failed plan of a series, `factory new <slug> '<feature>' --plans <fixed plan file> --replaces <id>`
+puts the fixed plan in that plan's place and cancels the failed job. It conflicts with `--one-job`. See
+`docs/reference/software-factory.md`.
+
 - The estimate is `110K + 100K per task` in weighted tokens, compared with `budget_weighted`.
 - Over budget, `new` creates nothing, prints a `needs consent:` line with the estimate and the budget on stderr and
   exits non-zero. Raise `budget_weighted`, or run the same command again with `--accept-over-budget` (it needs
