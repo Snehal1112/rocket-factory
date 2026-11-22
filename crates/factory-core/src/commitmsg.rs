@@ -701,7 +701,9 @@ pub struct JobMessage<'a> {
 }
 
 /// Builds the job message: subject, why paragraph, one section per task, the review fixes and
-/// the footers. The body holds at most 60 bullets, the rest becomes one `- and N more changes`.
+/// the footers. The body holds at most 60 bullets, the rest becomes one `- and N more changes`
+/// under the last block that has bullets. A footer appears once, and not at all when a body line
+/// equals it.
 pub fn build_job_message(m: &JobMessage<'_>) -> String {
     let mut left = MAX_JOB_BULLETS;
     let mut dropped = 0usize;
@@ -727,8 +729,14 @@ pub fn build_job_message(m: &JobMessage<'_>) -> String {
         }
     }
     if dropped > 0 {
-        if let Some(last) = blocks.last_mut() {
-            last.push(format!("- and {dropped} more changes"));
+        let more = format!("- and {dropped} more changes");
+        match blocks
+            .iter_mut()
+            .rev()
+            .find(|b| b.iter().any(|l| l.starts_with("- ")))
+        {
+            Some(block) => block.push(more),
+            None => blocks.push(vec![more]),
         }
     }
     let mut paragraphs: Vec<String> = vec![m.subject.to_string()];
@@ -737,12 +745,12 @@ pub fn build_job_message(m: &JobMessage<'_>) -> String {
     }
     paragraphs.extend(blocks.into_iter().map(|b| b.join("\n")));
     let mut out = paragraphs.join("\n\n");
-    let footers: Vec<&str> = m
-        .footers
-        .iter()
-        .map(|f| f.as_str())
-        .filter(|f| !out.lines().any(|l| l == *f))
-        .collect();
+    let mut footers: Vec<&str> = Vec::new();
+    for f in m.footers.iter().map(|f| f.as_str()) {
+        if !footers.contains(&f) && !out.lines().any(|l| l == f) {
+            footers.push(f);
+        }
+    }
     if !footers.is_empty() {
         out.push_str("\n\n");
         out.push_str(&footers.join("\n"));
@@ -1366,6 +1374,60 @@ mod tests {
             fixes: &fixes,
             footers: &footers,
         })
+    }
+
+    fn msg_with_footers(footers: &[&str]) -> String {
+        let tasks = sample_sections();
+        let fixes = vec!["Refuse approve while a retry is queued".to_string()];
+        let footers: Vec<String> = footers.iter().map(|f| f.to_string()).collect();
+        build_job_message(&JobMessage {
+            subject: "feat(retry): retry a parked job",
+            why: Some("The dashboard could not continue a parked job."),
+            tasks: &tasks,
+            fixes: &fixes,
+            footers: &footers,
+        })
+    }
+
+    #[test]
+    fn a_repeated_footer_appears_once() {
+        let msg = msg_with_footers(&["Fixes: #142", "Factory-Job: 042", "Fixes: #142"]);
+        assert_eq!(msg.matches("Fixes: #142").count(), 1, "{msg}");
+        assert!(msg.ends_with("Fixes: #142\nFactory-Job: 042"), "{msg}");
+    }
+
+    #[test]
+    fn a_footer_equal_to_a_body_line_is_left_out() {
+        let msg = msg_with_footers(&["- a", "Factory-Job: 042"]);
+        assert_eq!(msg.matches("- a").count(), 1, "{msg}");
+        assert!(
+            msg.ends_with("- Refuse approve while a retry is queued\n\nFactory-Job: 042"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn and_n_more_goes_under_the_last_section_with_bullets() {
+        let big = NoteSection {
+            title: "Big".to_string(),
+            bullets: (0..61).map(|i| format!("b{i}")).collect(),
+        };
+        let later = NoteSection {
+            title: "Later".to_string(),
+            bullets: Vec::new(),
+        };
+        let msg = build_job_message(&JobMessage {
+            subject: "feat: x",
+            why: None,
+            tasks: &[big, later],
+            fixes: &[],
+            footers: &[],
+        });
+        assert!(
+            msg.contains("- b59\n- and 1 more changes\n\nLater:"),
+            "{msg}"
+        );
+        assert!(msg.ends_with("Later:"), "{msg}");
     }
 
     #[test]
