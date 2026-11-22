@@ -60,15 +60,16 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(list: &str) -> Option<Fixture> {
-        let program = common::fake_claude()?.into_os_string();
+    fn new(list: &str) -> Fixture {
+        // The build runs before `EnvGuard` changes `HOME`.
+        let program = common::fake_claude().into_os_string();
         let tmp = tempfile::tempdir().expect("tempdir");
         let env = EnvGuard::set(&[("HOME", s(tmp.path())), ("FAKE_PLUGIN_LIST", list)]);
-        Some(Fixture {
+        Fixture {
             tmp,
             program,
             _env: env,
-        })
+        }
     }
 
     fn commands(&self) -> PathBuf {
@@ -108,9 +109,7 @@ fn detects_the_plugin_by_id() {
 
 #[test]
 fn detects_nothing_from_bad_output() {
-    let Some(program) = common::fake_claude() else {
-        return;
-    };
+    let program = common::fake_claude();
     let _env = EnvGuard::set(&[("FAKE_PLUGIN_LIST", "not json")]);
     assert!(installed_plugin_ids(program.as_os_str()).is_empty());
     let missing = std::path::Path::new("/nonexistent/claude-does-not-exist");
@@ -119,9 +118,7 @@ fn detects_nothing_from_bad_output() {
 
 #[test]
 fn install_prints_the_plugin_hint_when_not_installed() {
-    let Some(fx) = Fixture::new(NOT_INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(NOT_INSTALLED);
     let out = fx.install(None, false);
     assert!(out.contains(&install_hint()), "{out}");
     assert!(
@@ -133,9 +130,7 @@ fn install_prints_the_plugin_hint_when_not_installed() {
 
 #[test]
 fn install_skips_the_command_when_plugin_installed() {
-    let Some(fx) = Fixture::new(INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(INSTALLED);
     let out = fx.install(None, false);
     assert!(
         out.contains("skipped Claude command: the factory plugin is installed"),
@@ -152,9 +147,7 @@ fn install_skips_the_command_when_plugin_installed() {
 
 #[test]
 fn install_with_plugin_and_old_command_says_remove() {
-    let Some(fx) = Fixture::new(INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(INSTALLED);
     fx.write_old("old\n");
     let out = fx.install(None, false);
     assert!(out.contains(&duplicate_note(&fx.old_command())), "{out}");
@@ -166,9 +159,7 @@ fn install_with_plugin_and_old_command_says_remove() {
 
 #[test]
 fn install_with_dir_ignores_plugin_state() {
-    let Some(fx) = Fixture::new(INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(INSTALLED);
     let dir = fx.tmp.path().join("custom");
     let out = fx.install(Some(&dir), false);
     assert!(dir.join("factory.md").is_file(), "{out}");
@@ -177,9 +168,7 @@ fn install_with_dir_ignores_plugin_state() {
 
 #[test]
 fn upgrade_with_plugin_and_old_command_says_remove() {
-    let Some(fx) = Fixture::new(INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(INSTALLED);
     fx.write_old("old text\n");
     let out = fx.upgrade(false);
     assert!(out.contains(&duplicate_note(&fx.old_command())), "{out}");
@@ -190,9 +179,7 @@ fn upgrade_with_plugin_and_old_command_says_remove() {
 
 #[test]
 fn upgrade_with_plugin_only_prints_update_line() {
-    let Some(fx) = Fixture::new(INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(INSTALLED);
     let out = fx.upgrade(false);
     assert!(out.contains(&update_line()), "{out}");
     assert!(!fx.old_command().exists());
@@ -200,9 +187,7 @@ fn upgrade_with_plugin_only_prints_update_line() {
 
 #[test]
 fn upgrade_without_plugin_adds_the_switch_note() {
-    let Some(fx) = Fixture::new(NOT_INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(NOT_INSTALLED);
     fx.write_old("old text\n");
     let out = fx.upgrade(false);
     assert!(out.contains("updated "), "{out}");
@@ -223,18 +208,14 @@ fn upgrade_without_plugin_adds_the_switch_note() {
 
 #[test]
 fn upgrade_without_plugin_or_command_prints_the_install_hint() {
-    let Some(fx) = Fixture::new(NOT_INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(NOT_INSTALLED);
     let out = fx.upgrade(true);
     assert!(out.contains(&install_hint()), "{out}");
 }
 
 #[test]
 fn upgrade_dry_run_with_plugin_writes_nothing() {
-    let Some(fx) = Fixture::new(INSTALLED) else {
-        return;
-    };
+    let fx = Fixture::new(INSTALLED);
     fx.write_old("old text\n");
     let out = fx.upgrade(true);
     assert!(out.contains(&duplicate_note(&fx.old_command())), "{out}");

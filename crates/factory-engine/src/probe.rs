@@ -146,7 +146,7 @@ impl Engine<'_> {
     ) -> Result<(RoleProbe, String, AgentSpec), EngineError> {
         let mut spec = self.probe_base_spec(role, work_dir);
         self.shape_spec(&mut spec, harness)
-            .map_err(EngineError::Msg)?;
+            .map_err(|e| EngineError::Msg(with_project_hint(e)))?;
         spec.prompt = probe_prompt(marker);
         spec.resume = None;
         spec.used_before = 0;
@@ -210,7 +210,9 @@ impl Engine<'_> {
             .agent_files
             .iter()
             .find(|f| f.name == name || f.name == format!("{name}.md"))
-            .ok_or_else(|| EngineError::Msg(format!("agent file {name} not found")))?;
+            .ok_or_else(|| {
+                EngineError::Msg(with_project_hint(format!("agent file {name} not found")))
+            })?;
         let text = format!("{}\n\nProbe marker: {marker}\n", file.content);
         match delivery {
             Delivery::Agent => {
@@ -228,6 +230,16 @@ impl Engine<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// Adds the `--project` hint to a missing agent file error. Only the probe adds it, because the
+/// same error in a real job has no project flag to pass.
+fn with_project_hint(error: String) -> String {
+    if error.starts_with("agent file ") && error.ends_with(" not found") {
+        format!("{error}; pass --project <name>, or run inside a registered project")
+    } else {
+        error
     }
 }
 

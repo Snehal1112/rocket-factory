@@ -229,6 +229,28 @@ fn missing_agent_file_is_an_error() {
 }
 
 #[test]
+fn a_probe_without_agents_names_the_project_flag() {
+    for harness in [Harness::Claude, Harness::Codex] {
+        let fx = fixture(harness);
+        let runner = FakeRunner::new(vec![answer(MARKER)]);
+        let dir = work_dir(&fx);
+        let err = fx
+            .engine(&runner)
+            .probe_role_with(ProbeRole::Builder, harness, Delivery::Agent, MARKER, &dir)
+            .expect_err("no agent file")
+            .to_string();
+        assert!(
+            err.contains("agent file factory-builder not found"),
+            "{err}"
+        );
+        assert!(
+            err.ends_with("; pass --project <name>, or run inside a registered project"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
 fn run_probe_writes_report_and_transcripts() {
     let fx = fixture(Harness::Claude);
     let none = "MARKER: NONE\nBOOTSTRAP: NONE\nTOOLS: NONE\nSKILLS: NONE";

@@ -378,10 +378,14 @@ fn the_probe_report_names_the_model() {
 }
 
 #[test]
+fn fake_claude_builds_the_binary_when_it_is_missing() {
+    // In a worktree that never built the binary, this runs the build path.
+    assert!(common::fake_claude().exists());
+}
+
+#[test]
 fn probe_through_fake_claude_finds_the_marker() {
-    let Some(program) = common::fake_claude() else {
-        return;
-    };
+    let program = common::fake_claude();
     let fx = Fixture::new();
     let cases = [
         ("agent", Caps::default()),

@@ -2,18 +2,36 @@
 
 use std::path::{Path, PathBuf};
 
+/// Serializes the build, so parallel tests build `fake-claude` once.
+static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The `fake-claude` binary sits next to the test binaries once `factory-agent` is built.
-/// `cargo test -p factory-cli` does not build it, so a missing binary skips the test.
-pub fn fake_claude() -> Option<PathBuf> {
+/// `cargo test -p factory-cli` does not build it, so a missing binary is built here.
+pub fn fake_claude() -> PathBuf {
     let exe = std::env::current_exe().expect("current exe");
     let target = exe.parent().and_then(|p| p.parent()).expect("target dir");
     let program = target.join("fake-claude");
-    if program.is_file() {
-        Some(program)
-    } else {
-        eprintln!("skipped: build fake-claude with `cargo build -p factory-agent` first");
-        None
+    let _lock = BUILD.lock().unwrap_or_else(|e| e.into_inner());
+    if !program.is_file() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let built = std::process::Command::new(env!("CARGO"))
+            .args([
+                "build",
+                "-j4",
+                "-p",
+                "factory-agent",
+                "--bin",
+                "fake-claude",
+            ])
+            .current_dir(root)
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(
+            built && program.is_file(),
+            "build fake-claude with `cargo build -j4 -p factory-agent` first"
+        );
     }
+    program
 }
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
