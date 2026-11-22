@@ -348,14 +348,16 @@ pub(crate) fn parse_found(json: &str, title: &str, footer: &str) -> Result<Optio
 }
 
 /// The issues from `gh issue list --json number,title,body,labels,createdAt,updatedAt`. A missing or null
-/// body counts as empty. An entry without a number is skipped.
+/// body counts as empty. A reply that is not an array is an error. An entry without a usable
+/// number (missing, not an integer or over `u32::MAX`) is skipped.
 pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
-    let issues = value
+    let entries = value
         .as_array()
-        .into_iter()
-        .flatten()
+        .ok_or_else(|| "gh printed unexpected JSON: expected an array".to_string())?;
+    let issues = entries
+        .iter()
         .filter_map(|issue| {
             let number = u32::try_from(issue["number"].as_u64()?).ok()?;
             let labels = issue["labels"]
@@ -813,6 +815,68 @@ mod tests {
         assert!(parse_issue_list("nope")
             .expect_err("invalid")
             .contains("invalid JSON"));
+    }
+
+    fn issue_numbers(json: &str) -> Vec<u32> {
+        parse_issue_list(json)
+            .expect("parse")
+            .iter()
+            .map(|i| i.number)
+            .collect()
+    }
+
+    #[test]
+    fn parse_issue_list_rejects_an_object_reply() {
+        let err = parse_issue_list(r#"{"message":"Bad credentials"}"#)
+            .expect_err("an object is not a list");
+        assert_eq!(err, NOT_AN_ARRAY);
+    }
+
+    #[test]
+    fn parse_issue_list_rejects_a_null_reply() {
+        let err = parse_issue_list("null").expect_err("null is not a list");
+        assert_eq!(err, NOT_AN_ARRAY);
+    }
+
+    #[test]
+    fn parse_issue_list_rejects_a_string_reply() {
+        let err = parse_issue_list(r#""oops""#).expect_err("a string is not a list");
+        assert_eq!(err, NOT_AN_ARRAY);
+    }
+
+    #[test]
+    fn parse_issue_list_accepts_an_empty_array() {
+        assert_eq!(parse_issue_list("[]").expect("parse"), vec![]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_a_number_over_u32() {
+        let json = r#"[{"number":4294967296,"title":"Big"},{"number":4,"title":"Fix x"}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_a_string_number() {
+        let json = r#"[{"number":"7","title":"Str"},{"number":4,"title":"Fix x"}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_an_entry_without_a_number() {
+        let json = r#"[{"title":"None"},{"number":4,"title":"Fix x"}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_a_non_object_element() {
+        let json = r#"[1,{"number":4,"title":"Fix x"}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_keeps_u32_max() {
+        let json = r#"[{"number":4294967295,"title":"Max"}]"#;
+        assert_eq!(issue_numbers(json), vec![u32::MAX]);
     }
 
     const EVENTS: &str = r#"[
