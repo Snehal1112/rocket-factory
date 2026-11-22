@@ -757,9 +757,9 @@ impl SeriesFixture {
 /// A call hook that runs before every agent run of an owned series fixture.
 pub type RunHook = Arc<dyn Fn(&AgentSpec) + Send + Sync>;
 
-struct HookRunner {
-    inner: RoleRunner,
-    hook: RunHook,
+pub struct HookRunner {
+    pub inner: RoleRunner,
+    pub hook: RunHook,
 }
 
 impl AgentRunner for HookRunner {

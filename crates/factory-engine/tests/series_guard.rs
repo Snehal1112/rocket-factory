@@ -560,6 +560,65 @@ fn create_replacement_of_an_unstarted_plan_makes_one_job() {
     assert!(!fx.driver.repo().branch_exists(&old.branch));
     let new = fx.driver.job(&made.id).expect("new");
     assert_eq!(new.series.expect("pos").index, 2);
+    assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 3);
+}
+
+#[test]
+fn create_replacement_defaults_to_the_model_of_the_target() {
+    let fx = risky_fixture();
+    let (one, _two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    fx.driver
+        .store()
+        .update_job(&one, |j| {
+            j.model = Some("x".to_string());
+            Ok(())
+        })
+        .expect("model");
+    let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+    let made = create_replacement(&fx.driver, &replace(&one, &fixed)).expect("replace");
+    assert_eq!(made.model.as_deref(), Some("x"));
+}
+
+#[test]
+fn create_replacement_refuses_when_a_lease_is_taken_during_the_spec_check() {
+    let board_path: Arc<std::sync::OnceLock<std::path::PathBuf>> = Arc::default();
+    let hook_path = board_path.clone();
+    let fx = SeriesFixture::build(
+        "fine\nVERDICT: APPROVE",
+        factory_core::Config::default(),
+        move |inner| {
+            Arc::new(common::HookRunner {
+                inner,
+                hook: Arc::new({
+                    let hook_path = hook_path.clone();
+                    move |_spec: &AgentSpec| {
+                        let path = hook_path.get().expect("board path");
+                        let store = factory_engine::BoardStore::new(path, Duration::from_secs(15));
+                        factory_engine::acquire_lease(
+                            &store,
+                            "001",
+                            "other",
+                            600.0,
+                            factory_engine::now_secs(),
+                        )
+                        .expect("lease");
+                    }
+                }),
+            })
+        },
+    );
+    board_path
+        .set(factory_core::Layout::in_repo(&fx.main).board_file())
+        .expect("set");
+    let (one, _two) = two_plans(&fx);
+    write_target_spec(&fx, &one, GOOD_SPEC);
+    let fixed = fx.plan_file("plan-01-fixed.md", 1, "plan-02-b.md");
+    let err = create_replacement(&fx.driver, &replace(&one, &fixed)).expect_err("lease taken");
+    assert!(err.to_string().contains("live lease"), "{err}");
+    let old = fx.driver.job(&one).expect("old");
+    assert!(!old.cancelled && old.lease.is_some());
+    assert_eq!(fx.driver.store().load().expect("board").jobs.len(), 2);
 }
 
 #[test]

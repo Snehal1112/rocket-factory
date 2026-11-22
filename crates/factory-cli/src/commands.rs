@@ -950,23 +950,9 @@ fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, C
     }
     let text = format!("cancelled: {reason}");
     let now = now_secs();
-    d.store().update_job(id, |j| {
-        factory_engine::set_stage_logged(j, Stage::NeedsHuman, Some(&text), false, now)?;
-        j.cancelled = true;
-        j.lease = None;
-        j.task_session = None;
-        j.builder_last = None;
-        Ok(())
-    })?;
-    tracing::info!(
-        event = "operator.cancel",
-        reason = %factory_telemetry::cap_message(reason),
-        force,
-        msg = "job cancelled"
-    );
-    // The reason is folded into one line, because the ledger takes one line.
-    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    d.ledger(&job).ruling(&one_line)?;
+    d.store()
+        .update_job(id, |j| factory_engine::mark_cancelled(j, &text, now))?;
+    factory_engine::record_cancel(&d, &job, reason, force)?;
     let mut out = format!("job {id} cancelled");
     // The process that held the project lease may be gone, so a forced cancel clears it for this job.
     if force {

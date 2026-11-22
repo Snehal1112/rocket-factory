@@ -630,6 +630,87 @@ pub fn create_job_with_spec_accepting(
     Ok(first)
 }
 
+/// Copies the checked spec into the new job and cancels the target, in one board write that checks the
+/// target again. A run or a second replacement that started since the first check makes it refuse.
+fn swap_in(
+    driver: &Driver,
+    id: &str,
+    new: &Job,
+    spec_text: Option<&str>,
+) -> Result<(), EngineError> {
+    if let Some(text) = spec_text {
+        std::fs::write(driver.job_dir(new).join("spec.md"), text)?;
+    }
+    let reason = format!("replaced by job {}", new.id);
+    let now = now_secs();
+    let checked = driver.store().update(|board| {
+        let target = board.find(id)?;
+        if target.stage == Stage::Merged {
+            return Ok(Err(format!("job {id} is already merged")));
+        }
+        if crate::lease_is_live(target, now) {
+            return Ok(Err(format!("job {id} has a live lease")));
+        }
+        let place = target.series.clone();
+        let rival = board.jobs.iter().find(|j| {
+            j.id != id
+                && j.id != new.id
+                && !j.cancelled
+                && j.series.as_ref().is_some_and(|s| {
+                    place
+                        .as_ref()
+                        .is_some_and(|p| s.id == p.id && s.index == p.index)
+                })
+        });
+        if let Some(rival) = rival {
+            return Ok(Err(format!(
+                "job {id} was replaced by job {}, replace that one",
+                rival.id
+            )));
+        }
+        let was_cancelled = target.cancelled;
+        if !was_cancelled {
+            mark_cancelled(board.find_mut(id)?, &format!("cancelled: {reason}"), now)?;
+        }
+        Ok(Ok(was_cancelled))
+    })?;
+    if !checked.map_err(EngineError::Invalid)? {
+        let _span = job_span(id).entered();
+        record_cancel(driver, &driver.job(id)?, &reason, false)?;
+    }
+    Ok(())
+}
+
+/// Stops a job as the operator's cancel does: needs-human, flagged cancelled, no lease or sessions.
+pub fn mark_cancelled(job: &mut Job, text: &str, now: f64) -> Result<(), factory_core::CoreError> {
+    crate::set_stage_logged(job, Stage::NeedsHuman, Some(text), false, now)?;
+    job.cancelled = true;
+    job.lease = None;
+    job.task_session = None;
+    job.builder_last = None;
+    Ok(())
+}
+
+/// Logs the `operator.cancel` event and writes the ledger ruling of a cancel with `reason`.
+pub fn record_cancel(
+    driver: &Driver,
+    job: &Job,
+    reason: &str,
+    force: bool,
+) -> Result<(), EngineError> {
+    tracing::info!(
+        event = "operator.cancel",
+        reason = %factory_telemetry::cap_message(reason),
+        force,
+        msg = "job cancelled"
+    );
+    // The reason is folded into one line, because the ledger takes one line.
+    let text = format!("cancelled: {reason}");
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    driver.ledger(job).ruling(&one_line)?;
+    Ok(())
+}
+
 /// One fixed plan that takes the series place of a failed plan.
 #[derive(Debug, Clone, Copy)]
 pub struct Replacement<'a> {
@@ -650,7 +731,7 @@ pub struct Replacement<'a> {
 /// Every refusal comes before the board changes, so a refused call leaves nothing behind.
 pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, EngineError> {
     let id = r.target;
-    if !r.plan.is_file() {
+    if r.plan.is_dir() {
         return Err(EngineError::Invalid(
             "--replaces needs one plan file, not a folder".to_string(),
         ));
@@ -723,25 +804,22 @@ pub fn create_replacement(driver: &Driver, r: &Replacement<'_>) -> Result<Job, E
         Stage::Build,
         r.model.or(target.model.as_deref()),
     )?;
-    if let Some(text) = &spec_text {
-        std::fs::write(driver.job_dir(&new).join("spec.md"), text)?;
-    }
-    let text = format!("cancelled: replaced by job {}", new.id);
-    if !target.cancelled {
-        let now = now_secs();
-        driver.store().update_job(id, |j| {
-            crate::set_stage_logged(j, Stage::NeedsHuman, Some(&text), false, now)?;
-            j.cancelled = true;
-            j.lease = None;
-            j.task_session = None;
-            j.builder_last = None;
+    // The board may have changed while the spec was checked, so the new job goes if the swap fails.
+    if let Err(e) = swap_in(driver, id, &new, spec_text.as_deref()) {
+        let _ = driver.store().update(|board| {
+            board.jobs.retain(|j| j.id != new.id);
             Ok(())
-        })?;
-        driver.ledger(&target).ruling(&text)?;
+        });
+        let _ = std::fs::remove_dir_all(driver.job_dir(&new));
+        return Err(e);
     }
-    driver
-        .ledger(&new)
-        .ruling(&format!("replaces job {}", target.id))?;
+    driver.ledger(&new).ruling(&format!("replaces job {id}"))?;
+    if spec_text
+        .as_deref()
+        .is_some_and(|text| user_decisions(text) == 0)
+    {
+        new = add_warning(driver, r.slug, new, NO_USER_DECISION);
+    }
     if let Some(reason) = &accepted {
         new = record_accepted(driver, r.slug, new, reason);
     }
