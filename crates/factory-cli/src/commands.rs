@@ -414,8 +414,13 @@ pub fn dispatch(cli: Cli, ctx: &CliCtx) -> Result<String, CliError> {
         } => approve(ctx, &norm(&id)?, without_review, waive.as_deref()),
         Command::Retry { id } => retry(ctx, &norm(&id)?),
         Command::Rework { id, note, force } => rework(ctx, &norm(&id)?, &note, force),
-        Command::Cancel { id, reason, force } => match factory_core::normalize_id(&id) {
-            Ok(id) => cancel(ctx, &id, &reason, force),
+        Command::Cancel {
+            id,
+            reason,
+            force,
+            only,
+        } => match factory_core::normalize_id(&id) {
+            Ok(id) => cancel(ctx, &id, &reason, force, only),
             Err(_) => cancel_draft(ctx, &id),
         },
         Command::Spec { cmd } => spec(ctx, cmd),
@@ -936,27 +941,98 @@ fn rework(ctx: &CliCtx, id: &str, note: &str, force: bool) -> Result<String, Cli
     Ok(line)
 }
 
-fn cancel(ctx: &CliCtx, id: &str, reason: &str, force: bool) -> Result<String, CliError> {
-    let _span = factory_engine::job_span(id).entered();
+/// One job of a cancel with the reason it gets.
+struct CancelStep {
+    job: factory_core::Job,
+    reason: String,
+}
+
+fn cancel(
+    ctx: &CliCtx,
+    id: &str,
+    reason: &str,
+    force: bool,
+    only: bool,
+) -> Result<String, CliError> {
     let d = ctx.driver()?;
-    let job = d.job(id)?;
-    if job.stage == Stage::Merged {
-        return Err(CliError::Refused(format!("job {id} is already merged")));
-    }
-    if lease_is_live(&job, now_secs()) && !force {
-        return Err(CliError::Refused(
-            "job has a live lease, use --force to cancel anyway".into(),
-        ));
-    }
-    let text = format!("cancelled: {reason}");
     let now = now_secs();
-    d.store()
-        .update_job(id, |j| factory_engine::mark_cancelled(j, &text, now))?;
-    factory_engine::record_cancel(&d, &job, reason, force)?;
+    let steps = d
+        .store()
+        .update(|board| {
+            let target = board.find(id)?.clone();
+            if target.stage == Stage::Merged {
+                return Ok(Err(format!("job {id} is already merged")));
+            }
+            if let Some(new) = board.replacement_of(id) {
+                return Ok(Err(format!(
+                    "job {id} was replaced by job {}, cancel that one",
+                    new.id
+                )));
+            }
+            let target_index = target.series.as_ref().map_or(0, |p| p.index);
+            let sid = target.series.as_ref().and_then(|p| p.id.clone());
+            let mut steps = vec![CancelStep {
+                job: target,
+                reason: reason.to_string(),
+            }];
+            if let (false, Some(sid)) = (only, sid) {
+                let mut later: Vec<&factory_core::Job> = board
+                    .jobs
+                    .iter()
+                    .filter(|j| {
+                        j.stage != Stage::Merged
+                            && !j.cancelled
+                            && j.series.as_ref().is_some_and(|p| {
+                                p.id.as_deref() == Some(sid.as_str()) && p.index > target_index
+                            })
+                    })
+                    .collect();
+                later.sort_by_key(|j| j.series.as_ref().map_or(0, |p| p.index));
+                steps.extend(later.into_iter().map(|j| CancelStep {
+                    job: j.clone(),
+                    reason: format!("plan {target_index} (job {id}) was cancelled"),
+                }));
+            }
+            if !force {
+                if let Some(busy) = steps.iter().find(|s| lease_is_live(&s.job, now)) {
+                    let text = if busy.job.id == id {
+                        "job has a live lease, use --force to cancel anyway".to_string()
+                    } else {
+                        format!(
+                            "job {} has a live lease, use --force to cancel anyway",
+                            busy.job.id
+                        )
+                    };
+                    return Ok(Err(text));
+                }
+            }
+            for step in &steps {
+                let text = format!("cancelled: {}", step.reason);
+                factory_engine::mark_cancelled(board.find_mut(&step.job.id)?, &text, now)?;
+            }
+            Ok(Ok(steps))
+        })?
+        .map_err(CliError::Refused)?;
     let mut out = format!("job {id} cancelled");
-    // The process that held the project lease may be gone, so a forced cancel clears it for this job.
+    for (n, step) in steps.iter().enumerate() {
+        let _span = factory_engine::job_span(&step.job.id).entered();
+        let cascade_from = (n > 0).then_some(id);
+        factory_engine::record_cancel(&d, &step.job, &step.reason, force, cascade_from)?;
+        // Only later plans are in the set, and only a job with a series id gets in.
+        if let (Some(_), Some(sid)) = (
+            cascade_from,
+            step.job.series.as_ref().and_then(|p| p.id.as_ref()),
+        ) {
+            out.push_str(&format!(
+                "\njob {} cancelled (later plan of {sid})",
+                step.job.id
+            ));
+        }
+    }
+    // The process that held the project lease may be gone, so a forced cancel clears it for the target.
     if force {
-        let cleared = force_release_project_lease(&d.layout().state_dir, &job.id, ctx.lock_wait)
+        let _span = factory_engine::job_span(id).entered();
+        let cleared = force_release_project_lease(&d.layout().state_dir, id, ctx.lock_wait)
             .map_err(|e| {
                 CliError::Refused(format!(
                     "cancelled, but the project lease could not be cleared: {e}"

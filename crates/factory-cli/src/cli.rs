@@ -157,6 +157,9 @@ pub enum Command {
         /// Cancel even though the job holds a live lease, for when its process is gone.
         #[arg(long)]
         force: bool,
+        /// Cancel only this job, not the later plans of its series.
+        #[arg(long)]
+        only: bool,
     },
     /// Remove the worktree and branch of a merged or cancelled job.
     ///
