@@ -303,21 +303,34 @@ pub(crate) fn parse_created(output: &str) -> Option<u32> {
     output.trim().rsplit('/').next()?.parse().ok()
 }
 
+/// The `name` of every label, or `None` when one has no string `name`.
+fn label_names(labels: &[serde_json::Value]) -> Option<Vec<String>> {
+    labels
+        .iter()
+        .map(|l| l["name"].as_str().map(str::to_string))
+        .collect()
+}
+
 /// The label names and whether the issue is closed, from `gh issue view --json labels,state`.
+/// A merged pull request counts as closed. A reply without a labels array, a label without a
+/// name, or a state other than open, closed or merged is an error.
 pub(crate) fn parse_view(json: &str) -> Result<(Vec<String>, bool), String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
-    let labels = value["labels"]
+    let list = value["labels"]
         .as_array()
-        .map(|list| {
-            list.iter()
-                .filter_map(|l| l["name"].as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let closed = value["state"]
-        .as_str()
-        .is_some_and(|s| s.eq_ignore_ascii_case("closed"));
+        .ok_or("gh printed unexpected JSON: expected a labels array")?;
+    let labels = label_names(list).ok_or("gh printed unexpected JSON: a label has no name")?;
+    let closed = match value["state"].as_str() {
+        Some(s) if s.eq_ignore_ascii_case("closed") || s.eq_ignore_ascii_case("merged") => true,
+        Some(s) if s.eq_ignore_ascii_case("open") => false,
+        _ => {
+            return Err(format!(
+                "gh printed an unusable issue state: `{}`",
+                value["state"]
+            ));
+        }
+    };
     Ok((labels, closed))
 }
 
@@ -349,7 +362,8 @@ pub(crate) fn parse_found(json: &str, title: &str, footer: &str) -> Result<Optio
 
 /// The issues from `gh issue list --json number,title,body,labels,createdAt,updatedAt`. A missing or null
 /// body counts as empty. A reply that is not an array is an error. An entry without a usable
-/// number (missing, not an integer or over `u32::MAX`) is skipped.
+/// number (missing, not an integer or over `u32::MAX`) is skipped, and so is an entry whose
+/// `labels` is missing, is not an array, or holds a label without a name.
 pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
@@ -360,12 +374,7 @@ pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
         .iter()
         .filter_map(|issue| {
             let number = u32::try_from(issue["number"].as_u64()?).ok()?;
-            let labels = issue["labels"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|l| l["name"].as_str().map(str::to_string))
-                .collect();
+            let labels = label_names(issue["labels"].as_array()?)?;
             Some(IssueInfo {
                 number,
                 title: issue["title"].as_str().unwrap_or("").to_string(),
@@ -381,7 +390,8 @@ pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
 
 /// The actor and time of the last `labeled` event for `label`. The input is either the compact
 /// event lines the events call prints or full event arrays, one per page. The last matching event
-/// wins, so a null actor on it gives None even when an earlier event had a login.
+/// wins, so a null actor on it gives None even when an earlier event had a login. A value that is
+/// not an event or an array of events is an error, and so is a matching event without a time.
 pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<LabelEvent>, String> {
     let mut last = None;
     for value in serde_json::Deserializer::from_str(json).into_iter::<serde_json::Value>() {
@@ -391,17 +401,50 @@ pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<LabelEvent>,
             None => std::slice::from_ref(&value),
         };
         for event in events {
-            if event["event"].as_str() == Some("labeled")
-                && event["label"]["name"].as_str() == Some(label)
-            {
+            let kind = event["event"]
+                .as_str()
+                .ok_or("gh printed unexpected JSON: expected label events")?;
+            if kind == "labeled" && event["label"]["name"].as_str() == Some(label) {
+                let at = event["created_at"]
+                    .as_str()
+                    .ok_or_else(|| format!("gh printed a `{label}` label event without a time"))?;
                 last = Some(event["actor"]["login"].as_str().map(|login| LabelEvent {
                     actor: login.to_string(),
-                    at: event["created_at"].as_str().unwrap_or("").to_string(),
+                    at: at.to_string(),
                 }));
             }
         }
     }
     Ok(last.flatten())
+}
+
+/// Accepts only `owner/name`, each part a repository name that is not `.` or `..`.
+pub(crate) fn check_repo_name(name: &str) -> Result<(), String> {
+    let usable = name.split_once('/').is_some_and(|(owner, repo)| {
+        [owner, repo]
+            .iter()
+            .all(|part| factory_core::is_repo_name(part) && *part != "." && *part != "..")
+    });
+    if usable {
+        Ok(())
+    } else {
+        Err(format!(
+            "gh repo view printed an unusable repository name: `{name}`"
+        ))
+    }
+}
+
+/// Accepts only ASCII letters, digits and `-`, with an optional `[bot]` suffix, and never `null`.
+pub(crate) fn check_login(login: &str) -> Result<(), String> {
+    let rest = login.strip_suffix("[bot]").unwrap_or(login);
+    let usable = !rest.is_empty()
+        && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && !login.eq_ignore_ascii_case("null");
+    if usable {
+        Ok(())
+    } else {
+        Err(format!("gh api user printed an unusable login: `{login}`"))
+    }
 }
 
 /// Runs `gh` in the main checkout. It never uses a shell.
@@ -500,6 +543,7 @@ impl Tracker for GhTracker {
         if name.is_empty() {
             return Err("gh repo view printed no repository name".to_string());
         }
+        check_repo_name(&name)?;
         Ok(name)
     }
 
@@ -559,6 +603,7 @@ impl Tracker for GhTracker {
         if login.is_empty() {
             return Err("gh api user printed no login".to_string());
         }
+        check_login(&login)?;
         Ok(login)
     }
 }
@@ -601,6 +646,48 @@ mod tests {
         let closed = r#"{"labels":[],"state":"CLOSED"}"#;
         assert_eq!(parse_view(closed), Ok((vec![], true)));
         assert!(parse_view("not json").is_err());
+    }
+
+    #[test]
+    fn parse_view_rejects_a_reply_without_labels() {
+        let err = parse_view(r#"{"message":"Not Found"}"#).expect_err("no labels");
+        assert_eq!(err, "gh printed unexpected JSON: expected a labels array");
+    }
+
+    #[test]
+    fn parse_view_rejects_a_label_without_a_name() {
+        let err = parse_view(r#"{"labels":[{"id":1}],"state":"OPEN"}"#).expect_err("no name");
+        assert_eq!(err, "gh printed unexpected JSON: a label has no name");
+    }
+
+    #[test]
+    fn parse_view_rejects_a_missing_state() {
+        let err = parse_view(r#"{"labels":[]}"#).expect_err("no state");
+        assert_eq!(err, "gh printed an unusable issue state: `null`");
+    }
+
+    #[test]
+    fn parse_view_rejects_an_unknown_state() {
+        let err = parse_view(r#"{"labels":[],"state":"DRAFT"}"#).expect_err("unknown state");
+        assert_eq!(err, "gh printed an unusable issue state: `\"DRAFT\"`");
+    }
+
+    #[test]
+    fn parse_view_rejects_an_array_reply() {
+        let err = parse_view("[]").expect_err("array reply");
+        assert_eq!(err, "gh printed unexpected JSON: expected a labels array");
+    }
+
+    #[test]
+    fn parse_view_reads_a_lowercase_state() {
+        let parsed = parse_view(r#"{"labels":[{"name":"a"}],"state":"closed"}"#).expect("parse");
+        assert_eq!(parsed, (vec!["a".to_string()], true));
+    }
+
+    #[test]
+    fn parse_view_reads_a_merged_state_as_closed() {
+        let parsed = parse_view(r#"{"labels":[],"state":"MERGED"}"#).expect("parse");
+        assert_eq!(parsed, (vec![], true));
     }
 
     #[test]
@@ -851,40 +938,59 @@ mod tests {
 
     #[test]
     fn parse_issue_list_skips_a_number_over_u32() {
-        let json = r#"[{"number":4294967296,"title":"Big"},{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[{"number":4294967296,"title":"Big","labels":[]},{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_skips_a_string_number() {
-        let json = r#"[{"number":"7","title":"Str"},{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[{"number":"7","title":"Str","labels":[]},{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_skips_an_entry_without_a_number() {
-        let json = r#"[{"title":"None"},{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[{"title":"None","labels":[]},{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_skips_a_non_object_element() {
-        let json = r#"[1,{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[1,{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_keeps_u32_max() {
-        let json = r#"[{"number":4294967295,"title":"Max"}]"#;
+        let json = r#"[{"number":4294967295,"title":"Max","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![u32::MAX]);
     }
 
+    #[test]
+    fn parse_issue_list_skips_an_entry_without_labels() {
+        let json = r#"[{"number":3,"title":"No labels"},{"number":4,"title":"Fix x","labels":[]}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_labels_that_are_not_an_array() {
+        let json =
+            r#"[{"number":3,"title":"Str","labels":"x"},{"number":4,"title":"Fix x","labels":[]}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_a_label_without_a_name() {
+        let json = r#"[{"number":3,"title":"Id","labels":[{"id":1}]},{"number":4,"title":"Fix x","labels":[]}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
     const EVENTS: &str = r#"[
-      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"mallory"}},
-      {"event":"labeled","label":{"name":"bug"},"actor":{"login":"bob"}},
+      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"mallory"},"created_at":"2026-11-01T10:00:00Z"},
+      {"event":"labeled","label":{"name":"bug"},"actor":{"login":"bob"},"created_at":"2026-11-01T11:00:00Z"},
       {"event":"commented","actor":{"login":"carol"}},
       {"event":"unlabeled","label":{"name":"factory"},"actor":{"login":"dave"}},
-      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"}}
+      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"},"created_at":"2026-11-01T13:00:00Z"}
     ]"#;
 
     fn login_of(json: &str, label: &str) -> Option<String> {
@@ -901,7 +1007,7 @@ mod tests {
     fn parse_actor_reads_paginated_pages() {
         let pages = format!(
             "{EVENTS}{}",
-            r#"[{"event":"labeled","label":{"name":"factory"},"actor":{"login":"erin"}}]"#
+            r#"[{"event":"labeled","label":{"name":"factory"},"actor":{"login":"erin"},"created_at":"2026-11-02T10:00:00Z"}]"#
         );
         assert_eq!(login_of(&pages, "factory"), Some("erin".to_string()));
     }
@@ -946,6 +1052,48 @@ mod tests {
         let lines = format!("{LABELED}\n{LABELED}\n");
         assert_eq!(
             parse_actor(&lines, "factory").expect("parse"),
+            Some(LabelEvent {
+                actor: "alice".to_string(),
+                at: "2026-11-01T10:00:00Z".to_string()
+            })
+        );
+    }
+
+    const NOT_EVENTS: &str = "gh printed unexpected JSON: expected label events";
+
+    #[test]
+    fn parse_actor_rejects_a_stray_object() {
+        let err = parse_actor(r#"{"message":"Not Found"}"#, "factory").expect_err("not an event");
+        assert_eq!(err, NOT_EVENTS);
+    }
+
+    #[test]
+    fn parse_actor_rejects_a_non_event_element() {
+        let err = parse_actor("[1]", "factory").expect_err("not an event");
+        assert_eq!(err, NOT_EVENTS);
+    }
+
+    #[test]
+    fn parse_actor_rejects_a_scalar_value() {
+        let err = parse_actor("42", "factory").expect_err("not an event");
+        assert_eq!(err, NOT_EVENTS);
+    }
+
+    #[test]
+    fn parse_actor_rejects_a_matching_event_without_a_time() {
+        let json = r#"{"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"}}"#;
+        let err = parse_actor(json, "factory").expect_err("no time");
+        assert_eq!(err, "gh printed a `factory` label event without a time");
+    }
+
+    #[test]
+    fn parse_actor_ignores_a_time_missing_on_another_label() {
+        let json = format!(
+            "{LABELED}\n{}",
+            r#"{"event":"labeled","label":{"name":"bug"},"actor":{"login":"bob"}}"#
+        );
+        assert_eq!(
+            parse_actor(&json, "factory").expect("parse"),
             Some(LabelEvent {
                 actor: "alice".to_string(),
                 at: "2026-11-01T10:00:00Z".to_string()
@@ -1005,6 +1153,77 @@ mod tests {
             .edit_labels(7, &strings(&["x"]), &[])
             .expect_err("create fails");
         assert!(err.contains("bad credentials"), "{err}");
+    }
+
+    #[test]
+    fn check_repo_name_accepts_owner_and_name() {
+        for name in ["o/r", "Snehal1112/rocket-factory"] {
+            check_repo_name(name).expect("valid");
+        }
+    }
+
+    #[test]
+    fn check_repo_name_rejects_malformed_names() {
+        for name in [
+            "o/r/x", "o r/x", "/r", "o/", "or", "o/r\nx/y", "../x", "o/..", "./r", "o/r?x=1",
+            "o/r#a", "o%2Fr/x",
+        ] {
+            let err = check_repo_name(name).expect_err(name);
+            assert_eq!(
+                err,
+                format!("gh repo view printed an unusable repository name: `{name}`")
+            );
+        }
+    }
+
+    #[test]
+    fn check_login_accepts_bot_logins() {
+        for login in ["alice", "a-b", "github-actions[bot]"] {
+            check_login(login).expect("valid");
+        }
+    }
+
+    #[test]
+    fn check_login_rejects_malformed_logins() {
+        for login in [
+            "a b", "a/b", "a\nb", "a:b", "a?b", "a_b", "[bot]", "null", "NULL",
+        ] {
+            let err = check_login(login).expect_err(login);
+            assert_eq!(
+                err,
+                format!("gh api user printed an unusable login: `{login}`")
+            );
+        }
+    }
+
+    #[test]
+    fn repo_name_rejects_a_malformed_gh_reply() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "echo 'o r/x'");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let err = tracker.repo_name().expect_err("malformed");
+        assert_eq!(
+            err,
+            "gh repo view printed an unusable repository name: `o r/x`"
+        );
+    }
+
+    #[test]
+    fn repo_name_keeps_the_empty_output_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "true");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let err = tracker.repo_name().expect_err("empty");
+        assert_eq!(err, "gh repo view printed no repository name");
+    }
+
+    #[test]
+    fn current_user_rejects_a_malformed_gh_reply() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = fake_gh(dir.path(), "echo 'a b'");
+        let tracker = GhTracker::with_program(&gh, dir.path());
+        let err = tracker.current_user().expect_err("malformed");
+        assert_eq!(err, "gh api user printed an unusable login: `a b`");
     }
 
     #[test]

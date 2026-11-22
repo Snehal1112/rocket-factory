@@ -72,7 +72,7 @@ pub struct IssueRef {
 const GITHUB_PREFIX: &str = "https://github.com/";
 
 /// True for a GitHub owner or repository name: letters, digits, `-`, `_` and `.`.
-fn is_repo_name(s: &str) -> bool {
+pub fn is_repo_name(s: &str) -> bool {
     !s.is_empty() && s.chars().all(is_repo_char)
 }
 

@@ -52,11 +52,11 @@ pub use cargo_lock::{
 };
 pub use commitmsg::{
     append_footers, blocked_reason, build_job_message, builder_rulings, builder_status,
-    check_job_subject, check_note, fallback_note, has_footer, issue_footer, note_bullets,
-    parse_builder_status, parse_commit_note, parse_issue_refs, parse_issues, title_subject,
-    validate_message, wrap_bullet, wrap_paragraph, BuilderStatus, CommitNote, IssueRef, JobMessage,
-    NoteSection, COMMIT_BEGIN, COMMIT_END, MAX_JOB_BULLETS, MAX_JOB_SUBJECT_CHARS,
-    MAX_SUBJECT_CHARS,
+    check_job_subject, check_note, fallback_note, has_footer, is_repo_name, issue_footer,
+    note_bullets, parse_builder_status, parse_commit_note, parse_issue_refs, parse_issues,
+    title_subject, validate_message, wrap_bullet, wrap_paragraph, BuilderStatus, CommitNote,
+    IssueRef, JobMessage, NoteSection, COMMIT_BEGIN, COMMIT_END, MAX_JOB_BULLETS,
+    MAX_JOB_SUBJECT_CHARS, MAX_SUBJECT_CHARS,
 };
 pub use config::{
     builder_program_ok, check_kb_path, ignored_keys_in, is_env_assignment, resolve_kb_path,
