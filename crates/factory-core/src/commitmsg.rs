@@ -121,7 +121,7 @@ fn hash_refs(text: &str) -> Vec<IssueRef> {
 /// The `owner/repo#N` references. The char before the owner must be absent or neither a repository
 /// name char nor `/`.
 fn shorthand_refs(text: &str) -> Vec<IssueRef> {
-    let chars: Vec<char> = text.chars().collect();
+    let chars: Vec<char> = strip_code(text).chars().collect();
     let mut found = Vec::new();
     for (i, c) in chars.iter().enumerate() {
         if *c != '#' {
@@ -181,17 +181,54 @@ fn url_refs(text: &str) -> Vec<IssueRef> {
     found
 }
 
-/// The `#N` and GitHub issue URL references, sorted and de-duplicated.
+/// Blanks fenced blocks and inline code spans, so refs inside code are not found.
+fn strip_code(text: &str) -> String {
+    let mut in_fence = false;
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            lines.push(String::new());
+        } else if in_fence {
+            lines.push(String::new());
+        } else {
+            lines.push(strip_spans(line));
+        }
+    }
+    lines.join("\n")
+}
+
+/// Replaces each backtick pair on one line, and what it holds, with a space. A lone backtick stays.
+fn strip_spans(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(open) = rest.find('`') {
+        let after = &rest[open + 1..];
+        match after.find('`') {
+            Some(close) => {
+                out.push_str(&rest[..open]);
+                out.push(' ');
+                rest = &after[close + 1..];
+            }
+            None => break,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The `#N` and GitHub issue URL references outside code, sorted and de-duplicated.
 fn plain_refs(text: &str) -> Vec<IssueRef> {
-    let mut refs = hash_refs(text);
-    refs.extend(url_refs(text));
+    let text = strip_code(text);
+    let mut refs = hash_refs(&text);
+    refs.extend(url_refs(&text));
     refs.sort();
     refs.dedup();
     refs
 }
 
-/// Every issue reference in the text, `#N`, GitHub issue URLs and `owner/repo#N`, sorted and
-/// de-duplicated.
+/// Every issue reference in the text outside code, `#N`, GitHub issue URLs and `owner/repo#N`,
+/// sorted and de-duplicated. Refs in inline code or fenced blocks do not count.
 pub fn parse_issue_refs(text: &str) -> Vec<IssueRef> {
     let mut refs = plain_refs(text);
     refs.extend(shorthand_refs(text));
@@ -201,7 +238,7 @@ pub fn parse_issue_refs(text: &str) -> Vec<IssueRef> {
 }
 
 /// Every issue number in the text, sorted and de-duplicated. `#N` and GitHub issue URLs both count,
-/// `owner/repo#N` does not.
+/// `owner/repo#N` does not. Refs in inline code or fenced blocks do not count.
 pub fn parse_issues(text: &str) -> Vec<u32> {
     let mut numbers: Vec<u32> = plain_refs(text).into_iter().map(|r| r.number).collect();
     numbers.sort_unstable();
@@ -1060,6 +1097,63 @@ mod tests {
             parse_issues("https://github.com/o/r/issues/76 and #5"),
             vec![5, 76]
         );
+    }
+
+    #[test]
+    fn refs_skip_inline_code_spans() {
+        let refs = parse_issue_refs("fix `#42` and #7");
+        assert_eq!(
+            refs,
+            vec![IssueRef {
+                number: 7,
+                repo: None
+            }]
+        );
+    }
+
+    #[test]
+    fn refs_skip_fenced_blocks() {
+        let text = "text #7\n```\n#42\nhttps://github.com/o/r/issues/5\n```\n";
+        assert_eq!(
+            parse_issue_refs(text),
+            vec![IssueRef {
+                number: 7,
+                repo: None
+            }]
+        );
+    }
+
+    #[test]
+    fn refs_skip_an_unclosed_fence() {
+        assert_eq!(
+            parse_issue_refs("#7\n```\n#42\n"),
+            vec![IssueRef {
+                number: 7,
+                repo: None
+            }]
+        );
+    }
+
+    #[test]
+    fn a_lone_backtick_does_not_hide_a_ref() {
+        assert_eq!(
+            parse_issue_refs("a ` b #7"),
+            vec![IssueRef {
+                number: 7,
+                repo: None
+            }]
+        );
+    }
+
+    #[test]
+    fn urls_and_shorthand_in_code_are_not_refs() {
+        let text = "`o/r#5` and `https://github.com/o/r/issues/6`";
+        assert!(parse_issue_refs(text).is_empty());
+    }
+
+    #[test]
+    fn parse_issues_skips_code_too() {
+        assert_eq!(parse_issues("Closes `#42`, #7"), vec![7]);
     }
 
     #[test]
