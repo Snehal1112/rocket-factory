@@ -843,7 +843,31 @@ fn add_refuses_overlap_and_root_after_subfolder() {
     let err = run(&e, &["add", s(&repo), "--preset", "rust", "--name", "root"])
         .expect_err("root after subfolder")
         .to_string();
-    assert!(err.contains("web"), "{err}");
+    let canon = std::fs::canonicalize(&repo).expect("canon");
+    let web = canon.join("apps/web");
+    let expected = format!(
+        "project web already covers {}, inside {}",
+        web.display(),
+        canon.display()
+    );
+    assert!(err.ends_with(&expected), "{err}");
+    assert!(err.starts_with("config error: "), "{err}");
+    std::fs::create_dir_all(repo.join("apps/web/x")).expect("mkdir");
+    let err = run(
+        &e,
+        &[
+            "add",
+            s(&repo.join("apps/web/x")),
+            "--preset",
+            "rust",
+            "--name",
+            "x",
+        ],
+    )
+    .expect_err("inside subfolder")
+    .to_string();
+    let expected = format!("project web already covers {}", web.join("x").display());
+    assert!(err.ends_with(&expected), "{err}");
 }
 
 #[test]
@@ -857,6 +881,48 @@ fn list_shows_subfolder_project_disabled_when_folder_is_gone() {
         out.contains("web  disabled: project folder is missing"),
         "{out}"
     );
+}
+
+#[test]
+fn show_of_a_subfolder_project_with_a_missing_folder_is_disabled() {
+    let e = env();
+    let repo = make_monorepo(&e);
+    run(&e, &["add", s(&repo.join("apps/web")), "--preset", "rust"]).expect("add");
+    std::fs::remove_dir_all(repo.join("apps/web")).expect("rm");
+    let out = run(&e, &["show", "web"]).expect("show succeeds");
+    assert!(out.contains("disabled: project folder is missing"), "{out}");
+    assert!(out.contains("subpath: apps/web"), "{out}");
+}
+
+#[test]
+fn a_registered_subfolder_repo_path_names_the_top_folder_rule() {
+    let e = env();
+    let repo = make_monorepo(&e);
+    run(&e, &["add", s(&repo.join("apps/api")), "--preset", "rust"]).expect("add");
+    let canon = std::fs::canonicalize(&repo).expect("canon");
+    let file = e.home.project_dir("api").join("project.toml");
+    let text = std::fs::read_to_string(&file).expect("read");
+    let text: String = text
+        .lines()
+        .filter(|l| !l.starts_with("subpath"))
+        .map(|l| {
+            if l.starts_with("repo") {
+                format!("repo = {:?}", canon.join("apps/api").display().to_string())
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&file, text).expect("write");
+    let reason = format!(
+        "disabled: {} is not the top folder of a git repository",
+        canon.join("apps/api").display()
+    );
+    let shown = run(&e, &["show", "api"]).expect("show");
+    assert!(shown.contains(&reason), "{shown}");
+    let listed = run(&e, &["list"]).expect("list");
+    assert!(listed.contains(&reason), "{listed}");
 }
 
 #[test]

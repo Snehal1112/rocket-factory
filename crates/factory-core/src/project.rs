@@ -114,7 +114,20 @@ fn check_overlap(home: &Home, canon: &Path, subpath: Option<&Path>) -> Result<()
             continue;
         }
         let other = f.subpath.as_deref().unwrap_or(Path::new(""));
-        if new.starts_with(other) || other.starts_with(new) {
+        if other != new && other.starts_with(new) {
+            let outer = if new.as_os_str().is_empty() {
+                canon.to_path_buf()
+            } else {
+                canon.join(new)
+            };
+            return Err(CoreError::Config(format!(
+                "project {} already covers {}, inside {}",
+                entry.name,
+                canon.join(other).display(),
+                outer.display()
+            )));
+        }
+        if new.starts_with(other) {
             return Err(CoreError::Config(format!(
                 "project {} already covers {}",
                 entry.name,
@@ -929,6 +942,33 @@ mod tests {
         add(&e.home, "top", &e.repo, "rust", None, &ok).expect("add");
         let err = add_sub(&e.home, "web", &e.repo, "apps/web").expect_err("under top");
         assert!(err.to_string().contains("top"), "{err}");
+    }
+
+    #[test]
+    fn overlap_names_the_inner_folder() {
+        let e = env();
+        let canon = std::fs::canonicalize(&e.repo).expect("canon");
+        add_sub(&e.home, "web", &e.repo, "apps/web").expect("add");
+        let inner = add_sub(&e.home, "inner", &e.repo, "apps/web/inner").expect_err("inner");
+        let msg = format!(
+            "project web already covers {}",
+            canon.join("apps/web/inner").display()
+        );
+        assert!(inner.to_string().ends_with(&msg), "{inner}");
+        let top = add(&e.home, "top", &e.repo, "rust", None, &ok).expect_err("top");
+        let msg = format!(
+            "project web already covers {}, inside {}",
+            canon.join("apps/web").display(),
+            canon.display()
+        );
+        assert!(top.to_string().ends_with(&msg), "{top}");
+        let apps = add_sub(&e.home, "apps", &e.repo, "apps").expect_err("apps");
+        let msg = format!(
+            "project web already covers {}, inside {}",
+            canon.join("apps/web").display(),
+            canon.join("apps").display()
+        );
+        assert!(apps.to_string().ends_with(&msg), "{apps}");
     }
 
     #[test]
