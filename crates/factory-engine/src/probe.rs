@@ -145,7 +145,8 @@ impl Engine<'_> {
         work_dir: &Path,
     ) -> Result<(RoleProbe, String, AgentSpec), EngineError> {
         let mut spec = self.probe_base_spec(role, work_dir);
-        self.shape_spec(&mut spec).map_err(EngineError::Msg)?;
+        self.shape_spec(&mut spec, harness)
+            .map_err(EngineError::Msg)?;
         spec.prompt = probe_prompt(marker);
         spec.resume = None;
         spec.used_before = 0;
@@ -181,6 +182,10 @@ impl Engine<'_> {
                 }
                 probe
             }
+        };
+        let probe = RoleProbe {
+            model: spec.model.clone(),
+            ..probe
         };
         Ok((probe, run.result_text, spec))
     }

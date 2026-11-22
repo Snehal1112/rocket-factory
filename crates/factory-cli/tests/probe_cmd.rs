@@ -315,6 +315,66 @@ fn harness_flag_overrides_the_project_agent_cli() {
     assert_eq!(spec.sandbox.as_deref(), Some("read-only"));
     assert_eq!(spec.agent, None);
     assert!(spec.agent_prompt.is_some());
+    assert_eq!(
+        spec.model.as_deref(),
+        Some(factory_core::project::CODEX_DEFAULT_MODEL)
+    );
+}
+
+/// Replaces the project config with `extra` lines, keeping the disk check off.
+fn write_config(fx: &Fixture, extra: &str) {
+    std::fs::write(
+        fx.root.join(".claude/factory/config.toml"),
+        format!("min_free_disk_mb = 0\n{extra}\n"),
+    )
+    .expect("config");
+}
+
+/// Probes one role with a runner that fails the marker, and returns the spec it saw.
+fn probed_spec(fx: &Fixture, args: &[&str]) -> AgentSpec {
+    let runner = Arc::new(FakeRunner::new(vec![AgentRun::done("MARKER: NONE")]));
+    let ctx = ctx_with(fx, runner.clone());
+    // `MARKER: NONE` makes the probe report a failure, which these tests do not need.
+    let _ = probe(&ctx, args);
+    runner.calls().pop().expect("one run")
+}
+
+#[test]
+fn a_cross_harness_probe_uses_the_harness_default_model() {
+    let fx = Fixture::new();
+    let spec = probed_spec(&fx, &["--harness", "codex", "--role", "kb"]);
+    assert_eq!(
+        spec.model.as_deref(),
+        Some(factory_core::project::CODEX_DEFAULT_MODEL)
+    );
+    let fx = Fixture::new();
+    write_config(&fx, "agent_cli = \"codex\"\nbuilder_model = \"gpt-x\"");
+    let spec = probed_spec(&fx, &["--harness", "claude", "--role", "builder"]);
+    assert_eq!(
+        spec.model.as_deref(),
+        Some(factory_core::Config::default().builder_model.as_str())
+    );
+}
+
+#[test]
+fn a_same_harness_probe_keeps_the_project_models() {
+    let fx = Fixture::new();
+    write_config(&fx, "reviewer_model = \"claude-custom\"");
+    let spec = probed_spec(&fx, &["--harness", "claude", "--role", "reviewer"]);
+    assert_eq!(spec.model.as_deref(), Some("claude-custom"));
+}
+
+#[test]
+fn the_probe_report_names_the_model() {
+    let fx = Fixture::new();
+    let runner = Arc::new(FakeRunner::new(vec![AgentRun::done("MARKER: NONE")]));
+    let ctx = ctx_with(&fx, runner);
+    let (Ok(text) | Err(CliError::ProbeFailed(text))) =
+        probe(&ctx, &["--harness", "codex", "--role", "kb"])
+    else {
+        panic!("expected a report");
+    };
+    assert!(text.contains("model: gpt-5.6-luna"), "{text}");
 }
 
 #[test]

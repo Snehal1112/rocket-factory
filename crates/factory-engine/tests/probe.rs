@@ -101,6 +101,27 @@ fn append_delivery_puts_the_marker_in_agent_prompt() {
 }
 
 #[test]
+fn shape_spec_follows_the_probe_harness() {
+    let fx = fixture(Harness::Claude);
+    let runner = FakeRunner::new(vec![answer(MARKER)]);
+    let dir = work_dir(&fx);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .probe_role_with(
+            ProbeRole::Builder,
+            Harness::Codex,
+            Delivery::Agent,
+            MARKER,
+            &dir,
+        )
+        .expect("probe");
+    let spec = runner.calls().pop().expect("one run");
+    assert_eq!(spec.agent, None);
+    let text = spec.agent_prompt.expect("agent text");
+    assert!(text.starts_with("You run under Codex."), "{text}");
+}
+
+#[test]
 fn codex_marker_rides_agent_prompt_after_the_preface() {
     let (spec, _fx) = spec_of(ProbeRole::Builder, Harness::Codex, Delivery::Agent);
     assert_eq!(spec.agent, None);
