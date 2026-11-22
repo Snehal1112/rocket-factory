@@ -304,20 +304,29 @@ pub(crate) fn parse_created(output: &str) -> Option<u32> {
 }
 
 /// The label names and whether the issue is closed, from `gh issue view --json labels,state`.
+/// A merged pull request counts as closed. A reply without a labels array, a label without a
+/// name, or a state other than open, closed or merged is an error.
 pub(crate) fn parse_view(json: &str) -> Result<(Vec<String>, bool), String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
-    let labels = value["labels"]
+    let list = value["labels"]
         .as_array()
-        .map(|list| {
-            list.iter()
-                .filter_map(|l| l["name"].as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let closed = value["state"]
-        .as_str()
-        .is_some_and(|s| s.eq_ignore_ascii_case("closed"));
+        .ok_or("gh printed unexpected JSON: expected a labels array")?;
+    let labels = list
+        .iter()
+        .map(|l| l["name"].as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()
+        .ok_or("gh printed unexpected JSON: a label has no name")?;
+    let closed = match value["state"].as_str() {
+        Some(s) if s.eq_ignore_ascii_case("closed") || s.eq_ignore_ascii_case("merged") => true,
+        Some(s) if s.eq_ignore_ascii_case("open") => false,
+        _ => {
+            return Err(format!(
+                "gh printed an unusable issue state: `{}`",
+                value["state"]
+            ));
+        }
+    };
     Ok((labels, closed))
 }
 
@@ -601,6 +610,48 @@ mod tests {
         let closed = r#"{"labels":[],"state":"CLOSED"}"#;
         assert_eq!(parse_view(closed), Ok((vec![], true)));
         assert!(parse_view("not json").is_err());
+    }
+
+    #[test]
+    fn parse_view_rejects_a_reply_without_labels() {
+        let err = parse_view(r#"{"message":"Not Found"}"#).expect_err("no labels");
+        assert_eq!(err, "gh printed unexpected JSON: expected a labels array");
+    }
+
+    #[test]
+    fn parse_view_rejects_a_label_without_a_name() {
+        let err = parse_view(r#"{"labels":[{"id":1}],"state":"OPEN"}"#).expect_err("no name");
+        assert_eq!(err, "gh printed unexpected JSON: a label has no name");
+    }
+
+    #[test]
+    fn parse_view_rejects_a_missing_state() {
+        let err = parse_view(r#"{"labels":[]}"#).expect_err("no state");
+        assert_eq!(err, "gh printed an unusable issue state: `null`");
+    }
+
+    #[test]
+    fn parse_view_rejects_an_unknown_state() {
+        let err = parse_view(r#"{"labels":[],"state":"DRAFT"}"#).expect_err("unknown state");
+        assert_eq!(err, "gh printed an unusable issue state: `\"DRAFT\"`");
+    }
+
+    #[test]
+    fn parse_view_rejects_an_array_reply() {
+        let err = parse_view("[]").expect_err("array reply");
+        assert_eq!(err, "gh printed unexpected JSON: expected a labels array");
+    }
+
+    #[test]
+    fn parse_view_reads_a_lowercase_state() {
+        let parsed = parse_view(r#"{"labels":[{"name":"a"}],"state":"closed"}"#).expect("parse");
+        assert_eq!(parsed, (vec!["a".to_string()], true));
+    }
+
+    #[test]
+    fn parse_view_reads_a_merged_state_as_closed() {
+        let parsed = parse_view(r#"{"labels":[],"state":"MERGED"}"#).expect("parse");
+        assert_eq!(parsed, (vec![], true));
     }
 
     #[test]
