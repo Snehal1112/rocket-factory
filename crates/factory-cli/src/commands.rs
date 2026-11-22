@@ -1046,6 +1046,7 @@ fn cancel(
 }
 
 /// Removes the worktree, branch and leftover folder, then the card of a cancelled job. A merged job keeps its card.
+/// Once its series is finished, every other cancelled member is cleaned too, one line each.
 fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
@@ -1054,8 +1055,55 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
             "cleanup only works on a merged or cancelled job".into(),
         ));
     }
-    let mut message = cleanup_checkout(ctx, &job, discard)?;
-    d.store().update_job(id, |j| {
+    // The members come before the target's card goes, because the series is found through that card.
+    let others = if job.cancelled && job.stage != Stage::Merged {
+        finished_series_leftovers(&d.store().load()?, id)
+    } else {
+        Vec::new()
+    };
+    let mut message = cleanup_job(ctx, &job, discard)?;
+    for member in others {
+        let line = match cleanup_job(ctx, &member, discard) {
+            Ok(line) => line,
+            Err(CliError::Refused(why)) => why,
+            Err(e) => return Err(e),
+        };
+        message.push_str(&format!("\njob {}: {line}", member.id));
+    }
+    Ok(message)
+}
+
+/// The cancelled, not yet cleaned members of the target's series other than the target, in index order.
+/// Empty while the series has an active job or when the target has no series id.
+fn finished_series_leftovers(
+    board: &factory_core::Board,
+    target_id: &str,
+) -> Vec<factory_core::Job> {
+    let Some(sid) = series_id_of(board, target_id) else {
+        return Vec::new();
+    };
+    if !series_is_finished(board, target_id) {
+        return Vec::new();
+    }
+    let mut members: Vec<&factory_core::Job> = board
+        .jobs
+        .iter()
+        .filter(|j| {
+            j.id != target_id
+                && j.cancelled
+                && j.stage != Stage::Merged
+                && !j.cleaned
+                && j.series.as_ref().and_then(|p| p.id.as_deref()) == Some(sid.as_str())
+        })
+        .collect();
+    members.sort_by_key(|j| j.series.as_ref().map_or(0, |p| p.index));
+    members.into_iter().cloned().collect()
+}
+
+/// Cleans the checkout of one job, marks it cleaned and removes the card of a cancelled one.
+fn cleanup_job(ctx: &CliCtx, job: &factory_core::Job, discard: bool) -> Result<String, CliError> {
+    let mut message = cleanup_checkout(ctx, job, discard)?;
+    ctx.driver()?.store().update_job(&job.id, |j| {
         j.cleaned = true;
         Ok(())
     })?;

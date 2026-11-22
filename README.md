@@ -125,6 +125,7 @@ A draft card tracks a spec that is still being written, before any job exists. I
 - `factory spec stage <slug> <interviewing|writing-spec|writing-plans>` moves the card to another stage.
 - `factory spec resume <slug>` prints the `draft`, `stage` and `file <spec path> (exists|missing)` lines.
 - `factory cancel <slug>` removes the card and keeps the spec file. A numeric argument still means a job.
+- `factory cleanup <id>` of a cancelled series member, once every member of the series is merged or cancelled, also cleans every other cancelled member, one line each (`job <id>: ...`). `--discard-commits` applies to all of them, and a member whose cleanup is refused keeps its card while the others go on.
 - `factory status` lists the cards in a `drafts:` block.
 - `factory intake` also uses a card. It sits at `drafting-from-issue` with the issue number while the spec is drafted from the GitHub issue, and moves to `draft-failed` with a note when drafting fails. The dashboard shows it in the Spec column like any other draft, with an issue chip.
 - `factory new` adopts the draft with the same slug and removes it. When no list item of the spec's `## Decisions` section says `Decided by: user`, or the spec has no `## Decisions` section at all, it prints `warning: no decision in this spec was answered by the user` after `created job ...`. The job still runs. A single plan file with no spec text gets no warning.

@@ -631,8 +631,9 @@ fn cleanup_removes_cancelled_card_when_series_sibling_is_merged() {
 fn cleanup_removes_cancelled_card_when_series_sibling_is_cancelled() {
     let (fx, _home) = series_pair(Sibling::Cancelled);
     let out = cleanup_one(&fx);
-    assert!(out.ends_with("; card removed from the board"), "{out}");
-    assert_eq!(board_ids(&fx), only_second());
+    assert!(out.contains("; card removed from the board"), "{out}");
+    assert!(out.contains("job 002: "), "{out}");
+    assert!(board_ids(&fx).is_empty());
 }
 
 #[test]
@@ -1482,4 +1483,43 @@ fn forced_cascade_keeps_a_project_lease_held_by_a_later_plan() {
         factory_engine::ProjectLeaseStatus::Held { job, .. } => assert_eq!(job, "003"),
         other => panic!("project lease not held by 003: {other:?}"),
     }
+}
+
+#[test]
+fn cleanup_of_finished_series_cleans_every_cancelled_member() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    fx.run(&["cancel", "1"]).expect("cancel");
+    let out = fx
+        .run(&["cleanup", "1", "--discard-commits"])
+        .expect("cleanup");
+    assert!(out.contains("job 002: "), "{out}");
+    assert!(out.contains("job 003: "), "{out}");
+    assert!(board_ids(&fx).is_empty(), "{out}");
+}
+
+#[test]
+fn cleanup_of_unfinished_series_cleans_only_the_target() {
+    let fx = Fixture::new();
+    cli_three(&fx);
+    fx.run(&["cancel", "3", "--only"]).expect("cancel");
+    let out = fx.run(&["cleanup", "3"]).expect("cleanup");
+    assert!(!out.contains("\njob "), "{out}");
+    assert_eq!(board_ids(&fx).len(), 3);
+}
+
+#[test]
+fn cleanup_reports_a_refused_member_and_goes_on() {
+    let fx = Fixture::with_risk_path("docs/**");
+    cli_three(&fx);
+    set_merged(&fx, "001");
+    assert!(fx
+        .run(&["run", "2"])
+        .expect("run")
+        .starts_with("needs-human"));
+    fx.run(&["cancel", "2"]).expect("cancel");
+    let out = fx.run(&["cleanup", "3"]).expect("cleanup");
+    assert!(out.contains("job 002: "), "{out}");
+    assert!(out.contains("--discard-commits"), "{out}");
+    assert_eq!(board_ids(&fx), vec!["001".to_string(), "002".to_string()]);
 }
