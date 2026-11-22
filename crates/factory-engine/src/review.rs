@@ -130,13 +130,9 @@ impl Engine<'_> {
         let review_path = match run_kind {
             ReviewRun::Round => self.job_dir.join(format!("review-code-r{}.md", job.round)),
             ReviewRun::Sync => {
-                let prefix = format!("review-code-r{}-sync", job.round);
-                let taken = std::fs::read_dir(&self.job_dir)
-                    .map_err(io_err)?
-                    .filter_map(Result::ok)
-                    .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-                    .count();
-                self.job_dir.join(format!("{prefix}{}.md", taken + 1))
+                let k = next_sync_number(&self.job_dir, job.round)?;
+                self.job_dir
+                    .join(format!("review-code-r{}-sync{k}.md", job.round))
             }
             ReviewRun::Rebase => self
                 .job_dir
@@ -472,6 +468,31 @@ struct RolePart {
     failed: bool,
 }
 
+/// The number for the next sync review of a round: the highest saved one plus one.
+pub(crate) fn next_sync_number(job_dir: &std::path::Path, round: u32) -> Result<u32, EngineError> {
+    let prefix = format!("review-code-r{round}-sync");
+    let mut highest = 0;
+    for entry in std::fs::read_dir(job_dir)
+        .map_err(io_err)?
+        .filter_map(Result::ok)
+    {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(digits) = name
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".md"))
+        else {
+            continue;
+        };
+        if !digits.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if let Ok(k) = digits.parse::<u32>() {
+            highest = highest.max(k);
+        }
+    }
+    Ok(highest.saturating_add(1))
+}
+
 /// The `risk` line: pass for a normal diff or one the Cargo lock check cleared, note for a risky one.
 fn risk_line(risky: bool, paths: &[String], note: Option<&str>) -> (GateResult, String) {
     if risky {
@@ -587,6 +608,41 @@ pub fn final_checks(e: &Engine) -> Result<ChecksReport, EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn touch(dir: &std::path::Path, name: &str) {
+        std::fs::write(dir.join(name), "x").expect("write");
+    }
+
+    #[test]
+    fn next_sync_number_takes_the_highest_plus_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        touch(dir.path(), "review-code-r1-sync1.md");
+        touch(dir.path(), "review-code-r1-sync3.md");
+        assert_eq!(next_sync_number(dir.path(), 1).expect("number"), 4);
+    }
+
+    #[test]
+    fn next_sync_number_is_one_in_an_empty_folder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(next_sync_number(dir.path(), 2).expect("number"), 1);
+    }
+
+    #[test]
+    fn next_sync_number_ignores_other_rounds_and_bad_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in [
+            "review-code-r10-sync5.md",
+            "review-code-r1-syncx.md",
+            "review-code-r1-sync.md",
+            "review-code-r1-sync2.md.tmp",
+            "review-code-r1-sync99999999999.md",
+            "review-code-r1.md",
+        ] {
+            touch(dir.path(), name);
+        }
+        touch(dir.path(), "review-code-r1-sync2.md");
+        assert_eq!(next_sync_number(dir.path(), 1).expect("number"), 3);
+    }
 
     fn skippable(paths: &[&str]) -> bool {
         let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
