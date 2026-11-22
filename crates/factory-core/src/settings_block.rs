@@ -77,6 +77,7 @@ const GROUPS: &[(&str, &[Key])] = &[
         &[
             ("base_branch", None),
             ("tickets_on_merge", None),
+            ("cleanup_on_merge", None),
             ("minor_tickets", None),
             ("gate_record", None),
             ("spec_review", None),

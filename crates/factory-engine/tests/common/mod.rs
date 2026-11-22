@@ -441,11 +441,13 @@ pub fn init_repo(main: &Path) {
 }
 
 /// The config a test driver gets. A test machine with little free disk must never wait, so the disk check
-/// is off unless the test set its own limit.
+/// is off unless the test set its own limit. The cleanup after a merge is off, because many tests read a
+/// merged job's worktree or branch.
 pub fn test_config(mut config: Config) -> Config {
     if config.min_free_disk_mb == Config::default().min_free_disk_mb {
         config.min_free_disk_mb = 0;
     }
+    config.cleanup_on_merge = false;
     config
 }
 
@@ -481,7 +483,22 @@ pub fn approved_job_config(runner: Arc<ScriptedRunner>, config: Config) -> Merge
 pub fn approved_job_dyn(
     runner: Arc<dyn AgentRunner>,
     scripted: Arc<ScriptedRunner>,
+    config: Config,
+) -> MergeFixture {
+    approved_job_built(runner, scripted, config, false)
+}
+
+/// Like `approved_job`, with the cleanup after a merge turned on.
+pub fn approved_job_with_cleanup() -> MergeFixture {
+    let runner = approving_runner(3);
+    approved_job_built(runner.clone(), runner, Config::default(), true)
+}
+
+fn approved_job_built(
+    runner: Arc<dyn AgentRunner>,
+    scripted: Arc<ScriptedRunner>,
     mut config: Config,
+    cleanup_on_merge: bool,
 ) -> MergeFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
     let main = tmp.path().join("repo");
@@ -504,12 +521,10 @@ pub fn approved_job_dyn(
         commit_file(&main, ".gitignore", ".superpowers/\n");
     }
     let factory: factory_engine::RunnerFactory = Box::new(move |_job_id| runner.clone());
-    let driver = factory_engine::Driver::new(
-        factory_core::Layout::in_repo(&main),
-        test_config(config),
-        factory,
-    )
-    .expect("driver");
+    let mut config = test_config(config);
+    config.cleanup_on_merge = cleanup_on_merge;
+    let driver = factory_engine::Driver::new(factory_core::Layout::in_repo(&main), config, factory)
+        .expect("driver");
     let wt = driver
         .repo()
         .create_worktree(&factory_git::JobRef {
