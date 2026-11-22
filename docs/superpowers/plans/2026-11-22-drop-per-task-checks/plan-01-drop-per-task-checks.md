@@ -1,7 +1,7 @@
 # Drop the per-task checks: Implementation Plan
 
 > **Spec:** docs/superpowers/specs/2026-11-22-drop-per-task-checks-design.md
-> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.
+> **Executor:** the factory driver runs this plan using superpowers:subagent-driven-development, with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.
 
 **Goal:** A task plan no longer runs the mapped checks after each task; only the whole-branch checks stage runs them.
 
@@ -37,6 +37,8 @@
 **Interfaces:**
 - Consumes: `Fixture::new()`, `scripted(Vec<Effect>)`, `Engine::build_stage()`, `Engine::checks_stage()`, the `rule(path, command)` helper (`build_checks.rs:1688`), all existing.
 - Produces: nothing new for the next task. It only stops these tests from reading `checks-task1.md`.
+- Port: none. Tests only; the engine code under test is plain `Engine` methods behind no trait (`AgentRunner` and `Tracker` are not involved).
+- Tests added: the three renamed tests below.
 
 - [ ] **Step 1: Read** `crates/factory-engine/tests/build_checks.rs:300-400` (the checks-stage tests and `two_task_fixture`) and `:1688-1858`, and `crates/factory-engine/src/checks_stage.rs:85-130` and `:338-378`.
 
@@ -55,7 +57,6 @@ Rename and change each so it builds with `Fixture::new()` (the whole-plan builde
 Run: `cargo test -j4 -p factory-engine --test build_checks the_checks_stage_`
 Expected: 3 passed.
 
-- [ ] **Step 4: Commit** (the driver makes the commit)
 
 ### Task 2: No checks between tasks
 
@@ -68,6 +69,8 @@ Expected: 3 passed.
 **Interfaces:**
 - Consumes: the three moved planner tests stay green.
 - Produces: no new item. `Engine::run_checks_between` and `Engine::note_task_checks` no longer exist.
+- Port: none. The removed code is plain `Engine` methods in `build.rs` and `checks_stage.rs`, behind no trait.
+- Tests added: `a_task_plan_runs_no_checks_between_tasks`.
 
 - [ ] **Step 1: Write the failing test** in `build_checks.rs`, next to `two_task_fixture`:
 
@@ -118,4 +121,4 @@ Add one bullet at the end of the "Per-task builders" list in `docs/reference/sof
 Run: `cargo check -j4 -p factory-engine` then `cargo test -j4 -p factory-engine`
 Expected: no warnings, all tests pass, including `task_carry`.
 
-- [ ] **Step 7: Commit** (the driver makes the commit)
+Next plan: none
