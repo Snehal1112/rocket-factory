@@ -83,7 +83,7 @@ The settings, read the way git reads them:
 How each format signs. Every run has stdin from the buffer or null, never a terminal, and is killed after `timeout`:
 
 - OpenPGP and x509: `<program> --status-fd=2 --pinentry-mode error -bsau <key>`, with the buffer on stdin. The signature is stdout. The run counts only when it exits 0 and stderr has a line starting `[GNUPG:] SIG_CREATED `, as git requires. `--pinentry-mode error` needs gpg 2.1 or later; an older gpg rejects it, and the commit falls back to unsigned with that reason.
-- SSH: the buffer is written to a temporary file. A key starting `key::`, or starting `ssh-`, is a literal public key: it is written (without the `key::` prefix) to a temporary key file and `-U` is added so the agent signs. Any other key is a file path, with a leading `~/` expanded from `HOME`. The run is `<program> -Y sign -n git -f <key file> [-U] <buffer file>`, with `SSH_ASKPASS_REQUIRE=never` set so it cannot prompt. The signature is `<buffer file>.sig`. The temporary files are made with `tempfile`, which moves from factory-git's dev-dependencies to its dependencies (it is already a workspace dependency), and are removed afterwards. `-U` needs `SSH_AUTH_SOCK` in the driver's environment; without it ssh-keygen fails and the commit falls back to unsigned.
+- SSH: the buffer is written to a temporary file. A key starting `key::`, or starting `ssh-`, is a literal public key: it is written (without the `key::` prefix) to a temporary key file and `-U` is added so the agent signs. Any other key is a file path, with a leading `~/` expanded from `HOME`. The run is `<program> -Y sign -n git -f <key file> [-U] <buffer file>`, with `SSH_ASKPASS_REQUIRE=never` set so it cannot prompt. The signature is `<buffer file>.sig`. The temporary files are made in `std::env::temp_dir()` with a unique name (`factory-sign-<pid>-<counter>-<nanos>`, opened with `create_new`), and are removed afterwards, also on failure. `-U` needs `SSH_AUTH_SOCK` in the driver's environment; without it ssh-keygen fails and the commit falls back to unsigned.
 
 Every signature has one trailing newline removed before it is stored, so the `gpgsig` header matches what git writes byte for byte.
 
@@ -188,7 +188,6 @@ Commands:
 ## Files changed
 
 - `crates/factory-git/src/sign.rs` (new), `lib.rs`, `commits.rs`, `merge.rs`, `worktree.rs`
-- `crates/factory-git/Cargo.toml` (`tempfile` to dependencies)
 - `crates/factory-git/tests/commits.rs`, `tests/merge.rs`, `tests/worktree.rs`, `tests/base_branch.rs`, `tests/reset.rs`, and `tests/common/mod.rs`
 - The repository-creating test helpers in factory-engine, factory-cli and factory-supervisor tests (`commit.gpgsign = false`)
 - `crates/factory-engine/src/build.rs`, `merge.rs`, `sync.rs` and their tests
@@ -197,7 +196,7 @@ Commands:
 ## Constraints
 
 - Never shell out to `git`. The signing programs are run with `std::process::Command`.
-- No new crate dependency. `tempfile`, already a workspace dependency, becomes a normal dependency of factory-git.
+- No new crate dependency, and no `Cargo.toml` change (a risk path).
 - No prompt: OpenPGP and x509 get `--pinentry-mode error`, SSH gets `SSH_ASKPASS_REQUIRE=never`, and stdin is never a terminal.
 - `SIGN_TIMEOUT` is 30 seconds.
 - A failed signature never fails or parks a job.
@@ -237,5 +236,5 @@ Commands:
 - One trailing newline is removed from every signature, to match git's header byte for byte. Decided by: call
 - The final-merge reports are written in `merge_stage` after `try_merge`, carried by `Step::Merged`; the public `MergeResult` keeps its shape. Decided by: call
 - A signed snapshot moves its branch with a compare against the first parent, keeping today's refusal of a moved branch. Decided by: call
-- `tempfile` becomes a normal dependency of factory-git for the SSH temporary files. Decided by: call
+- The SSH temporary files are hand-made in the system temp folder, so no `Cargo.toml` changes. Decided by: call
 - A failure reason skips `[GNUPG:]` status lines when it picks the last stderr line. Decided by: call
