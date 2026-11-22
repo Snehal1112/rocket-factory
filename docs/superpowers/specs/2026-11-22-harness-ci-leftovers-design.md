@@ -22,9 +22,9 @@ Issue 12's "lock is free during the commit message run" item is obsolete. No com
 | `shape_spec` | `Engine::shape_spec` (`crates/factory-engine/src/ports.rs:240`) branches on `self.config.agent_cli()`. The probe calls it at `crates/factory-engine/src/probe.rs:148`. | It ignores the probe's `harness` argument. Only the config override in `Driver::probe` hides that. |
 | Silent skips | `common::fake_claude()` (`crates/factory-cli/tests/common/mod.rs:7-17`) prints a skip line and returns `None` when the binary is missing. Used at `tests/probe_cmd.rs:320-324` and `tests/plugin_install.rs:64,111`. | Three tests pass without testing anything. |
 | Probe hint | `hide_claude_tools` (`probe.rs:200-208`) and `prepare_for_codex` (`codex_prep.rs:94-99`) fail with `agent file {name} not found`. | No hint when no project is selected. |
-| Exec bits | `scripts/live-smoke.sh` and `crates/factory-cli/tests/support/claude-shim.sh` are mode 100644. `docs/operations/releasing.md:30-32` runs `./scripts/live-smoke.sh`. | `./scripts/live-smoke.sh` gives "permission denied". |
+| Exec bits | Before `a5b9c06`: `scripts/live-smoke.sh` and `crates/factory-cli/tests/support/claude-shim.sh` are mode 100644. `docs/operations/releasing.md:30-32` runs `./scripts/live-smoke.sh`. | `./scripts/live-smoke.sh` gives "permission denied". |
 | `--interactive` | `interactive_step` (`scripts/live-smoke.sh:296-320`). `tests/live_smoke_script.rs` covers only its argument checks. | The step itself is untested. |
-| CI | `.github/workflows/ci.yml`: jobs `check` and `dashboard`, both `ubuntu-latest`, no matrix. `PKGS` and `scripts/release.sh` `CRATES` (`:28-37`) list 8 crates. | No macOS. `factory-procgroup` is never fmt-checked, linted or tested in CI. |
+| CI | Before `a5b9c06`: `.github/workflows/ci.yml`: jobs `check` and `dashboard`, both `ubuntu-latest`, no matrix. `PKGS` and `scripts/release.sh` `CRATES` (`:28-37`) list 8 crates. | No macOS. `factory-procgroup` is never fmt-checked, linted or tested in CI. |
 | `/proc` | CLAUDE.md forbids reading `/proc`. No source does. `crates/factory-cli/tests/no_hardcoded_paths.rs` lints other paths. | Nothing stops a future `/proc` read. |
 | Combine lint | `stale_mentions` (`crates/factory-engine/src/combine.rs:393`) skips fenced lines, not inline backtick spans. `strip_spans` (`crates/factory-core/src/commitmsg.rs:~203`) is private. | A quoted `### Task 1: first` in a later plan warns. |
 | Subfolder cwd | Only the first builder (`builder_starts_in_the_project_folder`, `tests/agent_files.rs:120-143`) and the Codex builder check their cwd. | No test for the resumed, carried, per-task and fix builders, or for the reviewer. The reviewer prompt names the worktree root while the spec cwd is the project folder. |
@@ -35,7 +35,7 @@ Issue 12's "lock is free during the commit message run" item is obsolete. No com
 | Name collision | `create_worktree` (`crates/factory-git/src/worktree.rs:92-126`) refuses `{path} already exists`. `factory-a-001-001-x` is the name of both project `a-001` slug `x` and project `a` slug `001-x`. | Untested, and the error does not say why. |
 | `worktree_root_of` | `repo.rs:96-100` is lexical. | No test or doc for a `..` path. |
 | Committer | `RETIRED_AGENTS` (`crates/factory-core/src/resolve.rs:262`) is applied only to the preset layer (`:276`). Project-own (`:~282`) and base-tip (`:~296`) copies reach `agents.json`, and the builder has the `Agent` tool (`specs.rs:38`). | A builder can start a committer subagent. |
-| Committer text | `journeybook/src/data/journeys-f-h.ts:658`, `journeys-a-c.ts:603`, `journeys-d-e.ts:608` and `reference.ts:397-398` name a committer role. `docs/assets/images/factory-turns.svg` has no run counts. `no_preset_ships_the_committer_or_the_commit_context` (`preset.rs:984-994`) asserts with no messages. `every_intake_drafter_asks_for_the_commit_line` (`agent_lint.rs:1285`) pins only `**Commit:**` and `at most 50 characters`. | Stale text, and a weak pin. |
+| Committer text | Before `b58ac2c`: `journeybook/src/data/journeys-f-h.ts:658`, `journeys-a-c.ts:603`, `journeys-d-e.ts:608` and `reference.ts:397-398` name a committer role. `docs/assets/images/factory-turns.svg` has no run counts. `no_preset_ships_the_committer_or_the_commit_context` (`preset.rs:984-994`) asserts with no messages. `every_intake_drafter_asks_for_the_commit_line` (`agent_lint.rs:1285`) pins only `**Commit:**` and `at most 50 characters`. | Stale text, and a weak pin. |
 
 ## Non-goals
 
@@ -105,7 +105,7 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 
 - `merged_agents` applies the `RETIRED_AGENTS` filter after all three layers are merged.
 - Each project-own or tip copy it drops adds a note: "ignored retired agent {name} from {layer}; delete it". `{layer}` is `the project folder` or `the base branch`.
-- Tests that use `factory-committer.md` as a sample name move to `factory-kb-refresher.md`.
+- Tests that use `factory-committer.md` as a sample name move to `factory-kb-refresher.md` in `resolve.rs`, and to `factory-intake-drafter.md` in `factory-engine/tests/agent_files.rs`, whose list already holds kb-refresher.
 - The journeybook lines drop the committer. They were edited by hand before the job, because no check covers `journeybook/`, and the job adds a test that pins them:
   - `--role` lists `builder`, `reviewer`, `spec-reviewer` and `kb`;
   - the model line names the builder, its fix rounds, the reviewer, the KB refresher and their helpers;
@@ -125,7 +125,7 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 |---|---|
 | `--harness` equals the project's CLI | The project models are kept. |
 | A Codex project probed with `--harness claude` | The Claude defaults are used. |
-| fake-claude not built | The test panics with the build command. |
+| fake-claude not built | The helper builds it; the test panics with the build command only when that build fails. |
 | A probe without `--project` | The error names `--project`. |
 | One OS fails in CI | The other OS still reports. |
 | A `/proc` mention in a comment or test | Allowed. |
@@ -140,13 +140,14 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
   - `tests/agent_files.rs`: `every_builder_and_the_reviewer_start_in_the_project_folder`.
   - `tests/gates.rs`: the stronger `checks_map_project_relative_paths`.
   - `tests/merge.rs`: `a_scoped_job_with_a_merged_base_resumes`.
-  - `src/combine.rs`: `an_inline_code_mention_is_left_alone`, `a_mention_outside_the_code_span_still_warns`.
+  - `src/combine.rs`: `an_inline_code_mention_is_left_alone`, `a_mention_outside_the_code_span_still_warns`, `a_lone_backtick_does_not_hide_a_mention`.
 - factory-cli:
   - `tests/probe_cmd.rs`: `a_cross_harness_probe_uses_the_harness_default_model`, `a_same_harness_probe_keeps_the_project_models`, `the_probe_report_names_the_model`, and `harness_flag_overrides_the_project_agent_cli` also asserts the model.
   - `tests/live_smoke_script.rs`: `interactive_runs_with_a_fake_tmux`, `the_scripts_are_executable`.
-  - `tests/no_hardcoded_paths.rs`: `no_source_reads_proc`.
+  - `tests/probe_cmd.rs` also: `fake_claude_builds_the_binary_when_it_is_missing`.
+  - `tests/no_hardcoded_paths.rs`: `no_source_reads_proc`, `the_proc_lint_catches_a_proc_literal`, `ci_and_release_list_every_workspace_crate`, `ci_runs_on_linux_and_macos`.
   - `tests/project_cmd.rs`: `show_of_a_subfolder_project_with_a_missing_folder_is_disabled`, `a_registered_subfolder_repo_path_names_the_top_folder_rule`, and the full overlap texts.
-  - `tests/agent_lint.rs`: the stronger Commit-line pin.
+  - `tests/agent_lint.rs`: the stronger Commit-line pin, `the_turns_svg_names_the_worst_case_counts`, `the_journeybook_names_no_committer_role`.
 - factory-core:
   - `src/resolve.rs`: `a_retired_agent_is_dropped_from_every_layer_with_a_note`, and the sample name repointed;
   - `src/project.rs`: `overlap_names_the_inner_folder`;
@@ -156,12 +157,12 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 
 ## Files changed
 
-- `crates/factory-engine/src/`: `compat.rs`, `ports.rs`, `probe.rs`, `codex_prep.rs`, `combine.rs`
-- `crates/factory-core/src/`: `commitmsg.rs`, `lib.rs`, `resolve.rs`, `project.rs`, `preset.rs`
+- `crates/factory-engine/src/`: `compat.rs`, `ports.rs`, `probe.rs`, `combine.rs`
+- `crates/factory-core/src/`: `commitmsg.rs`, `lib.rs`, `probe.rs`, `resolve.rs`, `project.rs`, `preset.rs`
+- `crates/factory-cli/src/`: `probe.rs`
 - `crates/factory-git/src/`: `repo.rs`, `worktree.rs`
 - Tests: the files named in Testing, and `crates/factory-cli/tests/common/mod.rs`, `tests/plugin_install.rs`
-- `.github/workflows/ci.yml`, `scripts/release.sh`, and the modes of `scripts/live-smoke.sh` and `crates/factory-cli/tests/support/claude-shim.sh`
-- `journeybook/src/data/journeys-a-c.ts`, `journeys-d-e.ts`, `journeys-f-h.ts`, `reference.ts`, `docs/assets/images/factory-turns.svg`
+- Already changed on main by hand, in commits `a5b9c06` and `b58ac2c`, so the job adds only the tests that pin them: `.github/workflows/ci.yml`, `scripts/release.sh`, `scripts/live-smoke.sh`, the modes of `scripts/live-smoke.sh` and `crates/factory-cli/tests/support/claude-shim.sh`, the four journeybook data files and `docs/assets/images/factory-turns.svg`
 
 ## Constraints
 
@@ -177,7 +178,7 @@ CI: check and dashboard × {ubuntu-latest, macos-latest}, fail-fast off, PKGS + 
 
 - `factory probe --harness codex` on a Claude project sends `gpt-5.6-luna` for every role, and the report names it.
 - `shape_spec` follows the probe harness.
-- A missing fake-claude binary fails the three tests with the build command.
+- A missing fake-claude binary is built by the helper, and the three tests panic with the build command only when that build fails.
 - The no-agent probe error names `--project`.
 - Both shell scripts are executable, and the `--interactive` step has a test.
 - CI runs both jobs on Linux and macOS with fail-fast off, and `factory-procgroup` is in `PKGS` and `CRATES`.
