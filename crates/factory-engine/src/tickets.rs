@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use factory_core::{parse_issue_refs, write_atomic, Job, Stage};
+use factory_core::{parse_issue_refs, write_atomic, IssueRef, Job, Stage};
 use serde_json::{json, Value};
 
 use crate::ports::short_sha;
@@ -240,7 +240,11 @@ fn stage_follow_ups(
             report.skip(format!("job {id} is an intake job")),
         ));
     }
-    let refs = parse_issue_refs(&job.feature);
+    // An intake title can carry a URL to another issue, so only the intake issue is a parent.
+    let refs = match job.intake_issue {
+        Some(number) => vec![IssueRef { number, repo: None }],
+        None => parse_issue_refs(&job.feature),
+    };
     if refs.is_empty() {
         return Ok(StageOutcome::Stop(
             report.skip("the feature text has no issue references".to_string()),
