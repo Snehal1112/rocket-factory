@@ -35,6 +35,18 @@ pub enum Action {
     Intake,
 }
 
+impl Action {
+    /// The lower-case name, the same as in the request file.
+    pub fn name(self) -> &'static str {
+        match self {
+            Action::Run => "run",
+            Action::Approve => "approve",
+            Action::Retry => "retry",
+            Action::Intake => "intake",
+        }
+    }
+}
+
 /// The placeholder job of an intake request.
 pub const INTAKE_JOB: &str = "000";
 
@@ -154,6 +166,16 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_name_matches_the_serde_name() {
+        for a in [Action::Run, Action::Approve, Action::Retry, Action::Intake] {
+            assert_eq!(
+                serde_json::to_string(&a).expect("json"),
+                format!("\"{}\"", a.name())
+            );
+        }
+    }
 
     #[test]
     fn good_requests_are_accepted() {

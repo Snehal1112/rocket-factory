@@ -9,7 +9,6 @@ use factory_core::{Home, HomeConfig};
 use factory_supervisor::admit;
 use factory_supervisor::api::{ApiDeps, ApiServer};
 use factory_supervisor::lock::stop_file;
-use factory_supervisor::request::{Action, Request};
 use factory_supervisor::token;
 use factory_supervisor::version_check;
 use factory_supervisor::{
@@ -51,7 +50,7 @@ enum Cmd {
         job: String,
         #[arg(long)]
         series: bool,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "series")]
         approve: bool,
         /// Queue a retry of a parked job at its resume stage. A job that cannot be retried is refused here.
         #[arg(long, conflicts_with_all = ["approve", "series"])]
@@ -59,7 +58,7 @@ enum Cmd {
     },
 }
 
-/// Queues one request and returns its id. A retry passes the same checks as the API's retry route.
+/// Queues one request and returns its id. Each action passes the checks of the API's route.
 fn enqueue(
     home: &Home,
     project: &str,
@@ -72,14 +71,11 @@ fn enqueue(
     if retry {
         return admit::queue_retry(home, project, job, now).map_err(|e| e.to_string());
     }
-    let action = if approve {
-        Action::Approve
-    } else {
-        Action::Run
-    };
-    let req = Request::new(project, action, job, series, now).map_err(|e| e.to_string())?;
-    queue::enqueue(home, &req).map_err(|e| e.to_string())?;
-    Ok(req.id)
+    if approve {
+        return admit::queue_approve(home, project, job, false, None, now)
+            .map_err(|e| e.to_string());
+    }
+    admit::queue_run(home, project, job, series, now).map_err(|e| e.to_string())
 }
 
 fn now_ms() -> u64 {
@@ -203,7 +199,13 @@ fn status(home: &Home, mismatch: Option<&str>) -> String {
     }
     for item in items {
         match item {
-            QueueItem::Ok(r) => out.push_str(&format!("  {} {} job {}\n", r.id, r.project, r.job)),
+            QueueItem::Ok(r) => out.push_str(&format!(
+                "  {} {} {} job {}\n",
+                r.id,
+                r.project,
+                r.action.name(),
+                r.job
+            )),
             QueueItem::Bad { file, reason } => out.push_str(&format!("  bad {file}: {reason}\n")),
         }
     }
@@ -307,6 +309,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use factory_supervisor::request::{Action, Request};
 
     #[test]
     fn report_mismatch_logs_a_sup_warn() {
@@ -427,6 +430,47 @@ mod tests {
         let err = enqueue(&home, "nope", "1", false, false, true, 1).expect_err("refused");
         assert_eq!(err, "no project named nope");
         assert!(queue::list(&home).is_empty());
+    }
+
+    #[test]
+    fn enqueue_refuses_an_unknown_project_for_run_and_approve() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        for approve in [false, true] {
+            let err = enqueue(&home, "nope", "1", false, approve, false, 1).expect_err("refused");
+            assert_eq!(err, "no project named nope");
+        }
+        assert!(queue::list(&home).is_empty());
+    }
+
+    #[test]
+    fn enqueue_approve_conflicts_with_series() {
+        let err = Cli::try_parse_from([
+            "factoryd",
+            "enqueue",
+            "--project",
+            "p",
+            "--job",
+            "001",
+            "--approve",
+            "--series",
+        ])
+        .err()
+        .expect("refused");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn status_shows_the_action_of_a_queued_request() {
+        let t = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(t.path().to_path_buf());
+        let req = Request::new("p", Action::Approve, "001", false, 1).expect("req");
+        queue::enqueue(&home, &req).expect("enqueue");
+        let text = status(&home, None);
+        assert!(
+            text.contains(&format!("  {} p approve job 001\n", req.id)),
+            "{text}"
+        );
     }
 
     #[test]
