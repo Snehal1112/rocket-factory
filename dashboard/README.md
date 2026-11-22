@@ -36,7 +36,6 @@ The header shows a daily budget strip in home mode when `daily_budget_weighted` 
 - `.superpowers/factory/board.json`: job stages, written by the `factory` driver (the crates under `crates/`, binary in `crates/factory-cli`). Optional `stage_history`, `series`, `series.id`, `cancelled`, `tokens` and `budget_weighted` are read leniently, and a bad value is dropped. The card token bar shows the board total, or the running total from the agent events when that is higher, so it moves while an agent works.
 - `.superpowers/sdd/<job dir>/plan.md`, `spec.md`, `progress.md`: the plan title, spec goal and task list on each card. A task is done when its box is ticked or the ledger says `Task N: complete`; a merged job shows every task done.
 - `.superpowers/factory/events.jsonl`: subagent and tool events, appended by the same driver, with `job_id` and `tokens` on every event. There is no hook.
-
 - `.superpowers/sdd/<job dir>/gates.jsonl`: the gate record, written by the driver only when the project sets `gate_record = true`. The server reads the last 512 KiB, skips broken, newer-version and unknown lines, and gives each job `gates`: `{list, stopped_at}`, or null without a file. `list` has the 18 gates in card order, each with `gate`, `stage`, `state` (a result, `not-reached` or `interrupted`), `detail`, `round` and `history`. The card draws a strip of marks from it. Format and rules: `docs/reference/software-factory.md`, section Gate record.
 
 It never writes any of these files. If it is not running, the factory works the same.

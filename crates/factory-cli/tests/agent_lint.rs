@@ -1,12 +1,11 @@
 //! Lint tests for the factory agent files, the /factory command and the cutover.
 //! They read the repo files and pin the rules the driver relies on.
 
+use factory_core::preset::PRESET_NAMES as PRESETS;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), String>;
-
-const PRESETS: [&str; 5] = ["rust", "go", "ruby", "csharp", "node"];
 
 /// The repo-relative path of one agent file of a preset.
 fn preset_agent(preset: &str, name: &str) -> String {
@@ -372,7 +371,7 @@ fn kb_refresher_body_pins_the_rules() -> TestResult {
         "kb refresher",
         &[
             "kb-refresh",
-            "workflow scripts",
+            "Never use workflow scripts",
             "only files under the KB path",
             "BLOCKED:",
             "No relevant changes",
@@ -1180,6 +1179,32 @@ fn builder_files_tell_the_builder_to_match_conventions() -> TestResult {
     Ok(())
 }
 
+/// Rocket-only words in the text: lowercase words match in any case, `Rocket` only as written.
+fn rocket_only_hits(text: &str) -> Vec<&'static str> {
+    let lower = text.to_lowercase();
+    let mut hits: Vec<&'static str> = ["shadcn", "lucide", "zustand", "rocket-infra", "tauri"]
+        .into_iter()
+        .filter(|word| lower.contains(word))
+        .collect();
+    if text.contains("Rocket") {
+        hits.push("Rocket");
+    }
+    hits
+}
+
+#[test]
+fn forbid_words_match_in_any_case() {
+    assert_eq!(
+        rocket_only_hits("Uses ZUSTAND and Lucide icons in src-Tauri."),
+        vec!["lucide", "zustand", "tauri"]
+    );
+    assert_eq!(
+        rocket_only_hits("A rocket-infra deploy for Rocket."),
+        vec!["rocket-infra", "Rocket"]
+    );
+    assert!(rocket_only_hits("plain rust text about a rocket").is_empty());
+}
+
 #[test]
 fn preset_agent_files_name_no_rocket_only_term() -> TestResult {
     for preset in PRESETS {
@@ -1190,11 +1215,10 @@ fn preset_agent_files_name_no_rocket_only_term() -> TestResult {
         for name in factory_file_names(&dir)? {
             let path = preset_agent(preset, &name);
             let text = read(&path)?;
-            forbid_all(
-                &text,
-                &path,
-                &["shadcn", "lucide", "Zustand", "rocket-infra", "Rocket"],
-            )?;
+            let hits = rocket_only_hits(&text);
+            if !hits.is_empty() {
+                return Err(format!("{path} must not contain: {hits:?}"));
+            }
             if preset != "node" {
                 forbid_all(&text.to_lowercase(), &path, &["yarn"])?;
             }
