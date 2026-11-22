@@ -1,24 +1,9 @@
 //! `factory retry`: continues a parked job from the stage that parked it.
 
-use factory_core::{Job, ParkKind, ParkRecord, ResumeAt, Stage};
+use factory_core::{no_resume_refusal, ResumeAt, Stage};
 
 use crate::runloop::{cancel_reason, run_series, RunEnd};
 use crate::{now_secs, sync_requested_by, Driver, EngineError, SyncCaller, SyncOutcome, MAX_SYNCS};
-
-/// The commands the park of a job without a resume stage offers, joined for a refusal.
-fn park_commands(driver: &Driver, job: &Job) -> String {
-    if let Some(record) = ParkRecord::read(&driver.job_dir(job)) {
-        if !record.next.is_empty() {
-            return record.next.join(", ");
-        }
-    }
-    let kind = job
-        .park_kind
-        .as_deref()
-        .and_then(|k| serde_json::from_value::<ParkKind>(serde_json::Value::String(k.into())).ok())
-        .unwrap_or(ParkKind::Other);
-    kind.next(&job.id).join(", ")
-}
 
 /// Continues a parked job at the stage that parked it, then drives it like `run` until it merges
 /// or parks. It takes no leases, the caller holds them as for `run_series`.
@@ -47,9 +32,10 @@ fn retry_inner(driver: &Driver, id: &str) -> Result<RunEnd, EngineError> {
         )));
     }
     let Some(resume) = job.park_resume else {
-        return Err(EngineError::Refused(format!(
-            "job {id} has no stage to retry at; use {}",
-            park_commands(driver, &job)
+        return Err(EngineError::Refused(no_resume_refusal(
+            &driver.job_dir(&job),
+            &job.id,
+            job.park_kind.as_deref(),
         )));
     };
     let word = resume.as_str();

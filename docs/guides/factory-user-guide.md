@@ -1153,7 +1153,7 @@ factoryd enqueue --project my-app --job 028 --retry
 
 - It prints the new request id, for example `1761379200000-my-app-028`.
 - A request starts `factory --project <name> run <job> [--series]`, `factory --project <name> approve <job>`, or `factory --project <name> retry <job>`. A run or a retry waits for the daily budget, an approve does not.
-- `--retry` checks the job first, like the dashboard's Retry button: it refuses an unknown project or job, a cancelled job, a job that is not parked, a park with no resume stage, a merge or sync retry that lacks its approval, and a job that already has an approve or retry queued. It prints the reason and exits 1.
+- `--retry` checks the job first, like the dashboard's Retry button: it refuses an unknown project or job, a cancelled job, a job that is not parked, a park with no resume stage (naming that park's next commands), a merge or sync retry that lacks its approval, and a job that already has an approve or retry queued. It prints the reason and exits 1.
 - Without `--retry`, `enqueue` checks that the project exists and refuses an unknown one. It never needs `factoryd` to be running; if none runs, the request waits in the queue until one starts.
 - `--series` together with `--approve` is refused by the argument parser.
 - An approve is refused for the same job states as the dashboard's Approve button and while an approve or retry of the job is queued; a run is refused while a run of the job is queued.
