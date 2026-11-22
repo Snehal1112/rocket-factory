@@ -74,6 +74,7 @@
     if (slug) body.slug = slug;
     body.run = form.run !== false;
     body.series = form.series !== false;
+    if (form.oneJob === true) body.one_job = true;
     return body;
   }
 

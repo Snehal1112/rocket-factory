@@ -181,7 +181,11 @@ mod tests {
         let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::new(Vec::new()));
         Driver::new(
             Layout::in_repo(&root),
-            Config::default(),
+            // Unit tests skip the real disk check.
+            Config {
+                min_free_disk_mb: 0,
+                ..Config::default()
+            },
             Box::new(move |_| runner.clone()),
         )
         .expect("driver")

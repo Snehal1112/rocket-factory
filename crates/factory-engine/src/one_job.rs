@@ -7,7 +7,7 @@ use factory_core::{title_subject, Job, Stage};
 use crate::combine::with_commit_line;
 use crate::runloop::{
     add_job, add_warning, adopt_draft, create_job_with_spec_accepting, record_accepted,
-    user_decisions, validate_series, SpecMode, Validated, NO_USER_DECISION,
+    rolled_back, user_decisions, validate_series, SpecMode, Validated, NO_USER_DECISION,
 };
 use crate::tasks::{header_commit_line, parse_checkbox_tasks, plan_title};
 use crate::{combine_plans, parse_series_with, Driver, EngineError, SeriesError};
@@ -27,6 +27,16 @@ pub struct OneJob {
     pub job: Job,
     /// Plain lines for the CLI to print as `note:` lines.
     pub notes: Vec<String>,
+}
+
+/// The refusal text when the combined plan holds a different number of tasks than `expected`.
+fn count_mismatch(text: &str, expected: usize) -> Option<String> {
+    let found = parse_checkbox_tasks(text).len();
+    (found != expected).then(|| {
+        format!(
+            "combining the plans failed: the combined plan has {found} tasks but {expected} were expected"
+        )
+    })
 }
 
 /// Creates one job for the whole plan chain. The guard runs first: an estimate over the budget needs consent.
@@ -116,28 +126,28 @@ pub fn create_one_job_accepting(
         texts.push((name, text));
     }
     let combined = combine_plans(&texts);
-    let found = parse_checkbox_tasks(&combined.text).len();
-    if found != combined.tasks {
-        return Err(EngineError::Msg(format!(
-            "combining the plans failed: the combined plan has {found} tasks but {} were expected",
-            combined.tasks
-        )));
+    if let Some(why) = count_mismatch(&combined.text, combined.tasks) {
+        return Err(EngineError::Msg(why));
     }
     let issues = factory_core::parse_issues(feature);
-    let mut job = add_job(driver, slug, feature, &issues, None, Stage::Build, model)?;
-    let dir = driver.job_dir(&job);
-    let plan_text = match &spec_text {
-        Some(spec) => {
-            let subject =
-                header_commit_line(spec).unwrap_or_else(|| title_subject(&plan_title(spec)));
-            with_commit_line(&combined.text, &subject)
+    let mut job = rolled_back(driver, |made| {
+        let job = add_job(driver, slug, feature, &issues, None, Stage::Build, model)?;
+        made.push(job.clone());
+        let dir = driver.job_dir(&job);
+        let plan_text = match &spec_text {
+            Some(spec) => {
+                let subject =
+                    header_commit_line(spec).unwrap_or_else(|| title_subject(&plan_title(spec)));
+                with_commit_line(&combined.text, &subject)
+            }
+            None => combined.text.clone(),
+        };
+        std::fs::write(dir.join("plan.md"), &plan_text)?;
+        if let Some(text) = &spec_text {
+            std::fs::write(dir.join("spec.md"), text)?;
         }
-        None => combined.text.clone(),
-    };
-    std::fs::write(dir.join("plan.md"), &plan_text)?;
-    if let Some(text) = &spec_text {
-        std::fs::write(dir.join("spec.md"), text)?;
-    }
+        Ok(job)
+    })?;
     // The estimate is best effort, as in add_job for series jobs.
     if let Some(est) = crate::costs::estimate_for_plan(driver, combined.text.len() as u64) {
         let stored = est.clone();
@@ -172,4 +182,24 @@ pub fn create_one_job_accepting(
         ));
     }
     Ok(OneJob { job, notes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_mismatch_names_both_counts() {
+        let text = "### Task 1: a\n\n### Task 2: b\n";
+        assert_eq!(
+            count_mismatch(text, 3).as_deref(),
+            Some("combining the plans failed: the combined plan has 2 tasks but 3 were expected")
+        );
+    }
+
+    #[test]
+    fn count_mismatch_is_none_when_the_counts_agree() {
+        let text = "### Task 1: a\n\n### Task 2: b\n";
+        assert!(count_mismatch(text, 2).is_none());
+    }
 }

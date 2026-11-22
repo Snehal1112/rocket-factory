@@ -308,6 +308,7 @@ fn wait_ends_on_cancel() {
     assert!(matches!(out, Err(EngineError::Cancelled)), "{out:?}");
     assert_eq!(*m.disk_calls.lock().expect("calls"), vec![0.0]);
     assert_eq!(runner.call_count(), 0);
+    assert_eq!(fx.job().machine_wait, None);
 }
 
 #[test]
@@ -766,6 +767,69 @@ fn change_seeing_note(note: std::path::PathBuf, seen: Arc<AtomicU32>) -> Effect 
         std::fs::write(spec.cwd.join("a.txt"), "x\n").expect("write change");
         "done".to_string()
     })
+}
+
+#[test]
+fn a_failed_disk_run_waits_for_the_disk_then_reruns() {
+    let fx = disk_fixture();
+    let m = fake_machine(short_on_third_call(), |_, _| {});
+    let s = script(
+        vec![change_effect()],
+        vec![step(Some(failed_run(
+            "write: No space left on device",
+            3,
+            50,
+            500,
+        )))],
+    );
+    let out = fx
+        .engine(&s)
+        .with_machine_wait(m.wait)
+        .build_stage()
+        .expect("build");
+    assert_eq!(
+        out,
+        StageOutcome::Advanced(Stage::Review),
+        "{}",
+        ledger(&fx)
+    );
+    assert_eq!(s.specs().len(), 2);
+    assert!(
+        ledger(&fx).contains("builder failed (disk), rerunning once"),
+        "{}",
+        ledger(&fx)
+    );
+    assert!(m.disk_calls.lock().expect("calls").contains(&60.0));
+    assert_eq!(fx.job().machine_wait, None);
+}
+
+#[test]
+fn an_other_failure_waits_for_the_disk_before_its_rerun() {
+    let fx = disk_fixture();
+    let m = fake_machine(short_on_third_call(), |_, _| {});
+    let s = script(
+        vec![change_effect()],
+        vec![step(Some(failed_run(OTHER, 3, 50, 500)))],
+    );
+    let out = fx
+        .engine(&s)
+        .with_machine_wait(m.wait)
+        .build_stage()
+        .expect("build");
+    assert_eq!(
+        out,
+        StageOutcome::Advanced(Stage::Review),
+        "{}",
+        ledger(&fx)
+    );
+    assert_eq!(s.specs().len(), 2);
+    assert!(m.disk_calls.lock().expect("calls").contains(&60.0));
+    assert!(
+        ledger(&fx).contains("builder failed (claude reported success: it broke), rerunning once"),
+        "{}",
+        ledger(&fx)
+    );
+    assert_eq!(fx.job().machine_wait, None);
 }
 
 #[test]

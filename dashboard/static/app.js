@@ -523,6 +523,7 @@
       slug: byId("nj-slug").value,
       run: byId("nj-run").checked,
       series: byId("nj-series").checked,
+      oneJob: byId("nj-onejob").checked,
     });
     if (body.error) {
       showBanner(body.error);

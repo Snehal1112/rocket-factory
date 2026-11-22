@@ -632,7 +632,11 @@ mod tests {
             job_dir.join("plan.md"),
             &repo,
             &runner,
-            factory_core::Config::default(),
+            // Unit tests skip the real disk check.
+            factory_core::Config {
+                min_free_disk_mb: 0,
+                ..factory_core::Config::default()
+            },
             &events,
         )
         .expect("engine");

@@ -51,7 +51,7 @@ impl Engine<'_> {
             Some(line) => match check_job_subject(&line) {
                 Ok(()) => Some(line),
                 Err(why) => {
-                    self.ruling(&format!(
+                    self.ruling_once(&format!(
                         "merge message: plan **Commit:** line refused ({why}), plan title used"
                     ))?;
                     None
@@ -119,7 +119,7 @@ impl Engine<'_> {
         match validate_message(&message) {
             Ok(()) => Ok(message),
             Err(why) => {
-                self.ruling(&format!("merge message: {why}, fixed message used"))?;
+                self.ruling_once(&format!("merge message: {why}, fixed message used"))?;
                 Ok(append_footers(
                     &fixed_message(
                         MessageKind::Merge,

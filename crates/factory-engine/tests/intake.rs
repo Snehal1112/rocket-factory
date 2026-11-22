@@ -351,6 +351,7 @@ fn a_job_creation_io_error_fails_at_once_without_a_redraft() {
         }
     );
     assert_eq!(it.script.drafter_specs.lock().expect("specs").len(), 1);
+    assert!(it.driver.store().load().expect("board").jobs.is_empty());
 }
 
 #[test]

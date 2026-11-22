@@ -143,8 +143,45 @@ fn a_plan_without_a_commit_line_uses_the_plan_title() {
         .job_message(&request("", "", &[], true))
         .expect("message");
     let subject = message.lines().next().expect("subject");
-    assert!(subject.contains("Retry a parked job") || subject.contains("retry a parked job"));
-    assert!(!subject.starts_with("chore(factory): merge job"));
+    assert_eq!(subject, "feat: retry a parked job");
+}
+
+#[test]
+fn a_title_ending_in_a_period_drops_the_period() {
+    let fx = Fixture::new();
+    write_plan(&fx, "# Retry a parked job.\n\n**Goal:** Retry it.\n");
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    let message = engine
+        .job_message(&request("", "", &[], true))
+        .expect("message");
+    let subject = message.lines().next().expect("subject");
+    assert_eq!(subject, "feat: retry a parked job");
+    assert!(
+        !fx.ledger().contains("fixed message used"),
+        "{}",
+        fx.ledger()
+    );
+}
+
+#[test]
+fn a_second_merge_message_writes_the_refused_line_ruling_once() {
+    let fx = Fixture::new();
+    let _ = std::fs::remove_file(fx.job_dir.join("progress.md"));
+    write_plan(&fx, "# Retry\n\n**Commit:** Added a thing\n");
+    let runner = scripted(vec![]);
+    let engine = fx.engine(&runner);
+    for _ in 0..2 {
+        engine
+            .job_message(&request("", "", &[], true))
+            .expect("message");
+    }
+    assert_eq!(
+        fx.ledger().matches("plan **Commit:** line refused").count(),
+        1,
+        "{}",
+        fx.ledger()
+    );
 }
 
 #[test]
@@ -157,7 +194,81 @@ fn a_plan_without_a_heading_uses_the_feature() {
         .job_message(&request("", "", &[], true))
         .expect("message");
     let subject = message.lines().next().expect("subject");
-    assert!(subject.contains("demo feature"));
+    assert_eq!(subject, "feat: demo feature");
+}
+
+/// A builder that writes one file per run, and a reviewer that asks for changes once.
+struct NoteRunner {
+    builds: std::sync::atomic::AtomicUsize,
+    reviews: std::sync::atomic::AtomicUsize,
+}
+
+impl factory_agent::AgentRunner for NoteRunner {
+    fn run(&self, spec: &factory_agent::AgentSpec) -> factory_agent::AgentRun {
+        use std::sync::atomic::Ordering::SeqCst;
+        let text = if spec.role == "builder" {
+            let n = self.builds.fetch_add(1, SeqCst);
+            std::fs::create_dir_all(spec.cwd.join("docs")).expect("mkdir");
+            std::fs::write(spec.cwd.join(format!("docs/f{n}.txt")), "x\n").expect("write");
+            let subject = [
+                "Add the first file",
+                "Add the second file",
+                "Fix the finding",
+            ][n.min(2)];
+            format!("Done.\n\n---BEGIN COMMIT---\n{subject}\n\nWhy it matters.\n\n- Change f{n}\n---END COMMIT---\n")
+        } else if spec.role == "reviewer" && self.reviews.fetch_add(1, SeqCst) == 0 {
+            "1. [blocker] docs/f0.txt:1 handle the empty case.\nVERDICT: CHANGES".to_string()
+        } else {
+            "VERDICT: APPROVE".to_string()
+        };
+        factory_agent::AgentRun {
+            session_id: Some("sess-1".to_string()),
+            ..factory_agent::AgentRun::done(&text)
+        }
+    }
+}
+
+#[test]
+fn a_task_job_with_a_fix_round_merges_with_its_sections_and_review_fixes() {
+    let runner = std::sync::Arc::new(NoteRunner {
+        builds: std::sync::atomic::AtomicUsize::new(0),
+        reviews: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let fx = common::SeriesFixture::build(
+        "VERDICT: APPROVE",
+        factory_core::Config::default(),
+        move |_| runner.clone(),
+    );
+    let dir = fx.tmp.path().join("plans");
+    std::fs::create_dir_all(&dir).expect("plans dir");
+    let plan = dir.join("plan-01-two.md");
+    std::fs::write(
+        &plan,
+        "# Two\n\n**Goal:** Ship two files.\n\n**Commit:** feat(x): ship two files\n\n### Task 1: first\n\n### Task 2: second\n\nNext plan: none\n",
+    )
+    .expect("plan");
+    let job = factory_engine::create_job(&fx.driver, "two", "two files", Some(&plan), None)
+        .expect("create");
+    assert_eq!(
+        factory_engine::run_job(&fx.driver, &job.id).expect("run"),
+        factory_engine::RunEnd::Merged
+    );
+    let repo = git2::Repository::open(&fx.main).expect("open");
+    let tip = repo
+        .revparse_single("main")
+        .expect("main")
+        .peel_to_commit()
+        .expect("commit");
+    let msg = tip.message().expect("msg").to_string();
+    assert!(
+        msg.starts_with("feat(x): ship two files\n\nShip two files.\n\n"),
+        "{msg}"
+    );
+    assert!(msg.contains("Add the first file:\n- Change f0"), "{msg}");
+    assert!(msg.contains("Add the second file:\n- Change f1"), "{msg}");
+    assert!(msg.contains("Review fixes:\n- Change f2"), "{msg}");
+    assert!(msg.trim().ends_with("Factory-Job: 001"), "{msg}");
+    assert!(!msg.lines().any(|l| l.starts_with("wip:")), "{msg}");
 }
 
 #[test]

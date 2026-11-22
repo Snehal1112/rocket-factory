@@ -80,6 +80,23 @@ fn over_budget_without_consent_creates_nothing() {
 }
 
 #[test]
+fn a_failed_job_folder_leaves_no_job_on_the_board() {
+    let fx = fixture(10_000_000);
+    let plans = four_plans(fx.tmp.path());
+    // A file where the jobs folder belongs makes the job folder fail after the board write.
+    let jobs = fx.driver.layout().jobs_dir.clone();
+    if jobs.is_dir() {
+        std::fs::remove_dir_all(&jobs).expect("remove the jobs folder");
+    }
+    std::fs::create_dir_all(jobs.parent().expect("jobs parent")).expect("jobs parent");
+    std::fs::write(&jobs, "not a folder").expect("jobs file");
+    let err =
+        create_one_job(&fx.driver, "demo", "f", &plans, None, None, false).expect_err("io error");
+    assert!(matches!(err, EngineError::Io(_)), "{err}");
+    assert!(fx.driver.store().load().expect("board").jobs.is_empty());
+}
+
+#[test]
 fn a_plan_with_no_task_is_refused_with_its_name() {
     let fx = fixture(1_000_000);
     let plans = four_plans(fx.tmp.path());

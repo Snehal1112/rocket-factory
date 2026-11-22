@@ -131,6 +131,9 @@ pub use waivers::{
     WAIVERS_FILE,
 };
 
+/// The start of the `NeedsConsent` text. factoryd matches it to answer a conflict.
+pub const NEEDS_CONSENT: &str = "needs consent:";
+
 #[derive(Debug, Error)]
 pub enum EngineError {
     #[error("core: {0}")]
@@ -255,5 +258,20 @@ impl<'a> Engine<'a> {
     pub fn with_codex_skill_roots(mut self, roots: Vec<PathBuf>) -> Self {
         self.codex_skill_roots = roots;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn needs_consent_text_starts_with_the_const() {
+        let text = EngineError::NeedsConsent {
+            estimate: 2,
+            budget: 1,
+        }
+        .to_string();
+        assert!(text.starts_with(NEEDS_CONSENT), "{text}");
     }
 }
