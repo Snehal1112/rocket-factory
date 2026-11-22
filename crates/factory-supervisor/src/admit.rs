@@ -1,4 +1,4 @@
-//! The checks a request must pass before it is queued. The HTTP API and `factoryd enqueue --retry`
+//! The checks a request must pass before it is queued. The HTTP API and `factoryd enqueue`
 //! share them, because the queued child would refuse a bad request and nobody reads that refusal.
 
 use std::fmt;
@@ -6,7 +6,7 @@ use std::fmt;
 use factory_core::project::{self, ProjectFile};
 use factory_core::{normalize_id, Board, Home, Layout, ResumeAt, Stage};
 
-use crate::request::{validate_job, Action, Request};
+use crate::request::{validate_job, Action, Request, INTAKE_JOB};
 use crate::{queue, QueueError};
 
 /// Why a request was not queued. The API maps each kind to its status code.
@@ -54,17 +54,30 @@ pub fn project_layout(home: &Home, name: &str) -> Result<Layout, Refusal> {
 /// A job id checked and padded, such as `1` to `001`.
 pub fn job_id(raw: &str) -> Result<String, Refusal> {
     validate_job(raw).map_err(|e| Refusal::BadRequest(e.to_string()))?;
-    normalize_id(raw).map_err(|e| Refusal::BadRequest(e.to_string()))
+    let id = normalize_id(raw).map_err(|e| Refusal::BadRequest(e.to_string()))?;
+    if id == INTAKE_JOB {
+        return Err(Refusal::BadRequest(format!(
+            "job {INTAKE_JOB} is not a job, ids start at 001"
+        )));
+    }
+    Ok(id)
+}
+
+/// True when a queued or running request of one of `actions` exists for the padded job `id`.
+/// An old entry stored with an unpadded job id matches too.
+fn is_queued(home: &Home, name: &str, id: &str, actions: &[Action]) -> bool {
+    queue::list(home).iter().any(|item| {
+        matches!(item, queue::QueueItem::Ok(r)
+            if r.project == name
+                && actions.contains(&r.action)
+                && normalize_id(&r.job).is_ok_and(|j| j == id))
+    })
 }
 
 /// Refuses when an approve or retry request for the job is already queued or running.
 pub fn refuse_if_queued(home: &Home, name: &str, id: &str) -> Result<(), Refusal> {
     // The queue entry stays until the child finishes, so this also covers a running request.
-    let twice = queue::list(home).iter().any(|item| {
-        matches!(item, queue::QueueItem::Ok(r)
-            if r.project == name && r.job == id && matches!(r.action, Action::Approve | Action::Retry))
-    });
-    if twice {
+    if is_queued(home, name, id, &[Action::Approve, Action::Retry]) {
         return Err(Refusal::Conflict(format!(
             "job {id} already has an approve or retry queued"
         )));
@@ -78,6 +91,29 @@ pub fn enqueue(home: &Home, req: &Request) -> Result<(), Refusal> {
         QueueError::Duplicate(id) => Refusal::Conflict(format!("request {id} is already queued")),
         other => Refusal::Failed(other.to_string()),
     })
+}
+
+/// Queues a run request for job `raw_id` of project `name`. A run blocks only another run, and the
+/// queue entry stays while the child runs, so a running run blocks too. The board is not read: the
+/// child reports a job that does not exist. Returns the request id.
+pub fn queue_run(
+    home: &Home,
+    name: &str,
+    raw_id: &str,
+    series: bool,
+    now_ms: u64,
+) -> Result<String, Refusal> {
+    project_layout(home, name)?;
+    let id = job_id(raw_id)?;
+    if is_queued(home, name, &id, &[Action::Run]) {
+        return Err(Refusal::Conflict(format!(
+            "job {id} already has a run queued"
+        )));
+    }
+    let req = Request::new(name, Action::Run, &id, series, now_ms)
+        .map_err(|e| Refusal::BadRequest(e.to_string()))?;
+    enqueue(home, &req)?;
+    Ok(req.id)
 }
 
 /// Checks that job `raw_id` of project `name` can be retried, then queues a retry request.
@@ -141,6 +177,94 @@ mod tests {
             &format!(r#""stage":"needs-human",{extra}"#),
         );
         write_board(home, &format!(r#"{{"jobs":[{job}]}}"#));
+    }
+
+    fn jobs(home: &Home) -> Vec<(Action, String)> {
+        queue::list(home)
+            .into_iter()
+            .map(|item| match item {
+                queue::QueueItem::Ok(r) => (r.action, r.job.clone()),
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn queue_run_refuses_a_second_run() {
+        let (_t, home) = fixture();
+        queue_run(&home, "good", "1", false, 1).expect("queued");
+        let err = queue_run(&home, "good", "001", false, 2).expect_err("refused");
+        assert_eq!(
+            err,
+            Refusal::Conflict("job 001 already has a run queued".into())
+        );
+        assert_eq!(jobs(&home), vec![(Action::Run, "001".to_string())]);
+    }
+
+    #[test]
+    fn job_id_refuses_job_zero() {
+        for raw in ["0", "00", "000"] {
+            assert_eq!(
+                job_id(raw).expect_err("refused"),
+                Refusal::BadRequest("job 000 is not a job, ids start at 001".into())
+            );
+        }
+        assert_eq!(job_id("1").expect("ok"), "001");
+    }
+
+    #[test]
+    fn refuse_if_queued_matches_an_unpadded_entry() {
+        let (_t, home) = fixture();
+        parked(&home, RESUME_MERGE);
+        queue::enqueue(
+            &home,
+            &Request::new("good", Action::Approve, "1", false, 1).expect("req"),
+        )
+        .expect("enqueue");
+        let err = queue_retry(&home, "good", "1", 2).expect_err("refused");
+        assert_eq!(
+            err,
+            Refusal::Conflict("job 001 already has an approve or retry queued".into())
+        );
+        assert_eq!(queue::list(&home).len(), 1);
+    }
+
+    #[test]
+    fn queue_run_pads_the_job_id() {
+        let (_t, home) = fixture();
+        queue_run(&home, "good", "0001", true, 1).expect("queued");
+        assert_eq!(jobs(&home), vec![(Action::Run, "001".to_string())]);
+        match &queue::list(&home)[0] {
+            queue::QueueItem::Ok(r) => assert!(r.series),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn queue_run_does_not_block_an_approve_or_retry() {
+        let (_t, home) = fixture();
+        parked(&home, RESUME_MERGE);
+        queue_run(&home, "good", "1", false, 1).expect("queued");
+        queue_retry(&home, "good", "1", 2).expect("queued");
+        assert_eq!(queue::list(&home).len(), 2);
+    }
+
+    #[test]
+    fn queue_run_refuses_an_unknown_project_and_a_bad_id() {
+        let (_t, home) = fixture();
+        assert_eq!(
+            queue_run(&home, "nope", "1", false, 1),
+            Err(Refusal::NotFound("no project named nope".into()))
+        );
+        for bad in ["abc", "", "1234567"] {
+            assert_eq!(
+                queue_run(&home, "good", bad, false, 1),
+                Err(Refusal::BadRequest(
+                    validate_job(bad).expect_err("bad").to_string()
+                ))
+            );
+        }
+        assert!(queue::list(&home).is_empty());
     }
 
     #[test]
