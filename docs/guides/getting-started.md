@@ -114,7 +114,7 @@ which factory factoryd
 factory --help
 ```
 
-You should see two paths and a list of commands. `factoryd` finds its `factory` child next to its own file, so keep both links pointing into the same `target/debug` folder. If you keep the binaries somewhere else, set `FACTORY_BIN` (see section 5).
+You should see two paths and a list of commands. `factoryd` finds its `factory` child next to its own file, so keep both links pointing into the same `target/debug` folder. If you keep the binaries somewhere else, set `FACTORY_BIN` for `factoryd` (see section 5); the `/factory` command still needs `factory` on PATH.
 
 ## 5. Environment variables
 
@@ -123,7 +123,7 @@ You do not need to set any of these for a normal setup. They exist for special c
 | Variable | Default | What it does |
 |---|---|---|
 | `FACTORY_HOME` | `~/.factory` | Moves the factory home. Set it to try the factory in a scratch folder. |
-| `FACTORY_BIN` | the `factory` file next to `factoryd` | Tells `factoryd` and the `/factory` command where the `factory` binary is. |
+| `FACTORY_BIN` | the `factory` file next to `factoryd` | Tells `factoryd` where the `factory` binary is. The `/factory` command always uses `factory` on PATH. |
 | `FACTORY_ALLOW_API_KEY` | off | Set to `1` to let agents use `ANTHROPIC_API_KEY` (API billing). A project's `allow_api_key` and `api_key_file` settings override it. |
 | `FACTORY_LOCK_WAIT` | 15 | Seconds a command waits for a busy lock before it gives up. |
 

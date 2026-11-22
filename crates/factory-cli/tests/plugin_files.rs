@@ -90,7 +90,17 @@ fn plugin_dir_holds_only_declared_files() {
 fn command_names_the_path_failure() {
     let text = install::claude_command_text();
     assert!(text.contains("factory binaries are not on PATH"));
-    assert!(text.contains("FACTORY_BIN"));
+    assert!(text.contains("never use a shell variable"));
+}
+
+#[test]
+fn the_command_names_no_shell_variable() {
+    let plugin = std::fs::read_to_string(root().join("plugins/factory/commands/factory.md"))
+        .expect("read plugin command");
+    for text in [factory_core::GLOBAL_COMMAND, plugin.as_str()] {
+        assert!(!text.contains("FACTORY_BIN"));
+        assert!(!text.contains("$FACTORY"));
+    }
 }
 
 fn release_script() -> String {

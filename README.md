@@ -370,7 +370,7 @@ return an error after the Claude command has been installed. Restart Codex after
 `$factory` or select it from `/skills`.
 
 In a repository, `/factory` runs `factory project which` to find the project, then passes `--project <name>`
-on every `factory` call (`$FACTORY_BIN`, else `factory` on PATH). It runs the brainstorm interview and writes
+on every `factory` call (`factory` on PATH). It runs the brainstorm interview and writes
 the spec and the plans (at most 3 tasks each) with explicit approvals, creates the job with `factory new`, and
 starts the run: `factoryd enqueue --project <name> --job <id> --series` when `factoryd is-running` exits 0,
 else `factory --project <name> run <id> --series` in the background. It does not poll. The checks come from the

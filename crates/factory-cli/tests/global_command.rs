@@ -369,7 +369,7 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
     let text = GLOBAL_COMMAND;
     for needed in [
         "factory project which",
-        "FACTORY_BIN",
+        "never use a shell variable",
         "--project",
         "superpowers:brainstorming",
         "superpowers:writing-plans",
