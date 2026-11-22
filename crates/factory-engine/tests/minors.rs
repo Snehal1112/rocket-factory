@@ -47,6 +47,35 @@ fn merged(text: &str, tracker: &FakeTracker) -> MergeFixture {
     fx
 }
 
+/// Makes the next `write_atomic` of `name` in the job folder fail, by putting a folder at its temp path.
+fn block_write(fx: &MergeFixture, name: &str) {
+    let job = fx.driver.job(&fx.id).expect("job");
+    let tmp = fx
+        .driver
+        .job_dir(&job)
+        .join(format!(".{name}.{}.tmp", std::process::id()));
+    std::fs::create_dir(tmp).expect("block");
+}
+
+#[test]
+fn an_unrecordable_minor_ticket_reports_its_number() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    with_review(&fx, REVIEW);
+    block_write(&fx, MINORS_FILE);
+    merge(&fx);
+    assert_eq!(t.count("create Minor review findings from job"), 1);
+    assert!(!minors_file(&fx).exists());
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, Stage::Merged);
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    assert!(
+        ledger.contains("created #201 but could not record it in minors.json"),
+        "{ledger}"
+    );
+}
+
 #[test]
 fn a_merged_job_files_one_minor_ticket() {
     let t = FakeTracker::new("o/r");

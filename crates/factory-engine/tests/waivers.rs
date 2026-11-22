@@ -42,6 +42,32 @@ fn two_blockers() -> Waiver {
     )
 }
 
+/// Makes the next `write_atomic` of `name` in the job folder fail, by putting a folder at its temp path.
+fn block_write(fx: &MergeFixture, name: &str) {
+    let tmp = job_dir(fx).join(format!(".{name}.{}.tmp", std::process::id()));
+    std::fs::create_dir(tmp).expect("block");
+}
+
+#[test]
+fn an_unrecordable_waiver_ticket_reports_its_number_and_stops() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    record_waiver(&job_dir(&fx), two_blockers()).expect("record");
+    block_write(&fx, "waivers.json");
+    assert!(matches!(
+        merge_stage(&fx.driver, &fx.id).expect("merge"),
+        MergeResult::Merged(_)
+    ));
+    assert_eq!(t.count("create Waived review finding"), 1);
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, factory_core::Stage::Merged);
+    let ledger = std::fs::read_to_string(job_dir(&fx).join("progress.md")).expect("ledger");
+    assert!(
+        ledger.contains("created #201 but could not record it in waivers.json"),
+        "{ledger}"
+    );
+}
+
 #[test]
 fn a_waiver_files_one_ticket_per_blocker_after_merge() {
     let t = FakeTracker::new("o/r");

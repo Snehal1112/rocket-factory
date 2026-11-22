@@ -68,8 +68,15 @@ pub fn minor_tickets_step(
     match driver.tracker_for(&job).create(&title, &body, &[]) {
         Ok(number) => {
             let text = serde_json::json!({ "issue": number }).to_string();
-            write_atomic(&dir.join(MINORS_FILE), text.as_bytes())?;
-            report.lines.push(format!("created #{number}: {title}"));
+            match write_atomic(&dir.join(MINORS_FILE), text.as_bytes()) {
+                Ok(()) => report.lines.push(format!("created #{number}: {title}")),
+                Err(e) => {
+                    report.failed = true;
+                    report.lines.push(format!(
+                        "failed: created #{number} but could not record it in {MINORS_FILE}: {e}"
+                    ));
+                }
+            }
         }
         Err(e) => {
             report.failed = true;
