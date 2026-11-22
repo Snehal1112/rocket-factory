@@ -303,6 +303,14 @@ pub(crate) fn parse_created(output: &str) -> Option<u32> {
     output.trim().rsplit('/').next()?.parse().ok()
 }
 
+/// The `name` of every label, or `None` when one has no string `name`.
+fn label_names(labels: &[serde_json::Value]) -> Option<Vec<String>> {
+    labels
+        .iter()
+        .map(|l| l["name"].as_str().map(str::to_string))
+        .collect()
+}
+
 /// The label names and whether the issue is closed, from `gh issue view --json labels,state`.
 /// A merged pull request counts as closed. A reply without a labels array, a label without a
 /// name, or a state other than open, closed or merged is an error.
@@ -312,11 +320,7 @@ pub(crate) fn parse_view(json: &str) -> Result<(Vec<String>, bool), String> {
     let list = value["labels"]
         .as_array()
         .ok_or("gh printed unexpected JSON: expected a labels array")?;
-    let labels = list
-        .iter()
-        .map(|l| l["name"].as_str().map(str::to_string))
-        .collect::<Option<Vec<_>>>()
-        .ok_or("gh printed unexpected JSON: a label has no name")?;
+    let labels = label_names(list).ok_or("gh printed unexpected JSON: a label has no name")?;
     let closed = match value["state"].as_str() {
         Some(s) if s.eq_ignore_ascii_case("closed") || s.eq_ignore_ascii_case("merged") => true,
         Some(s) if s.eq_ignore_ascii_case("open") => false,
@@ -358,7 +362,8 @@ pub(crate) fn parse_found(json: &str, title: &str, footer: &str) -> Result<Optio
 
 /// The issues from `gh issue list --json number,title,body,labels,createdAt,updatedAt`. A missing or null
 /// body counts as empty. A reply that is not an array is an error. An entry without a usable
-/// number (missing, not an integer or over `u32::MAX`) is skipped.
+/// number (missing, not an integer or over `u32::MAX`) is skipped, and so is an entry whose
+/// `labels` is missing, is not an array, or holds a label without a name.
 pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
@@ -369,12 +374,7 @@ pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
         .iter()
         .filter_map(|issue| {
             let number = u32::try_from(issue["number"].as_u64()?).ok()?;
-            let labels = issue["labels"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|l| l["name"].as_str().map(str::to_string))
-                .collect();
+            let labels = label_names(issue["labels"].as_array()?)?;
             Some(IssueInfo {
                 number,
                 title: issue["title"].as_str().unwrap_or("").to_string(),
@@ -902,32 +902,51 @@ mod tests {
 
     #[test]
     fn parse_issue_list_skips_a_number_over_u32() {
-        let json = r#"[{"number":4294967296,"title":"Big"},{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[{"number":4294967296,"title":"Big","labels":[]},{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_skips_a_string_number() {
-        let json = r#"[{"number":"7","title":"Str"},{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[{"number":"7","title":"Str","labels":[]},{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_skips_an_entry_without_a_number() {
-        let json = r#"[{"title":"None"},{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[{"title":"None","labels":[]},{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_skips_a_non_object_element() {
-        let json = r#"[1,{"number":4,"title":"Fix x"}]"#;
+        let json = r#"[1,{"number":4,"title":"Fix x","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![4]);
     }
 
     #[test]
     fn parse_issue_list_keeps_u32_max() {
-        let json = r#"[{"number":4294967295,"title":"Max"}]"#;
+        let json = r#"[{"number":4294967295,"title":"Max","labels":[]}]"#;
         assert_eq!(issue_numbers(json), vec![u32::MAX]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_an_entry_without_labels() {
+        let json = r#"[{"number":3,"title":"No labels"},{"number":4,"title":"Fix x","labels":[]}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_labels_that_are_not_an_array() {
+        let json =
+            r#"[{"number":3,"title":"Str","labels":"x"},{"number":4,"title":"Fix x","labels":[]}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
+    }
+
+    #[test]
+    fn parse_issue_list_skips_a_label_without_a_name() {
+        let json = r#"[{"number":3,"title":"Id","labels":[{"id":1}]},{"number":4,"title":"Fix x","labels":[]}]"#;
+        assert_eq!(issue_numbers(json), vec![4]);
     }
 
     const EVENTS: &str = r#"[
