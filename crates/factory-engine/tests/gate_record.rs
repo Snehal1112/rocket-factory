@@ -399,6 +399,18 @@ fn a_format_detail_redacts_a_secret_flag() {
 }
 
 #[test]
+fn a_format_detail_redacts_a_spaced_secret_flag() {
+    let fx = with_rule(recording_fixture(true), &["true"], &["true --api-key abc"]);
+    let runner: ScriptedRunner = scripted(vec![write_effect(vec![("a.txt", "x\n")])]);
+    fx.engine(&runner).build_stage().expect("build");
+    fx.engine(&runner).checks_stage().expect("checks");
+    let format = lines_of(&fx, GateKey::Format);
+    assert_eq!(format.len(), 1, "{format:?}");
+    assert_eq!(format[0].result, GateResult::Pass);
+    assert_eq!(format[0].detail, "true --api-key [redacted]");
+}
+
+#[test]
 fn a_lint_detail_redacts_a_secret_flag() {
     let mut fx = with_rule(recording_fixture(true), &["true"], &[]);
     fx.config.checks[0].lint = vec!["true --token=xyz".to_string()];
