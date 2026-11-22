@@ -4,11 +4,11 @@ use factory_checks::{
     append_notes, plan_checks_in, run_checks, write_checks_md, CheckPlan, ChecksReport, Workspace,
 };
 use factory_core::{
-    code_paths_of, has_test_marker, has_test_path, uncovered_paths, write_atomic, ChecksPass,
-    Config, ParkKind, ParkPart, ReviewState, Stage,
+    code_paths_of,
+    gate_record::{GateKey, GateResult},
+    has_test_marker, has_test_path, uncovered_paths, write_atomic, ChecksPass, Config, ParkKind,
+    ParkPart, ReviewState, Stage,
 };
-
-use factory_core::gate_record::{GateKey, GateResult};
 
 use crate::decide::fix_rounds_used;
 use crate::gate_record::GateTarget;
@@ -153,6 +153,7 @@ impl Engine<'_> {
     /// Records `format`, `lint` and `checks` for one checks run. It runs outside every board closure.
     fn gate_checks_run(&self, plan: &CheckPlan, report: &ChecksReport) {
         // `format` and `lint` come first, so a checks park stops at `checks`, the last fail line.
+        let mut lines = Vec::new();
         for (name, key) in [("format", GateKey::Format), ("lint", GateKey::Lint)] {
             let results: Vec<_> = report
                 .results
@@ -160,7 +161,7 @@ impl Engine<'_> {
                 .filter(|r| plan.gate_of(&r.command) == Some(name))
                 .collect();
             if results.is_empty() {
-                self.gate(key, GateResult::Skipped, &format!("no {name} command"));
+                lines.push((key, GateResult::Skipped, format!("no {name} command")));
                 continue;
             }
             let result = if results.iter().all(|r| r.passed) {
@@ -173,7 +174,7 @@ impl Engine<'_> {
                 .iter()
                 .map(|r| factory_telemetry::redact_command(&r.command))
                 .collect();
-            self.gate(key, result, &commands.join(", "));
+            lines.push((key, result, commands.join(", ")));
         }
         let total = report.results.len();
         let passed = report.results.iter().filter(|r| r.passed).count();
@@ -182,11 +183,16 @@ impl Engine<'_> {
         } else {
             GateResult::Fail
         };
-        self.gate(
+        lines.push((
             GateKey::Checks,
             result,
-            &format!("{passed} of {total} commands passed"),
-        );
+            format!("{passed} of {total} commands passed"),
+        ));
+        let lines: Vec<_> = lines
+            .iter()
+            .map(|(key, result, detail)| (*key, *result, detail.as_str()))
+            .collect();
+        self.gate_lines(&lines);
     }
 
     /// The head of the whole job diff, the workdir and the check plan for the scoped changed paths.

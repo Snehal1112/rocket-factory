@@ -3,6 +3,23 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+/// The repo override file, relative to the base branch root.
+pub const FACTORY_OVERRIDE_REL_FILE: &str = ".factory/override.toml";
+/// The folder of repo agent files, relative to the base branch root.
+pub const FACTORY_AGENTS_REL_DIR: &str = ".factory/agents";
+/// Always a risk path, so a repo cannot change its own factory settings without review.
+pub const FACTORY_RISK_GLOB: &str = ".factory/**";
+/// The folder of a project's own agent files in the factory home.
+pub const PROJECT_AGENTS_DIR: &str = "agents";
+/// The folder of a project's state in the factory home.
+pub const PROJECT_STATE_DIR: &str = "state";
+/// The folder of a project's job worktrees in the factory home.
+pub const PROJECT_WORKTREES_DIR: &str = "worktrees";
+/// The folder of the job folders inside a project's state folder.
+pub const STATE_JOBS_DIR: &str = "jobs";
+/// The board file inside a project's state folder.
+pub const BOARD_FILE: &str = "board.json";
+
 /// The folder, relative to a worktree root, where Claude Code looks for agent files.
 pub fn agent_files_rel_dir() -> PathBuf {
     Path::new(".claude").join("agents")
@@ -132,7 +149,7 @@ impl Layout {
     }
 
     pub fn board_file(&self) -> PathBuf {
-        self.state_dir.join("board.json")
+        self.state_dir.join(BOARD_FILE)
     }
 
     /// The folder of saved spec reviews, one file per hash of the spec and its plans.

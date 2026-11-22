@@ -21,6 +21,11 @@ pub(crate) fn now() -> f64 {
     crate::clock::now_secs()
 }
 
+/// The current time in whole seconds.
+pub(crate) fn now_whole_secs() -> u64 {
+    now().max(0.0) as u64
+}
+
 /// The first 7 characters of a sha, or the whole string when it is shorter.
 pub(crate) fn short_sha(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)

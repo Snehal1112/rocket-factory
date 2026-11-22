@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::layout::{PROJECT_AGENTS_DIR, PROJECT_STATE_DIR, PROJECT_WORKTREES_DIR, STATE_JOBS_DIR};
 use crate::{preset, settings_block, Config, CoreError, Home, Layout, Scope};
 
 const MAX_NAME: usize = 40;
@@ -232,7 +233,7 @@ pub fn add(
         // Two adds with different names can still both pass; the merge lock serializes them.
         check_overlap(home, &canon, subpath)?;
         preset::seed(&home.presets_dir())?;
-        for sub in ["agents", "state", "worktrees"] {
+        for sub in [PROJECT_AGENTS_DIR, PROJECT_STATE_DIR, PROJECT_WORKTREES_DIR] {
             let p = dir.join(sub);
             std::fs::create_dir(&p).map_err(|e| CoreError::io(&p, e))?;
         }
@@ -414,12 +415,12 @@ pub fn layout(home: &Home, name: &str, file: &ProjectFile) -> Result<Layout, Cor
 /// Builds the layout.
 pub(crate) fn build_layout(home: &Home, name: &str, file: &ProjectFile) -> Layout {
     let dir = home.project_dir(name);
-    let state_dir = dir.join("state");
+    let state_dir = dir.join(PROJECT_STATE_DIR);
     Layout {
         repo: file.repo.clone(),
-        jobs_dir: state_dir.join("jobs"),
+        jobs_dir: state_dir.join(STATE_JOBS_DIR),
         state_dir,
-        worktrees_dir: dir.join("worktrees"),
+        worktrees_dir: dir.join(PROJECT_WORKTREES_DIR),
         config_file: dir.join(PROJECT_FILE),
         scope: file.subpath.as_ref().map(|sub| Scope {
             project: name.to_string(),

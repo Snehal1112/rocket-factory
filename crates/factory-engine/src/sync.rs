@@ -158,12 +158,16 @@ pub fn sync_requested_by(
     Ok(outcome)
 }
 
-/// True when a review is pending, running or failed. Pass, changes and skipped are verdicts.
+/// True when a review is pending, running, failed or unknown. Pass, changes and skipped are
+/// verdicts.
 fn has_no_verdict(job: &Job) -> bool {
     job.reviews.values().any(|s| {
         matches!(
             s,
-            ReviewState::Pending | ReviewState::Running | ReviewState::Failed
+            ReviewState::Pending
+                | ReviewState::Running
+                | ReviewState::Failed
+                | ReviewState::Unknown
         )
     })
 }
@@ -319,5 +323,17 @@ fn sync_with(
                 None,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_no_verdict_counts_unknown() {
+        let mut j = Job::new("001", "d", "s", "2026-11-22", "f", 1.0);
+        j.set_review("code", ReviewState::Unknown);
+        assert!(has_no_verdict(&j));
     }
 }

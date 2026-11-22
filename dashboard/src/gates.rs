@@ -126,7 +126,7 @@ fn is_stale(gate: &str, result: &str, job: &Job) -> bool {
         "running" => ended || job.stage == "needs-human",
         "waiting" => {
             let live = matches!(gate, "series" | "machine");
-            let working = matches!(job.stage.as_str(), "spec" | "build" | "checks" | "review");
+            let working = matches!(job.stage.as_str(), "spec" | "build" | "review");
             ended || (working && !live)
         }
         _ => false,
@@ -261,6 +261,13 @@ mod tests {
         let lines = vec![raw("checks", "fail", 2), raw("checks", "pass", 2)];
         let view = latest(&lines, &job_at("build", 2));
         assert_eq!(state_of(&view, "checks"), "pass");
+    }
+
+    #[test]
+    fn waiting_in_review_is_stale_and_checks_is_no_stage() {
+        assert!(is_stale("checks", "waiting", &job_at("review", 1)));
+        assert!(!is_stale("series", "waiting", &job_at("review", 1)));
+        assert!(!is_stale("checks", "waiting", &job_at("checks", 1)));
     }
 
     #[test]

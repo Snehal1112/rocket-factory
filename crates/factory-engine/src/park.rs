@@ -3,14 +3,13 @@
 use std::path::Path;
 
 use factory_core::{
+    gate_record::{GateKey, GateResult},
     next_with_resume, open_blockers, park_summary, ParkKind, ParkPart, ParkRecord, ResumeAt, Stage,
 };
 
-use factory_core::gate_record::{GateKey, GateResult};
-
 use crate::decide::risk_summary;
 use crate::gate_record::{fail_key, offers_approve, GateTarget};
-use crate::ports::{log_park, now, set_stage_logged};
+use crate::ports::{log_park, now, now_whole_secs, set_stage_logged};
 use crate::{Engine, EngineError, StageOutcome};
 
 /// The reviewer's open `[blocker]` lines, or the whole reply when it has none.
@@ -209,7 +208,7 @@ impl Engine<'_> {
         let round = job.as_ref().map_or(1, |j| j.round);
         let review_missing = job.as_ref().is_some_and(|j| j.review_missing);
         let stage_before = job.as_ref().map(|j| j.stage);
-        let at = now().max(0.0) as u64;
+        let at = now_whole_secs();
         let parts = evidence_or_reason(parts, &reason);
         let mut record = ParkRecord::new(kind, &reason, &self.job_id, round, at, parts);
         // A park that offers approve says so when the review has not run, because a plain approve is refused.
@@ -250,12 +249,14 @@ impl Engine<'_> {
             || {
                 write_record(&self.job_dir, &record);
                 // The gate lines follow the record, so a ruling error does not drop them.
+                let mut lines = Vec::new();
                 if let Some((key, result)) = fail_key(kind, stage_before, target) {
-                    self.gate(key, result, &reason);
+                    lines.push((key, result, reason.as_str()));
                 }
                 if offers_approve(&record.next) {
-                    self.gate(GateKey::Approve, GateResult::Waiting, &reason);
+                    lines.push((GateKey::Approve, GateResult::Waiting, reason.as_str()));
                 }
+                self.gate_lines(&lines);
             },
             || self.ruling(&format!("needs-human, {reason}")),
         )?;
@@ -645,6 +646,20 @@ pub(crate) mod tests {
     /// Builds an engine in a temp repo. `seed` runs on the board path first, then `body` gets the
     /// job folder and the board path.
     pub(crate) fn with_engine(seed: impl FnOnce(&Path), body: impl FnOnce(&Engine, &Path, &Path)) {
+        // Unit tests skip the real disk check.
+        let config = factory_core::Config {
+            min_free_disk_mb: 0,
+            ..factory_core::Config::default()
+        };
+        with_engine_config(config, seed, body);
+    }
+
+    /// Like `with_engine`, with the given config.
+    pub(crate) fn with_engine_config(
+        config: factory_core::Config,
+        seed: impl FnOnce(&Path),
+        body: impl FnOnce(&Engine, &Path, &Path),
+    ) {
         let dir = tempfile::tempdir().expect("temp dir");
         let board_path = dir.path().join("board.json");
         seed(&board_path);
@@ -666,11 +681,7 @@ pub(crate) mod tests {
             job_dir.join("plan.md"),
             &repo,
             &runner,
-            // Unit tests skip the real disk check.
-            factory_core::Config {
-                min_free_disk_mb: 0,
-                ..factory_core::Config::default()
-            },
+            config,
             &events,
         )
         .expect("engine");

@@ -494,11 +494,12 @@ pub(crate) fn next_sync_number(job_dir: &std::path::Path, round: u32) -> Result<
 }
 
 /// The `risk` line: pass for a normal diff or one the Cargo lock check cleared, note for a risky one.
-fn risk_line(risky: bool, paths: &[String], note: Option<&str>) -> (GateResult, String) {
+/// `cleared_by_lock` is the lock check's note when it cleared the diff, and is ignored for a risky one.
+fn risk_line(risky: bool, paths: &[String], cleared_by_lock: Option<&str>) -> (GateResult, String) {
     if risky {
         return (GateResult::Note, format!("risky: {}", paths.join(", ")));
     }
-    match note {
+    match cleared_by_lock {
         Some(note) => (
             GateResult::Pass,
             format!("cleared by the Cargo lock check; {note}"),
@@ -608,6 +609,16 @@ pub fn final_checks(e: &Engine) -> Result<ChecksReport, EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn risk_line_cleared_by_lock_says_so() {
+        let (result, text) = risk_line(false, &[], Some("only lock bumps"));
+        assert_eq!(result, GateResult::Pass);
+        assert_eq!(text, "cleared by the Cargo lock check; only lock bumps");
+        let (result, text) = risk_line(true, &["a.rs".to_string()], Some("x"));
+        assert_eq!(result, GateResult::Note);
+        assert_eq!(text, "risky: a.rs");
+    }
 
     fn touch(dir: &std::path::Path, name: &str) {
         std::fs::write(dir.join(name), "x").expect("write");
