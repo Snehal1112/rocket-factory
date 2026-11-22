@@ -27,6 +27,44 @@ fn with_review(fx: &MergeFixture, text: &str) {
         .expect("last review");
 }
 
+/// Writes the given review files, then records `last` as the last review of round 1.
+fn with_reviews(fx: &MergeFixture, files: &[(&str, &str)], last: &str) {
+    let job = fx.driver.job(&fx.id).expect("job");
+    for (name, text) in files {
+        std::fs::write(fx.driver.job_dir(&job).join(name), text).expect("review");
+    }
+    fx.driver
+        .store()
+        .update_job(&fx.id, |j| {
+            j.last_review = Some(LastReview {
+                round: 1,
+                verdict: "approve".into(),
+                blockers: 0,
+                file: last.into(),
+                source: if last.contains("sync") {
+                    "sync"
+                } else {
+                    "build"
+                }
+                .into(),
+            });
+            Ok(())
+        })
+        .expect("last review");
+}
+
+/// The checklist items of the first created ticket, and its body.
+fn created(t: &FakeTracker) -> (Vec<String>, String) {
+    let s = t.state.lock().expect("lock");
+    let body = s.created[0].1.clone();
+    let items = body
+        .lines()
+        .filter(|l| l.starts_with("- [ ]"))
+        .map(str::to_string)
+        .collect();
+    (items, body)
+}
+
 fn merge(fx: &MergeFixture) {
     assert!(matches!(
         merge_stage(&fx.driver, &fx.id).expect("merge"),
@@ -45,6 +83,106 @@ fn merged(text: &str, tracker: &FakeTracker) -> MergeFixture {
     with_review(&fx, text);
     merge(&fx);
     fx
+}
+
+/// Makes the next `write_atomic` of `name` in the job folder fail, by putting a folder at its temp path.
+fn block_write(fx: &MergeFixture, name: &str) {
+    let job = fx.driver.job(&fx.id).expect("job");
+    let tmp = fx
+        .driver
+        .job_dir(&job)
+        .join(format!(".{name}.{}.tmp", std::process::id()));
+    std::fs::create_dir(tmp).expect("block");
+}
+
+#[test]
+fn an_unrecordable_minor_ticket_reports_its_number() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    with_review(&fx, REVIEW);
+    block_write(&fx, MINORS_FILE);
+    merge(&fx);
+    assert_eq!(t.count("create Minor review findings from job"), 1);
+    assert!(!minors_file(&fx).exists());
+    let job = fx.driver.job(&fx.id).expect("job");
+    assert_eq!(job.stage, Stage::Merged);
+    let ledger =
+        std::fs::read_to_string(fx.driver.job_dir(&job).join("progress.md")).expect("ledger");
+    assert!(
+        ledger.contains("created #201 but could not record it in minors.json"),
+        "{ledger}"
+    );
+}
+
+#[test]
+fn minors_after_a_sync_include_the_round_review() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    with_reviews(
+        &fx,
+        &[
+            (
+                "review-code-r1.md",
+                "- [minor] first nit\nVERDICT: APPROVE\n",
+            ),
+            (
+                "review-code-r1-sync1.md",
+                "- [minor] sync nit\n- [minor] first nit\nVERDICT: APPROVE\n",
+            ),
+        ],
+        "review-code-r1-sync1.md",
+    );
+    merge(&fx);
+    let (items, body) = created(&t);
+    assert_eq!(
+        items,
+        vec!["- [ ] - [minor] first nit", "- [ ] - [minor] sync nit"]
+    );
+    assert!(
+        body.contains("Review files review-code-r1.md, review-code-r1-sync1.md."),
+        "{body}"
+    );
+}
+
+#[test]
+fn minors_include_the_rebase_review() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    with_reviews(
+        &fx,
+        &[
+            ("review-code-r1.md", "- [minor] a nit\nVERDICT: APPROVE\n"),
+            (
+                "review-code-r1-rebase.md",
+                "- [minor] rebase nit\nVERDICT: APPROVE\n",
+            ),
+        ],
+        "review-code-r1-rebase.md",
+    );
+    merge(&fx);
+    let (items, _) = created(&t);
+    assert_eq!(
+        items,
+        vec!["- [ ] - [minor] a nit", "- [ ] - [minor] rebase nit"]
+    );
+}
+
+#[test]
+fn minors_read_a_last_review_file_outside_the_round_names() {
+    let t = FakeTracker::new("o/r");
+    let fx = with_tracker(approved_job(), t.clone());
+    with_reviews(
+        &fx,
+        &[(
+            "review-code-old.md",
+            "- [minor] old nit\nVERDICT: APPROVE\n",
+        )],
+        "review-code-old.md",
+    );
+    merge(&fx);
+    let (items, body) = created(&t);
+    assert_eq!(items, vec!["- [ ] - [minor] old nit"]);
+    assert!(body.contains("review-code-old.md"), "{body}");
 }
 
 #[test]

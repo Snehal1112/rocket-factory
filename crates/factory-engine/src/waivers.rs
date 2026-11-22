@@ -166,8 +166,17 @@ pub fn waiver_tickets_step(
                     let n = list[w].blockers.len();
                     list[w].tickets.resize(n, None);
                     list[w].tickets[b] = Some(number);
-                    write_waivers(&dir, &list)?;
-                    report.lines.push(format!("created #{number}: {title}"));
+                    match write_waivers(&dir, &list) {
+                        Ok(()) => report.lines.push(format!("created #{number}: {title}")),
+                        Err(e) => {
+                            // Later records would fail the same way, so stop here.
+                            report.failed = true;
+                            report.lines.push(format!(
+                                "failed: created #{number} but could not record it in {WAIVERS_FILE}: {e}"
+                            ));
+                            break 'all;
+                        }
+                    }
                 }
                 Err(e) => {
                     report.failed = true;
