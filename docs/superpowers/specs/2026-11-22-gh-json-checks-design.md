@@ -61,8 +61,8 @@ parse_view      reply object  -> labels array of {name: string}?  state OPEN|CLO
 parse_issue_list entry        -> labels array of {name: string}?  else skip entry (like a bad number)
 parse_actor     each value    -> array of event objects | one event object, each with string `event`; else Err
                 matching event -> string `created_at`?  else Err;  null actor -> None (unchanged)
-repo_name       trimmed text  -> owner/name, one `/`, no whitespace?  else Err
-current_user    trimmed text  -> one token, no whitespace, no `/`?  else Err
+repo_name       trimmed text  -> owner/name, each part is_repo_name and not `.` or `..`?  else Err
+current_user    trimmed text  -> ASCII letters, digits, `-`, optional `[bot]` suffix?  else Err
 ```
 
 Every error goes to the existing callers, which already handle an `Err` (see Current state). All texts start with `gh printed` or name the `gh` command, as the existing errors do.
@@ -106,11 +106,13 @@ pub(crate) fn check_repo_name(name: &str) -> Result<(), String>
 pub(crate) fn check_login(login: &str) -> Result<(), String>
 ```
 
-- `check_repo_name` accepts only text with exactly one `/`, a non-empty part on each side, and no whitespace character (`char::is_whitespace`). Otherwise it returns ``Err(format!("gh repo view printed an unusable repository name: `{name}`"))``.
-- `check_login` accepts only text with no whitespace character and no `/`. Otherwise it returns ``Err(format!("gh api user printed an unusable login: `{login}`"))``. Bot logins such as `github-actions[bot]` pass.
+- Both checks are allowlists: they accept only the characters a real name can hold, and reject everything else.
+- `check_repo_name` splits on `/` and accepts only exactly two parts. Each part must pass `factory_core::is_repo_name` (letters, digits, `-`, `_` and `.`, non-empty, `crates/factory-core/src/commitmsg.rs:74-82`) and must not be `.` or `..`. Otherwise it returns ``Err(format!("gh repo view printed an unusable repository name: `{name}`"))``.
+- `is_repo_name` becomes `pub` in `crates/factory-core/src/commitmsg.rs` and is added to the `pub use commitmsg::{...}` list in `crates/factory-core/src/lib.rs`, so there is one rule. Its behaviour does not change.
+- `check_login` strips one optional `[bot]` suffix, then accepts only a non-empty rest made of ASCII letters, digits and `-`. Otherwise it returns ``Err(format!("gh api user printed an unusable login: `{login}`"))``. Bot logins such as `github-actions[bot]` pass, and `[bot]` alone fails.
 - The empty-output errors and their texts stay as they are.
 
-Example: `o/r` passes, while `o/r/x`, `o r/x`, `/r` and `o/r\nx/y` each fail. `alice` passes, while `a b`, `a/b` and `a\nb` fail.
+Example: `o/r` and `Snehal1112/rocket-factory` pass, while `o/r/x`, `o r/x`, `/r`, `o/`, `../x`, `o/..`, `o/r?x=1`, `o/r#a`, `o%2Fr/x` and `o/r\nx/y` each fail. `alice`, `a-b` and `github-actions[bot]` pass, while `a b`, `a/b`, `a\nb`, `a:b`, `a?b`, `a_b` and `[bot]` fail.
 
 ## Error handling and edge cases
 
@@ -136,8 +138,8 @@ Example: `o/r` passes, while `o/r/x`, `o r/x`, `/r` and `o/r\nx/y` each fail. `a
 | a non-matching event without `created_at` | ignored, as today |
 | the last matching event with `"actor":null` | `Ok(None)`, as today |
 | `repo_name` output `o/r` | `Ok("o/r")` |
-| `repo_name` output `o/r/x` or `o r/x` | unusable repository name error |
-| `current_user` output `a b` | unusable login error |
+| `repo_name` output `o/r/x`, `o r/x`, `../x` or `o/r?x=1` | unusable repository name error |
+| `current_user` output `a b`, `a:b` or `[bot]` | unusable login error |
 | empty output from either | the existing `printed no ...` error |
 
 ## Testing
@@ -191,12 +193,13 @@ cargo test -j4 -p factory-engine --test log_events
 
 ## Files changed
 
+- `crates/factory-core/src/commitmsg.rs` and `crates/factory-core/src/lib.rs`: `is_repo_name` becomes `pub` and is re-exported, with no change to its behaviour.
 - `crates/factory-engine/src/tracker.rs`: `parse_view`, `parse_issue_list`, `parse_actor`, the new `check_repo_name` and `check_login`, the `repo_name` and `current_user` methods, the doc comments and the tests.
 
 ## Constraints
 
 - Cargo commands are per crate with `-j4`, never `--workspace` or `--all`.
-- The logic sits behind the existing `Tracker` port; nothing outside `tracker.rs` changes.
+- The logic sits behind the existing `Tracker` port. Outside `tracker.rs`, only the visibility and re-export of `is_repo_name` change.
 - Tests use `.expect("...")` and `expect_err`, never the unwrap call.
 - Error texts are exactly the ones in Design.
 
@@ -206,7 +209,7 @@ cargo test -j4 -p factory-engine --test log_events
 - `parse_issue_list` skips an entry whose `labels` is missing, is not an array, or holds an element without a string `name`, and keeps the others.
 - `parse_actor` returns `expected label events` for any top-level value that is not an event or an array of events, and returns the without-a-time error for a matching labeled event that has no `created_at`.
 - `parse_actor` still gives `Ok(None)` for empty input, for `[]` and for a null actor on the last matching event.
-- `repo_name` and `current_user` reject malformed output with the unusable-name and unusable-login errors, and keep the empty-output errors.
+- `repo_name` and `current_user` accept only allowlisted names: an `owner/name` whose parts pass `is_repo_name` and are not `.` or `..`, and a login of ASCII letters, digits and `-` with an optional `[bot]` suffix. Anything else gets the unusable-name or unusable-login error, and empty output keeps its existing error.
 - All new tests and all existing `tracker` tests pass, with only the fixture changes listed in Testing.
 - `cargo test -j4 -p factory-engine --test tickets`, `--test intake` and `--test log_events` pass unchanged.
 
@@ -223,6 +226,8 @@ cargo test -j4 -p factory-engine --test log_events
 - What changes in parse_actor? Options: error on non-event values and on a matching event without a time, only non-event values, only a missing time. Chosen: error on both. Decided by: user
 - What does a bad `labels` value do to an issue-list entry? Options: skip that entry, fail the whole list, keep reading it as empty. Chosen: skip that entry. Decided by: user
 - Should the repo name and login shape be checked? Options: check the shape, tests only, drop it. Chosen: check the shape. Decided by: user
+- How are the repo name and login checked, after the factory spec review found that a reject-a-few-characters check lets `../x`, `o/r?x=1` and `a:b` through? Options: allowlist reusing `is_repo_name`, allowlist with a copied rule, keep the denylist. Chosen: allowlist reusing `is_repo_name`. Decided by: user
+- A login spelled `null` is accepted: it is a valid GitHub login, and a missing key gives empty output, not the text `null` (checked with `gh api user --jq .nosuchkey`). Decided by: call
 - How is the work split? Options: 2 plans in one job, 2 plans in 2 jobs, 1 plan. Chosen: 2 plans in one job (`--one-job`). Decided by: user
 - A null actor still gives `None`, because GitHub shows a deleted user as null. Decided by: call
 - The shape checks are pure helpers next to the parsers, so they can be tested without a fake `gh`; each also gets one fake-gh test. Decided by: call
