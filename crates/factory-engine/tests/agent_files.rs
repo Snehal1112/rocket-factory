@@ -2,8 +2,8 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use common::{commit_file, scripted, Effect, Fixture};
-use factory_core::{AgentFile, Stage};
+use common::{commit_file, scripted, Effect, Fixture, Tagged};
+use factory_core::{AgentFile, Board, CheckRule, Stage, TaskSession};
 use factory_engine::{EngineError, StageOutcome};
 use git2::{Repository, StatusOptions};
 
@@ -145,6 +145,116 @@ fn builder_starts_in_the_project_folder() {
     assert!(spec.agents_file.is_some());
     assert!(!wt.join(".claude").exists());
     assert!(!wt.join("apps/web/.claude").exists());
+}
+
+/// A scoped fixture with a two-task plan, at the build stage, that carries the builder session.
+fn scoped_two_task_fixture() -> Fixture {
+    let mut fx = scoped_fixture();
+    fx.config.builder_carry_session = true;
+    std::fs::write(&fx.plan_file, TWO_TASKS).expect("plan");
+    let mut board = Board::load(&fx.board_path).expect("load");
+    board
+        .find_mut("001")
+        .expect("job")
+        .set_stage(Stage::Build, None, false, 1.0)
+        .expect("stage");
+    board.save(&fx.board_path).expect("save");
+    fx
+}
+
+/// Runs a scoped job to fix round 2 with failing checks, then runs the fix builder after
+/// `idle_secs` of idle time on a session that ended at 150000 tokens. Returns its spec.
+fn fix_builder_spec(idle_secs: u64) -> factory_agent::AgentSpec {
+    let mut fx = scoped_fixture();
+    fx.config.checks = vec![CheckRule {
+        paths: vec!["**".into()],
+        commands: vec!["false".into()],
+        ..CheckRule::default()
+    }];
+    let first = Tagged::new(scripted(vec![write_effect("a.txt")]), 150_000);
+    fx.engine(&first).build_stage().expect("build");
+    fx.engine(&first).checks_stage().expect("checks");
+    assert_eq!(fx.job().round, 2);
+    let mut board = Board::load(&fx.board_path).expect("load");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    board
+        .find_mut("001")
+        .expect("job")
+        .builder_last
+        .as_mut()
+        .expect("the first builder is recorded")
+        .ended_at = now - idle_secs;
+    board.save(&fx.board_path).expect("save");
+    let fix = Tagged::new(scripted(vec![write_effect("b.txt")]), 20_000);
+    fx.engine(&fix).build_stage().expect("fix round");
+    fix.inner.last_spec_for("builder").expect("fix builder")
+}
+
+#[test]
+fn every_builder_and_the_reviewer_start_in_the_project_folder() {
+    // The task builder and the carried builder.
+    let fx = scoped_two_task_fixture();
+    let wt_dir = |fx: &Fixture| worktree(fx).join("apps/web");
+    let runner = Tagged::new(
+        scripted(vec![write_effect("a.txt"), write_effect("b.txt")]),
+        30_000,
+    );
+    fx.engine(&runner).build_stage().expect("task 1");
+    fx.engine(&runner).build_stage().expect("task 2");
+    let builders = runner.inner.specs_for("builder");
+    assert_eq!(builders[0].resume, None);
+    assert_eq!(builders[0].cwd, wt_dir(&fx), "task builder");
+    assert_eq!(builders[1].resume.as_deref(), Some("sess-1"));
+    assert_eq!(builders[1].cwd, wt_dir(&fx), "task carry builder");
+
+    // The task resume builder, after a crash left a session for task 2.
+    let fx = scoped_two_task_fixture();
+    let runner = Tagged::new(
+        scripted(vec![write_effect("a.txt"), write_effect("b.txt")]),
+        30_000,
+    );
+    fx.engine(&runner).build_stage().expect("task 1");
+    let mut board = Board::load(&fx.board_path).expect("load");
+    let job = board.find_mut("001").expect("job");
+    let tip = fx.repo.tip(&job.branch).expect("tip");
+    job.task_session = Some(TaskSession {
+        task: 2,
+        id: "sess-crash".into(),
+        tip,
+    });
+    board.save(&fx.board_path).expect("save");
+    fx.engine(&runner).build_stage().expect("task 2");
+    let spec = runner.inner.last_spec_for("builder").expect("resume");
+    assert_eq!(spec.resume.as_deref(), Some("sess-crash"));
+    assert_eq!(spec.cwd, wt_dir(&fx), "task resume builder");
+
+    // The resumed and the fresh fix builders.
+    let spec = fix_builder_spec(0);
+    assert!(spec.resume.is_some(), "a warm session resumes");
+    assert!(spec.cwd.ends_with("apps/web"), "resumed fix builder");
+    let spec = fix_builder_spec(1_000);
+    assert_eq!(spec.resume, None);
+    assert!(spec.cwd.ends_with("apps/web"), "fresh fix builder");
+
+    // The reviewer runs in the project folder, and its prompt names the worktree root.
+    let fx = scoped_fixture();
+    let runner = scripted(vec![write_effect("a.txt")]);
+    fx.engine(&runner).build_stage().expect("build");
+    fx.engine(&runner).checks_stage().expect("checks");
+    let reviewer = scripted(vec![Box::new(|_| "fine\nVERDICT: APPROVE".to_string())]);
+    fx.engine(&reviewer).review_stage().expect("review");
+    let spec = reviewer.last_spec().expect("reviewer spec");
+    let wt = worktree(&fx);
+    assert_eq!(spec.cwd, wt.join("apps/web"), "reviewer");
+    assert!(
+        spec.prompt
+            .contains(&format!("the worktree at {}. ", wt.display())),
+        "{}",
+        spec.prompt
+    );
 }
 
 #[test]
@@ -313,7 +423,7 @@ fn six_files() -> Vec<AgentFile> {
     [
         "builder",
         "code-reviewer",
-        "committer",
+        "intake-drafter",
         "kb-refresher",
         "security-reviewer",
         "spec-reviewer",
@@ -359,7 +469,7 @@ fn a_tracked_agent_text_wins_in_the_agents_file() {
         .expect("build");
     let json = agents_of(&runner.last_spec_for("builder").expect("builder"));
     assert!(prompt_of(&json, "factory-builder").contains("TRACKED-TEXT"));
-    assert!(prompt_of(&json, "factory-committer").contains("RESOLVED committer"));
+    assert!(prompt_of(&json, "factory-intake-drafter").contains("RESOLVED intake-drafter"));
     assert_eq!(json.as_object().expect("object").len(), 6);
 }
 
@@ -389,7 +499,7 @@ fn a_job_that_deletes_a_tracked_agent_file_still_gets_its_agents() {
     );
     for name in [
         "code-reviewer",
-        "committer",
+        "intake-drafter",
         "kb-refresher",
         "spec-reviewer",
     ] {
@@ -518,7 +628,7 @@ fn a_job_that_deletes_the_tracked_agent_files_reaches_review() {
         .expect("review");
     let spec = reviewer.last_spec_for("reviewer").expect("reviewer");
     assert_eq!(
-        agents_prompt(&spec, "factory-committer").as_deref(),
-        Some("TRACKED factory-committer.md")
+        agents_prompt(&spec, "factory-intake-drafter").as_deref(),
+        Some("TRACKED factory-intake-drafter.md")
     );
 }

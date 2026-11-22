@@ -97,7 +97,7 @@ impl Repo {
         let path = parent.join(&name);
         if path.exists() {
             return Err(GitError::Refused(format!(
-                "{} already exists",
+                "{} already exists; another job or project uses the worktree name {name}",
                 path.display()
             )));
         }

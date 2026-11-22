@@ -358,6 +358,8 @@ fn checks_map_project_relative_paths() {
     let out = fx.engine(&runner).checks_stage().expect("checks");
     // The `src/**` check ran and failed, so the no-checks gate did not park the job.
     assert_eq!(out, StageOutcome::Advanced(Stage::Build));
+    let md = std::fs::read_to_string(fx.job_dir.join("checks.md")).expect("checks.md");
+    assert!(md.contains("FAIL false"), "{md}");
 }
 
 #[test]

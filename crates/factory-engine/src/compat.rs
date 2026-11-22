@@ -180,6 +180,37 @@ impl Heartbeat {
     }
 }
 
+/// The config of a probe run. The flag overrides the project's agent CLI for this run only. A
+/// harness other than the project's gets its own default models, because the project's model ids
+/// belong to the other CLI.
+fn probe_config(config: &Config, harness: factory_core::Harness) -> Config {
+    let mut config = config.clone();
+    let other = harness.as_str() != config.agent_cli();
+    config.agent_cli = Some(harness.as_str().to_string());
+    if !other {
+        return config;
+    }
+    match harness {
+        factory_core::Harness::Codex => {
+            let model = factory_core::project::CODEX_DEFAULT_MODEL.to_string();
+            config.builder_model = model.clone();
+            config.reviewer_model = model.clone();
+            config.kb_model = model;
+            config.reviewer_model_large = None;
+            config.escalation_model = None;
+        }
+        factory_core::Harness::Claude => {
+            let defaults = Config::default();
+            config.builder_model = defaults.builder_model;
+            config.reviewer_model = defaults.reviewer_model;
+            config.kb_model = defaults.kb_model;
+            config.reviewer_model_large = defaults.reviewer_model_large;
+            config.escalation_model = defaults.escalation_model;
+        }
+    }
+    config
+}
+
 fn lock_held(m: &Mutex<Held>) -> MutexGuard<'_, Held> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -620,9 +651,7 @@ impl Driver {
         let probes_dir = self.layout.probes_dir();
         let scratch = probes_dir.join("work");
         let events = EventSink::null("probe");
-        // The flag overrides the project's agent CLI for this run only.
-        let mut config = self.config.clone();
-        config.agent_cli = Some(harness.as_str().to_string());
+        let config = probe_config(&self.config, harness);
         let engine = Engine::new(
             self.store.board_path().to_path_buf(),
             scratch.clone(),

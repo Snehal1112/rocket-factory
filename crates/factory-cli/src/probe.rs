@@ -147,6 +147,9 @@ pub fn render_probe(report: &ProbeReport) -> String {
             out.push_str(&format!("  {:<width$}", shown, width = name.len().max(7)));
         }
         out.push('\n');
+        if let Some(model) = &role.model {
+            out.push_str(&format!("  model: {model}\n"));
+        }
     }
     out.push('\n');
     for role in &report.roles {

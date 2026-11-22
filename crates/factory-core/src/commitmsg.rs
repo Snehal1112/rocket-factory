@@ -199,7 +199,7 @@ fn strip_code(text: &str) -> String {
 }
 
 /// Replaces each backtick pair on one line, and what it holds, with a space. A lone backtick stays.
-fn strip_spans(line: &str) -> String {
+pub fn strip_spans(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(open) = rest.find('`') {

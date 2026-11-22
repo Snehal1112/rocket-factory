@@ -258,8 +258,18 @@ fn note_drift(
     ));
 }
 
-/// Agent files the presets no longer ship. A copy left in the preset layer is ignored.
+/// Agent files the presets no longer ship. A copy in the preset layer is ignored, and a copy in
+/// another layer is ignored with a note.
 const RETIRED_AGENTS: [&str; 1] = ["factory-committer.md"];
+
+/// Adds a note for a retired agent file found in `layer`.
+fn note_retired(name: &str, layer: &str, notes: &mut Vec<String>) {
+    if RETIRED_AGENTS.contains(&name) {
+        notes.push(format!(
+            "ignored retired agent {name} from {layer}; delete it"
+        ));
+    }
+}
 
 fn merged_agents(
     home: &Home,
@@ -278,6 +288,7 @@ fn merged_agents(
     let preset_files = by_name.clone();
     let own_files = read_agent_dir(&home.project_dir(name).join("agents"), problems);
     for (n, content) in &own_files {
+        note_retired(n, "the project folder", notes);
         note_drift(&preset_files, n, content, &file.preset, notes);
     }
     by_name.extend(own_files);
@@ -292,12 +303,14 @@ fn merged_agents(
                         "agent file name {n:?} in {AGENTS_DIR} is not valid"
                     ));
                 } else if n.ends_with(".md") {
+                    note_retired(&n, "the base branch", notes);
                     note_drift(&preset_files, &n, &content, &file.preset, notes);
                     by_name.insert(n, content);
                 }
             }
         }
     }
+    by_name.retain(|n, _| !RETIRED_AGENTS.contains(&n.as_str()));
     // The engine only writes factory-<name>.md. A stray file is dropped with a note, it does not degrade the config.
     let mut out = Vec::new();
     for (name, content) in by_name {
@@ -423,6 +436,11 @@ mod tests {
         let r = resolve(&e.home, "p", &Tip::default()).expect("resolve");
         assert!(r.agents.iter().all(|a| a.name != "factory-committer.md"));
         assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(
+            r.notes.iter().all(|n| !n.contains("factory-committer.md")),
+            "{:?}",
+            r.notes
+        );
     }
 
     #[test]
@@ -712,7 +730,7 @@ mod tests {
         let e = env();
         let own = e.home.project_dir("p").join("agents");
         std::fs::write(own.join("factory-builder.md"), "project builder").expect("write");
-        std::fs::write(own.join("factory-committer.md"), "project committer").expect("write");
+        std::fs::write(own.join("factory-kb-refresher.md"), "project kb").expect("write");
         std::fs::write(own.join("factory-zzz-new.md"), "project new").expect("write");
         std::fs::write(own.join("notes.txt"), "ignored").expect("write");
         let mut tip = Tip::default();
@@ -720,8 +738,8 @@ mod tests {
             AGENTS_DIR.to_string(),
             vec![
                 (
-                    "factory-committer.md".to_string(),
-                    "repo committer".to_string(),
+                    "factory-kb-refresher.md".to_string(),
+                    "repo kb-refresher".to_string(),
                 ),
                 ("factory-aaa-repo.md".to_string(), "repo new".to_string()),
                 ("readme.txt".to_string(), "ignored".to_string()),
@@ -746,7 +764,6 @@ mod tests {
                 "factory-aaa-repo.md",
                 "factory-builder.md",
                 "factory-code-reviewer.md",
-                "factory-committer.md",
                 "factory-intake-drafter.md",
                 "factory-kb-refresher.md",
                 "factory-security-reviewer.md",
@@ -757,8 +774,36 @@ mod tests {
         assert_eq!(got[0].1, "repo new");
         assert_eq!(got[1].1, "project builder");
         assert_eq!(got[2].1, preset_reviewer);
-        assert_eq!(got[3].1, "repo committer");
-        assert_eq!(got[8].1, "project new");
+        assert_eq!(got[4].1, "repo kb-refresher");
+        assert_eq!(got[7].1, "project new");
+    }
+
+    #[test]
+    fn a_retired_agent_is_dropped_from_every_layer_with_a_note() {
+        let e = env();
+        let retired = "factory-committer.md";
+        let preset = e.home.presets_dir().join("rust/agents").join(retired);
+        std::fs::write(preset, "preset committer").expect("write");
+        let own = e.home.project_dir("p").join("agents").join(retired);
+        std::fs::write(own, "project committer").expect("write");
+        let mut tip = Tip::default();
+        tip.dirs.insert(
+            AGENTS_DIR.to_string(),
+            vec![(retired.to_string(), "repo committer".to_string())],
+        );
+        let r = resolve(&e.home, "p", &tip).expect("resolve");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(r.agents.iter().all(|a| a.name != retired));
+        for layer in ["the project folder", "the base branch"] {
+            let note = format!("ignored retired agent {retired} from {layer}; delete it");
+            assert!(r.notes.contains(&note), "{note}: {:?}", r.notes);
+        }
+        assert_eq!(
+            r.notes.iter().filter(|n| n.contains(retired)).count(),
+            2,
+            "{:?}",
+            r.notes
+        );
     }
 
     #[test]

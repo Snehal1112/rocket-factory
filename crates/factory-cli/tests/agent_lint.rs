@@ -1288,10 +1288,62 @@ fn every_intake_drafter_asks_for_the_commit_line() -> TestResult {
         require_all(
             &read(&path)?,
             &path,
-            &["**Commit:**", "at most 50 characters"],
+            &[
+                "**Commit:**",
+                "at most 50 characters",
+                "`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`",
+                "the scope is one word with no spaces",
+                "no trailing period",
+                "next to `**Goal:**`",
+            ],
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn the_turns_svg_names_the_worst_case_counts() -> TestResult {
+    let svg = read("docs/assets/images/factory-turns.svg")?;
+    require_all(
+        &svg,
+        "factory-turns.svg",
+        &["At most N + 2 builder runs, 3 runs per review role and 1 spec review, with fix_rounds = 2."],
+    )?;
+    let body = svg.trim();
+    if !body.starts_with("<svg") && !(body.starts_with("<?xml") && body.contains("<svg")) {
+        return Err("factory-turns.svg does not open with an svg tag".to_string());
+    }
+    if !body.ends_with("</svg>") {
+        return Err("factory-turns.svg does not end with </svg>".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn the_journeybook_names_no_committer_role() -> TestResult {
+    let files = [
+        "journeybook/src/data/journeys-f-h.ts",
+        "journeybook/src/data/journeys-a-c.ts",
+        "journeybook/src/data/journeys-d-e.ts",
+        "journeybook/src/data/reference.ts",
+    ];
+    for path in files {
+        forbid_all(
+            &read(path)?,
+            path,
+            &[
+                "`committer`",
+                "the committer,",
+                "reviewer, committer",
+                "message-only committer",
+            ],
+        )?;
+    }
+    require_all(
+        &read("journeybook/src/data/reference.ts")?,
+        "journeybook/src/data/reference.ts",
+        &["The driver writes commits and merge messages with no agent."],
+    )
 }
 
 #[test]

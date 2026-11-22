@@ -67,6 +67,28 @@ fn same_id_and_slug_in_two_projects_do_not_collide() {
 }
 
 #[test]
+fn a_worktree_name_clash_across_projects_fails_cleanly() {
+    let fx = Fixture::new();
+    let a001 = fx
+        .repo()
+        .with_scope("a-001", std::path::Path::new("apps/a1"));
+    let a = fx.repo().with_scope("a", std::path::Path::new("apps/a"));
+    a001.create_worktree(&a001.job_ref("001", "x"))
+        .expect("first");
+    let clash = a.job_ref("001", "001-x");
+    let err = a.create_worktree(&clash).expect_err("clash");
+    assert!(
+        err.to_string()
+            .contains("another job or project uses the worktree name factory-a-001-001-x"),
+        "{err}"
+    );
+    let repo = Repository::open(&fx.path).expect("open");
+    assert!(repo
+        .find_branch(&clash.branch_name(), git2::BranchType::Local)
+        .is_err());
+}
+
+#[test]
 fn create_worktree_rejects_a_hostile_project_name() {
     let fx = Fixture::new();
     let repo = fx

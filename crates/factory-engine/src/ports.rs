@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::path::PathBuf;
 
 use factory_agent::{AgentRun, AgentSpec};
-use factory_core::{Board, CoreError, Job, Ledger, Stage, TaskState};
+use factory_core::{Board, CoreError, Harness, Job, Ledger, Stage, TaskState};
 
 use crate::{Engine, EngineError, StoreError};
 
@@ -260,8 +260,8 @@ impl Engine<'_> {
 
     /// The provider-specific part of a run spec: Codex gets its agent text and sandbox, Claude gets
     /// the cache env, its plugins and the subagent model. The probe shapes its specs the same way.
-    pub(crate) fn shape_spec(&self, spec: &mut AgentSpec) -> Result<(), String> {
-        if self.config.agent_cli() == "codex" {
+    pub(crate) fn shape_spec(&self, spec: &mut AgentSpec, harness: Harness) -> Result<(), String> {
+        if harness == Harness::Codex {
             return self.prepare_for_codex(spec).map_err(|e| e.to_string());
         }
         if let Some(var) = cache_ttl_var(self.config.cache_ttl.as_deref()) {
@@ -367,7 +367,7 @@ impl Engine<'_> {
                 spec.model = Some(model);
             }
         }
-        if let Err(e) = self.shape_spec(&mut spec) {
+        if let Err(e) = self.shape_spec(&mut spec, Harness::from_config(&self.config)) {
             return Ok(Prepared::Refused(AgentRun::failed(&e)));
         }
         // Claude takes its agents from the file in the job folder, outside the repo.

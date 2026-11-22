@@ -101,6 +101,27 @@ fn append_delivery_puts_the_marker_in_agent_prompt() {
 }
 
 #[test]
+fn shape_spec_follows_the_probe_harness() {
+    let fx = fixture(Harness::Claude);
+    let runner = FakeRunner::new(vec![answer(MARKER)]);
+    let dir = work_dir(&fx);
+    fx.engine(&runner)
+        .with_agent_files(files())
+        .probe_role_with(
+            ProbeRole::Builder,
+            Harness::Codex,
+            Delivery::Agent,
+            MARKER,
+            &dir,
+        )
+        .expect("probe");
+    let spec = runner.calls().pop().expect("one run");
+    assert_eq!(spec.agent, None);
+    let text = spec.agent_prompt.expect("agent text");
+    assert!(text.starts_with("You run under Codex."), "{text}");
+}
+
+#[test]
 fn codex_marker_rides_agent_prompt_after_the_preface() {
     let (spec, _fx) = spec_of(ProbeRole::Builder, Harness::Codex, Delivery::Agent);
     assert_eq!(spec.agent, None);
@@ -204,6 +225,28 @@ fn missing_agent_file_is_an_error() {
             .expect_err("no agent files");
         assert!(err.to_string().contains("factory-builder"), "{err}");
         assert!(runner.calls().is_empty());
+    }
+}
+
+#[test]
+fn a_probe_without_agents_names_the_project_flag() {
+    for harness in [Harness::Claude, Harness::Codex] {
+        let fx = fixture(harness);
+        let runner = FakeRunner::new(vec![answer(MARKER)]);
+        let dir = work_dir(&fx);
+        let err = fx
+            .engine(&runner)
+            .probe_role_with(ProbeRole::Builder, harness, Delivery::Agent, MARKER, &dir)
+            .expect_err("no agent file")
+            .to_string();
+        assert!(
+            err.contains("agent file factory-builder not found"),
+            "{err}"
+        );
+        assert!(
+            err.ends_with("; pass --project <name>, or run inside a registered project"),
+            "{err}"
+        );
     }
 }
 

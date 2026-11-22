@@ -105,6 +105,9 @@ pub struct RoleProbe {
     pub channels: Vec<Channel>,
     pub tools: Vec<String>,
     pub skills: Vec<String>,
+    /// The model the probe run asked for, when the run named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl RoleProbe {
@@ -295,6 +298,7 @@ pub fn evaluate(
         channels,
         tools: answer.tools.clone(),
         skills: answer.skills.clone(),
+        model: None,
     }
 }
 

@@ -103,6 +103,39 @@ fn workdir_in_and_worktree_root_of() {
 }
 
 #[test]
+fn worktree_root_of_is_lexical() {
+    let fx = Fixture::new();
+    let repo = fx.repo();
+    let a = repo.worktrees_dir().join("a");
+    let sneaky = repo.worktrees_dir().join("a/../b");
+    assert_eq!(repo.worktree_root_of(&sneaky), Some(a));
+}
+
+fn web_paths(paths: &[&str]) -> Vec<String> {
+    let repo = Fixture::new()
+        .repo()
+        .with_scope("web", Path::new("apps/web"));
+    let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+    repo.scoped_paths(&paths)
+}
+
+#[test]
+fn scoped_paths_maps_both_sides_of_a_rename() {
+    let got = web_paths(&["apps/web/old.rs", "apps/web/new.rs", "lib/x.rs"]);
+    assert_eq!(got, ["old.rs", "new.rs", "lib/x.rs"]);
+}
+
+#[test]
+fn scoped_paths_of_nothing_is_nothing() {
+    assert!(web_paths(&[]).is_empty());
+}
+
+#[test]
+fn out_of_scope_paths_pass_through_scoped_paths() {
+    assert_eq!(web_paths(&["apps/webx/a.rs"]), ["apps/webx/a.rs"]);
+}
+
+#[test]
 fn common_git_dir_is_the_main_dot_git_from_a_worktree() {
     let fx = Fixture::new();
     let repo = fx.repo();
