@@ -1694,64 +1694,26 @@ fn rule(path: &str, command: &str) -> factory_core::CheckRule {
 }
 
 #[test]
-fn each_task_writes_a_checks_file_for_its_own_range() {
+fn a_task_plan_runs_no_checks_between_tasks() {
     let mut fx = two_task_fixture();
     fx.config.checks = vec![rule("a.txt", "echo task-a"), rule("b.txt", "echo task-b")];
     let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
     let e = fx.engine(&runner);
     e.build_stage().expect("task 1");
     e.build_stage().expect("task 2");
-    let one = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
-    let two = std::fs::read_to_string(fx.job_dir.join("checks-task2.md")).expect("checks-task2.md");
-    assert!(
-        one.contains("PASS echo task-a") && !one.contains("task-b"),
-        "{one}"
-    );
-    assert!(
-        two.contains("PASS echo task-b") && !two.contains("task-a"),
-        "{two}"
-    );
-    assert!(
-        fx.ledger().contains("task 1 checks: pass"),
-        "{}",
-        fx.ledger()
-    );
-    assert!(
-        !fx.job_dir.join("checks.md").exists(),
-        "the whole-branch file is not written here"
-    );
-}
-
-#[test]
-fn a_failing_task_check_is_a_ledger_line_not_a_park() {
-    let mut fx = two_task_fixture();
-    fx.config.checks = vec![rule("a.txt", "false")];
-    let before_round = fx.job().round;
-    let runner = scripted(vec![change_effect("a.txt", 3)]);
-    let out = fx.engine(&runner).build_stage().expect("task 1");
-    assert_eq!(out, StageOutcome::Advanced(Stage::Build));
-    let job = fx.job();
-    assert_eq!(job.task_index, 1);
-    assert_eq!(job.stage, Stage::Build);
-    assert_eq!(job.round, before_round);
+    assert!(!fx.job_dir.join("checks-task1.md").exists());
+    assert!(!fx.job_dir.join("checks-task2.md").exists());
     let ledger = fx.ledger();
-    assert!(ledger.contains("task 1 checks: fail false"), "{ledger}");
-    let md = std::fs::read_to_string(fx.job_dir.join("checks-task1.md")).expect("checks-task1.md");
-    assert!(md.contains("FAIL false"), "{md}");
-}
-
-#[test]
-fn a_failing_check_after_task_two_is_reported_against_task_two() {
-    let mut fx = two_task_fixture();
-    fx.config.checks = vec![rule("a.txt", "true"), rule("b.txt", "false")];
-    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
-    let e = fx.engine(&runner);
-    e.build_stage().expect("task 1");
-    e.build_stage().expect("task 2");
-    let ledger = fx.ledger();
-    assert!(ledger.contains("task 2 checks: fail false"), "{ledger}");
-    assert!(ledger.contains("task 1 checks: pass"), "{ledger}");
-    assert!(!ledger.contains("task 1 checks: fail"), "{ledger}");
+    assert!(
+        !ledger.contains("task 1 checks") && !ledger.contains("task 2 checks"),
+        "{ledger}"
+    );
+    e.checks_stage().expect("checks");
+    let md = std::fs::read_to_string(fx.job_dir.join("checks.md")).expect("checks.md");
+    assert!(
+        md.contains("PASS echo task-a") && md.contains("PASS echo task-b"),
+        "{md}"
+    );
 }
 
 #[test]
@@ -1851,16 +1813,6 @@ fn the_checks_stage_runs_the_checks_with_a_broken_workspace_map() {
     assert!(md.contains("PASS true"), "{md}");
     // Without a map the dependents rule plans no command.
     assert!(!md.contains("cargo test -j4 -p"), "{md}");
-}
-
-#[test]
-fn a_task_with_no_mapped_checks_writes_nothing() {
-    let mut fx = two_task_fixture();
-    fx.config.checks = vec![rule("src/**", "false")];
-    let runner = scripted(vec![change_effect("a.txt", 3)]);
-    fx.engine(&runner).build_stage().expect("task 1");
-    assert!(!fx.job_dir.join("checks-task1.md").exists());
-    assert!(!fx.ledger().contains("task 1 checks"), "{}", fx.ledger());
 }
 
 fn assert_builder_spec_is_strict(spec: &factory_agent::AgentSpec) {
