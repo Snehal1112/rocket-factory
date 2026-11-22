@@ -162,7 +162,7 @@ pub(crate) fn set_park_resume(
 }
 
 /// What went wrong in a soft step.
-enum StepFailure {
+pub(crate) enum StepFailure {
     Error(EngineError),
     Panic(String),
 }
@@ -177,7 +177,9 @@ impl std::fmt::Display for StepFailure {
 }
 
 /// Runs one post-merge step and turns a panic into a `StepFailure::Panic` with the payload text.
-fn run_soft_step<T>(f: impl FnOnce() -> Result<T, EngineError>) -> Result<T, StepFailure> {
+pub(crate) fn run_soft_step<T>(
+    f: impl FnOnce() -> Result<T, EngineError>,
+) -> Result<T, StepFailure> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(result) => result.map_err(StepFailure::Error),
         Err(payload) => {
@@ -247,7 +249,7 @@ pub(crate) fn report_unsigned(driver: &Driver, id: &str, kind: &str, sha: &str, 
 }
 
 /// Writes one folded line to the job's ledger. A missing job skips it and a failed write is only logged.
-fn write_step_ledger(driver: &Driver, id: &str, step: &str, line: &str) {
+pub(crate) fn write_step_ledger(driver: &Driver, id: &str, step: &str, line: &str) {
     let Ok(job) = driver.job(id) else {
         return;
     };
@@ -302,6 +304,10 @@ pub fn merge_stage(driver: &Driver, id: &str) -> Result<MergeResult, EngineError
             // The costs refresh runs last so that it counts the kb run of this job.
             if let Err(failure) = run_soft_step(|| crate::costs::refresh_costs(driver)) {
                 report_failure(driver, id, "costs_refresh", &failure);
+            }
+            // The cleanup is the last soft step, and what it does never changes the merge result.
+            if driver.config().cleanup_on_merge {
+                crate::cleanup::cleanup_after_merge(driver, id);
             }
             Ok(MergeResult::Merged(sha))
         }

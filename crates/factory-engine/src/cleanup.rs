@@ -1,5 +1,6 @@
 //! Removes the checkout of a finished job: its worktree, its branch and any leftover folder.
 
+use crate::merge::{run_soft_step, write_step_ledger};
 use crate::{Driver, EngineError};
 use factory_core::Job;
 use std::path::PathBuf;
@@ -60,6 +61,29 @@ pub fn cleanup_checkout(driver: &Driver, job: &Job, discard: bool) -> Result<Str
     repo.remove_worktree(&wt, discard)
         .map_err(|e| EngineError::Refused(format!("{e}, use --discard-commits to drop it")))?;
     Ok(format!("removed worktree and branch of job {id}"))
+}
+
+/// Runs the cleanup after a merge as a soft step: marks the card cleaned, or reports why the worktree was kept.
+pub(crate) fn cleanup_after_merge(driver: &Driver, id: &str) {
+    let result = run_soft_step(|| {
+        let job = driver.job(id)?;
+        let text = cleanup_checkout(driver, &job, false)?;
+        driver.store().update_job(id, |j| {
+            j.cleaned = true;
+            Ok(())
+        })?;
+        Ok(text)
+    });
+    match result {
+        Ok(text) => tracing::info!(event = "cleanup.done", job = id, msg = %text),
+        Err(failure) => {
+            let reason = failure.to_string();
+            let line = format!("cleanup kept the worktree: {reason}");
+            write_step_ledger(driver, id, "cleanup", &line);
+            eprintln!("warning: job {id}: {line}");
+            tracing::warn!(event = "cleanup.kept", job = id, reason = %reason);
+        }
+    }
 }
 
 fn remove_leftover_folder(path: &std::path::Path) -> Result<(), EngineError> {

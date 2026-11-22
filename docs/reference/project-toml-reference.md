@@ -132,6 +132,7 @@ The builder also gets deny rules for `Edit` and `Write` on the job folder, so it
 |---|---|---|---|
 | `base_branch` | string | `"main"` | Jobs branch from it and merge into it. Must be a valid git branch name and must not start with `factory/`. |
 | `tickets_on_merge` | bool | true | After the last plan merges, file follow-up tickets first, then comment on and close the parent tickets with `gh`. `false` turns it off. A failure never changes the merge. |
+| `cleanup_on_merge` | bool | true | Right after a job merges, remove its worktree and branch, as `factory cleanup <id>` does. A worktree with untracked or modified files is kept and reported. A failure never changes the merge. `false` turns it off. |
 | `minor_tickets` | bool | true | After a merge, file one ticket with a checklist of the open `[minor]` findings of the last review. It needs no `tickets_on_merge`, applies to every plan of a series and never changes the merge. |
 | `gate_record` | bool | false | Write gates.jsonl in each job folder, one line per gate result, for the dashboard's gate strip. |
 | `intake` | bool | false | Turns on polling for labelled GitHub issues and `factory intake`. |
@@ -424,6 +425,7 @@ kb_budget_weighted = 150000
 ```toml
 [settings]
 tickets_on_merge = true
+cleanup_on_merge = true
 ```
 
 Put `Fixes` style issue numbers in the `factory new` feature text. A job that only helps an issue should be created without the number, so the merge does not close it.

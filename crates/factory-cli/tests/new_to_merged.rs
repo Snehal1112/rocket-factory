@@ -344,6 +344,30 @@ fn cleanup_twice_succeeds_and_says_nothing_was_left() {
 }
 
 #[test]
+fn a_run_to_merged_cleans_up_by_default() {
+    let fx = Fixture::new();
+    std::fs::write(
+        fx.root.join(".claude/factory/config.toml"),
+        "risk_paths = [\"src-tauri/**\"]\nmin_free_disk_mb = 0\ncleanup_on_merge = true\n",
+    )
+    .expect("config");
+    let plans = fx.write_plan("plan-01-hello.md", 1, "none");
+    fx.run(&[
+        "new",
+        "hello",
+        "say hello",
+        "--plans",
+        plans.to_str().expect("utf8"),
+    ])
+    .expect("new");
+    assert_eq!(fx.run(&["run", "1"]).expect("run"), "merged");
+    assert_eq!(
+        fx.run(&["cleanup", "1"]).expect("cleanup"),
+        "nothing to remove for job 001, the worktree and branch are already gone"
+    );
+}
+
+#[test]
 fn cleanup_deletes_the_branch_when_the_worktree_folder_was_removed_by_hand() {
     let fx = Fixture::with_risk_path("docs/**");
     let plans = fx.write_plan("plan-01-hello.md", 1, "none");

@@ -249,7 +249,7 @@ Your three choices:
 /factory cancel <id>             # stop it
 ```
 
-`approve` is refused when the code review never ran. Add `--without-review` only if you mean it. Cancelling one plan of a series leaves the later plans waiting, so cancel each of them. After a merge or a cancel, `factory cleanup <id>` removes the worktree and the branch.
+`approve` is refused when the code review never ran. Add `--without-review` only if you mean it. Cancelling one plan of a series leaves the later plans waiting, so cancel each of them. A merge removes the worktree and the branch by itself (`cleanup_on_merge`), unless the worktree holds untracked or modified files. After a cancel, or when a worktree was kept, `factory cleanup <id>` removes them.
 
 After a merge, your base branch has a new merge commit. Check it, then push it yourself with `git push`.
 
@@ -331,7 +331,7 @@ Open http://127.0.0.1:8765/ in your browser. It listens on your own machine only
 | See what a job spent | `factory --project <name> tokens <id>` and `factory --project <name> costs`. |
 | Watch it live | The dashboard. |
 | Finish a parked job | `/factory approve <id>` or `/factory rework <id> <note>`. |
-| Clean up | `/factory cleanup <id>` after merge or cancel. |
+| Clean up | Automatic after a merge. `/factory cleanup <id>` after a cancel or a kept worktree. |
 | Stop a stuck job | `factory --project <name> cancel <id>`. If it says the lease is live, add `--force`. |
 
 Safety rules the driver follows, so you can trust it with your repo:
@@ -378,6 +378,7 @@ Keys you may want, with defaults:
 | `risk_paths` | from the preset | Globs that make a diff risky and force your review. |
 | `read_first` | `CLAUDE.md` | Files the builder reads first. |
 | `tickets_on_merge` | true | File follow-up GitHub issues, then comment on and close the parent issue after the last plan merges (needs `gh`). `false` turns it off. |
+| `cleanup_on_merge` | true | Remove the job's worktree and branch right after it merges. A worktree with untracked or modified files is kept. `false` turns it off. |
 | `plan_rules` | empty | Extra rules that `/factory` applies to every plan it writes. |
 
 The full key list is in `README.md`.
