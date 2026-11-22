@@ -390,7 +390,8 @@ pub(crate) fn parse_issue_list(json: &str) -> Result<Vec<IssueInfo>, String> {
 
 /// The actor and time of the last `labeled` event for `label`. The input is either the compact
 /// event lines the events call prints or full event arrays, one per page. The last matching event
-/// wins, so a null actor on it gives None even when an earlier event had a login.
+/// wins, so a null actor on it gives None even when an earlier event had a login. A value that is
+/// not an event or an array of events is an error, and so is a matching event without a time.
 pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<LabelEvent>, String> {
     let mut last = None;
     for value in serde_json::Deserializer::from_str(json).into_iter::<serde_json::Value>() {
@@ -400,12 +401,16 @@ pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<LabelEvent>,
             None => std::slice::from_ref(&value),
         };
         for event in events {
-            if event["event"].as_str() == Some("labeled")
-                && event["label"]["name"].as_str() == Some(label)
-            {
+            let kind = event["event"]
+                .as_str()
+                .ok_or("gh printed unexpected JSON: expected label events")?;
+            if kind == "labeled" && event["label"]["name"].as_str() == Some(label) {
+                let at = event["created_at"]
+                    .as_str()
+                    .ok_or_else(|| format!("gh printed a `{label}` label event without a time"))?;
                 last = Some(event["actor"]["login"].as_str().map(|login| LabelEvent {
                     actor: login.to_string(),
-                    at: event["created_at"].as_str().unwrap_or("").to_string(),
+                    at: at.to_string(),
                 }));
             }
         }
@@ -950,11 +955,11 @@ mod tests {
     }
 
     const EVENTS: &str = r#"[
-      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"mallory"}},
-      {"event":"labeled","label":{"name":"bug"},"actor":{"login":"bob"}},
+      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"mallory"},"created_at":"2026-11-01T10:00:00Z"},
+      {"event":"labeled","label":{"name":"bug"},"actor":{"login":"bob"},"created_at":"2026-11-01T11:00:00Z"},
       {"event":"commented","actor":{"login":"carol"}},
       {"event":"unlabeled","label":{"name":"factory"},"actor":{"login":"dave"}},
-      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"}}
+      {"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"},"created_at":"2026-11-01T13:00:00Z"}
     ]"#;
 
     fn login_of(json: &str, label: &str) -> Option<String> {
@@ -971,7 +976,7 @@ mod tests {
     fn parse_actor_reads_paginated_pages() {
         let pages = format!(
             "{EVENTS}{}",
-            r#"[{"event":"labeled","label":{"name":"factory"},"actor":{"login":"erin"}}]"#
+            r#"[{"event":"labeled","label":{"name":"factory"},"actor":{"login":"erin"},"created_at":"2026-11-02T10:00:00Z"}]"#
         );
         assert_eq!(login_of(&pages, "factory"), Some("erin".to_string()));
     }
@@ -1016,6 +1021,48 @@ mod tests {
         let lines = format!("{LABELED}\n{LABELED}\n");
         assert_eq!(
             parse_actor(&lines, "factory").expect("parse"),
+            Some(LabelEvent {
+                actor: "alice".to_string(),
+                at: "2026-11-01T10:00:00Z".to_string()
+            })
+        );
+    }
+
+    const NOT_EVENTS: &str = "gh printed unexpected JSON: expected label events";
+
+    #[test]
+    fn parse_actor_rejects_a_stray_object() {
+        let err = parse_actor(r#"{"message":"Not Found"}"#, "factory").expect_err("not an event");
+        assert_eq!(err, NOT_EVENTS);
+    }
+
+    #[test]
+    fn parse_actor_rejects_a_non_event_element() {
+        let err = parse_actor("[1]", "factory").expect_err("not an event");
+        assert_eq!(err, NOT_EVENTS);
+    }
+
+    #[test]
+    fn parse_actor_rejects_a_scalar_value() {
+        let err = parse_actor("42", "factory").expect_err("not an event");
+        assert_eq!(err, NOT_EVENTS);
+    }
+
+    #[test]
+    fn parse_actor_rejects_a_matching_event_without_a_time() {
+        let json = r#"{"event":"labeled","label":{"name":"factory"},"actor":{"login":"alice"}}"#;
+        let err = parse_actor(json, "factory").expect_err("no time");
+        assert_eq!(err, "gh printed a `factory` label event without a time");
+    }
+
+    #[test]
+    fn parse_actor_ignores_a_time_missing_on_another_label() {
+        let json = format!(
+            "{LABELED}\n{}",
+            r#"{"event":"labeled","label":{"name":"bug"},"actor":{"login":"bob"}}"#
+        );
+        assert_eq!(
+            parse_actor(&json, "factory").expect("parse"),
             Some(LabelEvent {
                 actor: "alice".to_string(),
                 at: "2026-11-01T10:00:00Z".to_string()
