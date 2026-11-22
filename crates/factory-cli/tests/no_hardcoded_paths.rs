@@ -72,3 +72,63 @@ fn no_source_names_a_state_path_or_the_main_branch() {
         hits.join("\n")
     );
 }
+
+fn root_text(rel: &str) -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(rel),
+    )
+    .unwrap_or_else(|e| panic!("read {rel}: {e}"))
+}
+
+#[test]
+fn ci_and_release_list_every_workspace_crate() {
+    let manifest = root_text("Cargo.toml");
+    let ci = root_text(".github/workflows/ci.yml");
+    let release = root_text("scripts/release.sh");
+    let crates_block = release
+        .split("CRATES=(")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .expect("CRATES list in scripts/release.sh");
+    let release_names: Vec<&str> = crates_block.split_whitespace().collect();
+    let members = manifest
+        .split("members = [")
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .expect("workspace members in Cargo.toml");
+    let mut seen = 0;
+    for line in members.lines() {
+        let path = line.trim().trim_end_matches(',').trim_matches('"');
+        let Some(name) = path.strip_prefix("crates/") else {
+            continue;
+        };
+        seen += 1;
+        assert!(
+            ci.contains(&format!("-p {name}\n")),
+            "{name} is missing from PKGS in .github/workflows/ci.yml"
+        );
+        assert!(
+            release_names.contains(&name),
+            "{name} is missing from CRATES in scripts/release.sh"
+        );
+    }
+    assert!(seen > 0, "no workspace members parsed from Cargo.toml");
+}
+
+#[test]
+fn ci_runs_on_linux_and_macos() {
+    let ci = root_text(".github/workflows/ci.yml");
+    for needle in [
+        "os: [ubuntu-latest, macos-latest]",
+        "fail-fast: false",
+        "runs-on: ${{ matrix.os }}",
+    ] {
+        assert_eq!(
+            ci.matches(needle).count(),
+            2,
+            "{needle} must appear once per job"
+        );
+    }
+}
