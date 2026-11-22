@@ -9,6 +9,9 @@ mod merge;
 mod repo;
 mod report;
 mod reset;
+// Not called until commits are signed.
+#[allow(dead_code)]
+mod sign;
 mod stage;
 mod state;
 mod tip;
