@@ -74,7 +74,7 @@ pub(crate) fn cleanup_after_merge(driver: &Driver, id: &str);
 
 Example ledger line: `cleanup kept the worktree: worktree <path> has uncommitted or untracked work, use --discard-commits to drop it`. The worktree stays for the user to look at, then remove the files or run `factory cleanup <id> --discard-commits`.
 
-No extra lock is taken: each job removes only its own worktree and branch, and the merge lock was already released.
+The merging driver holds the job's lease through the whole of `merge_stage`, the automatic cleanup included (the run loop and `factory approve` both renew it). `factory cleanup <id>` now refuses while another driver holds a live lease on that job, with the text `job <id> is leased by <owner>`, the same check `factory tickets` makes (`commands.rs:1316-1325`). So a manual cleanup can never run at the same time as the automatic one. A dead or expired lease does not block it, as today.
 
 ### 4. Tests that inspect a merged job's worktree
 
@@ -107,7 +107,8 @@ The setting is on by default, so existing tests that merge a job and then use it
 | The merge came from `factory approve` | The same step runs, because `approve` calls `merge_stage`. |
 | A merged job that was already cleaned | `factory cleanup <id>` says nothing was left, as today. |
 | A rerun of a job that is already merged | The run loop returns before `merge_stage`, so no cleanup runs; `factory cleanup <id>` is the way. |
-| Two projects sharing one repository merge at once | Each removes only its own worktree and branch; no extra lock. |
+| Two projects sharing one repository merge at once | Each removes only its own worktree and branch. |
+| `factory cleanup <id>` while another driver holds a live lease on the job | Refused with `job <id> is leased by <owner>`; nothing is removed. |
 
 ## Testing
 
@@ -117,6 +118,7 @@ The setting is on by default, so existing tests that merge a job and then use it
   - `a_dirty_worktree_is_kept_and_reported`: an untracked file is written into the worktree before the merge. Afterwards the result is still `Merged`, the worktree and branch exist, `cleaned` is false, and the ledger has one line starting `cleanup kept the worktree:` that contains `--discard-commits`.
   - `the_setting_off_keeps_the_worktree`: with `cleanup_on_merge = false`, the worktree and branch exist after the merge and the ledger has no cleanup line.
 - factory-cli `tests/new_to_merged.rs`:
+  - `cleanup_refuses_a_job_leased_by_another_driver`: a merged job whose card carries a live lease owned by `someone-else` (set as `project_lease_cli.rs` sets leases) gives `Err` with text `job 001 is leased by someone-else`, and the worktree and branch still exist.
   - `a_run_to_merged_cleans_up_by_default`: `run 1` returns `merged`, then `cleanup 1` says `nothing to remove for job 001, the worktree and branch are already gone`.
   - The existing cleanup tests pass, with `cleanup_on_merge = false` in their fixture config where they need the worktree after the merge.
 
@@ -134,7 +136,7 @@ Commands: `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine`, 
 
 - Never shell out to `git`; the cleanup uses `factory_git::Repo` as today.
 - A cleanup failure never changes the merge result, never parks a job and never removes a card.
-- `factory cleanup` keeps its texts and behaviour.
+- `factory cleanup` keeps its texts and behaviour, apart from the new lease refusal.
 - The board JSON keeps its shape; `cleaned` already exists. No `Cargo.toml` change and no file under `dashboard/` changes.
 - Cargo: `-j4 -p <crate>`, never `--workspace`, `--all` or `CARGO_TARGET_DIR`. Tests use `.expect("...")` and `expect_err`. Comments are short full sentences.
 
@@ -146,7 +148,7 @@ Commands: `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine`, 
 - With it off, nothing changes after a merge.
 - The merge result is `Merged` whatever the cleanup did.
 - `factory approve` merges get the same cleanup.
-- `factory cleanup <id>` behaves and prints exactly as before.
+- `factory cleanup <id>` behaves and prints exactly as before, except that it refuses a job another driver holds a live lease on.
 - The docs describe the setting, the new events and the changed `/factory cleanup` row.
 - Every test in Testing passes, with clippy and fmt clean.
 
@@ -165,4 +167,4 @@ Commands: `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine`, 
 - A successful cleanup logs `cleanup.done` and writes no ledger line; only a kept worktree writes one. Decided by: call
 - Existing tests that need a merged job's worktree get `cleanup_on_merge = false` through the two shared test helpers and `external_layout.rs`. Decided by: call
 - The kept-worktree ledger line quotes the refusal text, which names `--discard-commits`, instead of advising a plain `factory cleanup <id>`. Decided by: call
-- No extra lock around the cleanup. Decided by: call
+- How are a manual and the automatic cleanup kept apart? Options: `factory cleanup` refuses a job with a live lease held by another driver, no extra guard, a repository lock around both. Chosen: `factory cleanup` refuses a job leased by another driver, as `factory tickets` does. Decided by: user

@@ -16,7 +16,7 @@
 
 - `cleanup_on_merge: bool`, default `true`, parsed like `tickets_on_merge`.
 - A cleanup failure never changes the merge result, never parks a job and never removes a card.
-- `factory cleanup <id>` keeps its exact texts and behaviour.
+- `factory cleanup <id>` keeps its exact texts and behaviour, and newly refuses a job whose live lease another driver holds, with `job <id> is leased by <owner>` (the check `factory tickets` makes at `commands.rs:1316-1325`).
 - Kept-worktree ledger line: `cleanup kept the worktree: <reason>`. Stderr: `warning: job <id>: cleanup kept the worktree: <reason>`. Events: `cleanup.done` (info, `job`, `msg`) and `cleanup.kept` (warn, `job`, `reason`).
 - Never shell out to `git`. The board JSON keeps its shape; `cleaned` already exists. No `Cargo.toml` change and no file under `dashboard/` changes.
 - Cargo: `-j4 -p <crate>`, never `--workspace`, `--all` or `CARGO_TARGET_DIR`. Tests use `.expect("...")` and `expect_err`. Comments are short full sentences.
@@ -34,10 +34,11 @@
 
 ## Review Focus
 
-1. A refusal for one member must not stop `factory cleanup` over a series: the engine's `EngineError::Refused` must come back as `CliError::Refused`, so the loop at `commands.rs:1081-1085` goes on. Pinned by the existing series cleanup tests in factory-cli, unchanged.
-2. A dirty worktree after the merge must still give `MergeResult::Merged`, and its untracked file must survive. Pinned by `a_dirty_worktree_is_kept_and_reported`.
-3. With the setting off, the worktree must stay and no ledger line must appear. Pinned by `the_setting_off_keeps_the_worktree`.
-4. Tests that read a merged job's branch must keep passing through the helper defaults, for example `message.rs:119` and `merge.rs:546`. Pinned by the full factory-engine and factory-cli suites.
+1. A manual `factory cleanup <id>` while the merging driver is cleaning the same job must be refused, not race it. Pinned by `cleanup_refuses_a_job_leased_by_another_driver`.
+2. A refusal for one member must not stop `factory cleanup` over a series: the engine's `EngineError::Refused` must come back as `CliError::Refused`, so the loop at `commands.rs:1081-1085` goes on. Pinned by the existing series cleanup tests in factory-cli, unchanged.
+3. A dirty worktree after the merge must still give `MergeResult::Merged`, and its untracked file must survive. Pinned by `a_dirty_worktree_is_kept_and_reported`.
+4. With the setting off, the worktree must stay and no ledger line must appear. Pinned by `the_setting_off_keeps_the_worktree`.
+5. Tests that read a merged job's branch must keep passing through the helper defaults, for example `message.rs:119` and `merge.rs:546`. Pinned by the full factory-engine and factory-cli suites.
 
 ---
 
@@ -87,7 +88,7 @@ fn cleanup_on_merge_is_on_by_default_and_can_be_turned_off() {
 
 - [ ] **Step 5: Run** `cargo test -j4 -p factory-core`, `cargo test -j4 -p factory-engine` and `cargo test -j4 -p factory-cli`. Expected: all pass, including the two new tests and `every_config_key_is_listed_once`.
 
-### Task 2: Cleanup moves into the engine
+### Task 2: Cleanup moves into the engine, and the lease guard
 
 **Files:**
 - Create: `crates/factory-engine/src/cleanup.rs`
@@ -98,18 +99,21 @@ fn cleanup_on_merge_is_on_by_default_and_can_be_turned_off() {
 - Consumes: `factory_engine::Driver` (`repo()`, `job_worktree` at `build.rs:510`), `factory_core::Job`.
 - Produces: `pub fn cleanup_checkout(driver: &Driver, job: &Job, discard: bool) -> Result<String, EngineError>`. Every refusal is `EngineError::Refused(<today's exact text>)`.
 
-Tests added: none. This task moves code; the existing cleanup tests pin its texts.
+Tests added: `cleanup_refuses_a_job_leased_by_another_driver` in `crates/factory-cli/tests/project_lease_cli.rs`. The moved code is pinned by the existing cleanup tests.
 
 - [ ] **Step 1: Read** `crates/factory-cli/src/commands.rs:1060-1307`, `crates/factory-engine/src/lib.rs:140-175`, `crates/factory-engine/src/build.rs:505-520`, the `CliError` enum in factory-cli, and every `cleanup_*` test in `crates/factory-cli/tests/`.
 
-- [ ] **Step 2: Run** `cargo test -j4 -p factory-cli cleanup` before any change. Expected: all pass. Note the count; it must be the same after the move.
+- [ ] **Step 2: Run** `cargo test -j4 -p factory-cli cleanup` before any change. Expected: all pass. Note the count; it must be one more after this task.
+
+- [ ] **Step 2b: Write the failing lease test** in `tests/project_lease_cli.rs`, building the merged job and a live lease the way `cleanup_removes_the_card_despite_a_dead_owner_lease` builds its dead one, with owner `someone-else` and a fresh heartbeat. Assert `fx.run(&["cleanup", "1"]).expect_err("leased")` shows `job 001 is leased by someone-else`, and that the worktree path and the branch still exist. Run `cargo test -j4 -p factory-cli --test project_lease_cli cleanup_refuses_a_job_leased_by_another_driver`. Expected: it fails, because the cleanup succeeds.
 
 - [ ] **Step 3: Implement.**
   - Move `cleanup_checkout` into `cleanup.rs` with the signature above. Keep every message text, including "nothing to remove for job <id>, the worktree and branch are already gone", the leftover-folder texts, "<path> is not a git checkout and lies outside <dir>, remove it by hand", "the branch has commits that are not in <base>, use --discard-commits", "<git error>, use --discard-commits to drop it" and "removed worktree and branch of job <id>".
   - In factory-cli, `cleanup_job` calls `factory_engine::cleanup_checkout(&ctx.driver()?, job, discard)`. It maps `Err(EngineError::Refused(why))` to `CliError::Refused(why)` and other errors through `CliError::Engine`.
   - Delete the CLI copy.
+  - At the top of the CLI `cleanup`, refuse when `job.lease` is live (`lease_is_live(&job, now_secs())`) and its owner is not `ctx.owner`, with `CliError::Refused(format!("job {id} is leased by {owner}"))`, as `tickets` does.
 
-- [ ] **Step 4: Run** `cargo test -j4 -p factory-cli` and `cargo test -j4 -p factory-engine`. Expected: all pass, and the `cleanup` filter count from Step 2 is unchanged.
+- [ ] **Step 4: Run** `cargo test -j4 -p factory-cli` and `cargo test -j4 -p factory-engine`. Expected: all pass, and the `cleanup` filter count is one more than in Step 2.
 
 ### Task 3: The soft step after a merge, and docs
 
