@@ -191,8 +191,10 @@ pub fn queue_retry(home: &Home, name: &str, raw_id: &str, now_ms: u64) -> Result
         )));
     }
     let Some(resume) = job.park_resume else {
-        return Err(conflict(format!(
-            "job {id} has no resume stage, see its park for the next command"
+        return Err(conflict(factory_core::no_resume_refusal(
+            &layout.job_dir(&job.dir),
+            &id,
+            job.park_kind.as_deref(),
         )));
     };
     // An approval given before the park carries over, as in the engine.
@@ -449,7 +451,29 @@ mod tests {
         assert_eq!(
             err,
             Refusal::Conflict(
-                "job 001 has no resume stage, see its park for the next command".into()
+                "job 001 has no stage to retry at; use factory approve 001, factory rework 001 <note>, factory cancel 001".into()
+            )
+        );
+        assert!(queue::list(&home).is_empty());
+    }
+
+    #[test]
+    fn queue_retry_names_the_commands_of_the_park_file() {
+        let (_t, home) = fixture();
+        parked(&home, r#""park_kind":"other""#);
+        let dir = project_layout(&home, "good")
+            .expect("layout")
+            .job_dir("001-first");
+        std::fs::create_dir_all(&dir).expect("job dir");
+        let kind = factory_core::ParkKind::Other;
+        let mut record = factory_core::ParkRecord::new(kind, "r", "001", 1, 1, vec![]);
+        record.next = vec!["factory rework 001 <note>".to_string()];
+        record.write(&dir).expect("park file");
+        let err = queue_retry(&home, "good", "1", 1).expect_err("refused");
+        assert_eq!(
+            err,
+            Refusal::Conflict(
+                "job 001 has no stage to retry at; use factory rework 001 <note>".into()
             )
         );
         assert!(queue::list(&home).is_empty());
