@@ -2,7 +2,7 @@ mod common;
 
 use common::{commit_file, commit_index, scripted, Effect, Fixture, ScriptedRunner};
 use factory_core::Stage;
-use factory_engine::{StageOutcome, COMMIT_NOTE_LINE};
+use factory_engine::{StageOutcome, COMMIT_NOTE_LINE, NOTES_DIR};
 
 /// A builder that writes a file and leaves it uncommitted, as the real builder now does.
 fn change_effect(file: &'static str, lines: usize) -> Effect {
@@ -711,6 +711,35 @@ fn a_fix_round_snapshot_sits_above_the_reviewed_head() {
         .expect("parent")
         .to_string();
     assert_eq!(parent, reviewed);
+}
+
+#[test]
+fn a_fix_round_without_a_session_is_still_a_fix_round() {
+    let fx = Fixture::new();
+    let runner = scripted(vec![change_effect("a.txt", 3), change_effect("b.txt", 2)]);
+    let e = fx.engine(&runner);
+    e.build_stage().expect("first");
+    let reviewed = fx.job().head.clone().expect("reviewed head");
+    let first_note =
+        std::fs::read_to_string(fx.job_dir.join(NOTES_DIR).join("build.md")).expect("build note");
+    start_fix_round(&fx);
+    let mut board = factory_core::Board::load(&fx.board_path).expect("load");
+    board.find_mut("001").expect("job").builder_id = None;
+    board.save(&fx.board_path).expect("save");
+    assert_eq!(
+        e.build_stage().expect("fix"),
+        StageOutcome::Advanced(Stage::Review)
+    );
+    let head = fx.job().head.clone().expect("head");
+    let commits = fx.repo.commits_above(&reviewed, &head).expect("commits");
+    assert_eq!(commits.len(), 1, "{commits:?}");
+    assert_eq!(commits[0].subject, "wip: fix round 2");
+    let notes = fx.job_dir.join(NOTES_DIR);
+    assert!(notes.join("round-2.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(notes.join("build.md")).expect("build note"),
+        first_note
+    );
 }
 
 #[test]

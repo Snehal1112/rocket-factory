@@ -144,7 +144,8 @@ impl Engine<'_> {
             None
         };
         let fresh_fix = escalated || cold.is_some();
-        let new_work = !fresh_fix && (fresh || job.session_id.is_none());
+        // A fix round stays a fix round when its session was cleared, so only round 0 or 1 builds without a session are new work.
+        let new_work = !fresh_fix && (fresh || (job.session_id.is_none() && job.round <= 1));
         let (cwd, base, previous_head, branch) = if fresh {
             let (cwd, base, branch) = self.start_worktree(&job)?;
             self.ledger_task(
