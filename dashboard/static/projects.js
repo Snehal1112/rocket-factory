@@ -101,6 +101,15 @@
     return body;
   }
 
+  // The cancel dialog title; a series plan with later plans says they are cancelled too.
+  function cancelTitle(job) {
+    const series = job && job.series;
+    if (series && series.id && series.index < series.total) {
+      return `Cancel job ${job.id} and the later plans of ${series.id}`;
+    }
+    return `Cancel job ${job.id}`;
+  }
+
   // True when open changes wait on a review with no verdict, so no approve can merge the job. Same rule
   // as approveBlocked in board.js, which this file does not load.
   function approveBlocked(job) {
@@ -218,6 +227,7 @@
     buildReworkBody,
     buildWaiveBody,
     buildCancelBody,
+    cancelTitle,
     approveBlocked,
     jobActions,
     errorText,
