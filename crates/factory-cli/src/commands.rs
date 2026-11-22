@@ -1060,6 +1060,16 @@ fn cancel(
     Ok(out)
 }
 
+/// Refuses while another driver holds a live lease on the job.
+fn refuse_foreign_lease(ctx: &CliCtx, job: &factory_core::Job) -> Result<(), CliError> {
+    match job.lease.as_ref() {
+        Some(lease) if lease.owner != ctx.owner && lease_is_live(job, now_secs()) => Err(
+            CliError::Refused(format!("job {} is leased by {}", job.id, lease.owner)),
+        ),
+        _ => Ok(()),
+    }
+}
+
 /// Removes the worktree, branch and leftover folder, then the card of a cancelled job. A merged job keeps its card.
 /// Once its series is finished, every other cancelled member is cleaned too, one line each.
 fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
@@ -1070,6 +1080,7 @@ fn cleanup(ctx: &CliCtx, id: &str, discard: bool) -> Result<String, CliError> {
             "cleanup only works on a merged or cancelled job".into(),
         ));
     }
+    refuse_foreign_lease(ctx, &job)?;
     // The members come before the target's card goes, because the series is found through that card.
     let others = if job.cancelled && job.stage != Stage::Merged {
         finished_series_leftovers(&d.store().load()?, id)
@@ -1117,8 +1128,12 @@ fn finished_series_leftovers(
 
 /// Cleans the checkout of one job, marks it cleaned and removes the card of a cancelled one.
 fn cleanup_job(ctx: &CliCtx, job: &factory_core::Job, discard: bool) -> Result<String, CliError> {
-    let mut message = cleanup_checkout(ctx, job, discard)?;
-    ctx.driver()?.store().update_job(&job.id, |j| {
+    let d = ctx.driver()?;
+    let mut message = match factory_engine::cleanup_checkout(&d, job, discard) {
+        Err(factory_engine::EngineError::Refused(why)) => return Err(CliError::Refused(why)),
+        other => other?,
+    };
+    d.store().update_job(&job.id, |j| {
         j.cleaned = true;
         Ok(())
     })?;
@@ -1234,95 +1249,12 @@ fn queued_request_matches_series(
     }
 }
 
-/// Removes the worktree, the branch and any leftover folder. Returns what was done, in words.
-fn cleanup_checkout(
-    ctx: &CliCtx,
-    job: &factory_core::Job,
-    discard: bool,
-) -> Result<String, CliError> {
-    let d = ctx.driver()?;
-    let id = job.id.as_str();
-    let repo = d.repo();
-    let jr = repo.job_ref(&job.id, &job.slug);
-    let wt = factory_git::Worktree {
-        name: jr.dir_name(),
-        path: job
-            .worktree
-            .as_deref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| d.repo().worktrees_dir().join(jr.dir_name())),
-        branch: job.branch.clone(),
-        base: job.base.clone().unwrap_or_default(),
-    };
-    let branch_exists = repo.branch_exists(&wt.branch);
-    // A folder without a `.git` is not a checkout, it is debris, for example agent files written after the worktree was removed.
-    let debris = wt.path.is_dir() && !wt.path.join(".git").exists();
-    if debris && !wt.path.starts_with(repo.worktrees_dir()) {
-        return Err(CliError::Refused(format!(
-            "{} is not a git checkout and lies outside {}, remove it by hand",
-            wt.path.display(),
-            repo.worktrees_dir().display()
-        )));
-    }
-    if !branch_exists && (debris || !wt.path.exists()) {
-        let message = if debris {
-            std::fs::remove_dir_all(&wt.path).map_err(|e| {
-                CliError::Refused(format!(
-                    "could not remove leftover folder {}: {e}",
-                    wt.path.display()
-                ))
-            })?;
-            format!(
-                "removed leftover folder for job {id}; the worktree and branch were already gone"
-            )
-        } else {
-            format!("nothing to remove for job {id}, the worktree and branch are already gone")
-        };
-        return Ok(message);
-    }
-    // A head that is gone or equals the base has no commits to protect, so an error counts as merged.
-    let unmerged = match (job.base.as_deref(), job.head.as_deref()) {
-        (Some(b), Some(h)) => repo.is_merged(b, h).map(|m| m.is_none()).unwrap_or(false),
-        _ => false,
-    };
-    if unmerged && !discard {
-        return Err(CliError::Refused(format!(
-            "the branch has commits that are not in {}, use --discard-commits",
-            repo.base_branch()
-        )));
-    }
-    if debris {
-        // The unmerged check above has passed, so the leftover folder goes first and remove_worktree then drops the branch.
-        std::fs::remove_dir_all(&wt.path).map_err(|e| {
-            CliError::Refused(format!(
-                "could not remove leftover folder {}: {e}",
-                wt.path.display()
-            ))
-        })?;
-    }
-    // remove_worktree also deletes the job branch. It refuses a dirty worktree and unmerged commits unless forced.
-    repo.remove_worktree(&wt, discard)
-        .map_err(|e| CliError::Refused(format!("{e}, use --discard-commits to drop it")))?;
-    Ok(format!("removed worktree and branch of job {id}"))
-}
-
 /// Calls the tracker and writes the job folder. Refuses while another driver holds a live lease on the job.
 /// A real run holds the job lease to the end, so two runs cannot file twice. A dry run takes no lease.
 fn tickets(ctx: &CliCtx, id: &str, dry_run: bool) -> Result<String, CliError> {
     let d = ctx.driver()?;
     let job = d.job(id)?;
-    if let Some(lease) = job
-        .lease
-        .as_ref()
-        .filter(|_| lease_is_live(&job, now_secs()))
-    {
-        if lease.owner != ctx.owner {
-            return Err(CliError::Refused(format!(
-                "job {id} is leased by {}",
-                lease.owner
-            )));
-        }
-    }
+    refuse_foreign_lease(ctx, &job)?;
     let _job = if dry_run { None } else { Some(d.hold_job(id)?) };
     let tickets = render_tickets(factory_engine::tickets_step(&d, id, dry_run)?, dry_run);
     let waivers = render_tickets(

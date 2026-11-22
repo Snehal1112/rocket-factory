@@ -5,6 +5,7 @@ mod build;
 mod cargo_risk;
 mod carry;
 mod checks_stage;
+mod cleanup;
 mod clock;
 mod codex_prep;
 mod codex_skills;
@@ -65,6 +66,7 @@ use thiserror::Error;
 pub use build::build_stage;
 pub use checks_stage::checks_stage;
 pub use checks_stage::CHECKS_FAILURES_FILE;
+pub use cleanup::cleanup_checkout;
 pub use clock::{date_from_days, now_secs, today, utc_stamp};
 pub use combine::{combine_plans, CombinedPlan};
 pub use compat::{

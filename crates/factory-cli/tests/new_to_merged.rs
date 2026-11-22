@@ -743,7 +743,8 @@ fn cleanup_keeps_the_card_of_a_cancelled_job_with_a_live_lease() {
     let fx = Fixture::with_risk_path("docs/**");
     parked_and_cancelled(&fx, "hello");
     fx.run(&["cancel", "1"]).expect("cancel");
-    fx.hold_lease("001", "someone-else");
+    // The lease belongs to this driver, so the foreign-lease refusal does not apply.
+    fx.hold_lease("001", "tester");
     let out = fx
         .run(&["cleanup", "1", "--discard-commits"])
         .expect("cleanup");
