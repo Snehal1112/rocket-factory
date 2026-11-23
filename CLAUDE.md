@@ -43,13 +43,13 @@ factory-supervisor  `factoryd`: queue of run requests, one `factory` child per p
 
 ## Ticket hygiene
 
-- `factory tickets <id> [--dry-run]` and the setting `tickets_on_merge` (default true, a valid `Config` key) are documented in `README.md` (Ticket hygiene). Logic lives in `factory-engine/src/tickets.rs`, the `Tracker` port and the `gh` implementation in `tracker.rs`; `factory-core/src/commitmsg.rs` parses issue refs.
+- `factory tickets <id> [--dry-run]` and the setting `tickets_on_merge` (default true, a valid `Config` key) are documented in `docs/reference/software-factory.md` (Ticket hygiene). Logic lives in `factory-engine/src/tickets.rs`, the `Tracker` port and the `gh` implementation in `tracker.rs`; `factory-core/src/commitmsg.rs` parses issue refs.
 - The step runs after a merge in `merge.rs` and must never change the merge result: report failures to the ledger, stderr and events. Rocket's real `config.toml` is a test fixture in `factory-core/tests/fixtures/`; refresh it when Rocket's changes.
 - Only `git` may not be shelled out to. `gh` is allowed, behind the port.
 
 ## Home, projects and leases
 
-- `README.md` documents the factory home (`$FACTORY_HOME`, else `~/.factory`), presets, `factory --project <name>`, the project lease and `factoryd`. Read it before touching `factory-core` (`home`, `project`, `preset`, `layout`) or `factory-supervisor`.
+- `docs/reference/projects-and-supervisor.md` documents the factory home (`$FACTORY_HOME`, else `~/.factory`), presets, `factory --project <name>`, the project lease and `factoryd`. Read it before touching `factory-core` (`home`, `project`, `preset`, `layout`) or `factory-supervisor`. The `factoryd` HTTP API is in `docs/reference/factoryd-api.md`.
 - Paths reach the driver only through `Layout`. `factory-cli/tests/no_hardcoded_paths.rs` fails on hardcoded ones.
 - Process checks (does a pid exist, is it a zombie, when did it start) go through `factory-engine/src/procinfo.rs` only, built on `sysinfo`, for Linux and macOS alike. It refreshes only the pid it asks about. macOS reports an unreaped zombie as gone, Linux as a zombie; neither is alive. Never read `/proc` directly.
 - `factory-agent` ships a `fake-claude` binary that tests use instead of the real `claude`.

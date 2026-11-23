@@ -164,7 +164,7 @@ Note: a `.claude/commands/factory.md` inside a repo shadows the global one.
 
 ## 7. Register your repository
 
-Registration tells the factory which repo to work on and which preset to use. Do it once per repo. The repo must be a git repo, and its base branch must exist locally and be the branch you merge into. Give the top folder of the repo, or, in a monorepo, a subfolder such as `apps/web`. A subfolder becomes its own project, and a job may change only files inside it. A repo holds either one top-folder project or several disjoint subfolder projects (see "Monorepos" in the README).
+Registration tells the factory which repo to work on and which preset to use. Do it once per repo. The repo must be a git repo, and its base branch must exist locally and be the branch you merge into. Give the top folder of the repo, or, in a monorepo, a subfolder such as `apps/web`. A subfolder becomes its own project, and a job may change only files inside it. A repo holds either one top-folder project or several disjoint subfolder projects (see "Monorepos" in `../reference/projects-and-supervisor.md`).
 
 ```bash
 cd /path/to/your/repo
@@ -381,7 +381,7 @@ Keys you may want, with defaults:
 | `cleanup_on_merge` | true | Remove the job's worktree and branch right after it merges. A worktree with untracked or modified files is kept. `false` turns it off. |
 | `plan_rules` | empty | Extra rules that `/factory` applies to every plan it writes. |
 
-The full key list is in `README.md`.
+The full key list is in `../reference/project-toml-reference.md`.
 
 Fail-closed rule: if any layer is broken or has an unknown key, the project is treated as degraded. Every diff is risky, nothing merges by itself, and `run`, `approve` and `kb-refresh` are refused until you fix it. `factory project show <name>` names the problem.
 
@@ -475,7 +475,7 @@ A job that parks as `no-checks` shows in `factory --project <name> status`.
 ## 17. Where to read more
 
 - `docs/reference/factory-admin-manual.md`: developer and administrator command examples, supported flags, and supervisor operations.
-- `README.md`: every command, setting and file in detail.
+- `../README.md`: the index of every doc. `../reference/projects-and-supervisor.md` covers projects, leases, upgrades and `factoryd`, and `../reference/factoryd-api.md` covers the HTTP API.
 - `docs/reference/software-factory.md`: the pipeline, job model, merge rules and dashboard.
 - `dashboard/README.md`: dashboard modes and security.
 - `docs/superpowers/specs/2026-10-16-standalone-software-factory-design.md`: why it is built this way.
