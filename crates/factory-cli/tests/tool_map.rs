@@ -132,6 +132,20 @@ fn maps_name_their_own_tools() {
 }
 
 #[test]
+fn codex_map_has_no_filler() {
+    assert!(
+        !TOOL_MAP_CODEX.contains("follows the shared text."),
+        "filler sentence"
+    );
+    for needed in [
+        "Invoke this workflow as $factory",
+        "In factory runs, use only the skill catalog the run preface allows.",
+    ] {
+        assert!(TOOL_MAP_CODEX.contains(needed), "Codex map lacks {needed}");
+    }
+}
+
+#[test]
 fn claude_map_is_the_command_tail() {
     assert!(
         GLOBAL_COMMAND.ends_with(TOOL_MAP_CLAUDE),

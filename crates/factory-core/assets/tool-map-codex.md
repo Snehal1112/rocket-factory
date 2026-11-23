@@ -10,7 +10,7 @@ Run commands with `exec_command`. If it returns a still-running session handle, 
 
 ### Skills
 
-Use only the skill catalog the run preface allows. Follow the shared text for the rest.
+In factory runs, use only the skill catalog the run preface allows.
 
 ### Subagents
 
@@ -34,4 +34,4 @@ Follow the shared text.
 
 ### Model option
 
-`--opus` is a Claude-only option. If it appears at the start or end of a feature request, explain that this Codex skill does not accept it and ask the user to select a Codex model in the project configuration; stop before creating a draft or job. A feature may start or end with the single token `--one-job`: remove it from the feature text and slug, and pass `--one-job` to `<factory> --project <name> new`. Skill invocation as `$factory` follows the shared text.
+`--opus` is a Claude-only option. If it appears at the start or end of a feature request, explain that this Codex skill does not accept it and ask the user to select a Codex model in the project configuration; stop before creating a draft or job. A feature may start or end with the single token `--one-job`: remove it from the feature text and slug, and pass `--one-job` to `<factory> --project <name> new`. Invoke this workflow as $factory; the shared text's /factory examples are written as $factory here.

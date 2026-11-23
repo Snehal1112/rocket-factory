@@ -540,6 +540,16 @@ fn the_shared_executor_line_is_the_only_one() {
 }
 
 #[test]
+fn retry_bullet_maps_refusals_to_slash_forms() {
+    let text = GLOBAL_COMMAND;
+    assert!(
+        text.contains("naming each `factory <sub> <id> ...` it lists as `/factory <sub> <id> ...`"),
+        "retry bullet"
+    );
+    assert!(!text.contains("report a refusal as it is"), "old wording");
+}
+
+#[test]
 fn command_names_no_superpowers_version() {
     for (name, text) in [
         ("command", GLOBAL_COMMAND),
