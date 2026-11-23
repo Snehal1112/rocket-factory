@@ -18,11 +18,29 @@ You run `/factory` in Claude Code. It interviews you, writes a spec and plans (a
 3. A reviewer agent (and optionally a security reviewer) reads the diff. Changes requested start a fix round, 2 at most.
 4. The driver merges into the base branch, or parks the job as `needs-human` with the reason and the next commands.
 
-Yellow steps spend LLM tokens, teal steps are the Rust driver, which spends none, and orange marks a stop for a human.
+## Workflow
+
+How one job moves from the `/factory` command to a merge. Yellow steps spend LLM tokens, teal steps are the Rust driver, which spends none, and orange marks a stop for a human.
 
 ![One job, start to merge](docs/assets/images/factory-lifecycle.svg)
 
-More diagrams: [what can stop a merge](docs/assets/images/factory-gates.svg), [who talks to whom](docs/assets/images/factory-processes.svg), [how an agent is started](docs/assets/images/factory-agents.svg) and [agent turns in one job](docs/assets/images/factory-turns.svg). All five as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (source `docs/assets/factory-workflow.html`).
+The order of the gates a job passes, and what each one does when it fails:
+
+![What can stop a merge, in order](docs/assets/images/factory-gates.svg)
+
+The processes behind a job:
+
+![Who talks to whom](docs/assets/images/factory-processes.svg)
+
+How the driver starts one agent (`claude -p`), the five ways a run ends and the six roles it starts: builder, reviewer, spec reviewer, security reviewer, intake drafter and KB refresher. Only the builder and the KB refresher can start subagents, and the builder's limit of 2 helpers is a line in its prompt, not driver code:
+
+![How an agent is started](docs/assets/images/factory-agents.svg)
+
+The agent runs of one job in order: a fresh builder per task, checks, review, and the fix round that resumes the builder (2 at most). It also shows the early stops and the `factory rework` turn. The driver makes the commits and writes the merge message itself, so no agent run is spent on them. The spec review at `factory new` adds 1 run. The job budget stops a run before that:
+
+![Agent turns in one job](docs/assets/images/factory-turns.svg)
+
+The same five diagrams as one page: [Rocket Factory Workflow](https://claude.ai/code/artifact/64fc3640-5deb-4003-a67d-60b5fc29f80b) (a Claude artifact shared with its owner's organization). The page source is `docs/assets/factory-workflow.html` and the images are in `docs/assets/images/`.
 
 ## What you get
 
