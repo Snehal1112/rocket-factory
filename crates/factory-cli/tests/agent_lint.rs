@@ -587,6 +587,8 @@ fn no_doc_describes_the_committer_or_an_ignored_key() -> TestResult {
     let docs = [
         "docs/reference/software-factory.md",
         "README.md",
+        "docs/reference/projects-and-supervisor.md",
+        "docs/reference/factoryd-api.md",
         "docs/guides/factory-user-guide.md",
         "docs/guides/getting-started.md",
         "docs/reference/project-toml-reference.md",
@@ -652,12 +654,6 @@ fn docs_describe_the_per_project_api_key() -> TestResult {
             "chmod 600",
             "never falls back",
         ],
-    )?;
-    let readme = read("README.md")?;
-    require_all(
-        &readme,
-        "README.md",
-        &["`allow_api_key = true`", "`api_key_file"],
     )?;
     let pipeline = read("docs/reference/software-factory.md")?;
     require_all(
@@ -738,13 +734,13 @@ fn software_factory_doc_describes_builder_permissions() -> TestResult {
 }
 
 #[test]
-fn readme_documents_upgrading() -> TestResult {
-    let doc = read("README.md")?;
+fn reference_documents_upgrading() -> TestResult {
+    let doc = read("docs/reference/projects-and-supervisor.md")?;
     require_all(
         &doc,
-        "README.md",
+        "projects-and-supervisor.md",
         &[
-            "### Upgrading",
+            "## Upgrading",
             "factory upgrade --dry-run",
             "no running jobs",
             "factory.md.bak",
@@ -760,19 +756,19 @@ fn readme_documents_upgrading() -> TestResult {
     )?;
     forbid_all(
         &doc,
-        "README.md",
+        "projects-and-supervisor.md",
         &["After an upgrade also run `factory install --force`"],
     )
 }
 
 #[test]
-fn readme_documents_the_job_lease_and_resume() -> TestResult {
-    let doc = read("README.md")?;
+fn reference_documents_the_job_lease_and_resume() -> TestResult {
+    let doc = read("docs/reference/projects-and-supervisor.md")?;
     require_all(
         &doc,
-        "README.md",
+        "projects-and-supervisor.md",
         &[
-            "### The job lease",
+            "## The job lease",
             "every 60 seconds",
             "`driver-<pid>-<secs>`",
             "counts as stale at once, for the job lease too",
@@ -787,7 +783,7 @@ fn readme_documents_the_job_lease_and_resume() -> TestResult {
     )?;
     forbid_all(
         &doc,
-        "README.md",
+        "projects-and-supervisor.md",
         &["the job lease is judged by expiry only"],
     )
 }
@@ -804,27 +800,27 @@ fn getting_started_upgrades_with_one_command() -> TestResult {
 }
 
 #[test]
-fn readme_points_to_builder_permissions() -> TestResult {
+fn readme_points_to_the_reference_docs() -> TestResult {
     let doc = read("README.md")?;
     require_all(
         &doc,
         "README.md",
         &[
-            "`builder_permissions`",
             "docs/reference/project-toml-reference.md",
             "docs/reference/software-factory.md",
-            "check_hints",
+            "docs/reference/projects-and-supervisor.md",
+            "docs/reference/factoryd-api.md",
         ],
     )?;
     forbid_all(&doc, "README.md", &["never blocks on a prompt"])
 }
 
 #[test]
-fn readme_documents_the_rules_marker() -> TestResult {
-    let text = read("README.md")?;
+fn reference_documents_the_rules_marker() -> TestResult {
+    let text = read("docs/reference/projects-and-supervisor.md")?;
     require_all(
         &text,
-        "README",
+        "projects-and-supervisor.md",
         &[
             "## Agent file rules marker",
             "<!-- factory-rules: 1 -->",
@@ -1293,19 +1289,16 @@ fn the_marker_version_matches_the_engine_constant() -> TestResult {
 
 #[test]
 fn docs_describe_the_builder_carry() -> TestResult {
-    for path in ["README.md", "docs/reference/software-factory.md"] {
-        require_all(
-            &read(path)?,
-            path,
-            &[
-                "builder_carry_session",
-                "builder_carry_max_ctx",
-                "continued",
-                "cache_ttl",
-            ],
-        )?;
-    }
-    Ok(())
+    require_all(
+        &read("docs/reference/software-factory.md")?,
+        "docs/reference/software-factory.md",
+        &[
+            "builder_carry_session",
+            "builder_carry_max_ctx",
+            "continued",
+            "cache_ttl",
+        ],
+    )
 }
 
 #[test]

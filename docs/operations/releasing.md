@@ -57,7 +57,7 @@ A failing channel blocks the release unless the release notes say why. Paste the
 
 Run `factory costs --trend` and paste the table into the release notes, so each release says whether the cost per changed line fell after the markers.
 
-Paste the "Check coverage" note from `README.md` (Upgrading) into the draft release.
+Paste the "Check coverage" note from `docs/reference/projects-and-supervisor.md` (Upgrading) into the draft release.
 The changelog skips `chore:` commits, so this note is not generated.
 
 ```bash
