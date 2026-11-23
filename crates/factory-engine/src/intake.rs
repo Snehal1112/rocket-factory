@@ -59,6 +59,53 @@ fn failure(code: &'static str, issue: u32, cause: impl std::fmt::Display) -> Fai
     Failure { code, job: None }
 }
 
+/// Puts `> ` before every line of `text`. A line break is `\r\n` or one of `\n`, `\r`, U+000B,
+/// U+000C, U+0085, U+2028 and U+2029. Empty text gives one `> ` line.
+// The drafter prompt uses this in a later step of the plan.
+#[allow(dead_code)]
+pub(crate) fn quote_untrusted(text: &str) -> String {
+    let is_break = |c: char| {
+        matches!(
+            c,
+            '\n' | '\r' | '\u{B}' | '\u{C}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        )
+    };
+    let mut out = String::from("> ");
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if is_break(c) {
+            if c == '\r' && chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            out.push_str("\n> ");
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// 32 lowercase hex characters, new on every call, for the markers around the issue text.
+// The drafter prompt uses this in a later step of the plan.
+#[allow(dead_code)]
+pub(crate) fn prompt_nonce(issue: u32) -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let part = || {
+        let mut hasher = RandomState::new().build_hasher();
+        hasher.write_u32(issue);
+        hasher.write_u128(nanos);
+        hasher.write_u32(std::process::id());
+        hasher.finish()
+    };
+    format!("{:016x}{:016x}", part(), part())
+}
+
 /// The drafter run: it reads the export of the base branch and writes only into the draft folder.
 /// Both grants name the real folders. `findings` is the refusal of an earlier draft, if any.
 pub(crate) fn draft_spec(
@@ -810,6 +857,33 @@ mod tests {
                 .collect();
             assert_eq!(rules, [&format!("{tool}(//state/intake/7/tree/**)")]);
         }
+    }
+
+    #[test]
+    fn quote_untrusted_prefixes_every_line_break() {
+        let text = "a\r\nb\nc\rd\u{000B}e\u{000C}f\u{0085}g\u{2028}h\u{2029}i\n";
+        assert_eq!(
+            quote_untrusted(text),
+            "> a\n> b\n> c\n> d\n> e\n> f\n> g\n> h\n> i\n> "
+        );
+    }
+
+    #[test]
+    fn quote_untrusted_of_empty_text_is_one_line() {
+        assert_eq!(quote_untrusted(""), "> ");
+    }
+
+    #[test]
+    fn prompt_nonce_is_32_hex_and_varies() {
+        let a = prompt_nonce(7);
+        let b = prompt_nonce(7);
+        assert_eq!(a.len(), 32);
+        assert!(
+            a.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "{a}"
+        );
+        assert_ne!(a, b);
     }
 
     #[test]
