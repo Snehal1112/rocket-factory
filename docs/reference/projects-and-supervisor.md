@@ -133,6 +133,16 @@ unchecked_paths = ["LICENSE", "LICENSE-*", "LICENSE.txt", "COPYING", "COPYING.*"
 
 A job that parks as `no-checks` shows in `factory --project <name> status`.
 
+### Review states
+
+A reviewer run that fails or stalls before it gives a verdict is stored as the review state `"failed"` and shows as `failed` in `factory status`, for example `code:failed`. v0.5.0 added this state. `factory` and `factoryd` v0.4.0 and older cannot read a board that holds `"failed"`: they stop on the whole board, not just that job.
+
+From the release after v0.5.1, a review state the binary does not know loads as `unknown` and counts as no verdict, so a state added later no longer breaks the board.
+
+An older binary already stops on a home whose `<home>/VERSION` marker is newer. The board error shows only after that marker is deleted, or in a `factoryd` that still runs the old build, so restart `factoryd` after an upgrade.
+
+Before you roll back past v0.5.0, retry or rework every job that shows `failed` until its review gives a verdict. A job that was cancelled or merged while it still showed `failed` keeps that state, and the board stays unreadable for v0.4.0 and older, so do not roll back past v0.5.0 then.
+
 ## Refreshing seeded presets
 
 `factory presets refresh [--force]` brings `<home>/presets/` up to the text built into the binary. It needs no

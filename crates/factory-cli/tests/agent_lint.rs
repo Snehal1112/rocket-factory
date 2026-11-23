@@ -762,6 +762,31 @@ fn reference_documents_upgrading() -> TestResult {
 }
 
 #[test]
+fn reference_documents_the_failed_review_state() -> TestResult {
+    let doc = read("docs/reference/projects-and-supervisor.md")?;
+    require_all(
+        &doc,
+        "projects-and-supervisor.md",
+        &[
+            "### Review states",
+            "`\"failed\"`",
+            "v0.4.0 and older",
+            "v0.5.0",
+            "`unknown`",
+            "<home>/VERSION",
+            "restart `factoryd`",
+            "retry or rework",
+            "cancelled or merged",
+        ],
+    )?;
+    forbid_all(
+        &doc,
+        "projects-and-supervisor.md",
+        &["edit board.json", "`\"pending\"`"],
+    )
+}
+
+#[test]
 fn reference_documents_the_job_lease_and_resume() -> TestResult {
     let doc = read("docs/reference/projects-and-supervisor.md")?;
     require_all(
