@@ -1289,19 +1289,16 @@ fn the_marker_version_matches_the_engine_constant() -> TestResult {
 
 #[test]
 fn docs_describe_the_builder_carry() -> TestResult {
-    for path in ["docs/reference/software-factory.md"] {
-        require_all(
-            &read(path)?,
-            path,
-            &[
-                "builder_carry_session",
-                "builder_carry_max_ctx",
-                "continued",
-                "cache_ttl",
-            ],
-        )?;
-    }
-    Ok(())
+    require_all(
+        &read("docs/reference/software-factory.md")?,
+        "docs/reference/software-factory.md",
+        &[
+            "builder_carry_session",
+            "builder_carry_max_ctx",
+            "continued",
+            "cache_ttl",
+        ],
+    )
 }
 
 #[test]
