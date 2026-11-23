@@ -420,7 +420,6 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "## Goal",
         "## Acceptance criteria",
         // The plans, run by the driver.
-        "superpowers:subagent-driven-development",
         "one fresh factory-builder implementer per task",
         "File Structure",
         "`**Interfaces:**`",
@@ -454,7 +453,7 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
         "Report every `warning:` line",
         "refuses a plan with `TBD`, `TODO`, `FIXME` or `???` outside backticks and code fences",
         // The plan header's executor line, exactly.
-        "`> **Executor:** the factory driver runs this plan using superpowers:subagent-driven-development, with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.`",
+        "> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.",
     ] {
         assert!(text.contains(needed), "missing phrase: {needed}");
     }
@@ -526,6 +525,28 @@ fn the_command_text_has_the_required_phrases_and_no_rocket_bits() {
     }
     assert!(text.starts_with("---\n"));
     assert!(text.contains("\ndescription: "));
+}
+
+#[test]
+fn the_shared_executor_line_is_the_only_one() {
+    let text = GLOBAL_COMMAND;
+    let shared = "> **Executor:** the factory driver runs this plan with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.";
+    assert!(text.contains(shared), "shared executor line missing");
+    assert!(
+        !text.contains("runs this plan using superpowers:subagent-driven-development"),
+        "the Claude note still replaces the executor line"
+    );
+    assert_eq!(text.matches("See the `Commit` note.").count(), 2);
+}
+
+#[test]
+fn retry_bullet_maps_refusals_to_slash_forms() {
+    let text = GLOBAL_COMMAND;
+    assert!(
+        text.contains("naming each `factory <sub> <id> ...` it lists as `/factory <sub> <id> ...`"),
+        "retry bullet"
+    );
+    assert!(!text.contains("report a refusal as it is"), "old wording");
 }
 
 #[test]

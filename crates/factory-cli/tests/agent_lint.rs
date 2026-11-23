@@ -451,7 +451,6 @@ fn command_is_thin_and_pins_the_shapes() -> TestResult {
             "git commit --only -- <plan paths>",
             "## Decisions",
             // The plans, run by the driver.
-            "superpowers:subagent-driven-development",
             "one fresh factory-builder implementer per task",
             "File Structure",
             "`**Interfaces:**`",

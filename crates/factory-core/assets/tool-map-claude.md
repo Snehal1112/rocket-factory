@@ -26,7 +26,7 @@ Invoke `superpowers:brainstorming` yourself, with the user, in this session, and
 
 ### Plan writing
 
-Invoke `superpowers:writing-plans` yourself and write the plans in its style. The factory driver is the execution method: skip the skill's execution handoff question and do not offer to run the plans yourself. The plan header is the skill's template, with the repo-relative spec path (`docs/superpowers/specs/<date>-<slug>-design.md`) as its Spec line, and the header's line about who executes the plan is replaced by this executor line, whatever the skill's own wording is: `> **Executor:** the factory driver runs this plan using superpowers:subagent-driven-development, with one fresh factory-builder implementer per task and no per-task review. The driver keeps the ledger, makes the commits and runs the final review.` Write Review Focus as the skill defines it, as a numbered list. Run the skill's plan self-review and fix its findings.
+Invoke `superpowers:writing-plans` yourself and write the plans in its style. The factory driver is the execution method: skip the skill's execution handoff question and do not offer to run the plans yourself. The plan header is the skill's template, with the repo-relative spec path (`docs/superpowers/specs/<date>-<slug>-design.md`) as its Spec line. Write Review Focus as the skill defines it, as a numbered list. Run the skill's plan self-review and fix its findings.
 
 ### Commit
 
