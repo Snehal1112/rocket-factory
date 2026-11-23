@@ -488,6 +488,54 @@ mod tests {
     use crate::Config;
 
     #[test]
+    fn presets_ship_their_gates() {
+        let lists = |name: &str| {
+            let cfg = Config::parse(embedded(name).expect("preset").config).expect("parses");
+            let pick = |f: fn(&crate::CheckRule) -> &Vec<String>| -> Vec<String> {
+                cfg.checks.iter().flat_map(|c| f(c).clone()).collect()
+            };
+            (
+                pick(|c| &c.commands),
+                pick(|c| &c.format),
+                pick(|c| &c.lint),
+            )
+        };
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            lists("go"),
+            (
+                s(&["go test ./..."]),
+                s(&["gofmt -d ."]),
+                s(&["go vet ./..."])
+            )
+        );
+        assert_eq!(
+            lists("csharp"),
+            (
+                s(&["dotnet build --nologo", "dotnet test --nologo"]),
+                s(&["dotnet format --verify-no-changes --nologo"]),
+                s(&[])
+            )
+        );
+        assert_eq!(
+            lists("ruby"),
+            (
+                s(&["bundle exec rspec"]),
+                s(&["bundle exec rubocop --only Layout"]),
+                s(&["bundle exec rubocop --except Layout"])
+            )
+        );
+        assert_eq!(lists("node").1, s(&[]));
+        let node = Config::parse(embedded("node").expect("node").config).expect("parses");
+        assert!(
+            node.builder_rules
+                .iter()
+                .any(|r| r.contains("format:check")),
+            "node builder rule"
+        );
+    }
+
+    #[test]
     fn the_node_preset_is_bun_and_script_driven() {
         let p = embedded("node").expect("node preset");
         let cfg = Config::parse(p.config).expect("parses");
@@ -737,7 +785,7 @@ mod tests {
     fn only_the_rust_preset_plans_a_fmt_check() {
         for name in ["go", "ruby", "csharp", "node"] {
             let text = embedded(name).expect("preset").config;
-            assert!(!text.contains("fmt"), "{name}");
+            assert!(!text.contains("cargo fmt"), "{name}");
         }
     }
 

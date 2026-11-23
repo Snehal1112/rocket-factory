@@ -25,4 +25,5 @@ reviewer_rules = [
 [[checks]]
 paths = ["**/*.rb", "Gemfile", "*.gemspec", "Rakefile"]
 commands = ["bundle exec rspec"]
-lint = ["bundle exec rubocop"]
+format = ["bundle exec rubocop --only Layout"]
+lint = ["bundle exec rubocop --except Layout"]

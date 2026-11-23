@@ -165,6 +165,21 @@ Built-in values when the lists are empty (`factory-core/src/gate.rs`, `risk.rs`)
 - Doc paths, never code: a path that ends in `.md` or starts with `docs/` or `.claude/`.
 - A code diff that gets no check at all parks as `no-checks`, unless the diff is risky or has no code paths.
 
+Gates the presets ship in their check rules:
+
+| Preset | `format` | `lint` |
+|---|---|---|
+| rust | `cargo fmt -- --check` | `cargo clippy -j4 --all-targets -- -D warnings` |
+| go | `gofmt -d .` | `go vet ./...` |
+| csharp | `dotnet format --verify-no-changes --nologo` | none |
+| node | none | `bun run lint` |
+| ruby | `bundle exec rubocop --only Layout` | `bundle exec rubocop --except Layout` |
+
+- A project's own `[[settings.checks]]` replaces the preset's checks, so such a project keeps its gates unchanged.
+- `factory presets refresh` updates only a preset `config.toml` the user has not edited. An edited one needs `factory presets refresh --force`.
+- The go `format` gate relies on `gofmt -d` exiting 1 on a difference, as current Go does.
+- Node has no format gate by default. Its builder rules tell the builder to add a `format:check` script and list `bun run format:check` under `format`.
+
 ### Knowledge base
 
 | Key | Type | Default | Effect |
