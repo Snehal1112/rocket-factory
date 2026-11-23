@@ -25,8 +25,11 @@ fn software_factory_mentions_the_root_manifest_rule() {
 }
 
 #[test]
-fn readme_and_getting_started_carry_the_check_coverage_note() {
-    for rel in ["README.md", "docs/guides/getting-started.md"] {
+fn reference_and_getting_started_carry_the_check_coverage_note() {
+    for rel in [
+        "docs/reference/projects-and-supervisor.md",
+        "docs/guides/getting-started.md",
+    ] {
         let text = read(rel);
         assert!(text.contains("## Check coverage"), "{rel} has the heading");
         assert!(
@@ -44,13 +47,13 @@ fn readme_and_getting_started_carry_the_check_coverage_note() {
 fn releasing_has_the_paste_step() {
     let text = read("docs/operations/releasing.md");
     assert!(text.contains(
-        "Paste the \"Check coverage\" note from `README.md` (Upgrading) into the draft release."
+        "Paste the \"Check coverage\" note from `docs/reference/projects-and-supervisor.md` (Upgrading) into the draft release."
     ));
 }
 
 #[test]
 fn check_coverage_note_comes_after_the_upgrade_steps() {
-    let text = read("README.md");
+    let text = read("docs/reference/projects-and-supervisor.md");
     let steps = text
         .find("factory upgrade --dry-run")
         .expect("upgrade steps");
