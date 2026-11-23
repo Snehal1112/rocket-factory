@@ -36,6 +36,9 @@ impl Tracker for NoCalls {
     fn labelled_by(&self, _: u32, _: &str) -> Result<Option<factory_engine::LabelEvent>, String> {
         Err("not used".into())
     }
+    fn edited_at(&self, _: u32) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
         Err("not used".into())
     }

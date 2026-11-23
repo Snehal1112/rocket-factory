@@ -933,6 +933,7 @@ pub struct FakeState {
     pub on_create: Option<Arc<dyn Fn() + Send + Sync>>,
     pub issues: Vec<factory_engine::IssueInfo>,
     pub actors: HashMap<(u32, String), factory_engine::LabelEvent>,
+    pub edited: HashMap<u32, String>,
     pub user: String,
     pub label_edits: Vec<(u32, Vec<String>, Vec<String>)>,
 }
@@ -989,6 +990,15 @@ impl FakeTracker {
                 at: "9999-12-31T23:59:59Z".to_string(),
             },
         );
+        self
+    }
+    /// The time `edited_at` returns for `issue`. Without it the issue has no edit.
+    pub fn with_edited_at(self, issue: u32, at: &str) -> FakeTracker {
+        self.state
+            .lock()
+            .expect("lock")
+            .edited
+            .insert(issue, at.to_string());
         self
     }
     pub fn with_user(self, login: &str) -> FakeTracker {
@@ -1093,6 +1103,10 @@ impl factory_engine::Tracker for FakeTracker {
         let s = self.enter(format!("labelled_by {issue} {label}"), "labelled_by")?;
         Ok(s.actors.get(&(issue, label.to_string())).cloned())
     }
+    fn edited_at(&self, issue: u32) -> Result<Option<String>, String> {
+        let s = self.enter(format!("edited_at {issue}"), "edited_at")?;
+        Ok(s.edited.get(&issue).cloned())
+    }
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
         let mut s = self.enter(format!("edit_labels {issue}"), "edit_labels")?;
         s.label_edits.push((issue, add.to_vec(), remove.to_vec()));
@@ -1161,6 +1175,10 @@ impl factory_engine::Tracker for PanicTracker {
     ) -> Result<Option<factory_engine::LabelEvent>, String> {
         self.check("labelled_by");
         self.inner.labelled_by(issue, label)
+    }
+    fn edited_at(&self, issue: u32) -> Result<Option<String>, String> {
+        self.check("edited_at");
+        self.inner.edited_at(issue)
     }
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
         self.check("edit_labels");

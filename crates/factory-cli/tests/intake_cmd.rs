@@ -49,6 +49,9 @@ impl Tracker for OneIssue {
             at: "2026-01-02T00:00:00Z".into(),
         }))
     }
+    fn edited_at(&self, _: u32) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     fn edit_labels(&self, _: u32, add: &[String], remove: &[String]) -> Result<(), String> {
         self.edits
             .lock()
