@@ -20,6 +20,7 @@ read_first = ["CLAUDE.md"]
 builder_rules = [
   "Use `bun install --frozen-lockfile` and the project's own `package.json` scripts. If the project lacks the standard `typecheck`, `lint` and `test` scripts, add them first.",
   "In React code, follow the rules of hooks, never use `any`, write accessible markup and test behaviour, not implementation.",
+  "To get a format gate, add a `format:check` script and list `bun run format:check` under `format` in the project's check rules.",
 ]
 check_hints = ["bun run typecheck", "bun run lint", "bun test"]
 reviewer_rules = [

@@ -26,3 +26,4 @@ reviewer_rules = [
 [[checks]]
 paths = ["**/*.cs", "**/*.csproj", "**/*.sln"]
 commands = ["dotnet build --nologo", "dotnet test --nologo"]
+format = ["dotnet format --verify-no-changes --nologo"]

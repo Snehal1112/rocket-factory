@@ -20,4 +20,6 @@ reviewer_rules = [
 
 [[checks]]
 paths = ["**/*.go"]
-commands = ["go vet ./...", "go test ./..."]
+commands = ["go test ./..."]
+format = ["gofmt -d ."]
+lint = ["go vet ./..."]
