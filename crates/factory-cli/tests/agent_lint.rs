@@ -787,6 +787,20 @@ fn reference_documents_the_failed_review_state() -> TestResult {
 }
 
 #[test]
+fn releasing_doc_pastes_the_review_states_note() -> TestResult {
+    let doc = read("docs/operations/releasing.md")?;
+    require_all(
+        &doc,
+        "releasing.md",
+        &[
+            "\"Review states\" note",
+            "first release after v0.5.1",
+            "docs/reference/projects-and-supervisor.md",
+        ],
+    )
+}
+
+#[test]
 fn reference_documents_the_job_lease_and_resume() -> TestResult {
     let doc = read("docs/reference/projects-and-supervisor.md")?;
     require_all(
