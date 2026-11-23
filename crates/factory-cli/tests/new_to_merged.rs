@@ -1015,6 +1015,9 @@ impl factory_engine::Tracker for CountCreates {
     fn labelled_by(&self, _: u32, _: &str) -> Result<Option<factory_engine::LabelEvent>, String> {
         Ok(None)
     }
+    fn edited_at(&self, _: u32) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
         Ok(())
     }

@@ -7,7 +7,7 @@ use std::time::Duration;
 use factory_agent::{AgentSpec, StopReason};
 use factory_core::{agents_file, check_kb_path, is_agent_file_name, Config, Job, Stage};
 
-use crate::tracker::{IssueInfo, LabelEvent};
+use crate::tracker::{is_github_time, IssueInfo, LabelEvent};
 use crate::{
     create_job_with_spec_accepting, run_series, Driver, EngineError, RunEnd, SpecMode, Tracker,
 };
@@ -172,13 +172,15 @@ pub(crate) fn draft_spec(
 
 /// The next issue to work on, or None. A candidate is open, has the intake label and no state
 /// label. Candidates sort by priority label, then age (a missing date last), then number. The
-/// first one that is eligible wins: `labelled_by` names a trusted actor and nobody touched the
-/// issue after that label event. A failed lookup, no event, an untrusted actor and an empty
-/// `trusted` list all make an issue ineligible. Labels and logins compare without regard to case.
+/// first one that is eligible wins: `labelled_by` names a trusted actor and `edited_at` shows no
+/// body edit or title rename at or after that label event. A failed lookup, no event, an untrusted
+/// actor, a time in an unexpected form and an empty `trusted` list all make an issue ineligible.
+/// Labels and logins compare without regard to case.
 pub fn pick_next(
     issues: &[IssueInfo],
     cfg: &Config,
     labelled_by: &dyn Fn(u32) -> Result<Option<LabelEvent>, String>,
+    edited_at: &dyn Fn(u32) -> Result<Option<String>, String>,
     trusted: &[String],
 ) -> Option<IssueInfo> {
     let has =
@@ -207,15 +209,16 @@ pub fn pick_next(
     });
     candidates
         .into_iter()
-        .find(|i| eligible(i, labelled_by, trusted))
+        .find(|i| eligible(i, labelled_by, edited_at, trusted))
         .cloned()
 }
 
-/// Whether a trusted user added the intake label and nobody touched the issue since. Every
-/// refusal is logged.
+/// Whether a trusted user added the intake label and nobody edited the body or title since. The
+/// edit lookup runs only after the trust check. Every refusal is logged.
 fn eligible(
     issue: &IssueInfo,
     labelled_by: &dyn Fn(u32) -> Result<Option<LabelEvent>, String>,
+    edited_at: &dyn Fn(u32) -> Result<Option<String>, String>,
     trusted: &[String],
 ) -> bool {
     let skip = |msg: &str, actor: &str| {
@@ -229,11 +232,17 @@ fn eligible(
             "the intake label was not set by a trusted user",
             &event.actor,
         ),
-        Ok(Some(event)) if issue.updated_at > event.at => skip(
-            "the issue changed after the intake label was set",
-            &event.actor,
-        ),
-        Ok(Some(_)) => true,
+        Ok(Some(event)) if !is_github_time(&event.at) => {
+            skip("the label event time has an unexpected form", &event.actor)
+        }
+        Ok(Some(event)) => match edited_at(issue.number) {
+            Err(e) => skip(&format!("the edit lookup failed: {e}"), &event.actor),
+            Ok(Some(t)) if t.as_str() >= event.at.as_str() => skip(
+                "the issue changed after the intake label was set",
+                &event.actor,
+            ),
+            Ok(_) => true,
+        },
     }
 }
 
@@ -255,7 +264,8 @@ fn pick_issue(cfg: &Config, tracker: &dyn Tracker) -> Result<Option<IssueInfo>, 
         .list_labelled(&cfg.intake_label)
         .map_err(|e| tracker_err("cannot list the labelled issues", e))?;
     let labelled_by = |n: u32| tracker.labelled_by(n, &cfg.intake_label);
-    Ok(pick_next(&issues, cfg, &labelled_by, &trusted))
+    let edited_at = |n: u32| tracker.edited_at(n);
+    Ok(pick_next(&issues, cfg, &labelled_by, &edited_at, &trusted))
 }
 
 /// Runs one intake pass: pick an issue, claim it, draft, build and settle it.
@@ -689,8 +699,19 @@ mod tests {
         vec!["alice".to_string()]
     }
 
+    fn never_edited(_: u32) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
     fn pick(issues: &[IssueInfo]) -> Option<u32> {
-        pick_next(issues, &Config::default(), &alice, &trusted()).map(|i| i.number)
+        pick_next(
+            issues,
+            &Config::default(),
+            &alice,
+            &never_edited,
+            &trusted(),
+        )
+        .map(|i| i.number)
     }
 
     #[test]
@@ -729,7 +750,7 @@ mod tests {
             issue(4, &["factory"], "2026-11-02"),
         ];
         let by = |n: u32| Ok(Some(event(if n == 3 { "mallory" } else { "alice" })));
-        let got = pick_next(&issues, &Config::default(), &by, &trusted());
+        let got = pick_next(&issues, &Config::default(), &by, &never_edited, &trusted());
         assert_eq!(got.map(|i| i.number), Some(4));
     }
 
@@ -738,7 +759,13 @@ mod tests {
         let issues = vec![issue(3, &["factory"], "2026-11-01")];
         let none = |_: u32| Ok(None);
         assert_eq!(
-            pick_next(&issues, &Config::default(), &none, &trusted()),
+            pick_next(
+                &issues,
+                &Config::default(),
+                &none,
+                &never_edited,
+                &trusted()
+            ),
             None
         );
     }
@@ -756,11 +783,17 @@ mod tests {
                 Ok(Some(event("alice")))
             }
         };
-        let got = pick_next(&issues, &Config::default(), &by, &trusted());
+        let got = pick_next(&issues, &Config::default(), &by, &never_edited, &trusted());
         assert_eq!(got.map(|i| i.number), Some(4));
         let fails = |_: u32| Err("boom".to_string());
         assert_eq!(
-            pick_next(&issues, &Config::default(), &fails, &trusted()),
+            pick_next(
+                &issues,
+                &Config::default(),
+                &fails,
+                &never_edited,
+                &trusted()
+            ),
             None
         );
     }
@@ -768,16 +801,80 @@ mod tests {
     #[test]
     fn pick_next_returns_none_for_an_empty_trusted_list() {
         let issues = vec![issue(3, &["factory"], "2026-11-01")];
-        assert_eq!(pick_next(&issues, &Config::default(), &alice, &[]), None);
+        assert_eq!(
+            pick_next(&issues, &Config::default(), &alice, &never_edited, &[]),
+            None
+        );
+    }
+
+    /// Picks the one issue #3 with `edited_at` answering `edited`.
+    fn pick_edited(edited: Result<Option<String>, String>) -> Option<u32> {
+        let issues = vec![issue(3, &["factory"], "2026-11-01")];
+        let edit = move |_: u32| edited.clone();
+        pick_next(&issues, &Config::default(), &alice, &edit, &trusted()).map(|i| i.number)
+    }
+
+    #[test]
+    fn pick_next_picks_an_issue_whose_label_bumped_updated_at() {
+        let mut i = issue(3, &["factory"], "2026-11-01");
+        i.updated_at = "2026-11-05T10:00:01Z".to_string();
+        let got = pick_next(&[i], &Config::default(), &alice, &never_edited, &trusted());
+        assert_eq!(got.map(|i| i.number), Some(3));
     }
 
     #[test]
     fn pick_next_skips_an_issue_edited_after_labelling() {
-        let mut edited = issue(3, &["factory"], "2026-11-01");
-        edited.updated_at = "2026-11-05T10:00:01Z".to_string();
-        assert_eq!(pick(std::slice::from_ref(&edited)), None);
-        edited.updated_at = LABELLED_AT.to_string();
-        assert_eq!(pick(&[edited]), Some(3));
+        assert_eq!(
+            pick_edited(Ok(Some("2026-11-05T10:00:01Z".to_string()))),
+            None
+        );
+    }
+
+    #[test]
+    fn pick_next_skips_an_edit_in_the_label_second() {
+        assert_eq!(pick_edited(Ok(Some(LABELLED_AT.to_string()))), None);
+    }
+
+    #[test]
+    fn pick_next_picks_an_issue_edited_before_labelling() {
+        assert_eq!(
+            pick_edited(Ok(Some("2026-11-05T09:59:59Z".to_string()))),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn pick_next_skips_when_the_edit_lookup_fails() {
+        assert_eq!(pick_edited(Err("graphql down".to_string())), None);
+    }
+
+    #[test]
+    fn pick_next_ignores_a_comment_after_the_label() {
+        let mut i = issue(3, &["factory"], "2026-11-01");
+        i.updated_at = "2026-11-05T11:00:00Z".to_string();
+        assert_eq!(pick(&[i]), Some(3));
+    }
+
+    #[test]
+    fn pick_next_skips_a_label_time_in_another_form() {
+        let issues = vec![issue(3, &["factory"], "2026-11-01")];
+        let by = |_: u32| {
+            Ok(Some(LabelEvent {
+                actor: "alice".to_string(),
+                at: "2026-11-05T10:00:00.5Z".to_string(),
+            }))
+        };
+        let got = pick_next(&issues, &Config::default(), &by, &never_edited, &trusted());
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn pick_next_asks_edited_at_only_after_the_trust_check() {
+        let issues = vec![issue(3, &["factory"], "2026-11-01")];
+        let by = |_: u32| Ok(Some(event("mallory")));
+        let edit = |_: u32| -> Result<Option<String>, String> { panic!("edited_at was asked") };
+        let got = pick_next(&issues, &Config::default(), &by, &edit, &trusted());
+        assert_eq!(got, None);
     }
 
     #[test]
@@ -804,7 +901,7 @@ mod tests {
         assert_eq!(pick(&running), None);
         let by = |_: u32| Ok(Some(event("Alice")));
         let plain = vec![issue(3, &["factory"], "2026-11-01")];
-        let got = pick_next(&plain, &Config::default(), &by, &trusted());
+        let got = pick_next(&plain, &Config::default(), &by, &never_edited, &trusted());
         assert_eq!(got.map(|i| i.number), Some(3));
     }
 
@@ -820,7 +917,7 @@ mod tests {
             calls.set(calls.get() + 1);
             Ok(Some(event("alice")))
         };
-        let got = pick_next(&issues, &Config::default(), &by, &trusted());
+        let got = pick_next(&issues, &Config::default(), &by, &never_edited, &trusted());
         assert_eq!(got.map(|i| i.number), Some(3));
         assert_eq!(calls.get(), 1);
     }

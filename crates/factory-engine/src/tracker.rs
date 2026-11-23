@@ -30,6 +30,9 @@ pub trait Tracker {
     /// Who last added `label` to the issue and when, or None when no event is found or the last
     /// event has no login.
     fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String>;
+    /// The latest of the issue's body edit time and last title rename time as `YYYY-MM-DDTHH:MM:SSZ`,
+    /// or None when it has neither. Comments and label writes are not edits.
+    fn edited_at(&self, issue: u32) -> Result<Option<String>, String>;
     /// Adds and removes labels. A label to add that does not exist yet is created first.
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String>;
     /// The login `gh` runs as.
@@ -82,6 +85,9 @@ impl<T: Tracker + ?Sized> Tracker for Arc<T> {
     fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
         (**self).labelled_by(issue, label)
     }
+    fn edited_at(&self, issue: u32) -> Result<Option<String>, String> {
+        (**self).edited_at(issue)
+    }
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
         (**self).edit_labels(issue, add, remove)
     }
@@ -117,6 +123,9 @@ impl<T: Tracker + ?Sized> Tracker for &T {
     }
     fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
         (**self).labelled_by(issue, label)
+    }
+    fn edited_at(&self, issue: u32) -> Result<Option<String>, String> {
+        (**self).edited_at(issue)
     }
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
         (**self).edit_labels(issue, add, remove)
@@ -167,6 +176,9 @@ impl Tracker for GuardedTracker<'_> {
     }
     fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
         self.inner.labelled_by(issue, label)
+    }
+    fn edited_at(&self, issue: u32) -> Result<Option<String>, String> {
+        self.inner.edited_at(issue)
     }
     fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
         Err(REFUSED.to_string())
@@ -280,6 +292,24 @@ pub(crate) fn events_args(repo: &str, issue: u32) -> Vec<String> {
         "--paginate".to_string(),
         "--jq".to_string(),
         EVENTS_JQ.to_string(),
+    ]
+}
+
+/// Asks for the body's last edit time and the last title rename of one issue.
+const EDITED_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){lastEditedAt timelineItems(itemTypes:[RENAMED_TITLE_EVENT],last:1){nodes{... on RenamedTitleEvent{createdAt}}}}}}";
+
+pub(crate) fn edited_at_args(owner: &str, name: &str, issue: u32) -> Vec<String> {
+    vec![
+        "api".to_string(),
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={EDITED_QUERY}"),
+        "-F".to_string(),
+        format!("owner={owner}"),
+        "-F".to_string(),
+        format!("name={name}"),
+        "-F".to_string(),
+        format!("number={issue}"),
     ]
 }
 
@@ -416,6 +446,48 @@ pub(crate) fn parse_actor(json: &str, label: &str) -> Result<Option<LabelEvent>,
         }
     }
     Ok(last.flatten())
+}
+
+/// True for exactly `YYYY-MM-DDTHH:MM:SSZ`, the one form that compares right as a string.
+pub(crate) fn is_github_time(s: &str) -> bool {
+    const SHAPE: &[u8; 20] = b"dddd-dd-ddTdd:dd:ddZ";
+    s.len() == SHAPE.len()
+        && s.bytes().zip(SHAPE).all(|(b, shape)| match shape {
+            b'd' => b.is_ascii_digit(),
+            _ => b == *shape,
+        })
+}
+
+/// The latest of the issue's `lastEditedAt` and last title rename time, from the GraphQL reply of
+/// `edited_at_args`, or None when it has neither. A reply without an issue object, or a time that is
+/// not in the `is_github_time` form, is an error.
+pub(crate) fn parse_edited_at(json: &str) -> Result<Option<String>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("gh printed invalid JSON: {e}"))?;
+    let issue = &value["data"]["repository"]["issue"];
+    if !issue.is_object() {
+        return Err("gh printed unexpected JSON: expected data.repository.issue".to_string());
+    }
+    let nodes = issue["timelineItems"]["nodes"]
+        .as_array()
+        .ok_or("gh printed unexpected JSON: expected timelineItems.nodes")?;
+    let mut times = Vec::new();
+    if !issue["lastEditedAt"].is_null() {
+        let at = issue["lastEditedAt"]
+            .as_str()
+            .ok_or("gh printed unexpected JSON: lastEditedAt is not a string")?;
+        times.push(at);
+    }
+    for node in nodes {
+        let at = node["createdAt"]
+            .as_str()
+            .ok_or("gh printed unexpected JSON: expected createdAt on a rename")?;
+        times.push(at);
+    }
+    if let Some(bad) = times.iter().find(|t| !is_github_time(t)) {
+        return Err(format!("gh printed an unusable edit time: `{bad}`"));
+    }
+    Ok(times.into_iter().max().map(str::to_string))
 }
 
 /// Accepts only `owner/name`, each part a repository name that is not `.` or `..`.
@@ -579,6 +651,14 @@ impl Tracker for GhTracker {
     fn labelled_by(&self, issue: u32, label: &str) -> Result<Option<LabelEvent>, String> {
         let repo = self.repo_name()?;
         parse_actor(&self.run(&events_args(&repo, issue))?, label)
+    }
+
+    fn edited_at(&self, issue: u32) -> Result<Option<String>, String> {
+        let repo = self.repo_name()?;
+        let (owner, name) = repo
+            .split_once('/')
+            .ok_or_else(|| format!("unusable repository name: `{repo}`"))?;
+        parse_edited_at(&self.run(&edited_at_args(owner, name, issue))?)
     }
 
     fn edit_labels(&self, issue: u32, add: &[String], remove: &[String]) -> Result<(), String> {
@@ -1101,6 +1181,65 @@ mod tests {
         );
     }
 
+    const EDITED: &str = r#"{"data":{"repository":{"issue":{"lastEditedAt":"2026-11-05T10:00:03Z","timelineItems":{"nodes":[{"createdAt":"2026-11-05T10:00:05Z"}]}}}}}"#;
+
+    #[test]
+    fn parse_edited_at_takes_the_later_time() {
+        assert_eq!(
+            parse_edited_at(EDITED).expect("parse"),
+            Some("2026-11-05T10:00:05Z".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_edited_at_without_edits_is_none() {
+        let json = r#"{"data":{"repository":{"issue":{"lastEditedAt":null,"timelineItems":{"nodes":[]}}}}}"#;
+        assert_eq!(parse_edited_at(json).expect("parse"), None);
+    }
+
+    #[test]
+    fn parse_edited_at_rejects_other_json() {
+        for json in [
+            r#"{"data":{"repository":{"issue":null}}}"#,
+            "not json",
+            "[]",
+        ] {
+            let err = parse_edited_at(json).expect_err(json);
+            assert!(err.contains("expected") || err.contains("invalid"), "{err}");
+        }
+    }
+
+    #[test]
+    fn parse_edited_at_rejects_a_time_in_another_form() {
+        let json = r#"{"data":{"repository":{"issue":{"lastEditedAt":"2026-11-05T10:00:03.5Z","timelineItems":{"nodes":[]}}}}}"#;
+        parse_edited_at(json).expect_err("fractional seconds");
+    }
+
+    #[test]
+    fn is_github_time_takes_only_the_plain_form() {
+        assert!(is_github_time("2026-11-05T10:00:03Z"));
+        for s in ["2026-11-05T10:00:03+00:00", "2026-11-05 10:00:03Z", ""] {
+            assert!(!is_github_time(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn edited_at_args_query_body_edits_and_renames() {
+        let args = edited_at_args("o", "r", 7);
+        assert_eq!(&args[..2], &strings(&["api", "graphql"])[..]);
+        let q = args
+            .iter()
+            .find(|a| a.starts_with("query="))
+            .expect("query");
+        assert!(
+            q.contains("lastEditedAt") && q.contains("RENAMED_TITLE_EVENT"),
+            "{q}"
+        );
+        for f in ["owner=o", "name=r", "number=7"] {
+            assert!(args.iter().any(|a| a == f), "{f}");
+        }
+    }
+
     /// Writes an executable fake `gh` script into `dir` and returns its path.
     fn fake_gh(dir: &Path, body: &str) -> String {
         use std::os::unix::fs::PermissionsExt;
@@ -1323,6 +1462,10 @@ mod tests {
         }
         fn labelled_by(&self, _: u32, _: &str) -> Result<Option<LabelEvent>, String> {
             self.log("labelled_by");
+            Ok(None)
+        }
+        fn edited_at(&self, _: u32) -> Result<Option<String>, String> {
+            self.log("edited_at");
             Ok(None)
         }
         fn edit_labels(&self, _: u32, _: &[String], _: &[String]) -> Result<(), String> {
